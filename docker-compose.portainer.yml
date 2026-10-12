@@ -1,0 +1,38 @@
+# Garage-server overrides for the Portainer Git stack.
+# Merge order in Portainer: docker-compose.yml -> docker-compose.build.yml -> this file.
+# Reproduces the original release-image stack: data on the host, no published
+# ports, frontend reachable only through the shared proxy network.
+#
+# `ports: !reset []` needs Docker Compose v2.24+. If Portainer rejects it,
+# delete those two lines (the stack then also publishes the default ports).
+
+services:
+  postgres:
+    networks:
+      - pokecollector_internal
+
+  backend:
+    networks:
+      - pokecollector_internal
+    # Same container paths as the base file, so these replace its ./data/... mounts.
+    volumes:
+      - /home/rage/Documents/docker/pokecollector/backups:/app/backups
+      - /home/rage/Documents/docker/pokecollector/data/auth:/app/data/auth
+      - /home/rage/Documents/docker/pokecollector/data/pokedex-images:/app/data/pokedex-images
+      - /home/rage/Documents/docker/pokecollector/data/scan-uploads:/app/data/scan-uploads
+      - /home/rage/Documents/docker/pokecollector/data/scan-traces:/app/data/scan-traces
+    ports: !reset []
+
+  frontend:
+    networks:
+      - pokecollector_internal
+      - garage_network
+    ports: !reset []
+
+networks:
+  # Private network for frontend <-> backend <-> postgres
+  pokecollector_internal:
+    driver: bridge
+  # Shared with Nginx Proxy Manager; only the frontend joins it
+  garage_network:
+    external: true
