@@ -1,12 +1,12 @@
 services:
   backend:
-    image: pokecollector-backend:local
+    image: pokelocal-backend:local
     build:
       context: .
       dockerfile: backend/Dockerfile
 
   frontend:
-    image: pokecollector-frontend:local
+    image: pokelocal-frontend:local
     build:
       context: .
       dockerfile: frontend/Dockerfile
