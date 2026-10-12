@@ -9,29 +9,29 @@
 services:
   postgres:
     networks:
-      - pokecollector_internal
+      - pokelocal_internal
 
   backend:
     networks:
-      - pokecollector_internal
+      - pokelocal_internal
     # Same container paths as the base file, so these replace its ./data/... mounts.
     volumes:
-      - /home/rage/Documents/docker/pokecollector/backups:/app/backups
-      - /home/rage/Documents/docker/pokecollector/data/auth:/app/data/auth
-      - /home/rage/Documents/docker/pokecollector/data/pokedex-images:/app/data/pokedex-images
-      - /home/rage/Documents/docker/pokecollector/data/scan-uploads:/app/data/scan-uploads
-      - /home/rage/Documents/docker/pokecollector/data/scan-traces:/app/data/scan-traces
+      - /home/rage/Documents/docker/pokelocal/backups:/app/backups
+      - /home/rage/Documents/docker/pokelocal/data/auth:/app/data/auth
+      - /home/rage/Documents/docker/pokelocal/data/pokedex-images:/app/data/pokedex-images
+      - /home/rage/Documents/docker/pokelocal/data/scan-uploads:/app/data/scan-uploads
+      - /home/rage/Documents/docker/pokelocal/data/scan-traces:/app/data/scan-traces
     ports: !reset []
 
   frontend:
     networks:
-      - pokecollector_internal
+      - pokelocal_internal
       - garage_network
     ports: !reset []
 
 networks:
   # Private network for frontend <-> backend <-> postgres
-  pokecollector_internal:
+  pokelocal_internal:
     driver: bridge
   # Shared with Nginx Proxy Manager; only the frontend joins it
   garage_network:

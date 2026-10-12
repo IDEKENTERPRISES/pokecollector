@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:18-alpine
-    container_name: pokemon-postgres
+    container_name: pokemonlocal-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: pokemon
@@ -33,7 +33,7 @@ services:
 
   backend:
     image: ghcr.io/git-romer/pokecollector-backend:${POKECOLLECTOR_VERSION:-1.51.0}
-    container_name: pokemon-backend
+    container_name: pokemonlocal-backend
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://pokemon:${POSTGRES_PASSWORD:-changeme}@postgres:5432/pokemon_tcg
@@ -79,7 +79,7 @@ services:
 
   frontend:
     image: ghcr.io/git-romer/pokecollector-frontend:${POKECOLLECTOR_VERSION:-1.51.0}
-    container_name: pokemon-frontend
+    container_name: pokemonlocal-frontend
     restart: unless-stopped
     depends_on:
       - backend
