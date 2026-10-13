@@ -5,12 +5,17 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
 
-from api.auth import get_current_user
+from api.auth import get_current_user, multi_user_enabled
+from database import get_db
 from models import User
+from services.auth import verify_password
 from services.postgres_cli import parse_database_url
+from services.restore_sql_guard import RestoreSqlRejected, check_restore_sql
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -126,11 +131,22 @@ def download_backup(
 @router.post("/restore")
 async def restore_backup(
     file: UploadFile = File(...),
+    password: str | None = Form(None),
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    """Restore database from a SQL dump file."""
+    """Restore database from a SQL dump file.
+
+    Restoring replaces the whole database and runs the uploaded file through psql, so
+    when logins are enabled the administrator must confirm their password, and the file
+    must be plain pg_dump output (see services.restore_sql_guard).
+    """
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
+    if multi_user_enabled(db) and not (
+        password and verify_password(password, current_user.hashed_password)
+    ):
+        raise HTTPException(status_code=403, detail="Enter your password to restore a backup")
     params = get_db_params()
     if not params:
         raise HTTPException(status_code=500, detail="Database URL not configured")
@@ -155,6 +171,14 @@ async def restore_backup(
                 uploaded_bytes += len(chunk)
         if uploaded_bytes == 0:
             raise HTTPException(status_code=400, detail="Backup file is empty")
+        try:
+            await run_in_threadpool(check_restore_sql, restore_path)
+        except RestoreSqlRejected as exc:
+            logger.warning("Rejected restore upload: %s", exc)
+            raise HTTPException(
+                status_code=400,
+                detail=f"This file is not a plain PostgreSQL backup made by this app ({exc}).",
+            ) from None
 
         env = os.environ.copy()
         env["PGPASSWORD"] = params["password"]

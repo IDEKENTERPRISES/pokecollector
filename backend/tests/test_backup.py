@@ -9,10 +9,14 @@ try:
     from fastapi import HTTPException
 
     from api import backup as backup_api
+    from services.auth import hash_password
 
     DEPS_AVAILABLE = True
 except ModuleNotFoundError:
     DEPS_AVAILABLE = False
+
+
+VALID_SQL = b"SET statement_timeout = 0;\n"
 
 
 class ChunkedUpload:
@@ -158,8 +162,14 @@ class RestoreBackupTests(unittest.IsolatedAsyncioTestCase):
     def _remaining_files(self):
         return list(Path(self.temp_dir.name).iterdir())
 
+    async def _restore(self, upload, password=None, multi_user=False, user=None):
+        with patch.object(backup_api, "multi_user_enabled", return_value=multi_user):
+            return await backup_api.restore_backup(
+                upload, password=password, current_user=user or self.admin, db=None
+            )
+
     async def test_restore_is_streamed_atomic_and_stops_on_sql_errors(self):
-        upload = ChunkedUpload(b"SELECT 1;", filename="BACKUP.SQL")
+        upload = ChunkedUpload(VALID_SQL, filename="BACKUP.SQL")
         captured_command = None
 
         def complete(command, **_kwargs):
@@ -170,7 +180,7 @@ class RestoreBackupTests(unittest.IsolatedAsyncioTestCase):
 
         backup_dir, params, run = self._patches(complete)
         with backup_dir, params, run:
-            result = await backup_api.restore_backup(upload, current_user=self.admin)
+            result = await self._restore(upload)
 
         self.assertEqual(result, {"message": "Database restored successfully"})
         self.assertEqual(captured_command[captured_command.index("-v") + 1], "ON_ERROR_STOP=1")
@@ -184,7 +194,7 @@ class RestoreBackupTests(unittest.IsolatedAsyncioTestCase):
         completed = subprocess.CompletedProcess([], 1, "", "broken SQL")
         backup_dir, params, run = self._patches(completed)
         with backup_dir, params, run, self.assertRaises(HTTPException) as raised:
-            await backup_api.restore_backup(ChunkedUpload(b"broken"), current_user=self.admin)
+            await self._restore(ChunkedUpload(VALID_SQL))
 
         self.assertEqual(raised.exception.status_code, 500)
         self.assertEqual(self._remaining_files(), [])
@@ -193,7 +203,7 @@ class RestoreBackupTests(unittest.IsolatedAsyncioTestCase):
         timeout = subprocess.TimeoutExpired("psql", 120)
         backup_dir, params, run = self._patches(timeout)
         with backup_dir, params, run, self.assertRaises(HTTPException) as raised:
-            await backup_api.restore_backup(ChunkedUpload(b"SELECT 1;"), current_user=self.admin)
+            await self._restore(ChunkedUpload(VALID_SQL))
 
         self.assertEqual(raised.exception.detail, "Restore timed out")
         self.assertEqual(self._remaining_files(), [])
@@ -201,7 +211,7 @@ class RestoreBackupTests(unittest.IsolatedAsyncioTestCase):
     async def test_missing_psql_removes_temporary_upload(self):
         backup_dir, params, run = self._patches(FileNotFoundError())
         with backup_dir, params, run, self.assertRaises(HTTPException) as raised:
-            await backup_api.restore_backup(ChunkedUpload(b"SELECT 1;"), current_user=self.admin)
+            await self._restore(ChunkedUpload(VALID_SQL))
 
         self.assertEqual(raised.exception.detail, "psql not found")
         self.assertEqual(self._remaining_files(), [])
@@ -209,32 +219,79 @@ class RestoreBackupTests(unittest.IsolatedAsyncioTestCase):
     async def test_empty_restore_is_rejected_without_running_psql(self):
         backup_dir, params, run = self._patches(subprocess.CompletedProcess([], 0, "", ""))
         with backup_dir, params, run as run_mock, self.assertRaises(HTTPException) as raised:
-            await backup_api.restore_backup(ChunkedUpload(b""), current_user=self.admin)
+            await self._restore(ChunkedUpload(b""))
 
         self.assertEqual(raised.exception.status_code, 400)
         run_mock.assert_not_called()
         self.assertEqual(self._remaining_files(), [])
 
     async def test_missing_filename_is_rejected_without_creating_a_file(self):
-        upload = ChunkedUpload(b"SELECT 1;", filename=None)
+        upload = ChunkedUpload(VALID_SQL, filename=None)
         with patch.object(backup_api, "BACKUP_DIR", self.temp_dir.name), \
              patch.object(backup_api, "get_db_params", return_value=self.params), \
              patch.object(backup_api.subprocess, "run") as run, \
              self.assertRaises(HTTPException) as raised:
-            await backup_api.restore_backup(upload, current_user=self.admin)
+            await self._restore(upload)
 
         self.assertEqual(raised.exception.status_code, 400)
         run.assert_not_called()
         self.assertEqual(self._remaining_files(), [])
 
     async def test_interrupted_upload_removes_partial_file(self):
-        upload = InterruptedUpload(b"SELECT 1;", chunk_size=3)
+        upload = InterruptedUpload(VALID_SQL, chunk_size=3)
         backup_dir, params, run = self._patches(subprocess.CompletedProcess([], 0, "", ""))
         with backup_dir, params, run as run_mock, self.assertRaises(OSError):
-            await backup_api.restore_backup(upload, current_user=self.admin)
+            await self._restore(upload)
 
         run_mock.assert_not_called()
         self.assertEqual(self._remaining_files(), [])
+
+    async def test_restore_requires_the_admin_password_when_logins_are_enabled(self):
+        admin = SimpleNamespace(role="admin", hashed_password=hash_password("correct horse battery"))
+        backup_dir, params, run = self._patches(subprocess.CompletedProcess([], 0, "", ""))
+        with backup_dir, params, run as run_mock:
+            for password in (None, "", "wrong password"):
+                with self.subTest(password=password), self.assertRaises(HTTPException) as raised:
+                    await self._restore(ChunkedUpload(VALID_SQL), password=password, multi_user=True, user=admin)
+                self.assertEqual(raised.exception.status_code, 403)
+            run_mock.assert_not_called()
+
+            result = await self._restore(
+                ChunkedUpload(VALID_SQL), password="correct horse battery", multi_user=True, user=admin
+            )
+        self.assertEqual(result, {"message": "Database restored successfully"})
+        self.assertEqual(self._remaining_files(), [])
+
+    async def test_restore_does_not_ask_for_a_password_in_single_user_mode(self):
+        backup_dir, params, run = self._patches(subprocess.CompletedProcess([], 0, "", ""))
+        with backup_dir, params, run:
+            result = await self._restore(ChunkedUpload(VALID_SQL), multi_user=False)
+        self.assertEqual(result, {"message": "Database restored successfully"})
+
+    async def test_non_admin_cannot_restore_even_with_a_password(self):
+        trainer = SimpleNamespace(role="trainer", hashed_password=hash_password("x" * 12))
+        with self.assertRaises(HTTPException) as raised:
+            await self._restore(ChunkedUpload(VALID_SQL), password="x" * 12, multi_user=True, user=trainer)
+        self.assertEqual(raised.exception.status_code, 403)
+
+    async def test_dump_with_psql_commands_is_rejected_before_psql_runs(self):
+        malicious = b"SET statement_timeout = 0;\n\\! id > /app/backups/pwned\n"
+        backup_dir, params, run = self._patches(subprocess.CompletedProcess([], 0, "", ""))
+        with backup_dir, params, run as run_mock, self.assertRaises(HTTPException) as raised:
+            await self._restore(ChunkedUpload(malicious))
+
+        self.assertEqual(raised.exception.status_code, 400)
+        run_mock.assert_not_called()
+        self.assertEqual(self._remaining_files(), [])
+
+    async def test_dump_that_runs_server_programs_is_rejected_before_psql_runs(self):
+        malicious = b"COPY public.cards FROM PROGRAM 'id';\n"
+        backup_dir, params, run = self._patches(subprocess.CompletedProcess([], 0, "", ""))
+        with backup_dir, params, run as run_mock, self.assertRaises(HTTPException) as raised:
+            await self._restore(ChunkedUpload(malicious))
+
+        self.assertEqual(raised.exception.status_code, 400)
+        run_mock.assert_not_called()
 
 
 if __name__ == "__main__":
