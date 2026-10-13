@@ -107,6 +107,8 @@ def _run_migrations(conn):
         "ALTER TABLE product_cards ALTER COLUMN variant SET DEFAULT 'Normal'",
         # v32: Add grade column to collection table (PSA/BGS/CGC grade)
         "ALTER TABLE collection ADD COLUMN IF NOT EXISTS grade VARCHAR DEFAULT 'raw'",
+        # Owner-editable acquisition date; NULL falls back to added_at
+        "ALTER TABLE collection ADD COLUMN IF NOT EXISTS acquired_at TIMESTAMP",
         # v32: Add ebay_app_id to settings table
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS ebay_app_id VARCHAR",
         # v41: Add Pokemon avatar selection to users

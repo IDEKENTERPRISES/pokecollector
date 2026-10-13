@@ -298,6 +298,7 @@ def get_set_checklist(
                     "printing_details": [tag.name for tag in item.printing_detail_tags],
                     "lang": item.lang,
                     "purchase_price": item.purchase_price,
+                    "acquired_at": (item.acquired_at or item.added_at).isoformat() if (item.acquired_at or item.added_at) else None,
                 }
                 for item in owned_items
             ],

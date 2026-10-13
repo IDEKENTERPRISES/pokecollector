@@ -251,6 +251,10 @@ class CollectionItem(Base):
     purchase_price = Column(Float)
     lang = Column(String, default="en")  # fixed TCGdex card language
     added_at = Column(DateTime, default=func.now())
+    # When the owner acquired this copy. NULL means "same as added_at", so rows
+    # inherit the date they were added unless the owner overrides it. added_at
+    # itself is never edited: Recently Added and sync-change detection rely on it.
+    acquired_at = Column(DateTime, nullable=True)
 
     card = relationship("Card", back_populates="collection_items")
     printing_detail_tags = relationship(

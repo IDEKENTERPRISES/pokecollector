@@ -858,6 +858,18 @@ def delete_printing_detail_tag(
     db.commit()
     return {"message": "Printing detail tag deleted", "detached_from": usage_count}
 
+def _validated_acquired_at(value: Optional[datetime.datetime]) -> Optional[datetime.datetime]:
+    """Normalize a user-supplied acquisition date to naive UTC, as the column stores."""
+    if value is None:
+        return None  # reset: fall back to added_at
+    if value.tzinfo is not None:
+        value = value.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    # A day of slack covers clients ahead of the server's UTC date.
+    if value > datetime.datetime.utcnow() + datetime.timedelta(days=1):
+        raise HTTPException(status_code=422, detail="acquired_at cannot be in the future")
+    return value
+
+
 @router.put("/{item_id}", response_model=CollectionItemResponse)
 def update_collection_item(
     item_id: int,
@@ -883,6 +895,8 @@ def update_collection_item(
                 detail=f"variant must be one of: {', '.join(CANONICAL_VARIANTS)}",
             )
         update_data["variant"] = _normalize_collection_variant(update_data.get("variant"))
+    if "acquired_at" in update_data:
+        update_data["acquired_at"] = _validated_acquired_at(update_data["acquired_at"])
     printing_details_marker = object()
     requested_printing_details = update_data.pop("printing_details", printing_details_marker)
     requested_tag_pairs = None

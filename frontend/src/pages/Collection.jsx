@@ -25,6 +25,8 @@ import { formatMoneyInputValue, parseMoneyInputValue } from '../utils/moneyInput
 import { useDynamicFilterUrlState } from '../hooks/useDynamicFilterUrlState'
 import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import PrintingDetailBadges from '../components/PrintingDetailBadges'
+import AcquiredDateField from '../components/AcquiredDateField'
+import { formatAcquiredDate, oldestAcquiredByCard } from '../utils/acquiredDate'
 import PrintingDetailSelector from '../components/PrintingDetailSelector'
 import PrintingDetailTagManager from '../components/PrintingDetailTagManager'
 import { normalizePrintingDetailName, printingDetailNames } from '../utils/printingDetails'
@@ -317,6 +319,7 @@ function CollectionEditModal({ item, onClose }) {
   const [customImageVersion, setCustomImageVersion] = useState(0)
   const [activeTab, setActiveTab] = useState('manage')
   const [hasOwnPhoto, setHasOwnPhoto] = useState(Boolean(item.has_scan_photo))
+  const [acquiredAt, setAcquiredAt] = useState(item.acquired_at ?? item.added_at)
   const [selectedImageSource, setSelectedImageSource] = useState(
     settings.prefer_own_card_photos === 'true' ? 'own' : 'catalogue'
   )
@@ -440,6 +443,16 @@ function CollectionEditModal({ item, onClose }) {
       onClose()
     },
     onError: () => toast.error(t('collection.updateFailed')),
+  })
+
+  const acquiredMutation = useMutation({
+    mutationFn: (date) => updateCollectionItem(item.id, { acquired_at: date }),
+    onSuccess: (response) => {
+      setAcquiredAt(response.data.acquired_at)
+      toast.success(t('collection.acquiredSaved'))
+      invalidateCardState(queryClient)
+    },
+    onError: (err) => toast.error(getApiErrorMessage(err, t('collection.updateFailed'))),
   })
 
   const deleteMutation = useMutation({
@@ -735,6 +748,14 @@ function CollectionEditModal({ item, onClose }) {
             <span className="inline-flex min-w-12 items-center justify-center rounded-lg border border-brand-red/35 bg-brand-red/15 px-3 py-2 text-sm font-black text-brand-red">
               ×{item.quantity}
             </span>
+          </div>
+          <div className="rounded-xl border border-border bg-bg-card p-4">
+            <AcquiredDateField
+              value={acquiredAt}
+              onCommit={(date) => acquiredMutation.mutate(date)}
+              disabled={acquiredMutation.isPending}
+            />
+            <p className="mt-1 text-[11px] text-text-muted">{t('collection.acquiredHint')}</p>
           </div>
           {productSourceSummary && (
             <div className="rounded-xl border border-yellow/25 bg-yellow/10 p-3">
@@ -1034,7 +1055,7 @@ function CollectionEditModal({ item, onClose }) {
 }
 
 export default function Collection() {
-  const { t, settings, formatPrice, pricePrimaryField, currency, exchangeRate } = useSettings()
+  const { t, settings, formatPrice, pricePrimaryField, currency, exchangeRate, language } = useSettings()
   const visibleLanguages = useVisibleTcgdexLanguages()
   const [viewMode, setViewMode] = useState('grid')
   const [editingCollectionItem, setEditingCollectionItem] = useState(null) // for CollectionEditModal
@@ -1081,6 +1102,10 @@ export default function Collection() {
     refetchInterval: 60000,
     placeholderData: collectionQuery.placeholderData,
   })
+
+  // Each card shows the oldest acquired date across all of its owned versions.
+  const oldestAcquired = useMemo(() => oldestAcquiredByCard(items), [items])
+  const acquiredLabel = (item) => formatAcquiredDate(oldestAcquired.get(item.card_id), language)
 
   const { data: wishlistItems = [] } = useQuery({
     queryKey: ['wishlist'],
@@ -1666,6 +1691,7 @@ export default function Collection() {
                       <th className="text-right px-4 py-3 text-text-muted font-medium">{t('collection.buyPrice')}</th>
                       <th className="text-right px-4 py-3 text-text-muted font-medium">{t('collection.marketPrice')}</th>
                       <th className="text-right px-4 py-3 text-text-muted font-medium">P&amp;L</th>
+                      <th className="text-right px-4 py-3 text-text-muted font-medium">{t('collection.acquired')}</th>
                       <th className="px-4 py-3" />
                     </tr>
                   </thead>
@@ -1724,6 +1750,9 @@ export default function Collection() {
                               </span>
                             ) : '-'}
                           </td>
+                          <td className="px-4 py-3 text-right text-xs text-text-secondary whitespace-nowrap">
+                            {acquiredLabel(item) || '-'}
+                          </td>
                           <td className="px-4 py-3 text-right">
                             <button
                               type="button"
@@ -1745,6 +1774,7 @@ export default function Collection() {
                     <tr className="border-t border-border bg-bg/50">
                       <td colSpan={5} className="px-4 py-3 text-text-muted text-sm">{filtered.length} {t('collection.filtered')}</td>
                       <td className="px-4 py-3 text-right font-bold text-green" aria-label={t('collection.totalValue')}>{formatPrice(totalValue)}</td>
+                      <td />
                       <td />
                       <td />
                     </tr>
@@ -1770,6 +1800,8 @@ export default function Collection() {
                   printingDetailNames(item.printing_details).slice(0, 2).forEach(name => badges.push({ label: name, variant: 'blue' }))
                   const sourceSummary = getProductSourceSummary(item)
                   if (sourceSummary) badges.push({ label: `${t('collection.foundIn')}: ${sourceSummary.label}`, variant: 'gold' })
+                  const acquired = acquiredLabel(item)
+                  if (acquired) badges.push({ label: `${t('collection.acquired')} ${acquired}`, variant: 'gray' })
                   return (
                     <CollectionCardRow
                       key={item.id}
