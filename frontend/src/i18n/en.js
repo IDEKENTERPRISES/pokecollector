@@ -365,6 +365,7 @@ const en = {
     quantity: 'Quantity',
     sortBy: 'Sort by',
     sortDateAdded: 'Date Added',
+    sortAcquired: 'Date Acquired',
     acquired: 'Acquired',
     acquiredSaved: 'Acquired date saved',
     acquiredHint: 'Defaults to the day you added this copy. Change it if you got the card earlier.',
