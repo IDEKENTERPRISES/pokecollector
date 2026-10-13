@@ -11,7 +11,13 @@ from sqlalchemy.orm import Session
 
 from database import get_db, get_setting, save_setting
 from models import User
-from services.auth import create_access_token, decode_token, hash_password, verify_password
+from services.auth import (
+    DUMMY_PASSWORD_HASH,
+    create_access_token,
+    decode_token,
+    hash_password,
+    verify_password,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -48,6 +54,36 @@ class ChangePasswordRequest(BaseModel):
 
 class ForceChangePasswordRequest(BaseModel):
     new_password: str
+
+
+MIN_PASSWORD_LENGTH = 10
+MAX_PASSWORD_BYTES = 72  # bcrypt cannot hash more than this
+VALID_ROLES = ("admin", "trainer")
+# While a temporary password is in force only these routes work, so the account
+# cannot be used for anything but replacing it.
+PASSWORD_CHANGE_ALLOWED_PATHS = {
+    "/api/auth/me",
+    "/api/auth/me/force-password",
+    "/api/auth/logout",
+    "/api/auth/mode",
+}
+
+
+def validate_new_password(password: str | None) -> None:
+    if password is None:
+        return
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
+        )
+    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        raise HTTPException(status_code=400, detail="Password is too long (72 bytes at most)")
+
+
+def validate_role(role: str | None) -> None:
+    if role is not None and role not in VALID_ROLES:
+        raise HTTPException(status_code=400, detail=f"role must be one of: {', '.join(VALID_ROLES)}")
 
 
 def validate_avatar_id(avatar_id: int | None):
@@ -123,7 +159,11 @@ def multi_user_enabled(db: Session) -> bool:
     return str(multi).lower() == "true"
 
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+    request: Request = None,
+) -> User:
     if not token:
         if not multi_user_enabled(db):
             admin = db.query(User).filter(User.role == "admin", User.is_active == True).first()
@@ -140,6 +180,12 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     user = db.query(User).filter(User.id == int(user_id), User.is_active == True).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found or inactive")
+    if (
+        user.must_change_password
+        and request is not None
+        and request.url.path.rstrip("/") not in PASSWORD_CHANGE_ALLOWED_PATHS
+    ):
+        raise HTTPException(status_code=403, detail="You must change your temporary password first.")
     return user
 
 
@@ -160,7 +206,10 @@ def get_optional_user(token: str = Depends(oauth2_scheme), db: Session = Depends
 @router.post("/login", response_model=TokenResponse)
 def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == form_data.username, User.is_active == True).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    # An unknown user still pays for a password check, so timing does not reveal
+    # which usernames exist.
+    password_ok = verify_password(form_data.password, user.hashed_password if user else DUMMY_PASSWORD_HASH)
+    if not user or not password_ok:
         raise HTTPException(status_code=401, detail="Incorrect username or password")
     token = create_access_token({"sub": str(user.id), "role": user.role})
     return TokenResponse(
@@ -236,6 +285,8 @@ def create_user(
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     validate_avatar_id(data.avatar_id)
+    validate_role(data.role)
+    validate_new_password(data.password)
     existing = db.query(User).filter(User.username == data.username).first()
     if existing:
         raise HTTPException(status_code=400, detail="Username already exists")
@@ -264,6 +315,8 @@ def update_user(
         raise HTTPException(status_code=403, detail="Admin access required")
     if field_was_set(data, "avatar_id"):
         validate_avatar_id(data.avatar_id)
+    validate_role(data.role)
+    validate_new_password(data.password)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -398,6 +451,7 @@ def change_password(
 ):
     if not verify_password(data.current_password, current_user.hashed_password):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
+    validate_new_password(data.new_password)
     current_user.hashed_password = hash_password(data.new_password)
     current_user.must_change_password = False
     db.commit()
@@ -412,6 +466,7 @@ def force_change_password(
 ):
     if not current_user.must_change_password:
         raise HTTPException(status_code=400, detail="Password change is not required")
+    validate_new_password(data.new_password)
     current_user.hashed_password = hash_password(data.new_password)
     current_user.must_change_password = False
     db.commit()

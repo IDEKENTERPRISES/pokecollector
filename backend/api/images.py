@@ -25,6 +25,13 @@ _custom_image_client = httpx.Client(timeout=10, follow_redirects=False)
 _SET_FALLBACK_IMAGE = Path(__file__).resolve().parents[1] / "static" / "pokemon-logo.svg"
 _MAX_CUSTOM_IMAGE_BYTES = 8 * 1024 * 1024
 _MAX_CUSTOM_IMAGE_REDIRECTS = 3
+# Served on every image response. `nosniff` stops a browser reinterpreting the bytes,
+# and the sandboxing CSP keeps script inside an image (SVG) from running if someone
+# opens the URL directly. Neither affects <img> rendering.
+_IMAGE_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+}
 _ALLOWED_CUSTOM_IMAGE_TYPES = {
     "image/avif",
     "image/gif",
@@ -60,7 +67,7 @@ def _set_fallback_response():
     return FileResponse(
         _SET_FALLBACK_IMAGE,
         media_type="image/svg+xml",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": "public, max-age=86400", **_IMAGE_SECURITY_HEADERS},
     )
 
 
@@ -118,6 +125,14 @@ def _get_or_fetch_custom_image(
     allowed_content_types: set[str] | None = None,
 ) -> tuple[bytes, str]:
     cached = db.query(ImageCache).filter(ImageCache.image_key == key).first()
+    if cached and allowed_content_types is not None and (
+        (cached.content_type or "").split(";", 1)[0].strip().lower() not in allowed_content_types
+    ):
+        # Cached before the type restriction existed (for example an SVG): drop it
+        # and fetch again under the current rules.
+        db.delete(cached)
+        db.commit()
+        cached = None
     if cached:
         return cached.data, cached.content_type
 
@@ -208,7 +223,12 @@ def get_card_image(
                 allowed_content_types=_ALLOWED_CUSTOM_IMAGE_TYPES,
             )
         elif card.custom_image_url and url == card.custom_image_url:
-            data, content_type = _get_or_fetch_custom_image(db, f"card:{card_id}:{size}:custom", url)
+            data, content_type = _get_or_fetch_custom_image(
+                db,
+                f"card:{card_id}:{size}:custom",
+                url,
+                allowed_content_types=_ALLOWED_CUSTOM_IMAGE_TYPES,
+            )
         else:
             url_hash = hashlib.sha1(url.encode("utf-8")).hexdigest()
             data, content_type = _get_or_fetch(db, f"card:{card_id}:{size}:{url_hash}", url)
@@ -217,7 +237,7 @@ def get_card_image(
     return Response(
         content=data,
         media_type=content_type,
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": "public, max-age=86400", **_IMAGE_SECURITY_HEADERS},
     )
 
 
@@ -259,7 +279,7 @@ def get_set_image(set_id: str, image_type: str, db: Session = Depends(get_db)):
     return Response(
         content=data,
         media_type=content_type,
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": "public, max-age=86400", **_IMAGE_SECURITY_HEADERS},
     )
 
 
@@ -293,6 +313,6 @@ def get_product_image(
         media_type=content_type,
         headers={
             "Cache-Control": "private, no-cache",
-            "X-Content-Type-Options": "nosniff",
+            **_IMAGE_SECURITY_HEADERS,
         },
     )

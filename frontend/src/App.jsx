@@ -95,6 +95,7 @@ function ForcePasswordChangeScreen() {
             value={newPassword}
             onChange={(event) => setNewPassword(event.target.value)}
             className="input w-full"
+            minLength={10}
             required
           />
         </div>

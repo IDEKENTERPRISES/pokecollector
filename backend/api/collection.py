@@ -535,7 +535,14 @@ def _parse_import_row(row: dict, row_number: int) -> CollectionItemCreate:
     )
 
 
-@router.get("/user/{user_id}", response_model=List[CollectionItemResponse])
+# Another collector's rows leave out what they paid and which sealed products the
+# copies came from: a collection can be shared without sharing the owner's finances.
+@router.get(
+    "/user/{user_id}",
+    response_model=List[CollectionItemResponse],
+    # "__all__" applies the exclusion to every item of the list.
+    response_model_exclude={"__all__": {"purchase_price", "product_sources"}},
+)
 def get_user_collection(
     user_id: int,
     current_user: User = Depends(get_current_user),

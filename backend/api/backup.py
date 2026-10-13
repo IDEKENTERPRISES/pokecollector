@@ -43,6 +43,14 @@ BACKUP_GROUPS = {
 }
 
 
+def _first_error_line(stderr: str | None) -> str:
+    """One short line for the admin; the full output stays in the server log."""
+    for line in (stderr or "").splitlines():
+        if line.strip():
+            return line.strip()[:300]
+    return "see the server log for details"
+
+
 def get_db_params():
     """Parse DATABASE_URL into pg params."""
     return parse_database_url(DATABASE_URL)
@@ -108,7 +116,8 @@ def download_backup(
         )
 
         if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"pg_dump failed: {result.stderr}")
+            logger.error("pg_dump failed: %s", result.stderr)
+            raise HTTPException(status_code=500, detail="Backup failed. See the server log for details.")
 
         return FileResponse(
             filepath,
@@ -177,7 +186,11 @@ async def restore_backup(
         )
 
         if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Restore failed: {result.stderr}")
+            logger.error("psql restore failed: %s", result.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Restore failed: {_first_error_line(result.stderr)}",
+            )
 
         return {"message": "Database restored successfully"}
 
