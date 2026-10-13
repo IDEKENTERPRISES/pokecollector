@@ -7,6 +7,7 @@ import toast from 'react-hot-toast'
 import { enqueueScanJob, getScannerConfiguration } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import { isSupportedScannerImage, SCANNER_IMAGE_ACCEPT } from '../utils/scannerImages'
+import BatchCameraCapture, { liveCameraSupported } from './BatchCameraCapture'
 import ConfirmDialog from './ui/ConfirmDialog'
 import Modal from './ui/Modal'
 
@@ -40,6 +41,7 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
   const [stagedFiles, setStagedFiles] = useState([])
   const [submitting, setSubmitting] = useState(false)
   const [confirmation, setConfirmation] = useState(null)
+  const [liveCameraOpen, setLiveCameraOpen] = useState(false)
   const [photoGuidePinned, setPhotoGuidePinned] = useState(false)
   const [photoGuideHovered, setPhotoGuideHovered] = useState(false)
   const cameraRef = useRef()
@@ -84,7 +86,21 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
       previewUrl: URL.createObjectURL(file),
       individual: false,
     }))
+    // Update the ref now so rapid consecutive captures respect the 50-photo limit.
+    stagedFilesRef.current = [...stagedFilesRef.current, ...additions]
     setStagedFiles(current => [...current, ...additions])
+  }
+
+  // Prefer the live viewfinder so several photos can be taken in a row; fall back
+  // to the native capture input when the camera stream is unavailable (e.g. HTTP).
+  const openCamera = () => {
+    if (liveCameraSupported()) setLiveCameraOpen(true)
+    else cameraRef.current?.click()
+  }
+
+  const handleCameraUnavailable = () => {
+    setLiveCameraOpen(false)
+    cameraRef.current?.click()
   }
 
   const removeFile = id => {
@@ -172,7 +188,7 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
         onClose={closeScanner}
         title={t('scanner.title')}
         size="xl"
-        isObscured={Boolean(confirmation)}
+        isObscured={Boolean(confirmation) || liveCameraOpen}
       >
         <div className="space-y-4 p-4 sm:p-5">
           <p className="text-sm text-text-secondary">{t('scanner.subtitle')}</p>
@@ -269,7 +285,7 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => cameraRef.current?.click()}
+                onClick={openCamera}
                 disabled={stagedFiles.length >= 50}
                 className="btn-secondary flex flex-1 items-center justify-center gap-2"
               >
@@ -349,6 +365,15 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
           </button>
         </div>
       </Modal>
+
+      <BatchCameraCapture
+        isOpen={isOpen && liveCameraOpen}
+        count={stagedFiles.length}
+        max={50}
+        onCapture={file => appendFiles([file])}
+        onClose={() => setLiveCameraOpen(false)}
+        onUnavailable={handleCameraUnavailable}
+      />
 
       <ConfirmDialog
         isOpen={Boolean(confirmation)}
