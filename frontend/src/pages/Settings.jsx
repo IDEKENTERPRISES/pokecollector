@@ -7,7 +7,7 @@ import {
   downloadBackup, restoreBackup, exportCSV,
   getSetting, setSetting, getTelegramStatus, saveSettings, setAuthMode,
   getUsers, createUser, updateUser, deleteUser, changePassword, changeAvatar, changeUsername,
-  getContributors, getSupporters, getCustomMatches, downloadDebugLog,
+  getContributors, getSupporters, getCustomMatches, downloadDebugLog, logoutOtherDevices,
   getProfile, updateProfile, deleteScanDiagnostics,
   deleteAllCollectionCardPhotos,
 } from '../api/client'
@@ -1741,6 +1741,11 @@ function UsersTab({ t, queryClient }) {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['users'] }); toast.success(t('settings.users.userDeleted')) },
     onError: (e) => toast.error(e.response?.data?.detail || t('common.error')),
   })
+  const logoutOthersMut = useMutation({
+    mutationFn: () => logoutOtherDevices(),
+    onSuccess: () => toast.success(t('settings.users.otherDevicesSignedOut')),
+    onError: (e) => toast.error(e.response?.data?.detail || t('common.error')),
+  })
   const changePwMut = useMutation({
     mutationFn: (data) => changePassword(data),
     onSuccess: () => { toast.success(t('settings.users.passwordChanged')); setCurrentPw(''); setNewPw('') },
@@ -1825,6 +1830,12 @@ function UsersTab({ t, queryClient }) {
             <button onClick={() => changePwMut.mutate({ current_password: currentPw, new_password: newPw })} disabled={!currentPw || !newPw || changePwMut.isPending} className="btn-primary text-sm">
               {t('settings.users.changePassword')}
             </button>
+            <div className="border-t border-border pt-3">
+              <p className="mb-2 text-xs text-text-muted">{t('settings.users.signOutOthersHint')}</p>
+              <button onClick={() => logoutOthersMut.mutate()} disabled={logoutOthersMut.isPending} className="btn-ghost text-sm">
+                {t('settings.users.signOutOthers')}
+              </button>
+            </div>
           </div>
         </SettingsCard>
       </section>

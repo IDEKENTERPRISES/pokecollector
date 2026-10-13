@@ -99,7 +99,16 @@ def resolve_jwt_secret() -> str:
 
 SECRET_KEY = resolve_jwt_secret()
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+def _token_lifetime_minutes() -> int:
+    raw = (os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES") or "").strip()
+    try:
+        return max(5, int(raw)) if raw else 60 * 24 * 7  # 7 days
+    except ValueError:
+        logger.warning("Invalid ACCESS_TOKEN_EXPIRE_MINUTES=%r; using 7 days.", raw)
+        return 60 * 24 * 7
+
+
+ACCESS_TOKEN_EXPIRE_MINUTES = _token_lifetime_minutes()
 
 
 def secret_fingerprint(namespace: str, material: str) -> str:

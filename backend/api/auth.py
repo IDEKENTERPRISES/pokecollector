@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import timedelta
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
@@ -10,8 +11,21 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import get_db, get_setting, save_setting
-from models import User
-from services.auth import create_access_token, decode_token, hash_password, verify_password
+from models import User, UserSession
+from services.auth import (
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    create_access_token,
+    decode_token,
+    hash_password,
+    verify_password,
+)
+from services.sessions import (
+    create_session,
+    get_active_session,
+    revoke_session,
+    revoke_sessions,
+    touch,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -140,6 +154,12 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     user = db.query(User).filter(User.id == int(user_id), User.is_active == True).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found or inactive")
+    session = get_active_session(db, payload.get("sid"), user.id)
+    if session is None:
+        # Ended (signed out, password changed...), expired, or issued before sessions
+        # existed. Either way the client must sign in again.
+        raise HTTPException(status_code=401, detail="Session expired. Please sign in again.")
+    touch(db, session)
     return user
 
 
@@ -154,7 +174,20 @@ def get_optional_user(token: str = Depends(oauth2_scheme), db: Session = Depends
             return None
     except JWTError:
         return None
-    return db.query(User).filter(User.id == int(user_id), User.is_active == True).first()
+    user = db.query(User).filter(User.id == int(user_id), User.is_active == True).first()
+    if user is None or get_active_session(db, payload.get("sid"), user.id) is None:
+        return None
+    return user
+
+
+def session_id_from_token(token: str | None) -> str | None:
+    """The session id inside an already-validated token (None if unreadable)."""
+    if not token:
+        return None
+    try:
+        return decode_token(token).get("sid")
+    except JWTError:
+        return None
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -162,7 +195,12 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
     user = db.query(User).filter(User.username == form_data.username, User.is_active == True).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect username or password")
-    token = create_access_token({"sub": str(user.id), "role": user.role})
+    lifetime = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    session = create_session(db, user.id, lifetime, request.headers.get("user-agent"))
+    token = create_access_token(
+        {"sub": str(user.id), "role": user.role, "sid": session.id},
+        expires_delta=lifetime,
+    )
     return TokenResponse(
         access_token=token,
         user={
@@ -273,10 +311,15 @@ def update_user(
         user.username = data.username
     if data.password is not None:
         user.hashed_password = hash_password(data.password)
+        # A reset must end whoever held the old password.
+        revoke_sessions(db, user.id, commit=False)
     if data.role is not None:
         user.role = data.role
     if data.is_active is not None:
         user.is_active = data.is_active
+        if not data.is_active:
+            # Otherwise old tokens would work again if the account is re-enabled.
+            revoke_sessions(db, user.id, commit=False)
     if field_was_set(data, "avatar_id"):
         user.avatar_id = data.avatar_id
     try:
@@ -343,6 +386,7 @@ def delete_user(
     )
     db.query(PortfolioSnapshot).filter(PortfolioSnapshot.user_id == user_id).delete()
     db.query(UserSetting).filter(UserSetting.user_id == user_id).delete()
+    db.query(UserSession).filter(UserSession.user_id == user_id).delete(synchronize_session=False)
     if owned_custom_card_ids:
         db.query(CustomCardMatch).filter(
             CustomCardMatch.custom_card_id.in_(owned_custom_card_ids)
@@ -395,11 +439,14 @@ def change_password(
     data: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    token: str | None = Depends(oauth2_scheme),
 ):
     if not verify_password(data.current_password, current_user.hashed_password):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     current_user.hashed_password = hash_password(data.new_password)
     current_user.must_change_password = False
+    # Anyone holding the old password (or a stolen token) is signed out; this device stays.
+    revoke_sessions(db, current_user.id, keep=session_id_from_token(token), commit=False)
     db.commit()
     return {"message": "Password changed"}
 
@@ -409,13 +456,76 @@ def force_change_password(
     data: ForceChangePasswordRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    token: str | None = Depends(oauth2_scheme),
 ):
     if not current_user.must_change_password:
         raise HTTPException(status_code=400, detail="Password change is not required")
     current_user.hashed_password = hash_password(data.new_password)
     current_user.must_change_password = False
+    revoke_sessions(db, current_user.id, keep=session_id_from_token(token), commit=False)
     db.commit()
     return {"message": "Password changed"}
+
+
+@router.post("/logout")
+def logout(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    token: str | None = Depends(oauth2_scheme),
+):
+    """End this device's session. The token stops working immediately."""
+    session_id = session_id_from_token(token)
+    if session_id:
+        revoke_session(db, current_user.id, session_id)
+    return {"message": "Signed out"}
+
+
+@router.post("/logout-others")
+def logout_other_devices(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    token: str | None = Depends(oauth2_scheme),
+):
+    """Sign out every device except this one."""
+    ended = revoke_sessions(db, current_user.id, keep=session_id_from_token(token))
+    return {"ended": ended}
+
+
+@router.get("/sessions")
+def list_sessions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    token: str | None = Depends(oauth2_scheme),
+):
+    current_session_id = session_id_from_token(token)
+    rows = (
+        db.query(UserSession)
+        .filter(UserSession.user_id == current_user.id)
+        .order_by(UserSession.last_used_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": row.id,
+            "current": row.id == current_session_id,
+            "user_agent": row.user_agent,
+            "created_at": str(row.created_at),
+            "last_used_at": str(row.last_used_at),
+            "expires_at": str(row.expires_at),
+        }
+        for row in rows
+    ]
+
+
+@router.delete("/sessions/{session_id}")
+def revoke_one_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not revoke_session(db, current_user.id, session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"message": "Session ended"}
 
 
 @router.put("/me/avatar")
