@@ -11,6 +11,8 @@ import os
 import time
 from pathlib import Path
 
+from services.request_origin import allowed_origins_from_env, is_cross_site_unauthenticated_write
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -113,9 +115,26 @@ async def prevent_failed_public_response_caching(request: Request, call_next):
     return response
 
 
+# The bundled UI is same-origin behind nginx and native clients send no Origin, so
+# CORS stays closed unless CORS_ORIGINS lists specific origins.
+ALLOWED_ORIGINS = allowed_origins_from_env()
+
+
+@app.middleware("http")
+async def block_cross_site_writes(request: Request, call_next):
+    # Single-user mode treats token-less requests as the administrator. Refuse
+    # browser writes from other sites that would otherwise ride on that.
+    if is_cross_site_unauthenticated_write(request.method, request.headers, ALLOWED_ORIGINS):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Cross-site request blocked."},
+        )
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.environ.get("CORS_ORIGINS", "").split(",") if os.environ.get("CORS_ORIGINS") else ["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
