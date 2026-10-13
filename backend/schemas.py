@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Any, Literal, Dict
 from datetime import datetime, date
 from services.collection_variants import CollectionVariant
@@ -168,6 +168,8 @@ class CollectionItemUpdate(BaseModel):
     printing_details: Optional[List[str]] = Field(default=None, max_length=10)
     purchase_price: Optional[float] = None
     lang: Optional[str] = None
+    # Owner-editable acquisition date. Send null to fall back to the date added.
+    acquired_at: Optional[datetime] = None
 
 
 class BulkCollectionAddRequest(BaseModel):
@@ -204,6 +206,8 @@ class CollectionItemResponse(BaseModel):
     purchase_price: Optional[float] = None
     lang: str = "en"
     added_at: Optional[datetime] = None
+    # Defaults to added_at until the owner sets their own date.
+    acquired_at: Optional[datetime] = None
     standard_legal: bool = False
     # True when the owner has their own private photo of this card. A flag rather
     # than the image: bytes use a separate authenticated endpoint so collection
@@ -211,6 +215,12 @@ class CollectionItemResponse(BaseModel):
     has_scan_photo: bool = False
     product_sources: List[CollectionProductSourceResponse] = Field(default_factory=list)
     card: Optional[CardWithSet] = None
+
+    @model_validator(mode="after")
+    def _default_acquired_at(self):
+        if self.acquired_at is None:
+            self.acquired_at = self.added_at
+        return self
 
     class Config:
         from_attributes = True

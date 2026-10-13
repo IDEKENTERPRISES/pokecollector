@@ -21,6 +21,7 @@ import UnifiedCard, { UnifiedCardDialog } from './UnifiedCard'
 import CardPriceDetails from './card-system/CardPriceDetails'
 import PrintingDetailBadges from './PrintingDetailBadges'
 import PrintingDetailSelector from './PrintingDetailSelector'
+import AcquiredDateField from './AcquiredDateField'
 
 const RARITY_COLORS = {
   'Common': 'text-text-secondary',
@@ -486,7 +487,7 @@ export const CardItem = memo(function CardItem({ card, showActions = true, onAdd
   )
 })
 
-function OwnedVersionRow({ item, onQuantityChange, onRemove, isUpdating, isRemoving, t }) {
+function OwnedVersionRow({ item, onQuantityChange, onAcquiredChange, onRemove, isUpdating, isRemoving, t }) {
   const [quantity, setQuantity] = useState(item.quantity || 1)
 
   useEffect(() => {
@@ -506,6 +507,14 @@ function OwnedVersionRow({ item, onQuantityChange, onRemove, isUpdating, isRemov
           {[item.variant || 'Normal', item.condition].filter(Boolean).join(' · ')}
         </p>
         <PrintingDetailBadges details={item.printing_details} limit={2} className="mt-1" />
+        <div className="mt-1.5">
+          <AcquiredDateField
+            compact
+            value={item.acquired_at}
+            onCommit={(date) => onAcquiredChange(item, date)}
+            disabled={isUpdating || isRemoving}
+          />
+        </div>
       </div>
       <input
         type="number"
@@ -646,6 +655,18 @@ export function CardModal({ card, onClose, onEdit, defaultLang = 'en', ownedItem
       toast.success(t('collection.updated'))
       invalidateCardState(queryClient)
       invalidateTcgdexFilterLanguages(queryClient)
+    },
+    onError: () => toast.error(t('collection.updateFailed')),
+  })
+
+  const acquiredMutation = useMutation({
+    mutationFn: ({ item, date }) => updateCollectionItem(item.id, { acquired_at: date }),
+    onSuccess: (response, { item }) => {
+      setLocalOwnedItems(current => current.map(row => (
+        row.id === item.id ? { ...row, acquired_at: response.data.acquired_at } : row
+      )))
+      toast.success(t('collection.acquiredSaved'))
+      invalidateCardState(queryClient)
     },
     onError: () => toast.error(t('collection.updateFailed')),
   })
@@ -833,8 +854,9 @@ export function CardModal({ card, onClose, onEdit, defaultLang = 'en', ownedItem
                           key={item.id}
                           item={item}
                           onQuantityChange={(row, nextQuantity) => quantityMutation.mutate({ item: row, quantity: nextQuantity })}
+                          onAcquiredChange={(row, date) => acquiredMutation.mutate({ item: row, date })}
                           onRemove={(row) => removeMutation.mutate(row)}
-                          isUpdating={quantityMutation.isPending}
+                          isUpdating={quantityMutation.isPending || acquiredMutation.isPending}
                           isRemoving={removeMutation.isPending}
                           t={t}
                         />
