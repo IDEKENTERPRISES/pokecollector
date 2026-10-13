@@ -1305,6 +1305,8 @@ export default function Collection() {
       let valA, valB
       switch (sortBy) {
         case 'added_at': valA = a.added_at || ''; valB = b.added_at || ''; break
+        // Same value the Acquired column shows: the oldest across a card's versions.
+        case 'acquired_at': valA = oldestAcquired.get(a.card_id) || ''; valB = oldestAcquired.get(b.card_id) || ''; break
         case 'quantity': valA = a.quantity; valB = b.quantity; break
         case 'purchase_price': valA = a.purchase_price ?? -1; valB = b.purchase_price ?? -1; break
         case 'market_price': valA = getEffectivePrice(a.card, a.variant); valB = getEffectivePrice(b.card, b.variant); break
@@ -1320,7 +1322,7 @@ export default function Collection() {
     })
 
     return result
-  }, [items, filterRarity, filterCondition, filterVariant, filterPrintingDetail, filterSet, filterType, filterCategories, filterSubtypes, filterLegality, filterLang, filterMinPrice, filterMaxPrice, filterDuplicates, searchText, sortBy, sortOrder, pricePrimaryField])
+  }, [items, filterRarity, filterCondition, filterVariant, filterPrintingDetail, filterSet, filterType, filterCategories, filterSubtypes, filterLegality, filterLang, filterMinPrice, filterMaxPrice, filterDuplicates, searchText, sortBy, sortOrder, pricePrimaryField, oldestAcquired])
 
   const totalValue = filtered.reduce((sum, item) => sum + (getEffectivePrice(item.card, item.variant) * item.quantity), 0)
   const totalCards = filtered.reduce((sum, item) => sum + item.quantity, 0)
@@ -1427,6 +1429,7 @@ export default function Collection() {
             <SortAsc size={14} className="text-text-muted" />
             <select className="select w-40 py-1.5 text-sm" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
               <option value="added_at">{t('collection.sortDateAdded')}</option>
+              <option value="acquired_at">{t('collection.sortAcquired')}</option>
               <option value="name">{t('common.name')}</option>
               <option value="quantity">{t('collection.sortQuantity')}</option>
               <option value="purchase_price">{t('collection.sortPurchasePrice')}</option>
