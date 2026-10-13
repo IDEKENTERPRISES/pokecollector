@@ -265,7 +265,6 @@ function JobDetail({ jobId, onObscuredChange }) {
           getPhoto={() => addSelection.item.has_image
             ? fetchScanJobItemImageBlob(job.id, addSelection.item.id)
             : Promise.resolve(null)}
-          preservePhotoBeforeAdd
           addCard={async payload => {
             const result = await resolveAndAddScanJobItem(
               job.id,

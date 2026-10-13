@@ -21,6 +21,19 @@ import UnifiedCard, { UnifiedCardDialog } from './UnifiedCard'
 import CardPriceDetails from './card-system/CardPriceDetails'
 import PrintingDetailBadges from './PrintingDetailBadges'
 import PrintingDetailSelector from './PrintingDetailSelector'
+import OwnPhotoPicker from './OwnPhotoPicker'
+import { attachCollectionPhoto } from '../utils/collectionPhoto'
+
+// Adds the item, then saves the optional user-picked photo against it. A failed
+// photo upload warns but never undoes the add.
+async function addToCollectionWithPhoto(data, photo, onPhotoFailed) {
+  const response = await addToCollection(data)
+  if (photo) {
+    const saved = await attachCollectionPhoto({ created: response.data, photo, overwrite: true })
+    if (!saved) onPhotoFailed?.()
+  }
+  return response
+}
 
 const RARITY_COLORS = {
   'Common': 'text-text-secondary',
@@ -56,6 +69,7 @@ export function CustomCardModal({ onClose, onCreated, sets: setsProp = [], autoA
   const [variant, setVariant] = useState('Normal')
   const [printingDetails, setPrintingDetails] = useState([])
   const [purchasePrice, setPurchasePrice] = useState('')
+  const [ownPhoto, setOwnPhoto] = useState(null)
   const queryClient = useQueryClient()
 
   const { data: fetchedSets = [] } = useQuery({
@@ -126,7 +140,7 @@ export function CustomCardModal({ onClose, onCreated, sets: setsProp = [], autoA
   })
 
   const addMutation = useMutation({
-    mutationFn: (data) => addToCollection(data),
+    mutationFn: (data) => addToCollectionWithPhoto(data, ownPhoto, () => toast.error(t('collection.ownPhotoUploadFailed'))),
     onSuccess: () => {
       toast.success(`${createdCard.name} ${t('card.addedToCollection')}`)
       invalidateCardState(queryClient)
@@ -371,6 +385,12 @@ export function CustomCardModal({ onClose, onCreated, sets: setsProp = [], autoA
                   onChange={(e) => setPurchasePrice(e.target.value)}
                 />
               </div>
+              <OwnPhotoPicker
+                photo={ownPhoto}
+                hint={t('collection.ownPhotoAddHint')}
+                disabled={addMutation.isPending}
+                onChange={setOwnPhoto}
+              />
               <div className="flex gap-3">
                 <button onClick={handleAddToCollection} disabled={addMutation.isPending || !exchangeRateReady} className="btn-primary flex-1">
                   <Plus size={16} /> {addMutation.isPending ? t('card.adding') : t('card.addToCollection')}
@@ -545,6 +565,7 @@ export function CardModal({ card, onClose, onEdit, defaultLang = 'en', ownedItem
   const [printingDetails, setPrintingDetails] = useState([])
   const [collectionLang, setCollectionLang] = useState(card.lang || defaultLang || 'en')
   const [purchasePrice, setPurchasePrice] = useState('')
+  const [ownPhoto, setOwnPhoto] = useState(null)
   const [resolvedCardId, setResolvedCardId] = useState(card.id)
   const [customImageUrl, setCustomImageUrl] = useState(card.custom_image_url || '')
   const [savedCustomImageUrl, setSavedCustomImageUrl] = useState(card.custom_image_url || '')
@@ -616,7 +637,7 @@ export function CardModal({ card, onClose, onEdit, defaultLang = 'en', ownedItem
   }, [card.id, availableVariantKey, variant])
 
   const addMutation = useMutation({
-    mutationFn: (data) => addToCollection(data),
+    mutationFn: (data) => addToCollectionWithPhoto(data, ownPhoto, () => toast.error(t('collection.ownPhotoUploadFailed'))),
     onSuccess: () => {
       toast.success(`${t('common.add')} ${quantity}x ${card.name}!`)
       invalidateCardState(queryClient)
@@ -892,6 +913,12 @@ export function CardModal({ card, onClose, onEdit, defaultLang = 'en', ownedItem
                   onChange={(e) => setPurchasePrice(e.target.value)}
                 />
               </div>
+              <OwnPhotoPicker
+                photo={ownPhoto}
+                hint={t('collection.ownPhotoAddHint')}
+                disabled={addMutation.isPending}
+                onChange={setOwnPhoto}
+              />
 
               <div className="flex gap-2">
                 <button className="btn-primary flex-1" onClick={() => addMutation.mutate({

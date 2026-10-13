@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { Camera, Upload, ImagePlus, Trash2, X, Check, Loader2, RefreshCw, Plus } from 'lucide-react'
-import { recognizeCard, addToCollection, enqueueScanJob, getScannerConfiguration, uploadCollectionItemPhoto } from '../api/client'
+import { recognizeCard, addToCollection, enqueueScanJob, getScannerConfiguration } from '../api/client'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSettings } from '../contexts/SettingsContext'
 import { useConfirmDialog } from '../contexts/ConfirmDialogContext'
@@ -15,31 +15,17 @@ import { parseMoneyInputValue } from '../utils/moneyInput'
 import { CardDisplay } from './card-system'
 import { tcgdexLanguageLabel } from '../utils/tcgdexLanguages'
 import { isSupportedScannerImage, SCANNER_IMAGE_ACCEPT } from '../utils/scannerImages'
-import { hasCatalogueImage } from '../utils/imageUrl'
+import { attachCollectionPhoto } from '../utils/collectionPhoto'
+import OwnPhotoPicker from './OwnPhotoPicker'
 import { useDialogBehavior } from './ui/dialogBehavior'
 import PrintingDetailSelector from './PrintingDetailSelector'
-
-export async function attachScanFallbackPhoto({ created, match, getPhoto, uploadPhoto = uploadCollectionItemPhoto }) {
-  const createdCard = created?.card
-  const hasReferenceArtwork = hasCatalogueImage(createdCard) || Boolean(createdCard?.custom_image_url)
-  if (!getPhoto || !createdCard || created?.has_scan_photo || hasReferenceArtwork) return false
-  try {
-    const photo = await getPhoto()
-    if (!photo) return false
-    await uploadPhoto(created.id, photo)
-    return true
-  } catch {
-    // Photo retention is best-effort and must never undo the collection add.
-    return false
-  }
-}
 
 // ─── Add-to-Collection Modal für Scan-Ergebnis ──────────────────────────────
 // `getPhoto`, when given, resolves to the Blob/File the user actually scanned.
 // Callers decide how to source it: CardScanner has the raw File in hand,
-// ScanQueue fetches it from the job's stored bytes. Called only after the
-// collection item exists, and only matters for cards TCGdex has no scan of —
-// and only when the matched card has no catalogue artwork and no saved fallback.
+// ScanQueue fetches it from the job's stored bytes. It is loaded when the modal
+// opens (resolving a queued scan deletes its source photo) and shown as the
+// default "My card photo", which the user can remove or replace before adding.
 // A failed photo attach must never block adding the card itself.
 export function ScanAddModal({
   match,
@@ -48,7 +34,6 @@ export function ScanAddModal({
   onClose,
   onAdded,
   addCard,
-  preservePhotoBeforeAdd = false,
 }) {
   const { t, exchangeRate, exchangeRateReady } = useSettings()
   const [quantity, setQuantity] = useState(1)
@@ -58,8 +43,25 @@ export function ScanAddModal({
   const [lang, setLang] = useState(match.lang || defaultLang || 'en')
   const [purchasePrice, setPurchasePrice] = useState('')
   const [adding, setAdding] = useState(false)
+  const [photo, setPhoto] = useState(null)
+  const [photoLoading, setPhotoLoading] = useState(Boolean(getPhoto))
+  // 'scan' = the automatic default; 'user' = chosen by hand, so it may replace a saved photo.
+  const [photoSource, setPhotoSource] = useState('scan')
   const queryClient = useQueryClient()
   const { dialogRef, onDialogKeyDown } = useDialogBehavior(true, onClose)
+
+  useEffect(() => {
+    if (!getPhoto) return undefined
+    let cancelled = false
+    Promise.resolve()
+      .then(getPhoto)
+      .then(blob => { if (!cancelled) setPhoto(blob || null) })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setPhotoLoading(false) })
+    return () => { cancelled = true }
+    // The scan is fixed for the lifetime of the modal; load it once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow
@@ -68,7 +70,7 @@ export function ScanAddModal({
   }, [])
 
   const handleAdd = async () => {
-    if (!exchangeRateReady) return
+    if (!exchangeRateReady || photoLoading) return
     setAdding(true)
     try {
       const payload = {
@@ -80,23 +82,10 @@ export function ScanAddModal({
         lang,
         purchase_price: parseMoneyInputValue(purchasePrice, exchangeRate),
       }
-      // Resolving a queued scan deletes its private source photo. Retain the
-      // Blob before an atomic add+resolve so missing catalogue artwork can
-      // still receive the same best-effort fallback photo as direct scans.
-      const retainedPhoto = preservePhotoBeforeAdd && getPhoto
-        ? await getPhoto().catch(() => null)
-        : null
       const created = addCard
         ? await addCard(payload)
         : (await addToCollection(payload)).data
-      // Never overwrite a photo the item already has — grouping into an
-      // existing row (same card/variant/condition/lang) is common, and a
-      // second scan of the same card is not necessarily a better photo.
-      await attachScanFallbackPhoto({
-        created,
-        match,
-        getPhoto: retainedPhoto ? () => Promise.resolve(retainedPhoto) : getPhoto,
-      })
+      await attachCollectionPhoto({ created, photo, overwrite: photoSource === 'user' })
       invalidateCardState(queryClient)
       invalidateTcgdexFilterLanguages(queryClient)
       toast.success(`${match.name} ${t('scanner.addedToCollection')}!`)
@@ -195,12 +184,20 @@ export function ScanAddModal({
                 onChange={e => setPurchasePrice(e.target.value)}
               />
             </div>
+
+            <OwnPhotoPicker
+              photo={photo}
+              loading={photoLoading}
+              hint={photo && photoSource === 'scan' ? t('collection.ownPhotoScanHint') : t('collection.ownPhotoAddHint')}
+              disabled={adding}
+              onChange={file => { setPhoto(file); setPhotoSource('user') }}
+            />
           </div>
 
           <div className="flex gap-2 mt-5">
             <button
               onClick={handleAdd}
-              disabled={adding || !exchangeRateReady}
+              disabled={adding || !exchangeRateReady || photoLoading}
               className="flex-1 py-3 rounded-xl font-black text-white flex items-center justify-center gap-2 transition-all"
               style={{ background: adding ? '#555' : '#e3000b', boxShadow: adding ? 'none' : '0 0 16px rgba(227,0,11,0.3)' }}
             >
