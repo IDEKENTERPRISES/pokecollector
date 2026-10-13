@@ -1544,6 +1544,8 @@ const en = {
     subtitle: 'Take a photo',
     alignCard: 'Align card straight, well-lit',
     takePhoto: 'Take photo',
+    cameraDone: 'Done',
+    cameraCaptureFailed: 'Could not capture the photo. Try again.',
     photoGuide: 'Photo positioning help',
     photoGuideTitle: 'Position one complete card',
     photoGuideDescription: 'Keep all four borders visible, fill most of the frame, and avoid overlap or strong glare.',
