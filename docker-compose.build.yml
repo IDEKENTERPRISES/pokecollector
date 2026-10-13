@@ -1,12 +1,14 @@
 services:
   backend:
     image: pokelocal-backend:local
+    pull_policy: build
     build:
       context: .
       dockerfile: backend/Dockerfile
 
   frontend:
     image: pokelocal-frontend:local
+    pull_policy: build
     build:
       context: .
       dockerfile: frontend/Dockerfile
