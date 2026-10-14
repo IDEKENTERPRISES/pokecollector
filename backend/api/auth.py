@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 from database import get_db, get_setting, save_setting
 from models import User
 from services.auth import create_access_token, decode_token, hash_password, verify_password
+from services.client_ip import client_ip
+from services.login_throttle import login_throttle
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -159,9 +161,19 @@ def get_optional_user(token: str = Depends(oauth2_scheme), db: Session = Depends
 
 @router.post("/login", response_model=TokenResponse)
 def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    ip = client_ip(request)
+    retry_after = login_throttle.retry_after(ip, form_data.username)
+    if retry_after:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed login attempts. Try again in {max(1, round(retry_after / 60))} minute(s).",
+            headers={"Retry-After": str(retry_after)},
+        )
     user = db.query(User).filter(User.username == form_data.username, User.is_active == True).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
+        login_throttle.record_failure(ip, form_data.username)
         raise HTTPException(status_code=401, detail="Incorrect username or password")
+    login_throttle.record_success(form_data.username)
     token = create_access_token({"sub": str(user.id), "role": user.role})
     return TokenResponse(
         access_token=token,

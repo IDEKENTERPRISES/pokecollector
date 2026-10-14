@@ -4,7 +4,6 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 import logging
 import os
@@ -12,6 +11,7 @@ import time
 from pathlib import Path
 
 from services.request_origin import allowed_origins_from_env, is_cross_site_unauthenticated_write
+from services.client_ip import client_ip
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,8 +19,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Rate limiter: uses client IP, default 60 requests/minute
-limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+# Rate limiter: keyed on the real client address (the TCP peer is always a proxy), with
+# a per-client default that the polling web UI and mobile app stay comfortably under.
+limiter = Limiter(
+    key_func=client_ip,
+    default_limits=[os.environ.get("RATE_LIMIT_DEFAULT", "").strip() or "300/minute"],
+)
 
 
 def read_app_version() -> str:
@@ -173,32 +177,8 @@ from api.recognize import router as recognize_router
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 
-# Strict rate limit on login: 5 attempts per minute per IP
-@app.middleware("http")
-async def login_rate_limit(request: Request, call_next):
-    if request.url.path == "/api/auth/login" and request.method == "POST":
-        client_ip = get_remote_address(request)
-        # Use in-memory counter
-        import time
-        now = time.time()
-        if not hasattr(app.state, "_login_attempts"):
-            app.state._login_attempts = {}
-        attempts = app.state._login_attempts
-        # Clean old entries
-        attempts = {k: v for k, v in attempts.items() if now - v[-1] < 60}
-        app.state._login_attempts = attempts
-        # Check this IP
-        ip_attempts = attempts.get(client_ip, [])
-        ip_attempts = [t for t in ip_attempts if now - t < 60]
-        if len(ip_attempts) >= 5:
-            from fastapi.responses import JSONResponse
-            return JSONResponse(
-                status_code=429,
-                content={"detail": "Too many login attempts. Try again in 1 minute."},
-            )
-        ip_attempts.append(now)
-        attempts[client_ip] = ip_attempts
-    return await call_next(request)
+# Failed logins are throttled per client address and per username inside the login
+# handler itself (see services/login_throttle.py).
 app.include_router(cards.router, prefix="/api/cards", tags=["cards"])
 app.include_router(recognize_router, prefix="/api/cards", tags=["recognize"])
 app.include_router(scan_jobs.router, prefix="/api/cards", tags=["scan-jobs"])
