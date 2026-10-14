@@ -163,6 +163,21 @@ class User(Base):
     created_at = Column(DateTime, default=func.now())
 
 
+class UserSession(Base):
+    """One signed-in device. The login token carries this row's id as its `sid`
+    claim and is only honoured while the row exists, so a session can be ended
+    (sign out, password change, deactivation, "sign out other devices") without
+    waiting for the token to expire."""
+    __tablename__ = "user_sessions"
+
+    id = Column(String(64), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    last_used_at = Column(DateTime, default=func.now(), nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    user_agent = Column(String(255), nullable=True)
+
+
 collection_printing_detail_tags = Table(
     "collection_printing_detail_tags",
     Base.metadata,

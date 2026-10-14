@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
-import { getAuthMode, getMe } from '../api/client'
+import { getAuthMode, getMe, logoutSession } from '../api/client'
 import { authRetryDelay, loadAuthState } from './authBootstrap'
 
 const AuthContext = createContext(null)
@@ -85,12 +85,17 @@ export function AuthProvider({ children }) {
   }
 
   const logout = () => {
-    localStorage.removeItem('token')
-    localStorage.removeItem('user')
-    setUser(null)
-    // Force full page reload to clear all cached data (React Query, etc.)
-    // Prevents settings/data from previous user session leaking
-    window.location.href = '/login'
+    const finish = () => {
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+      setUser(null)
+      // Force full page reload to clear all cached data (React Query, etc.)
+      // Prevents settings/data from previous user session leaking
+      window.location.href = '/login'
+    }
+    // Revoke the session on the server first so a copied token is useless; if the
+    // server cannot be reached the device is still signed out locally.
+    logoutSession().catch(() => {}).finally(finish)
   }
 
   const loading = authStatus !== 'ready'
