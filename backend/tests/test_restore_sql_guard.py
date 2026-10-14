@@ -24,6 +24,7 @@ ALTER TABLE IF EXISTS ONLY public.collection DROP CONSTRAINT IF EXISTS collectio
 DROP INDEX IF EXISTS public.idx_collection_grouping;
 DROP TABLE IF EXISTS public.collection;
 DROP SEQUENCE IF EXISTS public.collection_id_seq;
+DROP EXTENSION IF EXISTS unaccent;
 CREATE EXTENSION IF NOT EXISTS unaccent WITH SCHEMA public;
 COMMENT ON EXTENSION unaccent IS 'text search dictionary that removes accents';
 
@@ -193,6 +194,25 @@ class RestoreSqlGuardTests(unittest.TestCase):
         self.assertRejected("CREATE VIEW v AS SELECT lo_import('/etc/passwd');\n")
         self.assertRejected("CREATE VIEW v AS SELECT pg_sleep(100);\n")
         self.assertRejected("CREATE VIEW v AS SELECT dblink('x','y');\n")
+
+    def test_only_the_expected_extensions_can_be_dropped(self):
+        self._check("DROP EXTENSION IF EXISTS unaccent;\n")
+        self.assertRejected("DROP EXTENSION IF EXISTS plpgsql;\n")
+        self.assertRejected("DROP EXTENSION unaccent;\n")
+
+    def test_errors_name_the_real_line_and_statement_without_echoing_data(self):
+        sql = (
+            "-- header comment\n"
+            "SET statement_timeout = 0;\n"
+            "\n"
+            "UPDATE public.users SET password = 'hunter2-secret';\n"
+        )
+        with self.assertRaises(RestoreSqlRejected) as raised:
+            self._check(sql)
+        message = str(raised.exception)
+        self.assertIn("line 4", message)
+        self.assertIn("UPDATE PUBLIC.USERS", message)
+        self.assertNotIn("hunter2", message)
 
     def test_rejects_non_utf8_client_encoding(self):
         self.assertRejected("SET client_encoding = 'SJIS';\n")
