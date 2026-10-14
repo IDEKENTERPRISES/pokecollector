@@ -47,6 +47,8 @@ _ALLOWED_STATEMENTS = [
     re.compile(r"^SET (?!ROLE\b|SESSION\b|LOCAL\b)[A-Z_][A-Z0-9_.]* (=|TO) .+$"),
     re.compile(r"^SELECT PG_CATALOG\.(SETVAL|SET_CONFIG)\([^()]*\)$"),
     re.compile(r"^DROP (TABLE|SEQUENCE|INDEX|VIEW|MATERIALIZED VIEW|TYPE)\b"),
+    # pg_dump --clean --if-exists drops the extensions it is about to recreate.
+    re.compile(r"^DROP EXTENSION IF EXISTS (UNACCENT|PG_TRGM)( CASCADE)?$"),
     re.compile(r"^CREATE (UNLOGGED )?TABLE\b"),
     re.compile(r"^CREATE SEQUENCE\b"),
     re.compile(r"^CREATE (UNIQUE )?INDEX\b"),
@@ -88,6 +90,7 @@ class _Scanner:
         self.statement: list[str] = []
         self.raw_statement: list[str] = []
         self.statement_line = 0
+        self._statement_started = False
 
     # -- statements -----------------------------------------------------------------
 
@@ -97,6 +100,7 @@ class _Scanner:
         text = _normalize("".join(self.statement)).upper()
         self.statement = []
         self.raw_statement = []
+        self._statement_started = False
         if not text:
             return False
         if text.startswith("SET CLIENT_ENCODING") and not _CLIENT_ENCODING.match(raw):
@@ -105,13 +109,15 @@ class _Scanner:
             return True
         if any(pattern.match(text) for pattern in _ALLOWED_STATEMENTS):
             return False
-        keyword = text.split(" ", 1)[0]
+        # Strings are blanked in `text`, so this shows the statement's shape (keywords and
+        # object names) without echoing any data.
         raise RestoreSqlRejected(
-            f"line {self.statement_line}: a {keyword} statement is not allowed in a restore file"
+            f"line {self.statement_line}: this statement is not allowed in a restore file: {text[:90]}"
         )
 
     def _add(self, char: str, line_no: int) -> None:
-        if not self.statement and not char.isspace():
+        if not self._statement_started and not char.isspace():
+            self._statement_started = True
             self.statement_line = line_no
         self.statement.append(char)
 
