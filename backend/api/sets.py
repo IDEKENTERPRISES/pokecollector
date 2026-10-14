@@ -1,3 +1,4 @@
+import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -21,6 +22,8 @@ from services.card_visibility import get_configured_sync_languages, visible_set_
 from services.digital_sets import digital_sets_enabled
 from services.display_language import get_tcgdex_display_language
 from services.tcgdex_languages import DEFAULT_TCGDEX_SYNC_LANGUAGES, has_lang_suffix, is_supported_tcgdex_language, normalize_tcgdex_language
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -82,7 +85,8 @@ def get_sets(
             _refresh_sets(db, display_lang)
         except Exception as e:
             if db.query(Set).count() == 0:
-                raise HTTPException(status_code=500, detail=str(e))
+                logger.exception("Could not refresh the set list")
+                raise HTTPException(status_code=500, detail="Something went wrong. Check the server log for details.")
 
     # Build query with optional lang filter. Globally disabled languages are
     # hidden unless this user has a collection/wishlist/binder card pinning that

@@ -74,8 +74,11 @@ services:
       - ./data/pokedex-images:/app/data/pokedex-images
       - ./data/scan-uploads:/app/data/scan-uploads
       - ./data/scan-traces:/app/data/scan-traces
+    # Published on this machine only: the web UI reaches the API through the frontend
+    # container, so the raw API (which skips nginx's security headers) is not exposed to
+    # the network. Use "${BACKEND_PORT:-8000}:8000" if another host needs to reach it.
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
 
   frontend:
     image: ghcr.io/git-romer/pokecollector-frontend:${POKECOLLECTOR_VERSION:-1.51.0}

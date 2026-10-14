@@ -1457,7 +1457,8 @@ async def _recognize_with_provider(
     except Exception as exc:
         if trace:
             trace.record_error(f"Recognition parsing failed: {type(exc).__name__}")
-        raise HTTPException(status_code=500, detail=f"Erkennung fehlgeschlagen: {exc}")
+        logger.warning("Card recognition failed: %s", type(exc).__name__, exc_info=True)
+        raise HTTPException(status_code=500, detail="Erkennung fehlgeschlagen.")
 
     if on_recognized:
         on_recognized(card_info)

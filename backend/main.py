@@ -51,6 +51,11 @@ def read_app_version() -> str:
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Pokemon TCG Collection API...")
+    if ":changeme@" in os.environ.get("DATABASE_URL", ""):
+        logger.warning(
+            "The database is using the default password 'changeme'. Set POSTGRES_PASSWORD "
+            "to something unique (the database port is not published, but defaults are guessable)."
+        )
     from api.auth import env_user_mode
     _forced_mode = env_user_mode(warn_invalid=True)
     if _forced_mode == "single":
