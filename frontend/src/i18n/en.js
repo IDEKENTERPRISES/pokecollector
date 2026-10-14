@@ -1108,6 +1108,8 @@ const en = {
     backupInfo: 'Backup creates a full PostgreSQL dump of your database. Restore will overwrite your current data.',
     downloadBackup: 'Download Backup',
     restoreBackup: 'Restore Backup',
+    restorePasswordTitle: 'Confirm your password',
+    restorePasswordMessage: 'Restoring a backup replaces all data on this server. Enter your password to continue.',
     restoring: 'Restoring...',
     restoreConfirm: 'Restore backup? This will overwrite your current database.',
     restoreSuccess: 'Backup restored successfully',

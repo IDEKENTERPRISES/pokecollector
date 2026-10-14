@@ -390,9 +390,11 @@ export const downloadBackup = (include = 'full') => {
     window.URL.revokeObjectURL(url)
   })
 }
-export const restoreBackup = (file) => {
+export const restoreBackup = (file, password) => {
   const formData = new FormData()
   formData.append('file', file)
+  // Required by the server whenever logins are enabled.
+  if (password) formData.append('password', password)
   return api.post('/backup/restore', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })

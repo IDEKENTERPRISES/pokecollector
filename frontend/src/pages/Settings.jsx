@@ -17,6 +17,7 @@ import { useTheme } from '../hooks/useTheme'
 import { useSettings } from '../contexts/SettingsContext'
 import { useConfirmDialog } from '../contexts/ConfirmDialogContext'
 import Modal from '../components/ui/Modal'
+import PasswordPromptDialog from '../components/ui/PasswordPromptDialog'
 import AvatarPicker from '../components/AvatarPicker'
 import ScannerSettingsCard from '../components/ScannerSettingsCard'
 import { formatDistanceToNow } from 'date-fns'
@@ -378,6 +379,7 @@ function SupportersSection({ t }) {
 export default function Settings() {
   const fileInputRef = useRef(null)
   const [restoring, setRestoring] = useState(false)
+  const [restorePromptFile, setRestorePromptFile] = useState(null)
   const [showAvatarPicker, setShowAvatarPicker] = useState(false)
   const [editingUsername, setEditingUsername] = useState(false)
   const [usernameInput, setUsernameInput] = useState('')
@@ -812,15 +814,23 @@ export default function Settings() {
       confirmLabel: t('common.restore'),
       destructive: true,
     })
-    if (!confirmed) {
-      e.target.value = ''
+    e.target.value = ''
+    if (!confirmed) return
+
+    // With logins enabled the server also wants the administrator's password.
+    if (multiUser) {
+      setRestorePromptFile(file)
       return
     }
+    await runRestore(file)
+  }
 
+  const runRestore = async (file, password) => {
     setRestoring(true)
     try {
-      await restoreBackup(file)
+      await restoreBackup(file, password)
       toast.success(t('settings.restoreSuccess'))
+      setRestorePromptFile(null)
       queryClient.invalidateQueries()
     } catch (err) {
       toast.error(t('settings.errorPrefix') + (err.response?.data?.detail || err.message))
@@ -1550,6 +1560,17 @@ export default function Settings() {
                 />
               </SettingsRow>
             </SettingsCard>
+            <PasswordPromptDialog
+              isOpen={Boolean(restorePromptFile)}
+              onClose={() => setRestorePromptFile(null)}
+              onSubmit={(password) => runRestore(restorePromptFile, password)}
+              title={t('settings.restorePasswordTitle')}
+              message={t('settings.restorePasswordMessage')}
+              label={t('settings.users.password')}
+              submitLabel={t('common.restore')}
+              cancelLabel={t('common.cancel')}
+              isPending={restoring}
+            />
           </section>
         </>
       )}
