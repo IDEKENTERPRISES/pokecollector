@@ -49,6 +49,7 @@ Be kind. Be clear. Assume good intent. Keep feedback constructive.
 ## ✨ Features
 
 ### 📦 Collection Management
+- Installable on iPhone and Android: add it to the Home Screen for a full-screen app with its own icon (online only for now)
 - Add cards with quantity, condition, variant, and purchase price
 - Variants are now limited to `Normal`, `Holo`, `Reverse Holo`, and `First Edition`
 - Add reusable, owner-scoped printing-detail tags such as signed, stamped, misprint, or altered; tags follow the physical copy through products and trades
