@@ -1843,6 +1843,12 @@ const de = {
   },
 
   // Achievements
+  pwa: {
+    updateAvailable: 'Eine neue Version ist verfügbar.',
+    updateNow: 'Aktualisieren',
+    updateBlocked: 'Schließe zuerst ab, was du gerade tust.',
+  },
+
   achievements: {
     title: 'Abzeichen',
     loadFailed: 'Abzeichen konnten nicht geladen werden.',
