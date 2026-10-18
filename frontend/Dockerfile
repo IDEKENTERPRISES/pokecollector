@@ -19,6 +19,7 @@ LABEL org.opencontainers.image.source="https://github.com/Git-Romer/pokecollecto
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY frontend/nginx-security-headers.conf /etc/nginx/snippets/pc-security-headers.conf
 COPY frontend/docker-entrypoint.d/40-configure-public-mode.sh /docker-entrypoint.d/40-configure-public-mode.sh
 
 RUN cp /usr/share/nginx/html/index.html /usr/share/nginx/html/index.html.template \
