@@ -312,6 +312,60 @@ Notable frontend API bindings include:
 - Pokédex, profile, and anonymous public-profile endpoints
 - authenticated collection-card photo and printing-detail-tag endpoints
 
+## Offline outbox
+
+`frontend/src/offline/` holds the client side of the offline queue designed in `docs/PWA_OFFLINE_DESIGN.md` (§6.2). It is a library with unit tests only: **nothing imports it yet**, so it is not part of the production bundle until the later phases wire it in. Items are kept in IndexedDB and replayed from the page (Safari has no Background Sync); the server's `Idempotency-Key` contract makes a repeated send harmless.
+
+### Module map
+
+| Module | Role |
+|--------|------|
+| `constants.js` | Every tunable of design §6.2.1, plus `uploadTimeoutMs(bytes)` and `attemptTimeoutMs(item)` |
+| `uuid.js` | `uuidv4()` from `crypto.getRandomValues` (never `randomUUID`) |
+| `debug.js` | `applyDebugParams()`, `debugFlag(name)` — see flags below |
+| `capabilities.js` | `getCapabilities()` by feature detection only |
+| `outbox/db.js` | `openOutboxDb()`, ordered `migrations`, `versionchange` handling |
+| `outbox/store.js` | `createStore(db)`: enqueue, claim, outcomes, retry/edit/discard, history, meta — single transactions, compare-and-set |
+| `outbox/states.js` | State transition table as data, `canTransition()` |
+| `outbox/classify.js` | Table-driven HTTP outcome classification (`classifyResponse`) |
+| `outbox/probe.js` | `/api/health` reachability probe and banner tracking |
+| `outbox/backoff.js` | Full-jitter backoff and `parseRetryAfter` |
+| `outbox/lease.js` | Single-flight lease row in `meta` |
+| `outbox/events.js` | `BroadcastChannel` change notifications with a `storage`-event fallback |
+| `outbox/replay.js` | The replay session (probe → claim → fetch → classify → apply), circuit breaker, 429 pause |
+| `outbox/ops/*.js` | `scanUpload`, `collectionAdd`, `wishlistAdd`: request builders, response validators, post-sync cache invalidation |
+| `outbox/index.js` | `createOutbox({ctx, flags, fetchImpl, now, rng, queryClient, …})` |
+
+### Item states
+
+States: `pending`, `sending`, `retry_wait`, `blocked` (`lastError.code` is `auth`, `proxy`, `wrong_account`, `server_old` or `newer_schema`), `failed`. Terminal: `sent` (item deleted, history row written) and `cancelled` (item and photos deleted).
+
+| Trigger | Result |
+|---------|--------|
+| Enqueue committed | `pending` |
+| Claim (compare-and-set) | `sending` with an expiring claim |
+| Valid 2xx JSON | `sent` (also for `Idempotent-Replayed: true`) |
+| Network error, timeout, 500, 502/503/504, 409 `idempotency_in_progress` | `retry_wait` (`maybeApplied` when the request may have reached the server) |
+| 429 | back to `pending`; the whole engine pauses (`Retry-After` or 60 s, doubling, max 900 s) |
+| 401 JSON, HTML/redirect/non-JSON 400-404, 409 `wrong_account`, old server | `blocked` |
+| Other definitive 4xx, malformed 2xx, 12 server errors | `failed` |
+| Claim expired (app killed) | `retry_wait`, `maybeApplied` |
+| User Retry / Edit / Discard | `pending` (Retry keeps the key; Edit of a never-sent add rotates it) / `cancelled` |
+
+### Constants
+
+`PACE_MS` 2000, `PROBE_TIMEOUT_MS` 5000, `PROBE_BACKOFF_MS` 15/30/60/120 s, `JSON_TIMEOUT_MS` 20 s, upload timeout `clamp(30 s + bytes/40 KiB/s, 60 s, 290 s)`, backoff 5 s base / 15 min cap with full jitter, `MAX_SERVER_ERRORS_PER_ITEM` 12, lease 30 s TTL with 10 s heartbeat, `STALE_UNKNOWN_OUTCOME_MS` 12 days, history 100 rows / 14 days, outbox caps 500 items / 300 MiB / 100 MiB kept free, item caps 12 photos / 10 MiB (a single photo may be up to 15 MiB). The authoritative values are in `constants.js`.
+
+### Debug flags
+
+Production builds honour three harmless `localStorage` flags, set by opening `/?pc_debug=<names>` (comma-separated, fixed allow-list; the parameter is stripped afterwards). `/?pc_debug=off` clears all three.
+
+| Name | Effect |
+|------|--------|
+| `forceUnreachable` | The reachability probe fails without touching the network |
+| `forceQuota` | `enqueue` rejects with `{code: 'quota'}` |
+| `forceLostResponse` | A replay response is discarded and treated as a network error (tests the lost-response path) |
+
 ## Removed / No Longer Documented
 
 - No eBay integration in the current frontend
