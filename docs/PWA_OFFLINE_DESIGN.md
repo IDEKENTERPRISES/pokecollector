@@ -37,7 +37,7 @@
 | P2 | Installability, iOS meta, icons, nginx cache headers | — | — |
 | P3 | Opt-in service worker, kill switch, update banner, upload hardening | P2 | `PWA_ENABLED` |
 | P4 | Outbox core (IndexedDB, state machine, replay engine) — no UI | P1 | `OFFLINE_QUEUE_ENABLED` |
-| P5 | Degraded (offline) sign-in state, logout guard, provider | P4 | `OFFLINE_QUEUE_ENABLED` |
+| P5 | Degraded (offline) sign-in state, logout guard, provider | P4, P3 | `OFFLINE_QUEUE_ENABLED` |
 | P6 | Sync center, offline banner, storage protection, `/offline` page | P5 | `OFFLINE_QUEUE_ENABLED` |
 | P7 | Offline scan capture (persist-then-send) | P6, P3, P1 | `OFFLINE_QUEUE_ENABLED` |
 | P8 | Read cache of viewed data (Tier 1) | P6 | `OFFLINE_QUEUE_ENABLED` |
@@ -1525,7 +1525,7 @@ cd .claude/worktrees/pwa-p01-idempotency-keys && git status   # must report a cl
 | P2 | `pwa-p02-installability` | `feature/pwa-p02-installability` | — | none | no | no (OD2) | `feat: make PokéCollector installable on iPhone` |
 | P3 | `pwa-p03-service-worker` | `feature/pwa-p03-service-worker` | P2 | none | no | no (OD2) | `feat: add opt-in service worker with kill switch` |
 | P4 | `pwa-p04-outbox-core` | `feature/pwa-p04-outbox-core` | P1 | none | no | no (OD2) | `feat: add offline outbox core` |
-| P5 | `pwa-p05-offline-auth` | `feature/pwa-p05-offline-auth` | P4 | none | no | no (OD2) | `feat: keep the app usable offline with cached sign-in` |
+| P5 | `pwa-p05-offline-auth` | `feature/pwa-p05-offline-auth` | P4, P3 | none | no | no (OD2) | `feat: keep the app usable offline with cached sign-in` |
 | P6 | `pwa-p06-sync-center` | `feature/pwa-p06-sync-center` | P5 | none | no | no (OD2) | `feat: add sync center and offline banner` |
 | P7 | `pwa-p07-offline-scan` | `feature/pwa-p07-offline-scan` | P6, P3, P1 | none | no | no (OD2) | `feat: save scan photos offline and upload when reachable` |
 | P8 | `pwa-p08-read-cache` | `feature/pwa-p08-read-cache` | P6 | none | no | no (OD2) | `feat: show previously loaded data offline` |
@@ -1533,7 +1533,7 @@ cd .claude/worktrees/pwa-p01-idempotency-keys && git status   # must report a cl
 | P10 | `pwa-p10-web-push` | `feature/pwa-p10-web-push` | P3, P1 | none | **yes** | no (OD2) | `feat: web push for price alerts` |
 | P11 | `pwa-p11-default-on` | `feature/pwa-p11-default-on` | P7, P3 | none | no | no (OD2) | `feat: enable offline features by default` |
 
-**Dependency edges:** P3←P2; P4←P1; P5←P4; P6←P5; P7←P6,P3,P1; P8←P6; P9←P7; P10←P3,P1; P11←P7,P3. **Longest chain = 6 PRs** (P1→P4→P5→P6→P7→P11). **Merge order (sequential, OD4): P0, P1, P2, P3, P4, P5, P6, P7, P8, P10, P11** (P9 parked). P7 and P8 are interchangeable after P6; P10 goes before P11 so the final checklist can include push (M-19).
+**Dependency edges:** P3←P2; P4←P1; P5←P4,P3 (P5 uses P3's `pwa/flags.js`, `playwright.pwa.config.js` and `docs/PWA.md`); P6←P5; P7←P6,P3,P1; P8←P6; P9←P7; P10←P3,P1; P11←P7,P3. **Longest chain = 6 PRs** (P1→P4→P5→P6→P7→P11, or P2→P3→P5→P6→P7→P11). **Merge order (sequential, OD4): P0, P1, P2, P3, P4, P5, P6, P7, P8, P10, P11** (P9 parked). P7 and P8 are interchangeable after P6; P10 goes before P11 so the final checklist can include push (M-19).
 
 **Hard ordering already known:** the server idempotency PR **P1 (with its migration) must merge before any PR that adds client-side queueing** — P4, P7, P9 (enforced by the "Depends on" column).
 
@@ -1876,8 +1876,8 @@ git fetch origin --prune && git worktree prune
 **Git setup**
 - Worktree name: `pwa-p05-offline-auth`
 - Branch name: `feature/pwa-p05-offline-auth`
-- Base: `origin/feature/pwa` **after P4 is merged** (revocable sessions live in `deploy`; reconcile them at the deploy merge, §9.1.8)
-- Depends on: P4
+- Base: `origin/feature/pwa` **after P4 and P3 are merged** (P5 uses P3's `pwa/flags.js`, `playwright.pwa.config.js` and `docs/PWA.md`; revocable sessions live in `deploy`; reconcile them at the deploy merge, §9.1.8)
+- Depends on: P4, P3
 - Safe to run in parallel with: none
 - Files it will touch: **create** `frontend/src/offline/authSnapshot.js`, `authSnapshot.test.js`, `OfflineProvider.jsx`, `useOutbox.js`, `frontend/src/components/sync/LogoutGuardDialog.jsx`, `frontend/tests/pwa/offline-auth.spec.js`; **modify** `frontend/src/contexts/AuthContext.jsx`, `frontend/src/App.jsx`, `frontend/src/components/AppNav.jsx`, `frontend/src/pages/HomeScreen.jsx`, `frontend/src/i18n/en.js`, `frontend/src/i18n/de.js`, `frontend/playwright.pwa.config.js`, `docs/PWA.md`, `docs/FRONTEND.md`
 - Needs a migration: no. Version bump: **no** (OD2)
