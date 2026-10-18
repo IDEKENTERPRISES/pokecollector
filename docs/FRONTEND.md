@@ -87,10 +87,15 @@ Responsibilities:
 - Exposes:
   - `user`
   - `loading`
+  - `status` (`loading`, `ready`, `offline` or `degraded`)
+  - `offline` (`degraded` or `offline`)
   - `multiUser`
   - `loginUser(token, userData)`
   - `updateCurrentUser(updates)`
-  - `logout()`
+  - `logout()` (async; asks the offline logout guard first)
+  - `setLogoutGuard(fn)`
+
+With the offline queue flag on, a failed startup with a valid cached sign-in (`pc.auth.snapshot`, see `docs/PWA.md`) sets `status` to `degraded`: the cached user is shown, the retry timer keeps running and a success returns to `ready`. `OfflineProvider` (`src/offline/`) owns the outbox and registers the logout guard.
 
 Security-related behavior:
 

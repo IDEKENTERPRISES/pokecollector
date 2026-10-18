@@ -32,7 +32,7 @@ Both are environment variables of the **frontend** container, read when it start
 | Variable | Default | Effect |
 |---|---|---|
 | `PWA_ENABLED` | off | `true` serves the real service worker at `/sw.js`; the app caches its own files and can start offline. `false` serves the kill worker, which removes any installed worker. |
-| `OFFLINE_QUEUE_ENABLED` | off | Reserved for the offline scan queue (a later phase). It already turns on the upload hardening below and has no other effect yet. |
+| `OFFLINE_QUEUE_ENABLED` | off | Turns on the upload hardening below, the cached sign-in and the logout protection described next. The offline scan queue itself arrives in later phases. |
 
 Accepted values: `true`, `1`, `yes`, `on`, `false`, `0`, `no`, `off` (any case). An invalid value logs a warning and uses the default.
 
@@ -61,6 +61,21 @@ L2 and L3 do not depend on `/sw.js`, so they also work when a proxy cached a sta
 ## Photo upload hardening
 
 Safari on iOS has a bug where a photo chosen from the library can upload as an empty file. When `PWA_ENABLED` or `OFFLINE_QUEUE_ENABLED` is on, uploads (scanner photos, collection card photos, CSV and backup restore) are first copied into memory (files up to 8 MiB) or re-sliced (larger files) with the original filename kept. If a photo still arrives empty the server answers with an explicit error instead of saving it. With both flags off the upload code behaves exactly as before.
+
+## Opening the app offline (cached sign-in)
+
+With `OFFLINE_QUEUE_ENABLED` on, the app remembers who was signed in (id, name, role, avatar; never the password or token) in this browser for up to 90 days. If the server cannot be reached when the app starts, it opens in a *degraded* state from that memory instead of the "Cannot reach PokéCollector" screen. The remembered user is only for display; the server checks every request. The app keeps retrying in the background and switches to normal as soon as the server answers. Without a remembered sign-in (first visit, after logout, expired, or a pending password change) the connection screen shows as before.
+
+## Logging out with unsynced items
+
+If items are waiting on this device, logging out asks what to do:
+
+- **Sync first** sends them now. If anything is still waiting afterwards, you are asked again.
+- **Log out and keep items** logs out and leaves them on the device, tied to your account and this server address. They are not shown to other accounts.
+- **Log out and delete items** deletes the waiting items of your account from this device. Choose this on a shared device.
+- **Cancel** stays signed in.
+
+Sync before moving the app to a different address or port: waiting items belong to the old address.
 
 ## Limitations
 

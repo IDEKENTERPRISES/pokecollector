@@ -72,6 +72,8 @@ test('registers on first load, controls after reload and precaches every asset b
 test('renders the app shell offline instead of a blank page', async ({ page, context }) => {
   await loadControlled(page)
   await page.unrouteAll({ behavior: 'ignoreErrors' })
+  // With the offline queue on a cached sign-in would open Home; this test is about the bare shell.
+  await page.evaluate(() => localStorage.removeItem('pc.auth.snapshot'))
   await context.setOffline(true)
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Cannot reach PokéCollector' })).toBeVisible()
