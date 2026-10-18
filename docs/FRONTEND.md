@@ -18,6 +18,18 @@ The app can be added to an iPhone Home Screen (Share, then Add to Home Screen) a
 - nginx revalidates `/`, `/index.html`, `/manifest.json` and SPA deep links (`Cache-Control: no-cache`); the security headers live in `nginx-security-headers.conf`, which `nginx.conf` includes in every location that sets its own `add_header`.
 - `scripts/pwa-assets.test.mjs` and `scripts/nginx-config.test.mjs` guard these files and run as part of `npm test`.
 
+## Service worker (opt-in)
+
+The service worker is off by default. `PWA_ENABLED=true` on the frontend container turns it on; user-facing behaviour is in [`PWA.md`](PWA.md), the design in `PWA_OFFLINE_DESIGN.md` §6.3.
+
+- `src/sw/sw.js` is the worker: a classic script with no imports and two build-time placeholders (`__BUILD_ID__`, `/*__PRECACHE__*/`) that are valid JavaScript unreplaced. `src/sw/sw.kill.js` is the kill worker.
+- `npm run build` runs `vite build` and then `scripts/build-sw.mjs`, which writes `dist/sw.real.js` and a byte-identical `dist/sw.js`, copies `dist/sw.kill.js`, prints the precache size and fails above 12 MiB. `index.html`, `robots*.txt` and `sw*.js` are never precached; the HTML shell is fetched at install and kept only if every `/assets/*` it references is in the manifest.
+- At container start `docker-entrypoint.d/45-configure-pwa.sh` (after `40-configure-public-mode.sh`, which resets `index.html`) copies `sw.real.js` or `sw.kill.js` over `sw.js` and inserts `<meta name="pokecollector-pwa" content="sw=1;queue=0">`. `src/pwa/flags.js` reads it; without the tag the build-time `VITE_PWA_DEFAULT=on|off` applies (default off).
+- `src/pwa/register.js` registers the worker (production, secure context, flag on), checks for updates when the app returns to the foreground, handles `?pc_sw=off` and exposes `addUpdateGuard(fn)` so features can block an update while work is in flight. `components/pwa/UpdateBanner.jsx` shows the update bar.
+- `src/utils/memoryBlob.js` copies upload files into memory when a PWA flag is on (WebKit empty-body bug); `api/client.js` uses it for its six multipart uploads.
+- Tests: `src/sw/sw.test.js` (worker loaded in a `node:vm` context), `scripts/build-sw.test.mjs`, `scripts/configure-pwa.test.mjs` run in `npm test`. `npm run test:pwa` builds with `VITE_PWA_DEFAULT=on`, serves `dist/` on port 4175 and drives real Chromium (`tests/pwa/`; install the browser with `npx playwright install chromium`).
+- Shell scripts must keep LF line endings (`.gitattributes`); a CRLF entrypoint fails inside the container.
+
 ## Route Table
 
 Routes are defined in `frontend/src/App.jsx`.

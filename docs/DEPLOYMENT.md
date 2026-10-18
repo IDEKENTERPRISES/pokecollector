@@ -55,6 +55,23 @@ docker compose up -d
 The published frontend image applies `PUBLIC_MODE` when the container starts,
 so public/private SEO behavior does not require a different frontend build.
 
+### Service worker flags, headers and rollback
+
+The frontend image also applies `PWA_ENABLED` and `OFFLINE_QUEUE_ENABLED` at
+start (both default to off; see [`PWA.md`](PWA.md)). Entry-point scripts in
+`/docker-entrypoint.d/` run in name order: `40-configure-public-mode.sh` resets
+`index.html` from its template, then `45-configure-pwa.sh` selects `/sw.js` and
+adds the flags meta tag, so restarts never accumulate edits.
+
+nginx sends `Cache-Control: no-cache` for `/sw.js`, `/sw.real.js`, `/sw.kill.js`,
+`/index.html`, `/manifest.json` and SPA routes, and a one-year `immutable` header for
+hashed assets. A reverse proxy in front must not cache `/sw.js`; with Nginx Proxy
+Manager turn **Cache Assets** off for the host.
+
+To roll back a bad service worker, set `PWA_ENABLED=false` and recreate the
+frontend container: phones replace the worker with a kill worker on their next
+update check. Reverting to the previous image tag also works.
+
 ## Update
 
 First create and retain a manual database backup:
