@@ -1,9 +1,21 @@
 import axios from 'axios'
 import { isPublicSharePath } from '../utils/publicRoutes'
+import { prepareUploadPart } from '../utils/memoryBlob'
+import { readPwaFlags } from '../pwa/flags'
 import {
   scannerRecognitionRequestTimeoutMs,
   scannerTestRequestTimeoutMs,
 } from '../utils/scannerTimeout'
+
+// iOS upload hardening (design §6.5.1): active when the service worker or queue flag is on.
+// With the flags off the original File is appended untouched; otherwise the memory-backed
+// part keeps the original filename (the CSV endpoints check the .csv suffix).
+const appendUpload = async (formData, field, file) => {
+  const flags = readPwaFlags()
+  const part = await prepareUploadPart(file, { enabled: flags.sw || flags.queue })
+  if (part === file) formData.append(field, file)
+  else formData.append(field, part, file.name)
+}
 
 const api = axios.create({
   baseURL: '/api',
@@ -114,9 +126,9 @@ export const getCustomCards = () => api.get('/cards/custom')
 export const cloneCustomCard = (cardId) => api.post(`/cards/custom/${cardId}/clone`).then(r => r.data)
 
 // Card recognition via Gemini Vision
-export const recognizeCard = (imageFile, requestTimeoutSeconds) => {
+export const recognizeCard = async (imageFile, requestTimeoutSeconds) => {
   const formData = new FormData()
-  formData.append('file', imageFile)
+  await appendUpload(formData, 'file', imageFile)
   return api.post('/cards/recognize', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: scannerRecognitionRequestTimeoutMs(requestTimeoutSeconds),
@@ -124,9 +136,9 @@ export const recognizeCard = (imageFile, requestTimeoutSeconds) => {
 }
 
 // Persistent background card-scan queue.
-export const enqueueScanJob = (files = [], individualPositions = []) => {
+export const enqueueScanJob = async (files = [], individualPositions = []) => {
   const formData = new FormData()
-  files.forEach(file => formData.append('files', file))
+  for (const file of files) await appendUpload(formData, 'files', file)
   formData.append('individual_positions', JSON.stringify(individualPositions))
   return api.post('/cards/recognize/jobs', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
@@ -182,9 +194,9 @@ export const fetchCollectionItemPhoto = (itemId) =>
 // For cards collected before the scanner kept photos, added by hand, or scanned
 // and resolved earlier — resolve discards the photo, so there is otherwise no
 // way to give those a picture. The backend strips EXIF and bounds the size.
-export const uploadCollectionItemPhoto = (itemId, file) => {
+export const uploadCollectionItemPhoto = async (itemId, file) => {
   const form = new FormData()
-  form.append('file', file)
+  await appendUpload(form, 'file', file)
   // The header is required, not decoration: this client defaults every request
   // to application/json, so without the override the multipart body is sent
   // under the wrong content type and the server rejects it as a missing field.
@@ -200,9 +212,9 @@ export const deleteAllCollectionCardPhotos = () =>
   api.delete('/settings/card-photos').then(r => r.data)
 
 export const bulkAddToCollection = (items) => api.post('/collection/bulk-add', { items }).then(r => r.data)
-export const importCollectionCsv = (file) => {
+export const importCollectionCsv = async (file) => {
   const formData = new FormData()
-  formData.append('file', file)
+  await appendUpload(formData, 'file', file)
   return api.post('/collection/import-csv', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then(r => r.data)
@@ -268,9 +280,9 @@ export const convertWishlistBinderToCollection = (binderId) => api.post(`/binder
 export const convertCollectionBinderToWishlist = (binderId) => api.post(`/binders/${binderId}/convert-to-wishlist`).then(r => r.data)
 export const removeCardFromBinder = (binderId, cardId) => api.delete(`/binders/${binderId}/cards/${cardId}`)
 export const removeBinderEntry = (binderId, binderCardId) => api.delete(`/binders/${binderId}/entries/${binderCardId}`)
-export const importBinderCsv = (binderId, file) => {
+export const importBinderCsv = async (binderId, file) => {
   const formData = new FormData()
-  formData.append('file', file)
+  await appendUpload(formData, 'file', file)
   return api.post(`/binders/${binderId}/import-csv`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then(r => r.data)
@@ -390,9 +402,9 @@ export const downloadBackup = (include = 'full') => {
     window.URL.revokeObjectURL(url)
   })
 }
-export const restoreBackup = (file) => {
+export const restoreBackup = async (file) => {
   const formData = new FormData()
-  formData.append('file', file)
+  await appendUpload(formData, 'file', file)
   return api.post('/backup/restore', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })

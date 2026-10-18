@@ -3,6 +3,9 @@ import ReactDOM from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'react-hot-toast'
 import App from './App.jsx'
+import { readPwaFlags } from './pwa/flags'
+import { handlePreloadError, initServiceWorker } from './pwa/register'
+import { updateStore } from './pwa/updateStore'
 import './components/card-system/tokens.css'
 import './index.css'
 import './components/card-system/styles.css'
@@ -23,7 +26,8 @@ const queryClient = new QueryClient({
   },
 })
 
-ReactDOM.createRoot(document.getElementById('root')).render(
+const root = ReactDOM.createRoot(document.getElementById('root'))
+root.render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <App />
@@ -46,3 +50,12 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     </QueryClientProvider>
   </React.StrictMode>
 )
+
+// Opt-in service worker (PWA_ENABLED). Never activates a new worker without the user's click.
+initServiceWorker({ flags: readPwaFlags(), onUpdateReady: registration => updateStore.setReady(registration) })
+
+// A lazy chunk that fails to load after a deploy: offer the update, or reload once.
+window.addEventListener('vite:preloadError', event => {
+  const { registration } = updateStore.getSnapshot()
+  handlePreloadError(event, { onUpdateReady: registration ? () => updateStore.setReady(registration) : null, registration })
+})

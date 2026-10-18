@@ -19,6 +19,8 @@ Allow unauthenticated access to these paths when public profiles should be reach
 | `/pokeball.svg` and `/cardback.jpg` | Public-page and missing-card artwork |
 | `/favicon.ico`, `/favicon-48.png`, `/apple-touch-icon.png`, `/manifest.json`, `/icon-192.png`, `/icon-512.png`, and `/robots.txt` | Browser, PWA, and crawler assets |
 
+`/sw.js` is also requested before sign-in when the opt-in service worker is on ([`PWA.md`](PWA.md)). Allowing it unauthenticated is optional: without it, anonymous visitors of public pages simply get no service worker. If it is allowed, the proxy must not cache it, and it must never be served as a login page (the worker refuses to install in that case).
+
 Keep every other application route behind the proxy. In particular, do not allow all of `/api/*`. Authenticated collection, settings, sync, backup, and administration endpoints are under that prefix.
 
 PokéCollector still applies its own sharing controls after a request reaches the app:
