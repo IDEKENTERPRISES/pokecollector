@@ -59,3 +59,17 @@ test('index.html has the iOS meta tags and no cache-busting query strings', () =
   assert.match(html, /<meta name="theme-color" content="#08080f"/);
   assert.match(html, /rel="apple-touch-icon" sizes="180x180" href="\/icons\/pc-apple-touch-180-v3\.png"/);
 });
+
+test('index.html keeps Google Fonts from blocking the first paint', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /<style>@layer pc-fallback \{[^}]*background-color: #08080f/);
+  const fontLinks = html.match(/<link[^>]*fonts\.googleapis\.com\/css2[^>]*>/g) ?? [];
+  assert.equal(fontLinks.length, 1);
+  assert.match(fontLinks[0], /rel="stylesheet"/);
+  assert.match(fontLinks[0], /media="print"/);
+  assert.match(fontLinks[0], /data-pc-fonts/);
+  const blocking = (html.match(/<link[^>]*rel="stylesheet"[^>]*>/g) ?? []).filter(
+    (tag) => tag.includes('fonts.googleapis.com') && !tag.includes('media="print"'),
+  );
+  assert.deepEqual(blocking, []);
+});
