@@ -255,6 +255,7 @@ Current frontend state layers:
 - Settings and i18n state: `SettingsContext`
 - Local UI state: component-level `useState`
 - Theme state: `useTheme` with `data-theme` and local storage
+- Outbox: IndexedDB + replay engine (`frontend/src/offline/`; library only until it is wired in, see `docs/FRONTEND.md`)
 
 `AuthContext` is now a core part of the app architecture, not an optional enhancement.
 
