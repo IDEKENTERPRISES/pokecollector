@@ -317,6 +317,7 @@ responses.
 - `ImageCache`
 - `CustomCardMatch`
 - `ScanJob` / `ScanJobItem` / `ScanQueueUserState`
+- `IdempotencyKey` (replayable `Idempotency-Key` results; see [Idempotency](#idempotency))
 - `GeminiQuotaState` / `ScannerProviderLimitState`
 
 ## Settings Scope
@@ -418,7 +419,12 @@ and queued-photo files remain filesystem data and are not part of SQL backups.
 `POST /api/backup/restore` accepts only a non-empty `.sql` upload, streams it to
 a temporary file, and invokes `psql` with `ON_ERROR_STOP=1`, `--no-psqlrc`, and
 `--single-transaction`. Any SQL error rolls back the whole restore. The
-temporary file is removed whether the operation succeeds or fails.
+temporary file is removed whether the operation succeeds or fails. After a
+successful restore the endpoint also deletes every row in `idempotency_keys`
+(best effort): an older dump would otherwise leave keys whose business rows no
+longer exist, and replaying one would silently drop the add. After a manual
+`psql` restore run `DELETE FROM idempotency_keys;`. The table is not part of
+the selective backup groups but is included in full dumps.
 
 ### Automatic Pre-upgrade Backup
 
@@ -503,6 +509,35 @@ Turning consent off stops future capture and leaves existing traces unchanged. T
 - `errors`: per-card error details
 
 Each item is committed independently, so one invalid or unavailable card does not roll back the rest of the batch. Existing rows are matched by card, variant, language, and current user.
+
+`bulk-add` and `import-csv` ignore the `Idempotency-Key` header (see below).
+
+## Idempotency
+
+Three append operations can be retried safely with an `Idempotency-Key` header, so a client that lost the response can resend the request without applying it twice:
+
+| Route | Scope |
+|---|---|
+| `POST /api/collection/` | `collection.add` |
+| `POST /api/wishlist/` | `wishlist.add` |
+| `POST /api/cards/recognize/jobs` | `scan.enqueue` |
+
+Every other route, including `bulk-add` and `import-csv`, ignores the header. Without the header the three routes behave exactly as before and never touch the `idempotency_keys` table.
+
+**Headers.** `Idempotency-Key` is 16-64 characters of `A-Z a-z 0-9 _ -` (one pair of surrounding double quotes is stripped); a UUID works. `X-Expected-User-Id` is an optional integer; on the three routes a value that differs from the authenticated user is rejected with `409 wrong_account`, with or without a key. A replayed response carries `Idempotent-Replayed: true`.
+
+**Semantics.** Results are deduplicated per `(user, key)`. The key row is written in the same database transaction as the business write, and only successful (2xx) results are stored, so a failed request leaves nothing behind and a retry runs again. A key is kept for 14 days (`KEY_TTL`); an expired key is treated as new, and the scheduler removes expired rows hourly. A key reused with a different scope or request fingerprint (the JSON body, or for scans the selection and the SHA-256 of each photo) is rejected. On PostgreSQL an advisory try-lock detects a duplicate that is still running without ever waiting.
+
+| HTTP | `detail.code` | Meaning |
+|---|---|---|
+| 400 | `idempotency_key_invalid` | `Idempotency-Key` or `X-Expected-User-Id` is malformed |
+| 409 | `idempotency_in_progress` | Another request holds the key (sets `Retry-After: 2`); retry shortly |
+| 409 | `wrong_account` | `X-Expected-User-Id` does not match the token's user |
+| 422 | `idempotency_key_reused` | Same key, different scope or payload |
+
+FastAPI's own validation `422` keeps its array `detail`; the two are told apart by `detail.code`. A restore clears all stored keys (see Manual restore).
+
+**Health.** `GET /api/health` also returns `version`, `api_level` (`1`) and `features` (`["idempotency-v1"]`, from `services/api_info.py`) so clients can tell whether the backend supports replays.
 
 ## Notifications
 

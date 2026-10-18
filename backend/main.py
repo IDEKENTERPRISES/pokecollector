@@ -11,6 +11,8 @@ import os
 import time
 from pathlib import Path
 
+from services.api_info import API_FEATURES, API_LEVEL
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -118,7 +120,7 @@ app.add_middleware(
     allow_origins=os.environ.get("CORS_ORIGINS", "").split(",") if os.environ.get("CORS_ORIGINS") else ["*"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Expected-User-Id"],
 )
 
 
@@ -207,4 +209,10 @@ app.include_router(community.router, prefix="/api/community", tags=["community"]
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "service": "pokemon-tcg-collection"}
+    return {
+        "status": "ok",
+        "service": "pokemon-tcg-collection",
+        "version": read_app_version(),
+        "api_level": API_LEVEL,
+        "features": list(API_FEATURES),
+    }
