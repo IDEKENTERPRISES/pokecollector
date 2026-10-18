@@ -77,6 +77,19 @@ If items are waiting on this device, logging out asks what to do:
 
 Sync before moving the app to a different address or port: waiting items belong to the old address.
 
+## Sync center
+
+With `OFFLINE_QUEUE_ENABLED` on, anything that waits on this device is visible:
+
+- A small button at the top right shows the state: *Offline mode*, *Waiting to sync*, *Syncing…* or *Needs attention*, with a count. It is hidden when nothing waits and the server answers. Tap it to open the sheet.
+- The sheet lists each waiting item with its state and age. **Retry** puts a failed or blocked item back in line, **Discard** removes it after a confirmation (it has not reached the server and cannot be recovered). **Sync now** sends everything immediately, even with **Automatic sync** switched off; the switch only stops the background attempts.
+- A banner appears when the server could not be reached twice in a row, or when the device says it is offline. It is based on actually asking the server (`/api/health`), not on the phone's own online flag, and it disappears after the first successful answer. While it shows, pages that need the server (anything except Home, Dashboard, Collection, Wishlist, Sets, Binders, Search and the sync center) show "This page isn't available offline." instead.
+- **/offline** is the full sync center: connection state, server version, the same item list, storage use, what this browser supports (HTTPS, service worker, storage, installed, push), the iPhone install hint and **Reset offline app data**. Reset removes cached app files and saved pages and keeps waiting items.
+
+Items waiting here exist only on this device until they reach the server. The app asks the browser to protect its storage (`navigator.storage.persist()`), shows how much space is used, and keeps a marker so it can tell you when the browser deleted its offline data anyway ("Some offline data was removed by the browser…"). In a Safari tab (not the Home Screen app) it warns once an item is 3 days old, and more strongly after 7 days, because Safari can delete data of websites that were not opened for about a week. Sync items in the browser before adding the app to the Home Screen: the installed app has its own storage.
+
+Not shown yet: *Edit* on queued adds (arrives with the collection/wishlist phase) and anything about cached read-only pages (later phase).
+
 ## Limitations
 
 - The first visit must happen online; there is nothing to start from before that.
