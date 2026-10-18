@@ -116,7 +116,10 @@ docker compose up -d
 The Settings restore action accepts `.sql` files, streams the upload into a
 temporary file, and executes it with PostgreSQL `ON_ERROR_STOP` in a single
 transaction. Any statement failure rolls back the complete restore, and the
-temporary upload is deleted afterward.
+temporary upload is deleted afterward. After a successful restore the app also
+clears its stored idempotency keys; after a manual `psql` restore, run
+`DELETE FROM idempotency_keys;` yourself so a retried request cannot be
+mistaken for one that was already applied.
 
 Selective backup groups are useful for targeted exports, but they may depend on
 rows outside their group and do not currently include every newer feature
