@@ -292,7 +292,7 @@ export default function HomeScreen() {
         <div className="flex items-center justify-between">
           {multiUser ? (
             <button
-              onClick={() => { logout(); navigate('/login') }}
+              onClick={() => { logout() }}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-text-muted hover:text-brand-red transition-colors"
               style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
             >

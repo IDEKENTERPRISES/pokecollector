@@ -1842,6 +1842,15 @@ const de = {
     exclusiveCards: 'Basierend auf Duplikaten und Wunschlisten',
   },
 
+  sync: {
+    syncingLabel: 'Synchronisiere…',
+    logoutTitle: 'Nicht synchronisierte Einträge',
+    logoutMessage: 'Du hast Einträge, die den Server noch nicht erreicht haben.',
+    logoutSyncFirst: 'Zuerst synchronisieren',
+    logoutKeep: 'Abmelden und Einträge behalten',
+    logoutDiscard: 'Abmelden und Einträge löschen',
+  },
+
   // Achievements
   pwa: {
     updateAvailable: 'Eine neue Version ist verfügbar.',

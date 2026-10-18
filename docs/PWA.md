@@ -32,7 +32,7 @@ Both are environment variables of the **frontend** container, read when it start
 | Variable | Default | Effect |
 |---|---|---|
 | `PWA_ENABLED` | off | `true` serves the real service worker at `/sw.js`; the app caches its own files and can start offline. `false` serves the kill worker, which removes any installed worker. |
-| `OFFLINE_QUEUE_ENABLED` | off | Reserved for the offline scan queue (a later phase). It already turns on the upload hardening below and has no other effect yet. |
+| `OFFLINE_QUEUE_ENABLED` | off | Turns on the upload hardening below, the cached sign-in and the logout protection described next. The offline scan queue itself arrives in later phases. |
 
 Accepted values: `true`, `1`, `yes`, `on`, `false`, `0`, `no`, `off` (any case). An invalid value logs a warning and uses the default.
 
@@ -71,6 +71,21 @@ Wishlist price alerts can also arrive as a notification, next to Telegram.
 3. Open Settings, **Notifications**, and tap **Enable on this device**, then allow notifications. **Send test notification** checks that it works.
 
 Each device is enabled separately. If notifications stop, tap **Disable** and **Enable** again. A subscription the phone has dropped is removed from the server automatically the next time it fails. The server keeps its signing key in `./data/auth` (see [DEPLOYMENT.md](DEPLOYMENT.md)); losing it only means turning notifications on again. Details: [BACKEND.md](BACKEND.md#web-push).
+
+## Opening the app offline (cached sign-in)
+
+With `OFFLINE_QUEUE_ENABLED` on, the app remembers who was signed in (id, name, role, avatar; never the password or token) in this browser for up to 90 days. If the server cannot be reached when the app starts, it opens in a *degraded* state from that memory instead of the "Cannot reach PokéCollector" screen. The remembered user is only for display; the server checks every request. The app keeps retrying in the background and switches to normal as soon as the server answers. Without a remembered sign-in (first visit, after logout, expired, or a pending password change) the connection screen shows as before.
+
+## Logging out with unsynced items
+
+If items are waiting on this device, logging out asks what to do:
+
+- **Sync first** sends them now. If anything is still waiting afterwards, you are asked again.
+- **Log out and keep items** logs out and leaves them on the device, tied to your account and this server address. They are not shown to other accounts.
+- **Log out and delete items** deletes the waiting items of your account from this device. Choose this on a shared device.
+- **Cancel** stays signed in.
+
+Sync before moving the app to a different address or port: waiting items belong to the old address.
 
 ## Limitations
 

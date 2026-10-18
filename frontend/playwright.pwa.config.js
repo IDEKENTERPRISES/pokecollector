@@ -26,5 +26,15 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], serviceWorkers: 'allow' },
       testMatch: /(service-worker|push)\.spec\.js/,
     },
+    {
+      name: 'chromium-page',
+      use: { ...devices['Desktop Chrome'], serviceWorkers: 'block' },
+      testIgnore: /service-worker\.spec\.js/,
+    },
+    {
+      name: 'webkit-page',
+      use: { ...devices['Desktop Safari'], serviceWorkers: 'block' },
+      testIgnore: /service-worker\.spec\.js/,
+    },
   ],
 })
