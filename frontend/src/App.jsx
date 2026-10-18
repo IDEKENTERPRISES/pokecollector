@@ -10,6 +10,7 @@ import Layout from './components/Layout'
 import { useSettings } from './contexts/SettingsContext'
 import PublicHomeButton from './components/PublicHomeButton'
 import { ConfirmDialogProvider } from './contexts/ConfirmDialogContext'
+import UpdateBanner from './components/pwa/UpdateBanner'
 
 const HomeScreen = lazy(() => import('./pages/HomeScreen'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
@@ -217,6 +218,7 @@ export default function App() {
               <Route path="/*" element={<ProtectedRoutes />} />
             </Routes>
           </BrowserRouter>
+          <UpdateBanner />
         </ConfirmDialogProvider>
       </SettingsProvider>
     </AuthProvider>

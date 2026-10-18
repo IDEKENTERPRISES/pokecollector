@@ -669,6 +669,20 @@ def _run_migrations(conn):
                 );
             END IF;
         END$$""",
+        # PWA P1: replayable results for Idempotency-Key requests.
+        """CREATE TABLE IF NOT EXISTS idempotency_keys (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            key VARCHAR(64) NOT NULL,
+            scope VARCHAR(64) NOT NULL,
+            request_hash VARCHAR(64) NOT NULL,
+            response_status INTEGER NOT NULL,
+            response_body JSONB NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            expires_at TIMESTAMP NOT NULL,
+            CONSTRAINT uq_idempotency_user_key UNIQUE (user_id, key)
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_idempotency_keys_expires_at ON idempotency_keys(expires_at)",
     ]
     for stmt in migrations:
         try:

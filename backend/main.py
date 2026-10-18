@@ -12,6 +12,7 @@ from pathlib import Path
 
 from services.request_origin import allowed_origins_from_env, is_cross_site_unauthenticated_write
 from services.client_ip import client_ip
+from services.api_info import API_FEATURES, API_LEVEL
 
 logging.basicConfig(
     level=logging.INFO,
@@ -146,7 +147,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Expected-User-Id"],
 )
 
 
@@ -211,4 +212,10 @@ app.include_router(community.router, prefix="/api/community", tags=["community"]
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "service": "pokemon-tcg-collection"}
+    return {
+        "status": "ok",
+        "service": "pokemon-tcg-collection",
+        "version": read_app_version(),
+        "api_level": API_LEVEL,
+        "features": list(API_FEATURES),
+    }

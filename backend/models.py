@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from database import Base
 
 POKEDEX_JSON = JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql")
+IDEMPOTENCY_JSON = JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql")
 PORTFOLIO_CALCULATION_VERSION = 2
 COLLECTION_VARIANT_CHECK = "variant IN ('Normal', 'Holo', 'Reverse Holo', 'First Edition')"
 
@@ -808,6 +809,24 @@ class ScanQueueUserState(Base):
 
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     last_dispatched_at = Column(DateTime, nullable=True, index=True)
+
+
+class IdempotencyKey(Base):
+    """A completed, replayable result for one (user, Idempotency-Key). Only 2xx results are stored."""
+
+    __tablename__ = "idempotency_keys"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    key = Column(String(64), nullable=False)
+    scope = Column(String(64), nullable=False)
+    request_hash = Column(String(64), nullable=False)          # sha256 hex
+    response_status = Column(Integer, nullable=False)
+    response_body = Column(IDEMPOTENCY_JSON, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    expires_at = Column(DateTime, nullable=False, index=True)
+
+    __table_args__ = (UniqueConstraint("user_id", "key", name="uq_idempotency_user_key"),)
 
 
 class GeminiQuotaState(Base):

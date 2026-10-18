@@ -32,7 +32,7 @@ services:
       retries: 5
 
   backend:
-    image: ghcr.io/git-romer/pokecollector-backend:${POKECOLLECTOR_VERSION:-1.51.0}
+    image: ghcr.io/git-romer/pokecollector-backend:${POKECOLLECTOR_VERSION:-1.51.6}
     container_name: pokemonlocal-backend
     restart: unless-stopped
     environment:
@@ -81,13 +81,15 @@ services:
       - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
 
   frontend:
-    image: ghcr.io/git-romer/pokecollector-frontend:${POKECOLLECTOR_VERSION:-1.51.0}
+    image: ghcr.io/git-romer/pokecollector-frontend:${POKECOLLECTOR_VERSION:-1.51.6}
     container_name: pokemonlocal-frontend
     restart: unless-stopped
     depends_on:
       - backend
     environment:
       PUBLIC_MODE: ${PUBLIC_MODE:-false}
+      PWA_ENABLED: ${PWA_ENABLED:-}
+      OFFLINE_QUEUE_ENABLED: ${OFFLINE_QUEUE_ENABLED:-}
     ports:
       - "${FRONTEND_PORT:-3000}:80"
 

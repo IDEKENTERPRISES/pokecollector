@@ -1885,6 +1885,12 @@ const en = {
   },
 
   // Achievements
+  pwa: {
+    updateAvailable: 'A new version is available.',
+    updateNow: 'Update',
+    updateBlocked: "Finish what you're doing first.",
+  },
+
   achievements: {
     title: 'Achievements',
     loadFailed: 'Failed to load achievements.',

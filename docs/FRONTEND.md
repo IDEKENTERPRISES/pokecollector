@@ -2,6 +2,34 @@
 
 React 18 SPA built with Vite. Source lives under `frontend/src/`.
 
+## Browser Support
+
+The frontend uses Tailwind CSS v4, which requires Safari 16.4+, Chrome 111+, or Firefox 128+. Older browser versions are not supported by this frontend build.
+
+## Installable web app
+
+The app can be added to an iPhone Home Screen (Share, then Add to Home Screen) and runs in its own window. This is installability only: there is no service worker yet, so nothing works offline.
+
+- `public/manifest.json` declares `id`, `scope`, `start_url: /`, `display: standalone`, `theme_color`/`background_color` `#08080f` and four icons (`any` and `maskable`, 192 and 512 px).
+- Icons live in `public/icons/` with a version suffix in the filename (`pc-*-v3.png`). nginx serves `.png` as `immutable` for a year, so a changed icon needs a new filename, not a query string. The older root icons stay for `og:image` and proxy allow-lists.
+- `index.html` links the 180 px opaque `apple-touch-icon` and sets the iOS meta tags (`apple-mobile-web-app-capable`, `mobile-web-app-capable`, `apple-mobile-web-app-title`, `apple-mobile-web-app-status-bar-style=black`).
+- `AppNav.jsx` pads the top strip and positions the floating Home button with `env(safe-area-inset-*)`, so they clear the notch and home indicator.
+- Standalone detection (not used by any component yet): `navigator.standalone === true || matchMedia('(display-mode: standalone)').matches`.
+- nginx revalidates `/`, `/index.html`, `/manifest.json` and SPA deep links (`Cache-Control: no-cache`); the security headers live in `nginx-security-headers.conf`, which `nginx.conf` includes in every location that sets its own `add_header`.
+- `scripts/pwa-assets.test.mjs` and `scripts/nginx-config.test.mjs` guard these files and run as part of `npm test`.
+
+## Service worker (opt-in)
+
+The service worker is off by default. `PWA_ENABLED=true` on the frontend container turns it on; user-facing behaviour is in [`PWA.md`](PWA.md), the design in `PWA_OFFLINE_DESIGN.md` §6.3.
+
+- `src/sw/sw.js` is the worker: a classic script with no imports and two build-time placeholders (`__BUILD_ID__`, `/*__PRECACHE__*/`) that are valid JavaScript unreplaced. `src/sw/sw.kill.js` is the kill worker.
+- `npm run build` runs `vite build` and then `scripts/build-sw.mjs`, which writes `dist/sw.real.js` and a byte-identical `dist/sw.js`, copies `dist/sw.kill.js`, prints the precache size and fails above 12 MiB. `index.html`, `robots*.txt` and `sw*.js` are never precached; the HTML shell is fetched at install and kept only if every `/assets/*` it references is in the manifest.
+- At container start `docker-entrypoint.d/45-configure-pwa.sh` (after `40-configure-public-mode.sh`, which resets `index.html`) copies `sw.real.js` or `sw.kill.js` over `sw.js` and inserts `<meta name="pokecollector-pwa" content="sw=1;queue=0">`. `src/pwa/flags.js` reads it; without the tag the build-time `VITE_PWA_DEFAULT=on|off` applies (default off).
+- `src/pwa/register.js` registers the worker (production, secure context, flag on), checks for updates when the app returns to the foreground, handles `?pc_sw=off` and exposes `addUpdateGuard(fn)` so features can block an update while work is in flight. `components/pwa/UpdateBanner.jsx` shows the update bar.
+- `src/utils/memoryBlob.js` copies upload files into memory when a PWA flag is on (WebKit empty-body bug); `api/client.js` uses it for its six multipart uploads.
+- Tests: `src/sw/sw.test.js` (worker loaded in a `node:vm` context), `scripts/build-sw.test.mjs`, `scripts/configure-pwa.test.mjs` run in `npm test`. `npm run test:pwa` builds with `VITE_PWA_DEFAULT=on`, serves `dist/` on port 4175 and drives real Chromium (`tests/pwa/`; install the browser with `npx playwright install chromium`).
+- Shell scripts must keep LF line endings (`.gitattributes`); a CRLF entrypoint fails inside the container.
+
 ## Route Table
 
 Routes are defined in `frontend/src/App.jsx`.
@@ -307,6 +335,60 @@ Notable frontend API bindings include:
 - product lifecycle, linked-card ledger, and trade endpoints
 - Pokédex, profile, and anonymous public-profile endpoints
 - authenticated collection-card photo and printing-detail-tag endpoints
+
+## Offline outbox
+
+`frontend/src/offline/` holds the client side of the offline queue designed in `docs/PWA_OFFLINE_DESIGN.md` (§6.2). It is a library with unit tests only: **nothing imports it yet**, so it is not part of the production bundle until the later phases wire it in. Items are kept in IndexedDB and replayed from the page (Safari has no Background Sync); the server's `Idempotency-Key` contract makes a repeated send harmless.
+
+### Module map
+
+| Module | Role |
+|--------|------|
+| `constants.js` | Every tunable of design §6.2.1, plus `uploadTimeoutMs(bytes)` and `attemptTimeoutMs(item)` |
+| `uuid.js` | `uuidv4()` from `crypto.getRandomValues` (never `randomUUID`) |
+| `debug.js` | `applyDebugParams()`, `debugFlag(name)` — see flags below |
+| `capabilities.js` | `getCapabilities()` by feature detection only |
+| `outbox/db.js` | `openOutboxDb()`, ordered `migrations`, `versionchange` handling |
+| `outbox/store.js` | `createStore(db)`: enqueue, claim, outcomes, retry/edit/discard, history, meta — single transactions, compare-and-set |
+| `outbox/states.js` | State transition table as data, `canTransition()` |
+| `outbox/classify.js` | Table-driven HTTP outcome classification (`classifyResponse`) |
+| `outbox/probe.js` | `/api/health` reachability probe and banner tracking |
+| `outbox/backoff.js` | Full-jitter backoff and `parseRetryAfter` |
+| `outbox/lease.js` | Single-flight lease row in `meta` |
+| `outbox/events.js` | `BroadcastChannel` change notifications with a `storage`-event fallback |
+| `outbox/replay.js` | The replay session (probe → claim → fetch → classify → apply), circuit breaker, 429 pause |
+| `outbox/ops/*.js` | `scanUpload`, `collectionAdd`, `wishlistAdd`: request builders, response validators, post-sync cache invalidation |
+| `outbox/index.js` | `createOutbox({ctx, flags, fetchImpl, now, rng, queryClient, …})` |
+
+### Item states
+
+States: `pending`, `sending`, `retry_wait`, `blocked` (`lastError.code` is `auth`, `proxy`, `wrong_account`, `server_old` or `newer_schema`), `failed`. Terminal: `sent` (item deleted, history row written) and `cancelled` (item and photos deleted).
+
+| Trigger | Result |
+|---------|--------|
+| Enqueue committed | `pending` |
+| Claim (compare-and-set) | `sending` with an expiring claim |
+| Valid 2xx JSON | `sent` (also for `Idempotent-Replayed: true`) |
+| Network error, timeout, 500, 502/503/504, 409 `idempotency_in_progress` | `retry_wait` (`maybeApplied` when the request may have reached the server) |
+| 429 | back to `pending`; the whole engine pauses (`Retry-After` or 60 s, doubling, max 900 s) |
+| 401 JSON, HTML/redirect/non-JSON 400-404, 409 `wrong_account`, old server | `blocked` |
+| Other definitive 4xx, malformed 2xx, 12 server errors | `failed` |
+| Claim expired (app killed) | `retry_wait`, `maybeApplied` |
+| User Retry / Edit / Discard | `pending` (Retry keeps the key; Edit of a never-sent add rotates it) / `cancelled` |
+
+### Constants
+
+`PACE_MS` 2000, `PROBE_TIMEOUT_MS` 5000, `PROBE_BACKOFF_MS` 15/30/60/120 s, `JSON_TIMEOUT_MS` 20 s, upload timeout `clamp(30 s + bytes/40 KiB/s, 60 s, 290 s)`, backoff 5 s base / 15 min cap with full jitter, `MAX_SERVER_ERRORS_PER_ITEM` 12, lease 30 s TTL with 10 s heartbeat, `STALE_UNKNOWN_OUTCOME_MS` 12 days, history 100 rows / 14 days, outbox caps 500 items / 300 MiB / 100 MiB kept free, item caps 12 photos / 10 MiB (a single photo may be up to 15 MiB). The authoritative values are in `constants.js`.
+
+### Debug flags
+
+Production builds honour three harmless `localStorage` flags, set by opening `/?pc_debug=<names>` (comma-separated, fixed allow-list; the parameter is stripped afterwards). `/?pc_debug=off` clears all three.
+
+| Name | Effect |
+|------|--------|
+| `forceUnreachable` | The reachability probe fails without touching the network |
+| `forceQuota` | `enqueue` rejects with `{code: 'quota'}` |
+| `forceLostResponse` | A replay response is discarded and treated as a network error (tests the lost-response path) |
 
 ## Removed / No Longer Documented
 

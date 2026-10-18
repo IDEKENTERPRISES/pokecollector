@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request, Response
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload, selectinload
 from typing import List, Optional
@@ -36,6 +37,12 @@ from services.printing_detail_tags import (
     printing_detail_keys,
 )
 from services.card_values import effective_market_price, normalize_price_field
+from services.idempotency import (
+    SCOPE_COLLECTION_ADD,
+    begin_idempotent,
+    fingerprint_json,
+    replay_response,
+)
 import datetime
 import csv
 import io
@@ -608,12 +615,28 @@ def add_to_collection(
     item: CollectionItemCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
     """Add a card to the collection, grouping only identical physical-copy details."""
+    idem = begin_idempotent(
+        db, current_user, request.headers if request is not None else None,
+        scope=SCOPE_COLLECTION_ADD,
+        fingerprint=fingerprint_json(SCOPE_COLLECTION_ADD, item.model_dump(mode="json")),
+    )
+    if idem.replay is not None:
+        return replay_response(idem.replay)
     _status, db_item = _upsert_collection_item(db, current_user, item)
+    if not idem.active:  # unchanged legacy behaviour
+        db.commit()
+        db.refresh(db_item)
+        return _annotate_collection_item(db, current_user, db_item)
+    db.flush()
+    body = jsonable_encoder(
+        CollectionItemResponse.model_validate(_annotate_collection_item(db, current_user, db_item))
+    )
+    idem.record(db, 200, body)
     db.commit()
-    db.refresh(db_item)
-    return _annotate_collection_item(db, current_user, db_item)
+    return body
 
 
 @router.post("/bulk-add", response_model=BulkCollectionAddResponse)
