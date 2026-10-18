@@ -16,6 +16,14 @@ if (savedTheme && savedTheme !== 'default') {
   document.documentElement.setAttribute('data-theme', savedTheme)
 }
 
+// index.html loads Google Fonts with media="print" so it never blocks the first paint;
+// switch it on once it has loaded. Offline it never loads and the system font is used.
+const fontSheet = document.querySelector('link[data-pc-fonts]')
+if (fontSheet) {
+  if (fontSheet.sheet) fontSheet.media = 'all'
+  else fontSheet.addEventListener('load', () => { fontSheet.media = 'all' }, { once: true })
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
