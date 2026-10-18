@@ -11,6 +11,7 @@ import { useSettings } from './contexts/SettingsContext'
 import PublicHomeButton from './components/PublicHomeButton'
 import { ConfirmDialogProvider } from './contexts/ConfirmDialogContext'
 import UpdateBanner from './components/pwa/UpdateBanner'
+import { OfflineProvider } from './offline/OfflineProvider'
 
 const HomeScreen = lazy(() => import('./pages/HomeScreen'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
@@ -202,6 +203,7 @@ export default function App() {
   return (
     <AuthProvider>
       <SettingsProvider>
+        <OfflineProvider>
         <ConfirmDialogProvider>
           <BrowserRouter>
             <Routes>
@@ -220,6 +222,7 @@ export default function App() {
           </BrowserRouter>
           <UpdateBanner />
         </ConfirmDialogProvider>
+        </OfflineProvider>
       </SettingsProvider>
     </AuthProvider>
   )

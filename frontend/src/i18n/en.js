@@ -1884,6 +1884,15 @@ const en = {
     exclusiveCards: 'Based on duplicates and wishlists',
   },
 
+  sync: {
+    syncingLabel: 'Syncing…',
+    logoutTitle: 'Unsynced items',
+    logoutMessage: 'You have items that have not reached the server yet.',
+    logoutSyncFirst: 'Sync first',
+    logoutKeep: 'Log out and keep items',
+    logoutDiscard: 'Log out and delete items',
+  },
+
   // Achievements
   pwa: {
     updateAvailable: 'A new version is available.',
