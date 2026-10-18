@@ -16,10 +16,14 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="PokéCollector" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
-    <!-- Fonts -->
+    <!-- Dark fallback until the app stylesheet applies. The layer is declared first, so it has
+         the lowest priority and every app style and theme still overrides it. -->
+    <style>@layer pc-fallback { html, body { background-color: #08080f; color: #fff; } }</style>
+    <!-- Fonts: media="print" keeps this optional stylesheet from blocking the first paint
+         (offline, iOS waits for a connection instead of failing it); main.jsx enables it once loaded. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" media="print" data-pc-fonts />
   </head>
   <body class="bg-dark-bg text-white font-sans">
     <div id="root"></div>
