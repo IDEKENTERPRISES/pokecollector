@@ -15,6 +15,7 @@ Allow unauthenticated access to these paths when public profiles should be reach
 | `/api/images/card/*` | Card artwork used by public Binders, Wishlists, and Decks |
 | `/api/pokedex/images/sprites/*` | Trainer avatars used by public pages |
 | `/assets/*` | Compiled JavaScript, CSS, and lazy-loaded page bundles |
+| `/icons/*` | Versioned home-screen and manifest icons (`/icons/pc-*-v3.png`) |
 | `/pokeball.svg` and `/cardback.jpg` | Public-page and missing-card artwork |
 | `/favicon.ico`, `/favicon-48.png`, `/apple-touch-icon.png`, `/manifest.json`, `/icon-192.png`, `/icon-512.png`, and `/robots.txt` | Browser, PWA, and crawler assets |
 
@@ -45,6 +46,7 @@ For proxy mode or forward auth for a single application, Authentik matches the r
 ^/api/images/card/.*$
 ^/api/pokedex/images/sprites/.*$
 ^/assets/.*$
+^/icons/.*$
 ^/(pokeball\.svg|cardback\.jpg|favicon\.ico|favicon-48\.png|apple-touch-icon\.png|manifest\.json|icon-192\.png|icon-512\.png|robots\.txt)$
 ```
 
@@ -56,6 +58,7 @@ For domain-level forward auth, Authentik matches the complete URL instead. Repla
 ^https://cards\.example\.com/api/images/card/.*$
 ^https://cards\.example\.com/api/pokedex/images/sprites/.*$
 ^https://cards\.example\.com/assets/.*$
+^https://cards\.example\.com/icons/.*$
 ^https://cards\.example\.com/(pokeball\.svg|cardback\.jpg|favicon\.ico|favicon-48\.png|apple-touch-icon\.png|manifest\.json|icon-192\.png|icon-512\.png|robots\.txt)(\?.*)?$
 ```
 
