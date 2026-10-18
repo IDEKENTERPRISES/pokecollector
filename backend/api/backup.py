@@ -123,6 +123,23 @@ def download_backup(
         raise HTTPException(status_code=500, detail="pg_dump not found")
 
 
+def _clear_idempotency_keys() -> None:
+    """Best-effort: drop every stored Idempotency-Key result after a restore.
+
+    An older dump leaves newer keys whose business rows no longer exist, and
+    replaying one would silently drop the add. A visible duplicate is safer.
+    """
+    try:
+        from database import SessionLocal
+        from models import IdempotencyKey
+
+        with SessionLocal() as db:
+            db.query(IdempotencyKey).delete(synchronize_session=False)
+            db.commit()
+    except Exception:
+        logger.warning("Could not clear idempotency keys after restore", exc_info=True)
+
+
 @router.post("/restore")
 async def restore_backup(
     file: UploadFile = File(...),
@@ -179,6 +196,7 @@ async def restore_backup(
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail=f"Restore failed: {result.stderr}")
 
+        _clear_idempotency_keys()
         return {"message": "Database restored successfully"}
 
     except subprocess.TimeoutExpired:
