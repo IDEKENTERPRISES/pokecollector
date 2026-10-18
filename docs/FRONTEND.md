@@ -42,6 +42,7 @@ Routes are defined in `frontend/src/App.jsx`.
 | `/search` | `pages/CardSearch.jsx` | Card search, scanner entry, and multi-select bulk add |
 | `/scans` | `pages/ScanQueue.jsx` | Persistent scan inbox |
 | `/scans/:jobId` | `pages/ScanQueue.jsx` | Review one queued scan job |
+| `/offline` | `pages/OfflineCenter.jsx` | Sync center: connection, waiting items, storage, capabilities, reset (needs `OFFLINE_QUEUE_ENABLED`; redirects to `/` otherwise) |
 | `/collection` | `pages/Collection.jsx` | User collection |
 | `/collection/user/:userId` | `pages/UserCollection.jsx` | Read-only view of another user's collection |
 | `/pokedex` | `pages/Pokedex.jsx` | Grouped or exact-form National Pokédex completion overview |
@@ -343,7 +344,7 @@ Notable frontend API bindings include:
 
 ## Offline outbox
 
-`frontend/src/offline/` holds the client side of the offline queue designed in `docs/PWA_OFFLINE_DESIGN.md` (§6.2). It is a library with unit tests only: **nothing imports it yet**, so it is not part of the production bundle until the later phases wire it in. Items are kept in IndexedDB and replayed from the page (Safari has no Background Sync); the server's `Idempotency-Key` contract makes a repeated send harmless.
+`frontend/src/offline/` holds the client side of the offline queue designed in `docs/PWA_OFFLINE_DESIGN.md` (§6.2). The library is wired in by `OfflineProvider` (P5) and the sync center (P6); the scanner does not queue yet. Items are kept in IndexedDB and replayed from the page (Safari has no Background Sync); the server's `Idempotency-Key` contract makes a repeated send harmless.
 
 ### Module map
 
@@ -364,6 +365,24 @@ Notable frontend API bindings include:
 | `outbox/replay.js` | The replay session (probe → claim → fetch → classify → apply), circuit breaker, 429 pause |
 | `outbox/ops/*.js` | `scanUpload`, `collectionAdd`, `wishlistAdd`: request builders, response validators, post-sync cache invalidation |
 | `outbox/index.js` | `createOutbox({ctx, flags, fetchImpl, now, rng, queryClient, …})` |
+| `durability.js` | `requestPersistence()`, `readEstimate()`, canary (`initCanary`/`checkCanary`), `ageWarning()` (design D12) |
+| `routes.js` | `OFFLINE_ROUTES` and `isOfflineRoute(pathname)`: pages that stay usable while the server is unreachable |
+| `useOffline.js` | `useOffline()`: two failed probes or `navigator.onLine === false` |
+| `syncToasts.js` | Coalesced "synced" / "failed" toasts and the last-synced time |
+| `OfflineProvider.jsx` | Owns the outbox, the logout guard (`runLogoutGuard`), storage protection and the eviction notice |
+
+### Sync center components (P6)
+
+All render nothing unless `OFFLINE_QUEUE_ENABLED` is on.
+
+| Component | Role |
+|-----------|------|
+| `components/sync/SyncIndicator.jsx` | Floating button (offline / waiting / syncing / needs attention) mounted once in `Layout`; opens the sheet |
+| `components/sync/SyncSheet.jsx` | Sheet with Sync now, Automatic sync, item list (Retry / Discard), storage lines; also exports `SyncControls`, `SyncItemList`, `StorageSummary` for `/offline` |
+| `components/sync/OfflineBanner.jsx` | Banner at the top of `Layout` while offline |
+| `components/sync/EvictedNotice.jsx` | Blocking notice when the browser removed the offline database |
+| `components/OfflineUnavailable.jsx` | Replaces pages that need the server while offline (anything outside `OFFLINE_ROUTES`) |
+| `components/pwa/InstallHint.jsx` | iOS "Add to Home Screen" card (Home and `/offline`) |
 
 ### Item states
 

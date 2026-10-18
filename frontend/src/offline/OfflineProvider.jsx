@@ -1,15 +1,67 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { onlineManager, useQueryClient } from '@tanstack/react-query'
+import toast from 'react-hot-toast'
 import { useAuth } from '../contexts/AuthContext'
+import { useSettings } from '../contexts/SettingsContext'
+import EvictedNotice from '../components/sync/EvictedNotice'
 import LogoutGuardDialog from '../components/sync/LogoutGuardDialog'
 import { readPwaFlags } from '../pwa/flags'
 import { getCapabilities } from './capabilities'
 import { REPLAY_TICK_MS } from './constants'
 import { applyDebugParams } from './debug'
+import { checkCanary, initCanary, requestPersistence } from './durability'
+import { openOutboxDb } from './outbox/db.js'
 import { createOutbox } from './outbox/index.js'
+import { createSyncReporter } from './syncToasts'
 import { OutboxContext } from './useOutbox'
 
 const ignore = () => {}
+
+/**
+ * The logout guard's decision loop (D7, A6). `ask()` resolves with 'sync' | 'keep' | 'discard' |
+ * 'cancel'; `setBusy(true)` shows the progress label while a sync runs; `close()` hides the dialog.
+ * Resolves true when logging out may proceed.
+ */
+export async function runLogoutGuard({ outbox, ask, setBusy, close }) {
+  try {
+    await outbox.start()
+  } catch {
+    return true
+  }
+  for (;;) {
+    if (outbox.getSnapshot().items.length === 0) {
+      close()
+      return true
+    }
+    const choice = await ask()
+    if (choice === 'cancel') {
+      close()
+      return false
+    }
+    if (choice === 'keep') {
+      close()
+      return true
+    }
+    if (choice === 'discard') {
+      try {
+        await outbox.discardAllForUser()
+      } catch {
+        close()
+        return false
+      }
+      close()
+      return true
+    }
+    // 'sync': keep the dialog open with a progress label, then look again. The user asked for
+    // it, so it runs as `manual` and also works when Automatic sync is switched off.
+    setBusy(true)
+    try {
+      await outbox.syncNow('manual')
+    } catch {
+      // items stay; the dialog comes back
+    }
+  }
+}
 
 /**
  * Owns the outbox (docs/PWA_OFFLINE_DESIGN.md §6.2.12, P5). Inert unless the queue flag is on
@@ -18,9 +70,13 @@ const ignore = () => {}
 export function OfflineProvider({ children }) {
   const { user, status, setLogoutGuard } = useAuth()
   const queryClient = useQueryClient()
+  const { t } = useSettings()
+  const tRef = useRef(t)
+  tRef.current = t
   const enabled = useMemo(() => readPwaFlags().queue && getCapabilities().indexedDB, [])
   const [outbox, setOutbox] = useState(null)
   const [dialog, setDialog] = useState(null)
+  const [evicted, setEvicted] = useState(false)
   const resolveRef = useRef(null)
   const userIdRef = useRef(null)
   userIdRef.current = typeof user?.id === 'number' ? user.id : null
@@ -40,6 +96,14 @@ export function OfflineProvider({ children }) {
       queryClient,
       onlineManager,
     })
+    // Every replay result, whoever started it (ticks, the sheet, the logout guard), feeds the toasts.
+    const report = createSyncReporter({ toast, getT: () => tRef.current })
+    const rawSyncNow = instance.syncNow
+    instance.syncNow = async (...args) => {
+      const result = await rawSyncNow(...args)
+      report(result)
+      return result
+    }
     setOutbox(instance)
     return () => {
       instance.stop()
@@ -52,6 +116,48 @@ export function OfflineProvider({ children }) {
     if (!outbox || !active) return
     outbox.start().then(() => outbox.syncNow('login')).catch(ignore)
   }, [outbox, active, userId])
+
+  // Storage protection (D12): persist() after the first enqueue and on every start while items
+  // wait, and notice when the browser removed the database behind our back.
+  useEffect(() => {
+    if (!outbox || !active) return undefined
+    let cancelled = false
+    let requested = false
+    const protect = async () => {
+      if (requested || outbox.getSnapshot().items.length === 0) return
+      requested = true
+      let db = null
+      try {
+        db = await openOutboxDb()
+        await requestPersistence({ db })
+      } catch {
+        // best effort
+      } finally {
+        db?.close()
+      }
+    }
+    const checkEviction = async () => {
+      let db = null
+      try {
+        await outbox.start()
+        db = await openOutboxDb()
+        const result = await checkCanary(db)
+        if (result === 'evicted' && !cancelled) setEvicted(true)
+        if (result !== 'ok') await initCanary(db)
+      } catch {
+        // the canary is advisory
+      } finally {
+        db?.close()
+      }
+      if (!cancelled) protect()
+    }
+    checkEviction()
+    const unsubscribe = outbox.subscribe(() => { if (!cancelled) protect() })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [outbox, active])
 
   useEffect(() => {
     if (!outbox || !active) return undefined
@@ -81,45 +187,7 @@ export function OfflineProvider({ children }) {
       resolveRef.current = null
       setDialog(null)
     }
-    const guard = async () => {
-      try {
-        await outbox.start()
-      } catch {
-        return true
-      }
-      for (;;) {
-        if (outbox.getSnapshot().items.length === 0) {
-          close()
-          return true
-        }
-        const choice = await ask()
-        if (choice === 'cancel') {
-          close()
-          return false
-        }
-        if (choice === 'keep') {
-          close()
-          return true
-        }
-        if (choice === 'discard') {
-          try {
-            await outbox.discardAllForUser()
-          } catch {
-            close()
-            return false
-          }
-          close()
-          return true
-        }
-        // 'sync': keep the dialog open with a progress label, then look again.
-        setDialog({ busy: true })
-        try {
-          await outbox.syncNow('logout')
-        } catch {
-          // items stay; the dialog comes back
-        }
-      }
-    }
+    const guard = () => runLogoutGuard({ outbox, ask, setBusy: busy => setDialog({ busy }), close })
     setLogoutGuard(guard)
     return () => {
       setLogoutGuard(null)
@@ -136,6 +204,7 @@ export function OfflineProvider({ children }) {
   return (
     <OutboxContext.Provider value={outbox}>
       {children}
+      <EvictedNotice isOpen={evicted} onClose={() => setEvicted(false)} />
       <LogoutGuardDialog
         isOpen={Boolean(dialog)}
         busy={Boolean(dialog?.busy)}
