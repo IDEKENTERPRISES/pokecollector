@@ -68,7 +68,7 @@ export default function AppNav() {
     })
   }
 
-  const handleLogout = () => { logout(); navigate('/login') }
+  const handleLogout = () => { logout() }
 
   if (location.pathname === '/') return null
 
