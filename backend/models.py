@@ -810,6 +810,25 @@ class IdempotencyKey(Base):
     __table_args__ = (UniqueConstraint("user_id", "key", name="uq_idempotency_user_key"),)
 
 
+class PushSubscription(Base):
+    """One Web Push subscription (one browser/device) of a user."""
+
+    __tablename__ = "push_subscriptions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    endpoint = Column(Text, nullable=False)
+    p256dh = Column(String(255), nullable=False)
+    auth = Column(String(255), nullable=False)
+    user_agent = Column(String(255), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    last_seen_at = Column(DateTime, nullable=False, default=func.now())
+    last_success_at = Column(DateTime, nullable=True)
+    failure_count = Column(Integer, nullable=False, default=0)
+
+    __table_args__ = (UniqueConstraint("endpoint", name="uq_push_subscription_endpoint"),)
+
+
 class GeminiQuotaState(Base):
     """Cross-worker pacing state keyed by a non-reversible API-key fingerprint."""
 

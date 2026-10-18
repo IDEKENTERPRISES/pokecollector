@@ -1874,6 +1874,18 @@ const en = {
     updateAvailable: 'A new version is available.',
     updateNow: 'Update',
     updateBlocked: "Finish what you're doing first.",
+    pushTitle: 'Push notifications',
+    pushDesc: 'Get price alerts for your wishlist as a notification on this device.',
+    pushEnable: 'Enable on this device',
+    pushDisable: 'Disable on this device',
+    pushTest: 'Send test notification',
+    pushDenied: 'Notifications are blocked in your device settings.',
+    pushIosHint: 'On iPhone, add PokéCollector to your Home Screen first.',
+    pushEnabled: 'Notifications are enabled on this device.',
+    pushDisabled: 'Notifications are disabled on this device.',
+    pushTestSent: 'Test notification sent.',
+    pushTestNone: 'No notification could be delivered. Try enabling it again.',
+    pushFailed: 'Notifications could not be changed. Please try again.',
   },
 
   achievements: {

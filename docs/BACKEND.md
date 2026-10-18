@@ -318,6 +318,7 @@ responses.
 - `CustomCardMatch`
 - `ScanJob` / `ScanJobItem` / `ScanQueueUserState`
 - `IdempotencyKey` (replayable `Idempotency-Key` results; see [Idempotency](#idempotency))
+- `PushSubscription` (Web Push subscriptions, one row per device; see [Web push](#web-push))
 - `GeminiQuotaState` / `ScannerProviderLimitState`
 
 ## Settings Scope
@@ -542,6 +543,27 @@ FastAPI's own validation `422` keeps its array `detail`; the two are told apart 
 ## Notifications
 
 `backend/services/telegram.py` now accepts `user_id` and reads Telegram credentials from that user's `UserSetting` rows first.
+
+### Web push
+
+Optional Web Push for wishlist price alerts, sent next to Telegram from `check_wishlist_alerts`. A push failure never stops Telegram or the alert loop. Design: [PWA_OFFLINE_DESIGN.md](PWA_OFFLINE_DESIGN.md) §6.7.
+
+All routes need a signed-in user (`backend/api/push.py`, prefix `/api/push`):
+
+| Route | Purpose |
+|---|---|
+| `GET /vapid-public-key` | `{"public_key": "<base64url P-256 point>"}` for `pushManager.subscribe` |
+| `POST /subscribe` | Body `{endpoint, keys:{p256dh, auth}, user_agent?}`. Upserts by `endpoint` (re-assigns it to the caller, resets the failure count) and returns `{"id": n}` |
+| `DELETE /subscribe` | Body `{endpoint}`. Removes only the caller's row. `204` |
+| `POST /test` | Sends a test notification to the caller's devices: `{"sent": n, "removed": m}` |
+
+- **Table** `push_subscriptions`: `user_id` (cascade on user delete), unique `endpoint`, `p256dh`, `auth`, `user_agent`, `created_at`, `last_seen_at`, `last_success_at`, `failure_count`.
+- **SSRF allow-list.** The server POSTs to the stored endpoint, so `subscribe` accepts only `https` URLs up to 2048 characters on port 443 whose host is `fcm.googleapis.com` or ends in `.push.apple.com`, `.push.services.mozilla.com` or `.notify.windows.com`. IP literals, credentials and every other host return `422`.
+- **Keys.** `VAPID_PRIVATE_KEY` (PEM, `
+` escapes allowed) overrides the key file, which defaults to `/app/data/auth/vapid_private.pem` (`VAPID_PRIVATE_KEY_FILE` changes the path). Without either, a P-256 key is created once with mode `0600`. The stock `docker-compose.yml` does not pass these variables to the backend, so Compose installs use the key file (add them under `environment:` in an override if needed). `VAPID_SUBJECT` is the contact URL or `mailto:` sent to the push services (default: the project URL). The private key is never logged.
+- **Payload.** At most 4096 bytes: only the card name and `/wishlist`, no prices or collection data; encrypted end to end.
+- **Outcomes.** `404`/`410` delete the row; `403` is logged and kept; `429` is skipped; any other failure adds one to `failure_count` and the tenth deletes the row.
+- **Dependency.** `pywebpush==2.5.0` (MPL-2.0, used unmodified).
 
 ## Migrations
 

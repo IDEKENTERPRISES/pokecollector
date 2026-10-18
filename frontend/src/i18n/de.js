@@ -1847,6 +1847,18 @@ const de = {
     updateAvailable: 'Eine neue Version ist verfügbar.',
     updateNow: 'Aktualisieren',
     updateBlocked: 'Schließe zuerst ab, was du gerade tust.',
+    pushTitle: 'Push-Benachrichtigungen',
+    pushDesc: 'Erhalte Preisalarme für deine Wunschliste als Benachrichtigung auf diesem Gerät.',
+    pushEnable: 'Auf diesem Gerät aktivieren',
+    pushDisable: 'Auf diesem Gerät deaktivieren',
+    pushTest: 'Testbenachrichtigung senden',
+    pushDenied: 'Benachrichtigungen sind in den Geräteeinstellungen blockiert.',
+    pushIosHint: 'Füge PokéCollector auf dem iPhone zuerst zum Home-Bildschirm hinzu.',
+    pushEnabled: 'Benachrichtigungen sind auf diesem Gerät aktiviert.',
+    pushDisabled: 'Benachrichtigungen sind auf diesem Gerät deaktiviert.',
+    pushTestSent: 'Testbenachrichtigung gesendet.',
+    pushTestNone: 'Es konnte keine Benachrichtigung zugestellt werden. Aktiviere sie erneut.',
+    pushFailed: 'Benachrichtigungen konnten nicht geändert werden. Bitte versuche es erneut.',
   },
 
   achievements: {

@@ -24,7 +24,7 @@ export default defineConfig({
     {
       name: 'chromium-sw',
       use: { ...devices['Desktop Chrome'], serviceWorkers: 'allow' },
-      testMatch: /service-worker\.spec\.js/,
+      testMatch: /(service-worker|push)\.spec\.js/,
     },
   ],
 })

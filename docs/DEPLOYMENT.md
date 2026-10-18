@@ -72,6 +72,14 @@ To roll back a bad service worker, set `PWA_ENABLED=false` and recreate the
 frontend container: phones replace the worker with a kill worker on their next
 update check. Reverting to the previous image tag also works.
 
+### Push notification key
+
+Web push (see [`PWA.md`](PWA.md)) signs with a private key stored at
+`./data/auth/vapid_private.pem` (or `VAPID_PRIVATE_KEY`). It is a file, not a database
+row, so SQL dumps and the backups in `./backups` do not contain it: include
+`./data/auth` in your file backups. If it is lost, a new key is created and everyone
+turns notifications on again. `VAPID_SUBJECT` can set a contact URL or `mailto:`.
+
 ## Update
 
 First create and retain a manual database backup:

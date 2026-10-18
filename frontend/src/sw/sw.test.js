@@ -22,7 +22,7 @@ class FakeCache {
   async delete(key) { return this.map.delete(String(key?.url ?? key)) }
 }
 
-function load({ precache = [], fetchImpl, existingCaches = {} } = {}) {
+function load({ precache = [], fetchImpl, existingCaches = {}, windowClients = [] } = {}) {
   const store = new Map(Object.entries(existingCaches))
   const caches = {
     open: async name => { if (!store.has(name)) store.set(name, new FakeCache()); return store.get(name) },
@@ -38,13 +38,18 @@ function load({ precache = [], fetchImpl, existingCaches = {} } = {}) {
     },
   }
   const listeners = {}
-  const calls = { skipWaiting: 0, claim: 0 }
+  const calls = { skipWaiting: 0, claim: 0, notifications: [], opened: [] }
   const self = {
     location: new URL(`${ORIGIN}/sw.js`),
     __PC_SW_TEST_MODE__: true,
     addEventListener: (type, fn) => { listeners[type] = fn },
     skipWaiting: () => { calls.skipWaiting += 1 },
-    clients: { claim: () => { calls.claim += 1 } },
+    registration: { showNotification: async (title, options) => { calls.notifications.push({ title, options }) } },
+    clients: {
+      claim: () => { calls.claim += 1 },
+      matchAll: async () => windowClients,
+      openWindow: async url => { calls.opened.push(url) },
+    },
   }
   const code = SOURCE.replace('/*__PRECACHE__*/ []', JSON.stringify(precache)).replace("'__BUILD_ID__'", "'b2'")
   const context = vm.createContext({
@@ -256,5 +261,102 @@ describe('lifecycle', () => {
     let responded = false
     listeners.fetch({ request: req('/api/collection/'), respondWith: () => { responded = true } })
     expect(responded).toBe(false)
+  })
+})
+
+describe('web push', () => {
+  const run = (listeners, type, event) => {
+    let pending
+    listeners[type]({ ...event, waitUntil: p => { pending = p } })
+    return pending
+  }
+  const pushEvent = payload => ({
+    data: payload === null ? null : { json: () => (typeof payload === 'function' ? payload() : payload) },
+  })
+  const declarative = (notification) => ({ web_push: 8030, notification })
+
+  it('shows the Declarative Web Push notification', async () => {
+    const { listeners, calls } = load()
+    await run(listeners, 'push', pushEvent(declarative({ title: 'PokéCollector', body: 'Pikachu price alert', navigate: '/wishlist' })))
+    expect(calls.notifications).toEqual([{
+      title: 'PokéCollector',
+      options: { body: 'Pikachu price alert', data: { navigate: '/wishlist' } },
+    }])
+  })
+
+  it('always shows a notification, falling back to a generic one without a usable title', async () => {
+    const payloads = [
+      null,
+      () => { throw new SyntaxError('not json') },
+      {},
+      [],
+      'text',
+      declarative({ body: 'no title', navigate: 'https://evil.test/' }),
+      declarative({ title: 42 }),
+      declarative({ title: '' }),
+    ]
+    for (const payload of payloads) {
+      const { listeners, calls } = load()
+      await run(listeners, 'push', pushEvent(payload))
+      expect(calls.notifications).toHaveLength(1)
+      expect(calls.notifications[0].title).toBe('PokéCollector')
+      expect(calls.notifications[0].options).toEqual({ body: '', data: { navigate: '/' } })
+    }
+  })
+
+  it('accepts a flat {title, body} payload from older senders', async () => {
+    const { listeners, calls } = load()
+    await run(listeners, 'push', pushEvent({ title: 'Hi', body: 'There' }))
+    expect(calls.notifications[0]).toMatchObject({ title: 'Hi', options: { body: 'There' } })
+  })
+
+  const click = (navigate, windowClients) => {
+    const { listeners, calls } = load({ windowClients })
+    let closed = 0
+    const pending = run(listeners, 'notificationclick', {
+      notification: { close: () => { closed += 1 }, data: navigate === undefined ? undefined : { navigate } },
+    })
+    return { pending, calls, closed: () => closed }
+  }
+
+  it('opens a same-origin path in a new window when the app is closed', async () => {
+    const { pending, calls, closed } = click('/wishlist', [])
+    await pending
+    expect(closed()).toBe(1)
+    expect(calls.opened).toEqual([ORIGIN + '/wishlist'])
+  })
+
+  it('focuses and navigates an open app window instead of opening another', async () => {
+    const client = { url: ORIGIN + '/collection', focused: 0, navigated: [], focus: async function () { this.focused += 1 }, navigate: async function (u) { this.navigated.push(u) } }
+    const { pending, calls } = click('/wishlist', [{ url: 'https://other.test/', focus: async () => { throw new Error('wrong origin') } }, client])
+    await pending
+    expect(client.focused).toBe(1)
+    expect(client.navigated).toEqual([ORIGIN + '/wishlist'])
+    expect(calls.opened).toEqual([])
+  })
+
+  it('opens a new window when an existing one cannot be navigated', async () => {
+    const client = { url: ORIGIN + '/', focus: async () => {}, navigate: async () => { throw new Error('uncontrolled') } }
+    const { pending, calls } = click('/wishlist', [client])
+    await pending
+    expect(calls.opened).toEqual([ORIGIN + '/wishlist'])
+  })
+
+  it('never navigates to another origin', async () => {
+    for (const target of ['https://evil.test/phish', '//evil.test/x', 'javascript:alert(1)', 'http://pc.test/x']) {
+      const { pending, calls } = click(target, [])
+      await pending
+      expect(calls.opened).toEqual([ORIGIN + '/'])
+    }
+    const { pending, calls } = click(undefined, [])
+    await pending
+    expect(calls.opened).toEqual([ORIGIN + '/'])
+  })
+
+  it('leaves non-push behaviour alone: no skipWaiting or claim', async () => {
+    const { listeners, calls } = load()
+    await run(listeners, 'push', pushEvent(declarative({ title: 'x' })))
+    expect(calls.skipWaiting).toBe(0)
+    expect(calls.claim).toBe(0)
   })
 })
