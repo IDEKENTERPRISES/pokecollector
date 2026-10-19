@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
+import { createPortal } from 'react-dom'
 import { useSettings } from '../../contexts/SettingsContext'
 import { applyUpdate } from '../../pwa/register'
 import { updateStore } from '../../pwa/updateStore'
@@ -8,6 +9,8 @@ const RELOAD_FALLBACK_MS = 15000
 
 // Non-blocking bar shown when a new service worker is waiting. Nothing activates on its own.
 // After Update is tapped it gives way to a full-screen notice until the page reloads.
+// Both render into document.body: index.css gives every direct child of #root
+// `position: relative`, which would otherwise override `fixed` and drop them to the end of the page.
 export default function UpdateBanner() {
   const { t } = useSettings()
   const { registration, blocked } = useSyncExternalStore(updateStore.subscribe, updateStore.getSnapshot)
@@ -29,7 +32,7 @@ export default function UpdateBanner() {
   }
 
   if (updating) {
-    return (
+    return createPortal(
       <div
         role="status"
         aria-live="polite"
@@ -44,11 +47,12 @@ export default function UpdateBanner() {
             {t('pwa.updatingReload')}
           </button>
         )}
-      </div>
+      </div>,
+      document.body,
     )
   }
 
-  return (
+  return createPortal(
     <div
       role="status"
       data-testid="update-banner"
@@ -67,6 +71,7 @@ export default function UpdateBanner() {
           {t('pwa.updateNow')}
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
