@@ -146,7 +146,7 @@ function DesktopModal({ isOpen, onClose, title, children, sizeClass, className =
           className={[
             'relative w-full mx-4',
             sizeClass,
-            'bg-bg-card border border-border rounded-2xl',
+            'bg-bg-card border border-border rounded-[16px]',
             'max-h-[85vh] flex flex-col',
             'animate-slide-up',
             className,
@@ -163,10 +163,10 @@ function DesktopModal({ isOpen, onClose, title, children, sizeClass, className =
           {/* Header */}
           {title && (
             <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
-              <h2 id={titleId} className="text-base font-semibold text-text-primary">{title}</h2>
+              <h2 id={titleId} className="text-headline text-text-primary">{title}</h2>
               <button
                 onClick={onClose}
-                className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors"
+                className="p-1.5 rounded-full text-text-secondary hover:text-text-primary hover:bg-bg-elevated transition-colors"
                 aria-label={closeLabel}
               >
                 <X size={18} />

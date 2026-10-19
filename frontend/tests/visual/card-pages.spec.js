@@ -311,6 +311,15 @@ async function expandDeckPicker(page) {
 
 async function expectVisibleArtwork(page) {
   const artwork = page.locator('.unified-card-compact-artwork:visible')
+  // Rows beyond the lazy-load margin only load once scrolled near, so walk down the page and back
+  // (a taller header must not turn this into a layout-height test).
+  await page.evaluate(async () => {
+    for (let y = 0; y < document.body.scrollHeight; y += 400) {
+      window.scrollTo(0, y)
+      await new Promise(resolve => setTimeout(resolve, 60))
+    }
+    window.scrollTo(0, 0)
+  })
   await expect(artwork.first()).toBeVisible()
   await expect.poll(async () => artwork.locator('img').evaluateAll(images => (
     images.length > 0 && images.every(image => image.complete && image.naturalWidth > 0)

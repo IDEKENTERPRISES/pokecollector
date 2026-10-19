@@ -1,6 +1,10 @@
-import { AlertTriangle, Loader2 } from 'lucide-react'
-import Modal from './Modal'
+import { Loader2 } from 'lucide-react'
+import Alert from '../ios/Alert'
 
+/**
+ * Confirmation prompt. The props are unchanged; it renders an iOS Alert, so every
+ * useConfirmDialog() call is an iOS alert (design doc §6.8). Sits above the older overlays (z 500).
+ */
 export default function ConfirmDialog({
   isOpen,
   onClose,
@@ -13,42 +17,27 @@ export default function ConfirmDialog({
   destructive = false,
 }) {
   return (
-    <Modal
+    <Alert
       isOpen={isOpen}
       onClose={isPending ? undefined : onClose}
       title={title}
-      size="sm"
-      mobileSheet={false}
-      overlayClassName="z-[500]"
-    >
-      <div className="space-y-4 p-5">
-        <div className="flex items-start gap-3">
-          <span className={`mt-0.5 grid h-9 w-9 flex-shrink-0 place-items-center rounded-full ${
-            destructive ? 'bg-brand-red/10 text-brand-red' : 'bg-yellow/10 text-yellow'
-          }`}>
-            <AlertTriangle size={18} aria-hidden />
-          </span>
-          <p className="text-sm leading-relaxed text-text-secondary">{message}</p>
-        </div>
-        <div className="flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end">
-          <button type="button" className="btn-ghost w-full justify-center sm:w-auto" disabled={isPending} onClick={onClose}>
-            {cancelLabel}
-          </button>
-          <button
-            type="button"
-            className={`w-full justify-center sm:w-auto ${
-              destructive
-                ? 'btn-ghost border-brand-red/30 text-brand-red hover:bg-brand-red/10'
-                : 'btn-primary'
-            }`}
-            disabled={isPending}
-            onClick={onConfirm}
-          >
-            {isPending && <Loader2 size={15} className="animate-spin" aria-hidden />}
-            {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </Modal>
+      message={message}
+      zIndex={500}
+      actions={[
+        { label: cancelLabel, style: 'cancel', disabled: isPending, onSelect: onClose },
+        {
+          label: (
+            <span className="inline-flex items-center gap-1.5">
+              {isPending && <Loader2 size={15} className="motion-safe:animate-spin" aria-hidden />}
+              {confirmLabel}
+            </span>
+          ),
+          style: destructive ? 'destructive' : 'default',
+          preferred: true,
+          disabled: isPending,
+          onSelect: onConfirm,
+        },
+      ]}
+    />
   )
 }

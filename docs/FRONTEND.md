@@ -10,7 +10,7 @@ The frontend uses Tailwind CSS v4, which requires Safari 16.4+, Chrome 111+, or 
 
 The app can be added to an iPhone Home Screen (Share, then Add to Home Screen) and runs in its own window. This is installability only: there is no service worker yet, so nothing works offline.
 
-- `public/manifest.json` declares `id`, `scope`, `start_url: /`, `display: standalone`, `theme_color`/`background_color` `#08080f` and four icons (`any` and `maskable`, 192 and 512 px).
+- `public/manifest.json` declares `id`, `scope`, `start_url: /`, `display: standalone`, `theme_color`/`background_color` `#000000` and four icons (`any` and `maskable`, 192 and 512 px).
 - Icons live in `public/icons/` with a version suffix in the filename (`pc-*-v3.png`). nginx serves `.png` as `immutable` for a year, so a changed icon needs a new filename, not a query string. The older root icons stay for `og:image` and proxy allow-lists.
 - `index.html` links the 180 px opaque `apple-touch-icon` and sets the iOS meta tags (`apple-mobile-web-app-capable`, `mobile-web-app-capable`, `apple-mobile-web-app-title`, `apple-mobile-web-app-status-bar-style=black`).
 - `AppNav.jsx` pads the top strip and positions the floating Home button with `env(safe-area-inset-*)`, so they clear the notch and home indicator.
@@ -28,6 +28,7 @@ The service worker is on by default in the container. `PWA_ENABLED=false` on the
 - `src/pwa/register.js` registers the worker (production, secure context, flag on), checks for updates when the app returns to the foreground, handles `?pc_sw=off` and exposes `addUpdateGuard(fn)` so features can block an update while work is in flight. `components/pwa/UpdateBanner.jsx` shows the update bar.
 - `src/utils/memoryBlob.js` copies upload files into memory when a PWA flag is on (WebKit empty-body bug); `api/client.js` uses it for its six multipart uploads.
 - Tests: `src/sw/sw.test.js` (worker loaded in a `node:vm` context), `scripts/build-sw.test.mjs`, `scripts/configure-pwa.test.mjs` run in `npm test`. `npm run test:pwa` builds with `VITE_PWA_DEFAULT=on`, serves `dist/` on port 4175 and drives real Chromium (`tests/pwa/`; install the browser with `npx playwright install chromium`).
+- CI runs the visual suites in the same Playwright image (`mcr.microsoft.com/playwright:v1.62.1-noble`) the Linux snapshots are generated in, so fonts and rendering match.
 - Shell scripts must keep LF line endings (`.gitattributes`); a CRLF entrypoint fails inside the container.
 
 ## Route Table

@@ -51,6 +51,9 @@ const PublicDirectory = lazy(() => import('./pages/PublicDirectory'))
 const CardSystemGallery = import.meta.env.DEV
   ? lazy(() => import('./components/card-system/CardSystemGallery'))
   : null
+const IosGallery = import.meta.env.DEV
+  ? lazy(() => import('./components/ios/IosGallery'))
+  : null
 
 function RouteLoader() {
   return (
@@ -230,6 +233,7 @@ export default function App() {
           <BrowserRouter>
             <Routes>
               {import.meta.env.DEV && <Route path="/__card-system" element={lazyRoute(<CardSystemGallery />)} />}
+              {import.meta.env.DEV && <Route path="/__ios" element={lazyRoute(<IosGallery />)} />}
               <Route path="/login" element={lazyRoute(<Login />)} />
               <Route path="/u" element={<PublicRoutes />}>
                 <Route index element={lazyRoute(<PublicDirectory />)} />
