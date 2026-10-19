@@ -118,17 +118,18 @@ test.describe('read cache', () => {
     state.offline = true
     await page.reload()
     await expect(page.getByTestId('stale-data-label')).toBeVisible()
+    // Open the page while the file server still answers: its code is loaded on demand, and a
+    // failed chunk load makes the app reload itself once, which would destroy the page under test.
+    await page.evaluate(() => {
+      history.pushState({}, '', '/trades')
+      dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await expect(page).toHaveURL(/trades$/)
+    await expect(page.getByRole('heading').first()).toBeVisible()
     await context.setOffline(true)
-    // The device event shows the banner at once; otherwise two failed probes do, a few seconds later.
-    // The page may reload while the connection drops, so the whole step can be repeated.
-    await expect(async () => {
-      await expect(page.getByTestId('offline-banner')).toBeVisible({ timeout: 10000 })
-      await page.evaluate(() => {
-        history.pushState({}, '', '/trades')
-        dispatchEvent(new PopStateEvent('popstate'))
-      })
-      await expect(page.getByTestId('offline-unavailable')).toBeVisible({ timeout: 5000 })
-    }).toPass({ timeout: 40000 })
+    // The device event shows the banner at once; both checks wait for that state, not for a delay.
+    await expect(page.getByTestId('offline-banner')).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('offline-unavailable')).toBeVisible()
     await context.setOffline(false)
   })
 
