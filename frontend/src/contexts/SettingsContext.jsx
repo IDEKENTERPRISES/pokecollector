@@ -3,6 +3,7 @@ import en from '../i18n/en'
 import { priceFieldFromPrimary } from '../utils/prices'
 import { normalizeTcgdexLanguageCsv } from '../utils/tcgdexLanguages'
 import { useAuth } from './AuthContext'
+import { loadSettingsWithCache, readCachedSettings, withRateCache } from '../offline/settingsCache'
 
 const TRANSLATION_LOADERS = {
   de: () => import('../i18n/de'),
@@ -66,15 +67,20 @@ function cacheLanguage(language) {
   }
 }
 
-function initialSettings() {
-  return { ...DEFAULT_SETTINGS, language: readCachedLanguage() || DEFAULT_SETTINGS.language }
+function initialSettings(userId) {
+  const cached = readCachedSettings(userId) || {}
+  return {
+    ...DEFAULT_SETTINGS,
+    ...cached,
+    language: readCachedLanguage() || cached.language || DEFAULT_SETTINGS.language,
+  }
 }
 
 const SettingsContext = createContext(null)
 
 export function SettingsProvider({ children }) {
   const { user, loading: authLoading, multiUser } = useAuth()
-  const [settings, setSettings] = useState(initialSettings)
+  const [settings, setSettings] = useState(() => initialSettings(user?.id))
   const [loaded, setLoaded] = useState(false)
   const [exchangeRate, setExchangeRate] = useState(1.0)
   const [exchangeRateReady, setExchangeRateReady] = useState(true)
@@ -90,17 +96,18 @@ export function SettingsProvider({ children }) {
     setLoaded(false)
     const token = localStorage.getItem('token')
     if (multiUser && !token) {
-      setSettings(initialSettings())
+      setSettings(initialSettings(user?.id))
       setLoaded(true)
       return
     }
 
     const headers = token && multiUser ? { Authorization: `Bearer ${token}` } : {}
-    fetch('/api/settings/', { headers })
+    // Offline, loadSettingsWithCache serves the last good copy for this user.
+    loadSettingsWithCache(user?.id, () => fetch('/api/settings/', { headers })
       .then(r => {
         if (!r.ok) throw new Error('Settings load failed')
         return r.json()
-      })
+      }))
       .then(data => {
         const language = data.language === 'zh' ? 'zh-cn' : data.language
         cacheLanguage(language)
@@ -144,17 +151,16 @@ export function SettingsProvider({ children }) {
     if (authLoading || (multiUser && !token)) return
 
     const fetchExchangeRate = async (from, to, fallback) => {
-      try {
-        const headers = token && multiUser ? { Authorization: `Bearer ${token}` } : {}
+      const headers = token && multiUser ? { Authorization: `Bearer ${token}` } : {}
+      const rate = await withRateCache(user?.id, from, to, async () => {
         const response = await fetch(`/api/settings/exchange-rate?from=${from}&to=${to}`, {
           headers,
         })
         if (!response.ok) throw new Error('Exchange rate lookup failed')
         const data = await response.json()
-        return Number(data.rate) || fallback
-      } catch {
-        return fallback
-      }
+        return Number(data.rate)
+      })
+      return rate ?? fallback
     }
 
     const curr = settings.currency || 'EUR'
