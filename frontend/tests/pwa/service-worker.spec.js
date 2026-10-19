@@ -122,9 +122,13 @@ test('shows an updating screen after Update and offers a manual reload if nothin
   })
   const banner = page.getByTestId('update-banner')
   await expect(banner).toBeVisible()
-  // Class check: the harness does not reliably apply the compiled stylesheet to computed styles.
-  await expect(banner).toHaveClass(/(^| )top-0( |$)/)
-  await expect(banner).not.toHaveClass(/bottom-0/)
+  // Real layout, not class names: index.css makes #root's direct children position: relative,
+  // which once overrode `fixed` and put this banner at the end of the page.
+  expect(await banner.evaluate(el => getComputedStyle(el).position)).toBe('fixed')
+  expect(await banner.evaluate(el => el.parentElement === document.body)).toBe(true)
+  const box = await banner.boundingBox()
+  expect(box.y).toBe(0)
+  expect(box.y + box.height).toBeLessThan(page.viewportSize().height / 2)
 
   // Swallow controllerchange so the page does not reload and the updating screen stays visible.
   await page.evaluate(() => {
@@ -138,6 +142,10 @@ test('shows an updating screen after Update and offers a manual reload if nothin
   await expect(overlay).toBeVisible()
   await expect(overlay).toHaveAttribute('role', 'status')
   await expect(overlay).toHaveAttribute('aria-live', 'polite')
+  // Full screen: covers the viewport whatever the page's scroll height.
+  expect(await overlay.evaluate(el => getComputedStyle(el).position)).toBe('fixed')
+  const cover = await overlay.boundingBox()
+  expect(cover).toEqual({ x: 0, y: 0, width: page.viewportSize().width, height: page.viewportSize().height })
   await expect(overlay.locator('img.pokeball-loader')).toBeVisible()
   await expect(overlay).toContainText('Updating PokéCollector…')
   await expect(overlay).toContainText("Please don't close the app. It will reload on its own.")
