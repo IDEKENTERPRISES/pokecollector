@@ -20,7 +20,7 @@ The app can be added to an iPhone Home Screen (Share, then Add to Home Screen) a
 
 ## Service worker (opt-in)
 
-The service worker is off by default. `PWA_ENABLED=true` on the frontend container turns it on; user-facing behaviour is in [`PWA.md`](PWA.md), the design in `PWA_OFFLINE_DESIGN.md` §6.3.
+The service worker is on by default in the container. `PWA_ENABLED=false` on the frontend container turns it off (kill switch); user-facing behaviour is in [`PWA.md`](PWA.md), the design in `PWA_OFFLINE_DESIGN.md` §6.3.
 
 - `src/sw/sw.js` is the worker: a classic script with no imports and two build-time placeholders (`__BUILD_ID__`, `/*__PRECACHE__*/`) that are valid JavaScript unreplaced. `src/sw/sw.kill.js` is the kill worker.
 - `npm run build` runs `vite build` and then `scripts/build-sw.mjs`, which writes `dist/sw.real.js` and a byte-identical `dist/sw.js`, copies `dist/sw.kill.js`, prints the precache size and fails above 12 MiB. `index.html`, `robots*.txt` and `sw*.js` are never precached; the HTML shell is fetched at install and kept only if every `/assets/*` it references is in the manifest.
