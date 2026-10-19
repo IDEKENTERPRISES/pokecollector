@@ -40,8 +40,8 @@ const matrix = [
   ['1', 'sw=1', '// real worker\n'],
   ['false', 'sw=0', '// kill worker\n'],
   ['off', 'sw=0', '// kill worker\n'],
-  ['', 'sw=0', '// kill worker\n'],
-  ['maybe', 'sw=0', '// kill worker\n'],
+  ['', 'sw=1', '// real worker\n'],
+  ['maybe', 'sw=1', '// real worker\n'],
 ]
 
 for (const [value, flag, worker] of matrix) {
@@ -50,13 +50,35 @@ for (const [value, flag, worker] of matrix) {
     try {
       const result = run(webRoot, { PWA_ENABLED: value })
       assert.equal(metaCount(result.index), 1)
-      assert.ok(result.index.includes(`content="${flag};queue=0" /></head>`), result.index)
+      assert.ok(result.index.includes(`content="${flag};queue=1" /></head>`), result.index)
       assert.equal(result.sw, worker)
     } finally {
       rmSync(webRoot, { recursive: true, force: true })
     }
   })
 }
+
+test('unset env enables both features', () => {
+  const webRoot = setup()
+  try {
+    const result = run(webRoot, {})
+    assert.ok(result.index.includes('content="sw=1;queue=1"'))
+    assert.equal(result.sw, '// real worker\n')
+  } finally {
+    rmSync(webRoot, { recursive: true, force: true })
+  }
+})
+
+test('explicit false disables both features', () => {
+  const webRoot = setup()
+  try {
+    const result = run(webRoot, { PWA_ENABLED: 'false', OFFLINE_QUEUE_ENABLED: 'false' })
+    assert.ok(result.index.includes('content="sw=0;queue=0"'))
+    assert.equal(result.sw, '// kill worker\n')
+  } finally {
+    rmSync(webRoot, { recursive: true, force: true })
+  }
+})
 
 test('OFFLINE_QUEUE_ENABLED is reflected independently', () => {
   const webRoot = setup()
@@ -74,7 +96,7 @@ test('an invalid value warns and uses the default', () => {
     execFileSync('sh', [publicScript], { env: { ...process.env, WEB_ROOT: webRoot, PUBLIC_MODE: '' }, stdio: 'pipe' })
     // The script exits 0 (a non-zero exit would throw here) and falls back to the default.
     execFileSync('sh', [pwaScript], { env: { ...process.env, WEB_ROOT: webRoot, PWA_ENABLED: 'bogus' }, stdio: 'pipe' })
-    assert.ok(readFileSync(resolve(webRoot, 'index.html'), 'utf8').includes('sw=0;queue=0'))
+    assert.ok(readFileSync(resolve(webRoot, 'index.html'), 'utf8').includes('sw=1;queue=1'))
   } finally {
     rmSync(webRoot, { recursive: true, force: true })
   }
@@ -102,7 +124,7 @@ test('re-running after the template reset does not accumulate flags', () => {
     // Running 45- alone twice would accumulate; the entrypoint order (40- first) prevents it.
     const third = run(webRoot, { PWA_ENABLED: 'false' })
     assert.equal(metaCount(third.index), 1)
-    assert.ok(third.index.includes('sw=0;queue=0'))
+    assert.ok(third.index.includes('sw=0;queue=1'))
     assert.equal(third.sw, '// kill worker\n')
   } finally {
     rmSync(webRoot, { recursive: true, force: true })

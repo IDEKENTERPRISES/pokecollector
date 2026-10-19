@@ -15,8 +15,8 @@ flag() {
   esac
 }
 
-sw_enabled="$(flag "${PWA_ENABLED:-}" 0)"            # P11 changes this default to 1
-queue_enabled="$(flag "${OFFLINE_QUEUE_ENABLED:-}" 0)" # P11 changes this default to 1
+sw_enabled="$(flag "${PWA_ENABLED:-}" 1)"            # unset/empty/invalid = on
+queue_enabled="$(flag "${OFFLINE_QUEUE_ENABLED:-}" 1)" # unset/empty/invalid = on
 
 if [ "${sw_enabled}" = 1 ]; then
   cp "${web_root}/sw.real.js" "${web_root}/sw.js"
