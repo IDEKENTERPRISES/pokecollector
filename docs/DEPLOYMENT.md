@@ -68,7 +68,7 @@ nginx sends `Cache-Control: no-cache` for `/sw.js`, `/sw.real.js`, `/sw.kill.js`
 hashed assets. A reverse proxy in front must not cache `/sw.js`; with Nginx Proxy
 Manager turn **Cache Assets** off for the host.
 
-To roll back a bad service worker, set `PWA_ENABLED=false` and recreate the
+To roll back a bad service worker (the kill switch), set `PWA_ENABLED=false` and recreate the
 frontend container: phones replace the worker with a kill worker on their next
 update check. Reverting to the previous image tag also works.
 

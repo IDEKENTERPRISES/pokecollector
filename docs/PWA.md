@@ -32,7 +32,7 @@ Both are environment variables of the **frontend** container, read when it start
 | Variable | Default | Effect |
 |---|---|---|
 | `PWA_ENABLED` | off | `true` serves the real service worker at `/sw.js`; the app caches its own files and can start offline. `false` serves the kill worker, which removes any installed worker. |
-| `OFFLINE_QUEUE_ENABLED` | off | Turns on the upload hardening below, the cached sign-in and the logout protection described next. The offline scan queue itself arrives in later phases. |
+| `OFFLINE_QUEUE_ENABLED` | off | `true` turns on the upload hardening below, the cached sign-in, the logout protection, the sync center and the offline scan queue. Setting it back to `false` stops the queue; items already waiting stay on the device, so turn it on briefly to sync them before disabling. |
 
 Accepted values: `true`, `1`, `yes`, `on`, `false`, `0`, `no`, `off` (any case). An invalid value logs a warning and uses the default.
 
