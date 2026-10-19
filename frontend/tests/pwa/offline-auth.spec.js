@@ -85,6 +85,14 @@ async function expectStorageCleared(page, key) {
 }
 
 // The page may still be navigating right after a logout; retry until a stable document answers.
+// Logout sets window.location, and a slower logout (a server call first) can be followed by a
+// second navigation. Wait until the Login page is loaded and rendered before touching the page.
+async function waitForLoginPage(page) {
+  await page.waitForURL('**/login')
+  await page.waitForLoadState('load')
+  await expect(page.getByRole('heading', { name: 'Login' })).toBeVisible()
+}
+
 async function countItems(page) {
   let count
   await expect(async () => { count = await readCount(page) }).toPass({ timeout: 10000 })
@@ -196,7 +204,7 @@ test.describe('logout guard', () => {
     await logoutOnHome(page).click()
     await expectFourWayDialog(page)
     await dialogButtons(page).keep.click()
-    await page.waitForURL('**/login')
+    await waitForLoginPage(page)
     await expectStorageCleared(page, 'token')
     await expectStorageCleared(page, SNAPSHOT_KEY)
     expect(await countItems(page)).toBe(1)
@@ -211,7 +219,7 @@ test.describe('logout guard', () => {
     await expectFourWayDialog(page)
     expect(await countItems(page)).toBe(1)
     await dialogButtons(page).discard.click()
-    await page.waitForURL('**/login')
+    await waitForLoginPage(page)
     expect(await countItems(page)).toBe(0)
   })
 
@@ -231,7 +239,7 @@ test.describe('logout guard', () => {
   test('without items logout works as before', async ({ page, context }) => {
     await signInAsMisty(page, context)
     await logoutOnHome(page).click()
-    await page.waitForURL('**/login')
+    await waitForLoginPage(page)
     await expect(page.getByRole('button', { name: 'Log out and keep items' })).toHaveCount(0)
     await expectStorageCleared(page, 'token')
   })
