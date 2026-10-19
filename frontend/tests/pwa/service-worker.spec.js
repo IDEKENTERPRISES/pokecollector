@@ -113,6 +113,41 @@ test('shows the update banner and activates the new worker after one reload', as
   expect(state).toEqual({ waiting: false, controlled: true })
 })
 
+test('shows an updating screen after Update and offers a manual reload if nothing reloads', async ({ page }) => {
+  await loadControlled(page)
+  appendFileSync(resolve(dist, 'sw.js'), '\n// byte-different update\n')
+
+  await page.evaluate(async () => {
+    await (await navigator.serviceWorker.getRegistration()).update()
+  })
+  const banner = page.getByTestId('update-banner')
+  await expect(banner).toBeVisible()
+  // Class check: the harness does not reliably apply the compiled stylesheet to computed styles.
+  await expect(banner).toHaveClass(/(^| )top-0( |$)/)
+  await expect(banner).not.toHaveClass(/bottom-0/)
+
+  // Swallow controllerchange so the page does not reload and the updating screen stays visible.
+  await page.evaluate(() => {
+    const add = navigator.serviceWorker.addEventListener.bind(navigator.serviceWorker)
+    navigator.serviceWorker.addEventListener = (type, ...rest) => (type === 'controllerchange' ? undefined : add(type, ...rest))
+  })
+  await page.clock.install()
+  await banner.getByRole('button', { name: 'Update' }).click()
+
+  const overlay = page.getByTestId('update-overlay')
+  await expect(overlay).toBeVisible()
+  await expect(overlay).toHaveAttribute('role', 'status')
+  await expect(overlay).toHaveAttribute('aria-live', 'polite')
+  await expect(overlay.locator('img.pokeball-loader')).toBeVisible()
+  await expect(overlay).toContainText('Updating PokéCollector…')
+  await expect(overlay).toContainText("Please don't close the app. It will reload on its own.")
+  await expect(page.getByTestId('update-banner')).toHaveCount(0)
+  await expect(overlay.getByRole('button', { name: 'Reload now' })).toHaveCount(0)
+
+  await page.clock.fastForward(16000)
+  await expect(overlay.getByRole('button', { name: 'Reload now' })).toBeVisible()
+})
+
 test('kill switch removes the registration and pc-* caches but leaves IndexedDB alone', async ({ page }) => {
   await loadControlled(page)
   await page.evaluate(() => new Promise((resolveDb, reject) => {
