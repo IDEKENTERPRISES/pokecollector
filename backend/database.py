@@ -681,6 +681,21 @@ def _run_migrations(conn):
             CONSTRAINT uq_idempotency_user_key UNIQUE (user_id, key)
         )""",
         "CREATE INDEX IF NOT EXISTS ix_idempotency_keys_expires_at ON idempotency_keys(expires_at)",
+        # PWA P10: Web Push subscriptions for price alerts.
+        """CREATE TABLE IF NOT EXISTS push_subscriptions (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            endpoint TEXT NOT NULL,
+            p256dh VARCHAR(255) NOT NULL,
+            auth VARCHAR(255) NOT NULL,
+            user_agent VARCHAR(255),
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            last_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            last_success_at TIMESTAMP,
+            failure_count INTEGER NOT NULL DEFAULT 0,
+            CONSTRAINT uq_push_subscription_endpoint UNIQUE (endpoint)
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_push_subscriptions_user_id ON push_subscriptions(user_id)",
     ]
     for stmt in migrations:
         try:

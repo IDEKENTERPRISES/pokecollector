@@ -84,7 +84,7 @@ Be kind. Be clear. Assume good intent. Keep feedback constructive.
 - Persistent Deck Builder for 20-, 40-, and 60-card lists, with editable targets, ownership totals, shortage warnings, validation, analytics, and probabilities
 - Explicit actions send missing Planned Binder or Deck copies to the global Wishlist
 - Convert between Planned and physical Binders, import/export Binder CSV files, and populate a physical Binder from an owned set
-- Wishlist with Telegram price alerts and profile-wide Private, Trade matches, or Public visibility
+- Wishlist with Telegram (and optional web push) price alerts and profile-wide Private, Trade matches, or Public visibility
 
 ### 📈 Prices, Portfolio & Analytics
 - Cardmarket EUR pricing and TCGPlayer USD pricing via TCGdex
@@ -350,6 +350,7 @@ If you are already locked out of multi-user mode, set `USER_MODE=single` in the 
 | `PUBLIC_MODE` | Enable SEO meta tags, Open Graph, and allow search engine indexing. Default blocks all crawlers. Recreate the frontend container after changing it. | `false` |
 | `PWA_ENABLED` | Let the frontend save its own files on the device for offline start (needs HTTPS). Enabled by default; set `false` to disable. `false` is also the kill switch: it removes an installed service worker. Recreate the frontend container after changing it. See [docs/PWA.md](docs/PWA.md). | `true` |
 | `OFFLINE_QUEUE_ENABLED` | Offline scan queue, cached sign-in, sync center and iOS photo-upload hardening. Enabled by default; set `false` to disable (waiting items stay on the device). | `true` |
+| `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Optional web push (price alerts). Both are optional and are not passed through by the stock `docker-compose.yml`: the signing key is created in `./data/auth` on first use. See [docs/PWA.md](docs/PWA.md). | *(unset)* |
 | `POKECOLLECTOR_VERSION` | Optional frontend and backend image-tag override for controlled deployments and rollbacks. Leave unset to use the exact release bundled with `docker-compose.yml`; `latest` is available only when deliberately requested. | Bundled release version |
 | `CORS_ORIGINS` | Comma-separated list of allowed origins for CORS. If empty, allows all origins. Set to your domain for production (e.g. `https://pokecollector.romerg.de`). | *(all)* |
 | `PRE_UPGRADE_BACKUP_ENABLED` | Create an automatic SQL backup before startup migrations when an existing install starts on a new app version | `true` |
