@@ -141,9 +141,7 @@ test.describe('sync center', () => {
     await openApp(page)
     await seed(page, { state: 'pending' })
     await page.reload()
-    await expect(indicator(page)).toHaveAttribute('data-state', 'waiting')
-    await expect(page.getByTestId('offline-banner')).toHaveCount(0)
-
+    // The reachability monitor probes on its own, so the banner may already be up.
     await indicator(page).click()
     const syncNow = page.getByTestId('sync-sheet').getByRole('button', { name: 'Sync now' })
     // A click while the startup sync is still running is skipped, so retry until the second failed probe lands.

@@ -72,3 +72,8 @@ export function uploadTimeoutMs(bytes) {
 export function attemptTimeoutMs(item) {
   return item.type === ITEM_TYPES.SCAN_UPLOAD ? uploadTimeoutMs(item.photoBytes) : JSON_TIMEOUT_MS
 }
+
+/** Reachability monitor (independent of the queue): short probes so the banner shows quickly. */
+export const MONITOR_PROBE_TIMEOUT_MS = 3000
+export const MONITOR_CONFIRM_DELAY_MS = 1000
+export const MONITOR_MAX_RETRY_MS = 10000
