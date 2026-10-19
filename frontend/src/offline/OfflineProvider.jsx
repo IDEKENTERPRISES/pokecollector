@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { useSettings } from '../contexts/SettingsContext'
 import EvictedNotice from '../components/sync/EvictedNotice'
 import LogoutGuardDialog from '../components/sync/LogoutGuardDialog'
+import { SavedAtContext } from '../components/sync/StaleDataLabel'
 import { readPwaFlags } from '../pwa/flags'
 import { getCapabilities } from './capabilities'
 import { REPLAY_TICK_MS } from './constants'
@@ -12,17 +13,32 @@ import { applyDebugParams } from './debug'
 import { checkCanary, initCanary, requestPersistence } from './durability'
 import { openOutboxDb } from './outbox/db.js'
 import { createOutbox } from './outbox/index.js'
+import { persist, purge, purgeOthers, restore } from './readCache'
 import { createSyncReporter } from './syncToasts'
 import { OutboxContext } from './useOutbox'
 
 const ignore = () => {}
+const RESTORE_WAIT_MS = 1500
 
 /**
  * The logout guard's decision loop (D7, A6). `ask()` resolves with 'sync' | 'keep' | 'discard' |
  * 'cancel'; `setBusy(true)` shows the progress label while a sync runs; `close()` hides the dialog.
- * Resolves true when logging out may proceed.
+ * Resolves true when logging out may proceed. `clearCache()` (the read cache, P8) runs on every
+ * path that proceeds, including "nothing unsynced", and never blocks the logout.
  */
-export async function runLogoutGuard({ outbox, ask, setBusy, close }) {
+export async function runLogoutGuard({ outbox, ask, setBusy, close, clearCache = ignore }) {
+  const proceed = await decideLogout({ outbox, ask, setBusy, close })
+  if (proceed) {
+    try {
+      await clearCache()
+    } catch {
+      // best effort: a failed purge must not trap the user in the app
+    }
+  }
+  return proceed
+}
+
+async function decideLogout({ outbox, ask, setBusy, close }) {
   try {
     await outbox.start()
   } catch {
@@ -77,7 +93,11 @@ export function OfflineProvider({ children }) {
   const [outbox, setOutbox] = useState(null)
   const [dialog, setDialog] = useState(null)
   const [evicted, setEvicted] = useState(false)
+  const [savedAt, setSavedAt] = useState(null)
+  const [restoreDone, setRestoreDone] = useState(false)
   const resolveRef = useRef(null)
+  const persisterRef = useRef(null)
+  const restoreStartedRef = useRef(false)
   const userIdRef = useRef(null)
   userIdRef.current = typeof user?.id === 'number' ? user.id : null
 
@@ -116,6 +136,45 @@ export function OfflineProvider({ children }) {
     if (!outbox || !active) return
     outbox.start().then(() => outbox.syncNow('login')).catch(ignore)
   }, [outbox, active, userId])
+
+  // Read cache (P8): other users' saved data goes as soon as the signed-in user is known.
+  useEffect(() => {
+    if (enabled && userId !== null) purgeOthers({ origin: window.location.origin, keepUserId: userId }).catch(ignore)
+  }, [enabled, userId])
+
+  // A degraded start puts the saved data back before protected routes mount (or after 1.5 s).
+  useEffect(() => {
+    if (!enabled || status !== 'degraded' || userId === null || restoreStartedRef.current) return
+    restoreStartedRef.current = true
+    const timer = window.setTimeout(() => setRestoreDone(true), RESTORE_WAIT_MS)
+    restore(queryClient, { origin: window.location.origin, userId })
+      .then(saved => { if (saved) setSavedAt(saved) })
+      .catch(ignore)
+      .finally(() => {
+        window.clearTimeout(timer)
+        setRestoreDone(true)
+      })
+  }, [enabled, status, userId, queryClient])
+
+  // The server answered again: the pages hold fresh data, so the "saved data" label goes.
+  useEffect(() => {
+    if (status !== 'ready') return
+    setSavedAt(null)
+    setRestoreDone(true) // a session that started online never waits for a restore
+  }, [status])
+
+  // Saves allow-listed query results while a user is signed in. It starts after a degraded
+  // start's restore so a half-empty cache never replaces the saved record.
+  const persistReady = status === 'ready' || restoreDone
+  useEffect(() => {
+    if (!enabled || !active || !persistReady) return undefined
+    const persister = persist(queryClient, { origin: window.location.origin, userId })
+    persisterRef.current = persister
+    return () => {
+      persister.stop()
+      if (persisterRef.current === persister) persisterRef.current = null
+    }
+  }, [enabled, active, persistReady, userId, queryClient])
 
   // Storage protection (D12): persist() after the first enqueue and on every start while items
   // wait, and notice when the browser removed the database behind our back.
@@ -187,7 +246,13 @@ export function OfflineProvider({ children }) {
       resolveRef.current = null
       setDialog(null)
     }
-    const guard = () => runLogoutGuard({ outbox, ask, setBusy: busy => setDialog({ busy }), close })
+    // Stop the writer first so a pending save cannot bring the data back after the purge.
+    const clearCache = async () => {
+      if (userIdRef.current === null) return
+      await persisterRef.current?.stop()
+      await purge({ origin: window.location.origin, userId: userIdRef.current })
+    }
+    const guard = () => runLogoutGuard({ outbox, ask, setBusy: busy => setDialog({ busy }), close, clearCache })
     setLogoutGuard(guard)
     return () => {
       setLogoutGuard(null)
@@ -200,10 +265,13 @@ export function OfflineProvider({ children }) {
   if (!enabled) return children
 
   const choose = choice => resolveRef.current?.(choice)
+  const gated = status === 'degraded' && userId !== null && !restoreDone
 
   return (
     <OutboxContext.Provider value={outbox}>
-      {children}
+      <SavedAtContext.Provider value={savedAt}>
+        {gated ? null : children}
+      </SavedAtContext.Provider>
       <EvictedNotice isOpen={evicted} onClose={() => setEvicted(false)} />
       <LogoutGuardDialog
         isOpen={Boolean(dialog)}

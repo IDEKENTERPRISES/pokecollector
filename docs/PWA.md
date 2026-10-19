@@ -62,6 +62,16 @@ L2 and L3 do not depend on `/sw.js`, so they also work when a proxy cached a sta
 
 Safari on iOS has a bug where a photo chosen from the library can upload as an empty file. When `PWA_ENABLED` or `OFFLINE_QUEUE_ENABLED` is on, uploads (scanner photos, collection card photos, CSV and backup restore) are first copied into memory (files up to 8 MiB) or re-sliced (larger files) with the original filename kept. If a photo still arrives empty the server answers with an explicit error instead of saving it. With both flags off the upload code behaves exactly as before.
 
+## Push notifications for price alerts
+
+Wishlist price alerts can also arrive as a notification, next to Telegram.
+
+1. Serve the app over HTTPS and set `PWA_ENABLED=true` (push needs the service worker).
+2. On iPhone, install the app first: Share, then **Add to Home Screen**, and open it from the Home Screen icon. Safari tabs cannot receive push; Settings then shows a hint instead of buttons.
+3. Open Settings, **Notifications**, and tap **Enable on this device**, then allow notifications. **Send test notification** checks that it works.
+
+Each device is enabled separately. If notifications stop, tap **Disable** and **Enable** again. A subscription the phone has dropped is removed from the server automatically the next time it fails. The server keeps its signing key in `./data/auth` (see [DEPLOYMENT.md](DEPLOYMENT.md)); losing it only means turning notifications on again. Details: [BACKEND.md](BACKEND.md#web-push).
+
 ## Opening the app offline (cached sign-in)
 
 With `OFFLINE_QUEUE_ENABLED` on, the app remembers who was signed in (id, name, role, avatar; never the password or token) in this browser for up to 90 days. If the server cannot be reached when the app starts, it opens in a *degraded* state from that memory instead of the "Cannot reach PokéCollector" screen. The remembered user is only for display; the server checks every request. The app keeps retrying in the background and switches to normal as soon as the server answers. Without a remembered sign-in (first visit, after logout, expired, or a pending password change) the connection screen shows as before.
@@ -84,11 +94,21 @@ With `OFFLINE_QUEUE_ENABLED` on, anything that waits on this device is visible:
 - A small button at the top right shows the state: *Offline mode*, *Waiting to sync*, *Syncing…* or *Needs attention*, with a count. It is hidden when nothing waits and the server answers. Tap it to open the sheet.
 - The sheet lists each waiting item with its state and age. **Retry** puts a failed or blocked item back in line, **Discard** removes it after a confirmation (it has not reached the server and cannot be recovered). **Sync now** sends everything immediately, even with **Automatic sync** switched off; the switch only stops the background attempts.
 - A banner appears when the server could not be reached twice in a row, or when the device says it is offline. It is based on actually asking the server (`/api/health`), not on the phone's own online flag, and it disappears after the first successful answer. While it shows, pages that need the server (anything except Home, Dashboard, Collection, Wishlist, Sets, Binders, Search and the sync center) show "This page isn't available offline." instead.
-- **/offline** is the full sync center: connection state, server version, the same item list, storage use, what this browser supports (HTTPS, service worker, storage, installed, push), the iPhone install hint and **Reset offline app data**. Reset removes cached app files and saved pages and keeps waiting items.
+- **/offline** is the full sync center: connection state, server version, the same item list, storage use, what this browser supports (HTTPS, service worker, storage, installed, push), the iPhone install hint and **Reset offline app data**. Reset removes cached app files and the saved copies of your data and keeps waiting items.
 
 Items waiting here exist only on this device until they reach the server. The app asks the browser to protect its storage (`navigator.storage.persist()`), shows how much space is used, and keeps a marker so it can tell you when the browser deleted its offline data anyway ("Some offline data was removed by the browser…"). In a Safari tab (not the Home Screen app) it warns once an item is 3 days old, and more strongly after 7 days, because Safari can delete data of websites that were not opened for about a week. Sync items in the browser before adding the app to the Home Screen: the installed app has its own storage.
 
-Not shown yet: *Edit* on queued adds (arrives with the collection/wishlist phase) and anything about cached read-only pages (later phase).
+Not shown yet: *Edit* on queued adds (arrives with the collection/wishlist phase).
+
+## What you can see offline
+
+With `OFFLINE_QUEUE_ENABLED` on, the app keeps a copy of the data you have already looked at, so a degraded start (server unreachable) shows it instead of empty pages. Above the page it says *Showing saved data from <time ago>* while the server cannot be reached.
+
+- **Which pages:** Collection, Wishlist, Dashboard, Sets and their checklists, Binders and their cards, the scanner configuration, printing tags and the investment tracker. Only data you actually opened is saved, after a successful load (at most every 5 seconds). Saved pages you do not open again are kept until they are 30 days old.
+- **Limits:** a single page of data over 5 MiB is skipped; the total stays under 20 MiB (the oldest data goes first); a copy older than 30 days, or saved by a different app version, is ignored.
+- **Per user:** each account on this device and server address has its own copy, in a separate browser database from the waiting items. Signing in as someone else deletes every other account's copy.
+- **Cleared at logout:** logging out (whatever you choose about waiting items; cancelling keeps you signed in) deletes your copy. **Reset offline app data** on /offline deletes every copy.
+- **Read-only:** you can look, but changes still need the server. Pages outside this list say "This page isn't available offline."
 
 ## Scanning without a connection
 
@@ -106,11 +126,11 @@ Limits: 15 MB per photo, 12 photos or about 10 MB per waiting item (a bigger bat
 - Plain `http://` addresses never get a service worker (see HTTPS above).
 - iOS can remove stored website data after a long period of non-use; the app then behaves like a first visit.
 - Safari Lockdown Mode disables service workers. The app keeps working online.
-- Offline start shows the app shell; data is shown only while the server is reachable until the later caching phases ship.
+- Offline start shows the app shell; data you viewed earlier is shown from a saved copy (see What you can see offline); anything you never opened is not available.
 
 ## Privacy
 
-The service worker caches no user data. It stores the app's public static files and public card images only. Per-user information stays in the places it already lived in.
+The service worker caches no user data. It stores the app's public static files and public card images only. The saved copy of your viewed data (above) is kept by the app itself, per user, and deleted at logout. Per-user information stays in the places it already lived in.
 
 ## For developers
 

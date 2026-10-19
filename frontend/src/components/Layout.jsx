@@ -3,6 +3,7 @@ import AppNav from './AppNav'
 import OfflineUnavailable from './OfflineUnavailable'
 import InstallHint from './pwa/InstallHint'
 import OfflineBanner from './sync/OfflineBanner'
+import StaleDataLabel from './sync/StaleDataLabel'
 import SyncIndicator from './sync/SyncIndicator'
 import { useReleaseManualHistoryScrollRestoration } from '../hooks/useListScrollRestoration'
 import { isOfflineRoute } from '../offline/routes'
@@ -21,7 +22,12 @@ export default function Layout() {
       {!isHome && <AppNav />}
       <SyncIndicator belowNav={!isHome} />
       <main className={`flex-1 ${!isHome ? 'w-full px-6 pb-8 sm:px-8 lg:px-10 xl:px-12' : ''}`}>
-        {showUnavailable ? <OfflineUnavailable /> : <Outlet />}
+        {showUnavailable ? <OfflineUnavailable /> : (
+          <>
+            <StaleDataLabel />
+            <Outlet />
+          </>
+        )}
         {isHome && <InstallHint />}
       </main>
     </div>
