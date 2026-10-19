@@ -20,7 +20,8 @@ export default function Layout() {
     <div className="min-h-dvh flex flex-col bg-bg overflow-x-hidden">
       <OfflineBanner />
       {!isHome && <AppNav />}
-      <SyncIndicator belowNav={!isHome} />
+      {/* While the banner is up the indicator sits on it (the banner reserves room at its right). */}
+      <SyncIndicator belowNav={!isHome && !offline} />
       <main className={`flex-1 ${!isHome ? 'w-full px-6 pb-8 sm:px-8 lg:px-10 xl:px-12' : ''}`}>
         {showUnavailable ? <OfflineUnavailable /> : (
           <>

@@ -7,6 +7,7 @@ import { openOutboxDb } from './db.js'
 import { createEvents } from './events.js'
 import { createLease } from './lease.js'
 import { createReachability, probe as defaultProbe } from './probe.js'
+import { createReachabilityMonitor } from './monitor.js'
 import { createReplayer } from './replay.js'
 import { createStore, OutboxError } from './store.js'
 import { collectionAdd } from './ops/collectionAdd.js'
@@ -56,10 +57,20 @@ export function createOutbox({
     : null,
   storageManager = globalThis.navigator?.storage ?? null,
 } = {}) {
+  const enabled = () => flags?.queue !== false
   const getCtx = typeof ctx === 'function' ? ctx : () => ctx
   const tabId = uuidv4()
   const listeners = new Set()
   const reachability = createReachability({ onlineManager })
+
+  const monitor = createReachabilityMonitor({
+    reachability,
+    probe: options => probeImpl({ fetchImpl: fetchImpl || globalThis.fetch?.bind(globalThis), now, ...options }),
+    isEnabled: () => enabled(),
+    isReplayRunning: () => Boolean(replayer?.getEngineState().running),
+    notify: () => { refresh().catch(() => {}) },
+    now,
+  })
 
   let db = null
   let store = null
@@ -78,7 +89,6 @@ export function createOutbox({
     otherAccountCount: 0,
   }
 
-  const enabled = () => flags?.queue !== false
 
   function emitLocal() {
     listeners.forEach(cb => {
@@ -149,7 +159,7 @@ export function createOutbox({
           ...(sleep ? { sleep } : {}),
           queryClient,
           ...(getToken ? { getToken } : {}),
-          probeImpl,
+          probeImpl: monitor.wrapProbe(probeImpl),
           origin: getCtx()?.origin,
           notify: () => { changed() },
         })
@@ -174,10 +184,12 @@ export function createOutbox({
       stopped = false
       await ready()
       await refresh()
+      monitor.start()
     },
 
     stop() {
       stopped = true
+      monitor.stop()
       replayer?.stop()
       unsubscribeEvents?.()
       events.close()
@@ -189,6 +201,11 @@ export function createOutbox({
       db = null
       store = null
       starting = null
+    },
+
+    /** The caller already knows the server is unreachable (auth startup gave up). */
+    noteUnreachable() {
+      monitor.assumeUnreachable()
     },
 
     /** Persist-then-send entry point for every operation (§6.2.12). */
