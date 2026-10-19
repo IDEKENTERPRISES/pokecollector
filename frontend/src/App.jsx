@@ -92,19 +92,19 @@ function ForcePasswordChangeScreen() {
           <p className="text-sm text-text-muted">{t('settings.users.forcePasswordChange')}</p>
         </div>
         <input
-type="text"
-name="username"
-id="force-change-username"
-value={user?.username || ''}
-onChange={() => {}}
-autoComplete="username"
-autoCapitalize="none"
-autoCorrect="off"
-spellCheck={false}
-tabIndex={-1}
-aria-label={t('auth.username')}
-className="sr-only"
-/>
+          type="text"
+          name="username"
+          id="force-change-username"
+          value={user?.username || ''}
+          onChange={() => {}}
+          autoComplete="username"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          tabIndex={-1}
+          aria-label={t('auth.username')}
+          className="sr-only"
+        />
         <div>
           <label htmlFor="force-change-new-password" className="text-xs text-text-secondary mb-1 block">{t('settings.users.newPassword')}</label>
           <input

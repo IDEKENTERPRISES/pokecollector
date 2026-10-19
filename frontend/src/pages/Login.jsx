@@ -84,19 +84,19 @@ export default function Login() {
               </div>
 
               <input
-type="text"
-name="username"
-id="login-username-saved"
-value={username}
-onChange={(e) => setUsername(e.target.value)}
-autoComplete="username"
-autoCapitalize="none"
-autoCorrect="off"
-spellCheck={false}
-tabIndex={-1}
-aria-label={t('auth.username')}
-className="sr-only"
-/>
+                type="text"
+                name="username"
+                id="login-username-saved"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                tabIndex={-1}
+                aria-label={t('auth.username')}
+                className="sr-only"
+              />
 
               <div>
                 <label htmlFor="login-password-saved" className="mb-1 block text-xs text-text-secondary">{t('auth.password')}</label>
