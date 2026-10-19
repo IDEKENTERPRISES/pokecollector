@@ -106,3 +106,26 @@ describe('withRateCache', () => {
     await expect(withRateCache(1, 'EUR', 'GBP', offline, { storage: memoryStorage() })).resolves.toBeNull()
   })
 })
+
+describe('hanging requests (offline iOS)', () => {
+  it('uses cached GBP settings when the fetch never settles', async () => {
+    const storage = memoryStorage()
+    writeCachedSettings(1, gbp, { storage })
+    const hang = () => new Promise(() => {})
+    await expect(loadSettingsWithCache(1, hang, { storage, timeoutMs: 20 })).resolves.toEqual(gbp)
+  })
+
+  it('uses the cached rate when the fetch never settles, and aborts it', async () => {
+    const storage = memoryStorage()
+    writeCachedRate(1, 'EUR', 'GBP', 0.85, { storage })
+    let aborted = false
+    const hang = signal => new Promise(() => { signal.addEventListener('abort', () => { aborted = true }) })
+    await expect(withRateCache(1, 'EUR', 'GBP', hang, { storage, timeoutMs: 20 })).resolves.toBe(0.85)
+    expect(aborted).toBe(true)
+  })
+
+  it('rethrows a timeout when nothing is cached', async () => {
+    const hang = () => new Promise(() => {})
+    await expect(loadSettingsWithCache(1, hang, { storage: memoryStorage(), timeoutMs: 20 })).rejects.toThrow('timed out')
+  })
+})

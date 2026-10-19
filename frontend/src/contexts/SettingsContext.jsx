@@ -3,7 +3,7 @@ import en from '../i18n/en'
 import { priceFieldFromPrimary } from '../utils/prices'
 import { normalizeTcgdexLanguageCsv } from '../utils/tcgdexLanguages'
 import { useAuth } from './AuthContext'
-import { loadSettingsWithCache, readCachedSettings, withRateCache } from '../offline/settingsCache'
+import { loadSettingsWithCache, readCachedRate, readCachedSettings, withRateCache } from '../offline/settingsCache'
 
 const TRANSLATION_LOADERS = {
   de: () => import('../i18n/de'),
@@ -102,8 +102,18 @@ export function SettingsProvider({ children }) {
     }
 
     const headers = token && multiUser ? { Authorization: `Bearer ${token}` } : {}
-    // Offline, loadSettingsWithCache serves the last good copy for this user.
-    loadSettingsWithCache(user?.id, () => fetch('/api/settings/', { headers })
+    // Stale-while-revalidate: show this user's cached settings now (the user is only known
+    // here, not at mount), then let the network copy replace them. A hanging offline request
+    // times out and loadSettingsWithCache falls back to the same cache.
+    const cached = readCachedSettings(user?.id)
+    if (cached) {
+      setSettings(prev => ({
+        ...prev,
+        ...cached,
+        language: readCachedLanguage() || cached.language || prev.language,
+      }))
+    }
+    loadSettingsWithCache(user?.id, signal => fetch('/api/settings/', { headers, signal })
       .then(r => {
         if (!r.ok) throw new Error('Settings load failed')
         return r.json()
@@ -152,9 +162,10 @@ export function SettingsProvider({ children }) {
 
     const fetchExchangeRate = async (from, to, fallback) => {
       const headers = token && multiUser ? { Authorization: `Bearer ${token}` } : {}
-      const rate = await withRateCache(user?.id, from, to, async () => {
+      const rate = await withRateCache(user?.id, from, to, async signal => {
         const response = await fetch(`/api/settings/exchange-rate?from=${from}&to=${to}`, {
           headers,
+          signal,
         })
         if (!response.ok) throw new Error('Exchange rate lookup failed')
         const data = await response.json()
@@ -166,9 +177,11 @@ export function SettingsProvider({ children }) {
     const curr = settings.currency || 'EUR'
     let cancelled = false
     if (curr === 'USD') {
-      setExchangeRateReady(false)
-      setExchangeRateCurrency(null)
-      setExchangeRate(1.1)
+      // A cached rate is applied at once (ready); the network refresh replaces it.
+      const cachedRate = readCachedRate(user?.id, 'EUR', 'USD')?.rate
+      setExchangeRateReady(Boolean(cachedRate))
+      setExchangeRateCurrency(cachedRate ? 'USD' : null)
+      setExchangeRate(cachedRate || 1.1)
       fetchExchangeRate('EUR', 'USD', 1.1).then(rate => {
         if (!cancelled) {
           setExchangeRate(rate)
@@ -180,6 +193,8 @@ export function SettingsProvider({ children }) {
       setExchangeRateReady(true)
       setExchangeRateCurrency('EUR')
       setExchangeRate(1.0)
+      const cachedUsd = readCachedRate(user?.id, 'USD', 'EUR')?.rate
+      if (cachedUsd) setUsdToEurRate(cachedUsd)
       fetchExchangeRate('USD', 'EUR', 0.91).then(rate => {
         if (!cancelled) setUsdToEurRate(rate)
       })

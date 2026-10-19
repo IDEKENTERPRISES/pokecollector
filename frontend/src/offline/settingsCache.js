@@ -61,6 +61,25 @@ export function readCachedSettings(userId, { storage = getStorage() } = {}) {
   return settings && typeof settings === 'object' ? settings : null
 }
 
+export const FETCH_TIMEOUT_MS = 5_000
+
+/**
+ * Run `task(signal)` but give up after `timeoutMs` (default 5 s): offline iOS requests
+ * can hang instead of rejecting. The signal is aborted on timeout so a real fetch stops too.
+ */
+export function withTimeout(task, { timeoutMs = FETCH_TIMEOUT_MS } = {}) {
+  const controller = new AbortController()
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort()
+      reject(new Error('timed out'))
+    }, timeoutMs)
+  })
+  return Promise.race([Promise.resolve().then(() => task(controller.signal)), timeout])
+    .finally(() => clearTimeout(timer))
+}
+
 function pairKey(from, to) {
   return `${from}>${to}`
 }
@@ -80,14 +99,14 @@ export function readCachedRate(userId, from, to, { storage = getStorage() } = {}
 }
 
 /**
- * Wrap a rate fetcher. `fetcher()` resolves to a rate number, or `null`/throws on failure.
+ * Wrap a rate fetcher. `fetcher(signal)` (pass `signal` to fetch) resolves to a rate number, or `null`/throws on failure.
  * Success is cached; failure returns the cached rate for the pair. Never throws:
  * resolves to a number, or `null` when there is neither a fresh nor a cached rate
  * (callers apply their own fallback, e.g. `(await withRateCache(...)) ?? fallback`).
  */
 export async function withRateCache(userId, from, to, fetcher, options) {
   try {
-    const rate = Number(await fetcher())
+    const rate = Number(await withTimeout(fetcher, options))
     if (Number.isFinite(rate) && rate > 0) {
       writeCachedRate(userId, from, to, rate, options)
       return rate
@@ -107,12 +126,12 @@ export function clearSettingsCache({ storage = getStorage() } = {}) {
 }
 
 /**
- * Run `fetchSettings()` (resolves to the settings object, rejects on failure). Success is
+ * Run `fetchSettings(signal)` (resolves to the settings object, rejects on failure). Success is
  * cached; failure resolves to the cached copy when there is one and rethrows otherwise.
  */
 export async function loadSettingsWithCache(userId, fetchSettings, options) {
   try {
-    const data = await fetchSettings()
+    const data = await withTimeout(fetchSettings, options)
     writeCachedSettings(userId, data, options)
     return data
   } catch (err) {
