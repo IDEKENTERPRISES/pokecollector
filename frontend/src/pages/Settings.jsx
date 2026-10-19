@@ -1859,8 +1859,8 @@ function UsersTab({ t, queryClient }) {
         <SectionHeader title={t('settings.users.changePassword')} />
         <SettingsCard>
           <div className="px-4 py-3 space-y-3">
-            <input type="password" placeholder={t('settings.users.currentPassword')} value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} className="input w-full" />
-            <input type="password" placeholder={t('settings.users.newPassword')} value={newPw} onChange={(e) => setNewPw(e.target.value)} className="input w-full" />
+            <input type="password" name="current-password" id="change-current-password" autoComplete="current-password" aria-label={t('settings.users.currentPassword')} placeholder={t('settings.users.currentPassword')} value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} className="input w-full" />
+            <input type="password" name="new-password" id="change-new-password" autoComplete="new-password" aria-label={t('settings.users.newPassword')} placeholder={t('settings.users.newPassword')} value={newPw} onChange={(e) => setNewPw(e.target.value)} className="input w-full" />
             <button onClick={() => changePwMut.mutate({ current_password: currentPw, new_password: newPw })} disabled={!currentPw || !newPw || changePwMut.isPending} className="btn-primary text-sm">
               {t('settings.users.changePassword')}
             </button>
@@ -1878,11 +1878,11 @@ function UsersTab({ t, queryClient }) {
         <form onSubmit={handleSubmit} className="space-y-4 p-4">
           <div>
             <label className="text-xs text-text-secondary mb-1 block">{t('settings.users.username')}</label>
-            <input type="text" value={formUsername} onChange={(e) => setFormUsername(e.target.value)} className="input w-full" required />
+            <input type="text" name="new-user-username" id="user-form-username" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={formUsername} onChange={(e) => setFormUsername(e.target.value)} className="input w-full" required />
           </div>
           <div>
             <label className="text-xs text-text-secondary mb-1 block">{t('settings.users.password')}{editingUser && ' (leave blank to keep)'}</label>
-            <input type="password" value={formPassword} onChange={(e) => setFormPassword(e.target.value)} className="input w-full" {...(!editingUser && { required: true })} />
+            <input type="password" name="new-user-password" id="user-form-password" autoComplete="new-password" value={formPassword} onChange={(e) => setFormPassword(e.target.value)} className="input w-full" {...(!editingUser && { required: true })} />
           </div>
           <div>
             <label className="text-xs text-text-secondary mb-1 block">{t('settings.users.role')}</label>

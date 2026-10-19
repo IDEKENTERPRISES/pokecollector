@@ -134,8 +134,12 @@ export function OfflineProvider({ children }) {
   // Start once a user is known; sync when the signed-in user changes (A4).
   useEffect(() => {
     if (!outbox || !active) return
-    outbox.start().then(() => outbox.syncNow('login')).catch(ignore)
-  }, [outbox, active, userId])
+    outbox.start().then(() => {
+      // The startup auth check gave up: no need to wait for two probes to show the banner.
+      if (status === 'degraded') outbox.noteUnreachable()
+      return outbox.syncNow('login')
+    }).catch(ignore)
+  }, [outbox, active, userId, status])
 
   // Read cache (P8): other users' saved data goes as soon as the signed-in user is known.
   useEffect(() => {

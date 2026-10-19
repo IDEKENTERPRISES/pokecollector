@@ -53,7 +53,7 @@ describe('createOutbox', () => {
   it('exposes the surface of design §6.2.12', () => {
     const outbox = make()
     expect(Object.keys(outbox).sort()).toEqual([
-      'discard', 'discardAllForUser', 'editPending', 'enqueue', 'getSnapshot', 'retry', 'sendNow',
+      'discard', 'discardAllForUser', 'editPending', 'enqueue', 'getSnapshot', 'noteUnreachable', 'retry', 'sendNow',
       'setAutoSync', 'start', 'stop', 'storageInfo', 'subscribe', 'syncNow',
     ])
   })

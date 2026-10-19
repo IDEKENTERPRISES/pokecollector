@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { getAuthMode, getMe, logoutSession } from '../api/client'
 import { authRetryDelay, loadAuthState } from './authBootstrap'
+import { clearSettingsCache } from '../offline/settingsCache'
 import { clearAuthSnapshot, readAuthSnapshot, writeAuthSnapshot } from '../offline/authSnapshot'
 import { readPwaFlags } from '../pwa/flags'
 
@@ -44,7 +45,10 @@ export function AuthProvider({ children }) {
 
         if (result.clearSession || !result.user) {
           localStorage.removeItem('user')
-          if (result.clearSession) clearAuthSnapshot()
+          if (result.clearSession) {
+            clearAuthSnapshot()
+            clearSettingsCache()
+          }
         } else {
           localStorage.setItem('user', JSON.stringify(result.user))
           writeAuthSnapshot({ multiUser: result.multiUser, locked: result.modeLocked, user: result.user })
@@ -115,6 +119,7 @@ export function AuthProvider({ children }) {
       localStorage.removeItem('token')
       localStorage.removeItem('user')
       clearAuthSnapshot()
+      clearSettingsCache()
       setUser(null)
       // Force full page reload to clear all cached data (React Query, etc.)
       // Prevents settings/data from previous user session leaking

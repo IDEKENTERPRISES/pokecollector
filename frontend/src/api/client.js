@@ -2,6 +2,7 @@ import axios from 'axios'
 import { isPublicSharePath } from '../utils/publicRoutes'
 import { prepareUploadPart } from '../utils/memoryBlob'
 import { readPwaFlags } from '../pwa/flags'
+import { notifyNetworkFailure } from '../offline/networkFailure'
 import {
   scannerRecognitionRequestTimeoutMs,
   scannerTestRequestTimeoutMs,
@@ -38,6 +39,8 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // No response at all (network error or timeout): let the reachability monitor check.
+    if (!error.response && !axios.isCancel(error)) notifyNetworkFailure()
     if (error.response?.status === 401 && !error.config?.preserveSessionOnUnauthorized) {
       const token = localStorage.getItem('token')
       localStorage.removeItem('token')
