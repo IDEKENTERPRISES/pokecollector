@@ -27,12 +27,12 @@ The service worker script must always be fetched fresh, otherwise updates and th
 
 ## The two flags
 
-Both are environment variables of the **frontend** container, read when it starts. Recreate the container after changing them (`docker compose up -d`). Empty means the default, which is off.
+Both are environment variables of the **frontend** container, read when it starts. Recreate the container after changing them (`docker compose up -d`). Unset or empty means the default, which is **on**: both features are enabled by default. Set `PWA_ENABLED=false` / `OFFLINE_QUEUE_ENABLED=false` to disable.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `PWA_ENABLED` | off | `true` serves the real service worker at `/sw.js`; the app caches its own files and can start offline. `false` serves the kill worker, which removes any installed worker. |
-| `OFFLINE_QUEUE_ENABLED` | off | Turns on the upload hardening below, the cached sign-in and the logout protection described next. The offline scan queue itself arrives in later phases. |
+| `PWA_ENABLED` | on | `true` (default) serves the real service worker at `/sw.js`; the app caches its own files and can start offline. `false` serves the kill worker, which removes any installed worker. |
+| `OFFLINE_QUEUE_ENABLED` | on | `true` (default) turns on the upload hardening below, the cached sign-in, the logout protection, the sync center and the offline scan queue. `false` stops the queue; items already waiting stay on the device, so turn it on briefly to sync them before disabling. |
 
 Accepted values: `true`, `1`, `yes`, `on`, `false`, `0`, `no`, `off` (any case). An invalid value logs a warning and uses the default.
 
