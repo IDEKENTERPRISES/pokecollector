@@ -3,6 +3,8 @@
 > **Status: design document. Nothing in it is implemented yet.** As each phase ships, current behaviour is documented in `docs/FRONTEND.md` and `docs/PWA.md` (see `CONTRIBUTING.md`: implementation briefs stay clearly labelled). This file stays as the rationale.
 >
 > Written 2026-10-19 against `origin/deploy` @ `2333043`, which is also where `feature/ios-ui` was cut. This is fork-only work on `IDEKENTERPRISES/pokecollector`. It is not offered upstream as is.
+>
+> The owner approved it on 2026-10-19 after two rounds of [mockups](https://claude.ai/artifact/FVYGUzcRSuEeLZshZgWJAS). Version 2 added the Pokémon look (OD-E) and sets grouped by series (OD-F).
 
 **Contents:** 0 Owner decisions · 1 Summary · 2 Goals, principles, non-goals · 3 Verified code facts · 4 Information architecture and route map · 5 Screen specs · 6 Shell behaviour · 7 Visual system and tokens · 8 PWA placement · 9 Component inventory · 10 Settings coverage checklist · 11 iOS home-screen constraints · 12 Test plan · 13 iPhone checklists · 14 Phases · 15 Process · 16 Risks · 17 Decisions for the owner · 18 Docs to update · 19 Sources
 
@@ -29,6 +31,13 @@ These are final (2026-10-19). They override anything below that contradicts them
   - the glow orbs and the animated background gradient go;
   - **dark only**.
 - **OD-D, fork only.** `feature/ios-ui` is cut from **`origin/deploy`** and never targets `main` or `upstream`.
+- **OD-E, Pokémon look** (after the first mockups, which felt basic, like iPhone Settings and a stocks app). The iOS structure of OD-A to OD-C stays; a Pokémon layer goes on top (§7.12):
+  - colour from the Pokémon world: energy-type colours on tiles, chips and cards, and a glow behind each tab's header;
+  - Pokémon shapes: a Poké Ball Scan button and shutter, a trainer card with gym badges, HP bars for progress, holo shine on featured cards;
+  - cards before money: Home leads with your cards, sets and Pokédex; the portfolio value is one tile, and the chart lives in Analytics;
+  - a rounder, chunkier type for titles and numbers (SF Pro Rounded, still a system font);
+  - a little playful wording (Q18).
+- **OD-F, sets by series.** Sets shows series first: a 2-column grid of series tiles, each with the series logo, its years, its number of sets, and the cards owned out of every card in the series. A series opens a 2-column grid of its sets. A switch in Settings › Appearance, **Show sets in series**, turns this off to show all sets in one grid. The server downloads the official series logos during sync (Q19, an approved backend change, phase P6a).
 
 **Standing rules** (from the owner's memory; they apply to the coordinator and every worker):
 - Use a fresh worktree and branch for every phase or fix.
@@ -38,11 +47,11 @@ These are final (2026-10-19). They override anything below that contradicts them
 - **Every merge into `deploy` needs the owner's OK.**
 - No version bumps.
 
-**Smaller decisions (§17).** The owner's answers to Q1–Q16 are recorded in §17. Once answered they are as binding as the decisions above.
+**Smaller decisions (§17).** The owner answered Q1–Q19 on 2026-10-19 (§17). The answers are as binding as the decisions above.
 
 ## 1. Summary
 
-The home-screen app gets the shell of a native iPhone app: a floating glass tab bar with a big Scan button, large titles that collapse, back buttons that name the parent screen, segmented controls, inset grouped lists, page sheets and iOS menus. Pages keep their data fetching and business logic; only their chrome changes.
+The home-screen app gets the shell of a native iPhone app: a floating glass tab bar with a big Scan button, large titles that collapse, back buttons that name the parent screen, segmented controls, page sheets and iOS menus. On top of that structure sits a Pokémon layer: energy-type colours, Poké Ball shapes, a trainer card, HP bars and holo shine (OD-E). Sets are grouped by series (OD-F). Pages keep their data fetching and business logic; only their chrome changes.
 
 Delivery follows the PWA rollout: P0 (this document and the mockups) → P1 foundations → P2 shell (milestone A, iPhone round 1) → P3–P7 in parallel (milestones B and C, rounds 2 and 3) → P8 polish → P9 cleanup. Every phase is a PR into `feature/ios-ui`; milestones reach `deploy` only with the owner's OK.
 
@@ -59,7 +68,7 @@ Delivery follows the PWA rollout: P0 (this document and the mockups) → P1 foun
 6. **Offline keeps working.** The PWA components keep their logic; only placement and styling change.
 7. **Accessible.** Real buttons with labels, `aria-current` on the active tab, WCAG AA contrast, `prefers-reduced-motion`, checked with VoiceOver.
 
-**Non-goals:** App Store or native wrappers; light mode; backend or API changes (ask the owner first if one ever seems necessary); changing scan recognition, the outbox, the read cache or the service worker; redesigning the public `/u/*` pages (palette only); features beyond the extras approved in §17.
+**Non-goals:** App Store or native wrappers; light mode; backend or API changes, except the approved series-logo change (Q19, P6a; ask the owner first if another one ever seems necessary); changing scan recognition, the outbox, the read cache or the service worker; redesigning the public `/u/*` pages (palette only); features beyond the extras approved in §17.
 
 ## 3. Verified code facts
 
@@ -162,6 +171,7 @@ Every route in `App.jsx`. "Back" is the logical parent that `useBack()` falls ba
 | `/decks/:deckId/build` | — | redirect → `/decks/:deckId` | | | | |
 | `/search` | search | root | — | `nav.search` (new) | yes (Browse only) | |
 | `/sets` | search | pushed | `/search` | `nav.sets` | yes | |
+| `/sets/series/:seriesKey` (new) | search | pushed | `/sets` | the series name | **yes (new)** | |
 | `/sets/:setId` | search | pushed | `/sets` | `nav.sets` | yes | yes |
 | `/pokedex` | search | pushed | `/search` | `nav.pokedex` | no | |
 | `/pokedex/:dexId` | search | pushed | `/pokedex` | `nav.pokedex` | no | yes |
@@ -186,20 +196,20 @@ Every route in `App.jsx`. "Back" is the logical parent that `useBack()` falls ba
 Rules:
 - Map routes **explicitly** with patterns, never by prefix: `/collection/user/:userId` belongs to Profile even though it starts with `/collection`.
 - The back label of a pushed page is its parent's label: `/binders` is labelled `nav.binders` ("Card Lists"), not "Collection".
-- Add `/profile` to `OFFLINE_ROUTES`. `/settings` stays online-only; offline its row opens `OfflineUnavailable` with the tab bar still visible.
+- Add `/profile` (P2) and `/sets/series/:seriesKey` (P6) to `OFFLINE_ROUTES`; the series page is built from the cached sets list. `/settings` stays online-only; offline its row opens `OfflineUnavailable` with the tab bar still visible.
 
 ### 4.3 Entry points and cross-links
 - **Scan overlay:** the Scan circle from any tab; Collection's "+" menu ("Scan cards"); "Scan a card instead" on Search's empty and no-results states. Until P6, CardSearch's own camera button also opens it.
-- **Scan inbox:** the Inbox button on the camera screen (badge), a Home attention row ("N scans need review" or "Scans processing"), the badge on the Scan circle.
-- **Sets:** Search › Browse (with an "N new" badge from `new_sets_count`), a Home quick action, the Home attention row "N new sets".
-- **Analytics:** the Home portfolio card, the Profile row.
-- **Sealed products:** the Profile row (badge), and a Home attention row when `products_needing_review_count > 0`.
-- **Trades:** the Profile row. **Leaderboard, Achievements:** Profile rows, multi-user only.
+- **Scan inbox:** the Inbox button on the camera screen (badge), a Home to-do card ("N scans need review" or "Scans processing"), the badge on the Scan circle.
+- **Sets:** the Browse tile in Search (with "N new" from `new_sets_count`), the Sets tile and quick action on Home, and the Home to-do card "N new sets".
+- **Analytics:** the Value tile on Home, the Analytics tile on Profile.
+- **Sealed products:** the Profile tile (badge), and a Home to-do card when `products_needing_review_count > 0`.
+- **Trades:** the Profile tile. **Leaderboard, Badges (Achievements):** Profile tiles and the trainer card's badge row, multi-user only.
 - **Settings:** Profile › Settings (root list) › section.
-- **Sync center:** `SyncIndicator` → `SyncSheet` → `/offline`; the Profile row "Sync & offline" when the queue flag is on; a Home attention row "N items waiting to sync".
-- **Custom card migration:** a Home attention row and a Profile row, only while matches are pending, with the count; the existing row in Settings › Data & sync stays.
+- **Sync center:** `SyncIndicator` → `SyncSheet` → `/offline`; the Profile row "Sync & offline" when the queue flag is on; a Home to-do card "N items waiting to sync".
+- **Custom card migration:** a Home to-do card and a Profile row, only while matches are pending, with the count; the existing row in Settings › Data & sync stays.
 - **Log out:** the last Profile row, multi-user only. It calls `AuthContext.logout()`, so the guard still runs.
-- **Public profile:** a Profile row when public profiles are on and the trainer's profile is public.
+- **Public profile:** the Public page tile on Profile when public profiles are on and the trainer's profile is public.
 - **Cards on Home** open `/collection?itemId=…` as today (the card sheet opens in the Collection tab). Opening the card sheet over Home would mean moving Collection's dialog logic out of `Collection.jsx`, which principle 3 rules out for v1.
 
 ## 5. Screen specs
@@ -207,42 +217,43 @@ Rules:
 The [mockups](https://claude.ai/artifact/FVYGUzcRSuEeLZshZgWJAS) (§17) show each screen at 390×844. Text styles are those of §7.6; strings are existing keys unless marked new.
 
 ### 5.1 Home (`/`)
+Cards first, money second (OD-E).
 1. **Nav bar** (large-title mode). Trailing: `SyncIndicator` when visible, then the hide-values eye (Q1a). The compact title after scrolling is "Home".
-2. **Greeting block** in place of the large title: the avatar (44 px circle, sprite) and two lines, "Hello," (Subheadline, secondary) over the trainer name (Title 1, bold). The literal "Hello," stays (`t('home.hello')` + ","), because four PWA specs look for it.
-3. **Portfolio card** (`--color-card`, radius 16, padding 16):
-   - a segmented control Portfolio value | Capital invested (the existing `portfolio_display_mode` setting);
-   - the label (Footnote, secondary). When there is a product-value explanation, an ⓘ button next to it opens a small popover **on tap** (replaces the hover-only `ProductValueInfo`);
-   - the value (Display style, 40/44 bold, tabular figures, white);
-   - a P&L chip: tinted capsule, green or red, "+£37.76 (+4.2%)", and a second chip for realized P&L when it is non-zero;
-   - the area chart, edge to edge inside the card, 140 px tall, green when the period went up and red when it went down, no axes, touch shows date and value;
-   - a 4-segment control 1W | 1M | 1Y | Max (`PORTFOLIO_PERIODS`);
-   - a row of four mini stats: Cards · Unique · Sets · Invested (Caption 1 label over Subheadline value);
-   - a footer row "Prices updated 5 min ago" (Footnote, muted; from the cached `dashboard.last_sync.finished_at`) and "Analytics ›" (tint).
-   - The value block (label, number, chips) is one button that opens `/analytics`; the segmented controls and the chart are separate controls.
-4. **Attention rows**: an inset list, each row shown only when its count is non-zero, each with an icon, the composed text and a chevron:
-   - "N scans need review" → `/scans`; "Scans processing…" (spinner) → `/scans`;
+2. **Header bloom** in the theme accent and Pokémon yellow (§7.12), masked to black at the top so it meets the status bar without a seam.
+3. **Greeting block** in place of the large title: the trainer's sprite (local endpoint) in a ring with Poké Ball colours, and two lines, "Hello," (Subheadline) over the trainer name (Title 1, rounded, heavy). The literal "Hello," stays (`t('home.hello')` + ","), because four PWA specs look for it.
+4. **Latest pulls** (new wording, Q18): a carousel of the newest cards from `recent_additions`, 118 px wide, with holo shine; "All" (tint) → `/collection` (its default sort is date added, newest first). The shared `CardLegend` (collapsed) stays near it, as the card-system contract requires.
+5. **Stat tiles**, 2 × 2, in type colours (§7.12); each opens its page (the Value tile also has a mode button):
+   - **Cards** (Fire): `total_cards`, with "N unique" → `/collection`;
+   - **Sets** (Water): `owned_sets`, with "N complete" (sets whose `owned_count` equals `total`, from the cached sets list) → `/sets`;
+   - **Pokédex** (Grass, Poké Ball icon): caught out of total, from the `summary` of `GET /pokedex` (cached for an hour; hidden offline when not cached) → `/pokedex`;
+   - **Value** (Lightning, dark text): the headline value (Portfolio value or Capital invested, per `portfolio_display_mode`), the change over the last month and a sparkline of it (`investment-tracker`, period 1M). The tile's label is its own small button that switches between Portfolio value and Capital invested (the existing setting); the rest of the tile opens `/analytics`. The tile is a container of these two controls, not one link around them.
+   The big chart, the period control, P&L, realized P&L and the product-value note move to Analytics › Investment (§5.7). Under the tiles, a footnote says "Prices updated 12 min ago" (from the cached `dashboard.last_sync.finished_at`), as Q5 promised.
+6. **To-do cards**, shown only when the count is non-zero: bright rounded cards with an icon, a title, a line of detail and a button:
+   - "N scans need review" (yellow) → `/scans`; "Scans processing…" (spinner) → `/scans`;
    - "N items waiting to sync" → opens `SyncSheet` (queue flag on only);
    - "N custom card matches" → `/migration` (`getCustomMatches`, online only);
    - "N products need review" → `/products`;
-   - "N new sets" → `/sets`.
-5. **`InstallHint`** (Safari only) as an inset card. It stays rendered by `Layout` under Home's content (§8).
-6. **Quick actions**: four round buttons (56 px, `--color-card` fill, tint icon) with Caption labels: Wishlist, Card Lists, Sets, Analytics (Q4).
-7. **Recently added**: header (Title 3) with "See all" (tint) → `/collection` (its default sort is date added, newest first). A snapping carousel of artwork tiles (110 px) using the card system, followed by the shared `CardLegend` (collapsed), as the card-system contract requires.
-8. **Most valuable**: an inset list of up to 5 rows: 40×56 artwork, name (Body), "Set · Variant" (Footnote, secondary), value (Body semibold, tabular, right). "See all" → `/collection?sort=market_price&order=desc` (P5 teaches Collection to read `sort` and `order`; until then the parameters are ignored).
+   - "N new sets" (blue) → `/sets`.
+7. **Quick actions:** four round buttons in type colours with labels: Wishlist (Fairy), Card Lists (Water), Sets (Grass), Analytics (Lightning) (Q4).
+8. **Your sets:** a row of the sets closest to complete (from the cached sets list), each with a logo-style title, "owned / total" and an HP bar (§7.12) → `/sets/:setId`.
+9. **Top cards:** a carousel of `top_cards` with a rank badge and a price tag on each card. "All" → `/collection?sort=market_price&order=desc` (P5 teaches Collection to read `sort` and `order`; until then the parameters are ignored).
+10. **`InstallHint`** (Safari only) as an inset card. It stays rendered by `Layout` under Home's content (§8).
 
-Removed: the portal grid, Home's Logout (now in Profile), the admin price-sync button (now in Settings › Data & sync, Q5), the orbs, the gold glow and the uppercase labels. Dashboard's content is covered by Home and Analytics; `/dashboard` redirects to `/`.
+Removed: the portal grid, Home's Logout (now in Profile), the admin price-sync button (now in Settings › Data & sync, Q5), the big portfolio chart (now in Analytics), the orbs, the gold text glow and the uppercase labels. Dashboard's content is covered by Home and Analytics; `/dashboard` redirects to `/`.
 
 ### 5.2 Collection (`/collection`, `/binders`, `/wishlist`)
-- **Large title** "Collection" with the subtitle "N cards · £value" (Subheadline, secondary; masked when values are hidden).
+- **Large title** "Collection" with the subtitle "N cards · N sets · £value" (Subheadline; the amount is masked when values are hidden).
 - **Segmented control** under the title: Cards | Card Lists | Wishlist (Q12). It switches routes with `replace`, so the segments don't pile up history.
 - **Nav bar menus** (trailing):
   - "+": Scan cards (`openScanner()`), Search the catalogue (`/search`), Add custom card (the existing modal), Import CSV (the existing modal).
   - "⋯": Export CSV, Export PDF, Manage printing tags.
   - On Card Lists, "+" holds the page's existing create actions. Wishlist keeps its own actions in a "⋯" menu.
+- A header bloom in Pokémon blue and the theme accent (§7.12).
 - **Cards view:**
-  - a search field ("Search your collection");
+  - a search field ("Search cards...", the existing placeholder);
+  - a row of **type chips** (§7.12): All, then each energy type present in the collection, with its symbol. A chip sets the existing type filter, and the chips and the Filters sheet stay in sync;
   - a toolbar row: a Sort menu (the existing nine options, with the current choice checked, then Ascending/Descending), a Filters button with a count badge that opens a page sheet with the existing normal and advanced filters, and a grid/list toggle;
-  - **grid:** 3 columns on phones (as today), the card system's tiles with their quantity and variant indicators; **list:** the existing `CardRow` list (name, set, variant, price).
+  - **grid:** 3 columns on phones (as today), the card system's tiles with their quantity and variant indicators, plus a soft glow in the card's type colour from a page-level wrapper (no card-system change). Variant chips get the foil look of §7.12 through the card system's own tokens, one shared change reviewed with its checklist. **List:** the existing `CardRow` list (name, set, variant, price).
 - Tapping a card opens the card detail (Q14: a page sheet on iPhone with the existing `UnifiedCardDialog` content, including `OwnPhotoPicker`, `AcquiredDateField`, printing tags and price details).
 - **Card Lists:** inset rows per list (artwork or icon, name, type, card count, chevron); per-row actions (edit, public, delete) move into a "⋯" menu on the row.
 - Binder, deck and compare pages are pushed with "‹ Card Lists". DeckEditor keeps its `<header>` element (four visual tests use it); the shell's nav bar is not a `<header>`.
@@ -252,14 +263,15 @@ Removed: the portal grid, Home's Logout (now in Profile), the admin price-sync b
 - **Camera screen** (from `BatchCameraCapture`), full screen, black:
   - top: ✕ (glass circle), the title "Scan", and Inbox (glass capsule with the attention badge and a pulse dot while jobs process);
   - when the outbox holds `scan.upload` items, a status line under the top bar: "N batches waiting to upload";
-  - middle: the live video (`object-fit: cover`; the captured frame still holds everything in view), a card-shaped frame guide (63:88, about 70 % of the width, white corners, the outside dimmed) and the existing photo-guide hint;
-  - bottom: **Photos** (library, multi-select), the shutter (72 px), and the **review stack**: the last thumbnail with the count, "3/50" under it. Tapping the stack opens the review sheet as "Review (3)".
+  - middle: the live video (`object-fit: cover`; the captured frame still holds everything in view), a card-shaped frame guide (63:88, about 70 % of the width, Pokémon-yellow corners, the outside dimmed) and the existing photo-guide hint;
+  - bottom: **Photos** (library, multi-select), the shutter, and the **review stack**: the last thumbnail with an "N caught" badge (Q18) and "3/50" under it. Tapping the stack opens the review sheet as "Review (3)";
+  - the shutter is a Poké Ball whose top half is the theme accent (Q17, §7.12): 70 px inside a 4 px white ring.
   - At 50 photos the shutter is disabled and the existing limit toast shows.
 - **Review sheet** (page sheet over the camera, today's staging UI):
   - title "Review (n)"; leading "Clear" (destructive, confirmed); trailing "Done" back to the camera;
   - a 3-column grid of thumbnails with remove buttons and, when allowed, the per-photo and all-at-once "scan individually" toggles;
   - "Add more": Take photo and Choose from library;
-  - the primary button "Start scanning (n)";
+  - the primary button "Start scanning (n)", with a small Poké Ball icon;
   - `submitScanBatch` unchanged, with today's size, storage and server-version errors; `addUpdateGuard` held while photos are staged or saving.
 - **After submit:** a sent batch closes the overlay and goes to `/scans/:id` (one job) or `/scans`; a batch saved offline closes the overlay and shows today's toast.
 - **Fallback:** if `getUserMedia` is missing, denied or fails, the review sheet opens on its own with **Take photo** (`<input capture="environment">`) and **Choose from library** (`<input multiple>`) as real buttons, so iOS accepts the tap. A denial is remembered for the session (`sessionStorage['pc.scan.cameraDenied']`), so the next tap goes straight to the sheet; a "Try the camera again" link clears it.
@@ -267,30 +279,36 @@ Removed: the portal grid, Home's Logout (now in Profile), the admin price-sync b
 - **Circle badges:** a yellow count = `scanAttentionCount`; a pulse ring = `hasActiveScanJobs`. **P0 decision:** uploads queued offline are not counted on the circle. They are not scans yet, `SyncIndicator` already shows them, and the camera screen shows its status line.
 
 ### 5.4 Search (`/search`) and Browse
-- Large title "Search" and a sticky search field ("Cards, sets or numbers (e.g. MEP 022)", new key) with Cancel while focused. Cancel clears the query (URL `replace`) and blurs.
+- Large title "Search" over a header bloom in Pokémon blue and yellow (§7.12), and a sticky search field ("Cards, sets or numbers (e.g. MEP 022)", new key) with Cancel while focused. Cancel clears the query (URL `replace`) and blurs.
 - **Empty state:**
-  - an inset "Browse" list: Sets › (badge "N new") and Pokédex ›;
-  - a "Scan a card instead" row that opens the scanner.
-- **With a query:** today's CardSearch results (2 columns on phones, because each tile carries add controls). A toolbar under the field holds "Filters (n)", which opens the advanced-filter page sheet. The nav bar's "⋯" holds Select (bulk add) and Create custom card. No results: the existing empty text plus "Scan a card instead" and "Create custom card".
-- **Offline:** Browse keeps working from the read cache. The field is disabled with the placeholder "Search needs a connection" (new).
-- **Sets** (`/sets`, pushed): a search field, a Filters menu (series, progress, language, sort, hidden sets), and an inset list grouped by series. Each row: the set symbol, the name, "owned / total" and a thin progress bar in the accent, with a "New" badge.
-- **Set detail** (`/sets/:setId`, pushed, "‹ Sets"), following screenshot 1 (Q1d):
-  - swipeable stat cards: "Complete set" with "278 of 295", a donut (94.2 %), the release date (from the cached sets list) and the market value (summed on the client from the checklist prices); then "Master set" (printings owned / available, from `variants_*` and `owned_variants`) with the owned value;
+  - **Browse tiles** (§7.12): Sets (blue; "N new" and "N series · N sets") → `/sets`; Pokédex (Pokédex red with its lens lights; "N of 1,025 caught") → `/pokedex`; a wide "Scan a card instead" tile with a Poké Ball → the scanner;
+  - **Browse by type:** a 3-column grid of the eleven energy types, each with its symbol. A type opens the results filtered by that type (the existing type filter in the URL).
+- **With a query:** today's CardSearch results (2 columns on phones, because each tile carries add controls; Q3). Under the field: type chips for the types in the results, then "Filters (n)", which opens the advanced-filter page sheet. Each result shows its type symbol, set and number, price, and an accent "+" add button. The nav bar's "⋯" holds Select (bulk add) and Create custom card. No results: the existing empty text plus "Scan a card instead" and "Create custom card".
+- **Offline:** the tiles keep working from the read cache (the Pokédex count hides if it isn't cached). The field is disabled with the placeholder "Search needs a connection" (new).
+- **Sets** (`/sets`, pushed; OD-F). The per-user setting `sets_view` (`series` by default, or `sets`) picks the view. Settings › Appearance has the switch **Show sets in series** (§5.6). The app saves it with `updateSettings`, the way the Sets page already saves `set_overview_filters`: `PUT /settings/` stores any non-admin key per user and `GET /settings/` returns it, so the setting follows the user to every device without a server change.
+  - **Series view:** a 2-column grid of **series tiles** (§7.12). Each tile shows the series logo (Q19, through P6a's image route; before P6a or the next sync, the namesake set's logo, else the newest set's), the years (first and last `release_date`), "N sets", and the cards owned out of every card in the series with an HP bar. The totals are sums of `owned_count` and `total` over the series' sets in the cached sets list, so the view works offline. A finished series gets a green Complete badge. The existing filters (language, progress, sort, hidden sets) apply to the sets before they are grouped. A tile opens the series page.
+  - **Series page** (`/sets/series/:seriesKey`, pushed, "‹ Sets"): a header with the series logo, its years, "N sets" and "owned / total cards" with an HP bar, over a bloom in the series colour (`colourFor`, §7.12). Below it, a 2-column grid of **set tiles**, newest first. Each tile shows the set logo (the existing set image route), name, set code (`abbreviation`), "owned / total" with an HP bar, a yellow "Releases <date>" strip when `release_date` is in the future, and a green Complete badge when every card is owned. A tile opens Set detail.
+  - **Sets view** (switch off): the same set tiles in one 2-column grid, newest first, with the existing filters.
+  - `seriesKey` is the set's `series_id` (P6a) when known, otherwise a slug of the series name, so the page works before the next sync fills `series_id`. Grouping uses the same key.
+- **Set detail** (`/sets/:setId`, pushed; back returns to where you came from, else `/sets`), following screenshot 1 (Q1d):
+  - a banner in the set's colour (`colourFor`) with a logo-style title, the release date and the card count;
+  - swipeable stat cards: "Complete set" with a Poké Ball progress ring, "178 of 252", an HP bar and the market value (summed on the client from the checklist prices); then "Master set" (printings owned / available, from `variants_*` and `owned_variants`) with the owned value. The release date comes from the cached sets list;
   - a "Search in set" field (name or number, on the client);
   - a toolbar: Sort menu (number, price, name), Filter menu (All / Owned / Missing, rarity) and a "Split variants" toggle (one tile per available printing, dimmed when not owned);
-  - the 3-column grid with variant chips, quantity badges and the existing `dimWhenUnowned`. Card art is not restyled.
-  - All of this comes from data the checklist and sets endpoints already return. No API change.
-- **Pokédex** (`/pokedex`, pushed): the existing list with completion in the new list style; the species page is pushed with "‹ Pokédex".
+  - the 3-column grid with foil variant chips, quantity badges and the existing `dimWhenUnowned`. Card art is not restyled.
+  - All of this comes from data the checklist and sets endpoints already return.
+- **Pokédex** (`/pokedex`, pushed): the existing list with completion in the new list style, caught entries marked with a small Poké Ball; the species page is pushed with "‹ Pokédex".
 
 ### 5.5 Profile (`/profile`, new)
-- **Header** (instead of a large title; the compact title after scrolling is "Profile"): the avatar (64 px), the trainer name (Title 2, bold), "@handle" (Subheadline, secondary, only when the public profile is on), and three stats, Cards · Sets · Value, from the cached dashboard. The stats respect hidden values; the nav bar has the eye too.
-- **Inset groups** (rows: a 29 px coloured square icon, the label, an optional value or badge, a chevron):
-  - **Portfolio:** Analytics, Sealed products (badge: products needing review), Trades.
-  - **Community** (multi-user only): Leaderboard, Achievements, Public profile (when public; opens `/u/:handle`).
-  - **App:** Settings; Sync & offline (queue flag on; value = waiting items); Custom card migration (only while matches are pending; value = count); Install on iPhone (Safari on iOS only; opens a sheet with the install steps).
-  - **Log out:** a centred red row, multi-user only. It calls `logout()`, so the guard runs.
+- **Trainer card** (§7.12), in place of a large title; the compact title after scrolling is "Profile". An accent gradient card with holo shine and a Poké Ball watermark, showing:
+  - the trainer's sprite in a white ring, the trainer name (rounded, heavy), "@handle" (only when the public profile is on) and "ID No." with the user id padded to five digits;
+  - three stats, Cards · Sets · Pokédex, from the cached dashboard and the Pokédex summary;
+  - in multi-user mode, a row of gym badges for the first eight achievements (coloured when earned) and "N/20 ›" → `/achievements`.
+  Amounts respect hidden values; the nav bar has the eye too.
+- **Tiles** (3 columns, type colours, §7.12): Analytics (the value change this month), Sealed products (badge: products needing review), Trades, and, in multi-user mode, Leaderboard (your rank, when known), Badges (`/achievements`) and Public page (when the profile is public; opens `/u/:handle`).
+- **List** (inset rows with coloured icons): Settings; Sync & offline (queue flag on; value = waiting items); Custom card migration (only while matches are pending; value = count); Install on iPhone (Safari on iOS only; opens a sheet with the install steps); then **Log out**, a centred red row, multi-user only. It calls `logout()`, so the guard runs.
 - A footer line with the app version.
-- Offline, the header and rows render from cached data; rows to online-only pages open `OfflineUnavailable`.
+- Offline, the card, tiles and rows render from cached data (the Pokédex count and the rank hide when not cached); rows to online-only pages open `OfflineUnavailable`.
 
 ### 5.6 Settings (`/settings` → `/settings/:section`)
 - `/settings` is a root list of sections with coloured icons, in this order. Hidden sections are left out, never disabled.
@@ -298,7 +316,7 @@ Removed: the portal grid, Home's Logout (now in Profile), the admin price-sync b
 | Section (`:section`) | Who sees it | Holds (§10 has the full checklist) |
 |---|---|---|
 | Account (`account`) | everyone | Avatar, username, the public profile group; change password and sign out other devices (Q13) |
-| Appearance (`appearance`) | everyone | Accent theme, language, currency, price type, own card photos |
+| Appearance (`appearance`) | everyone | Accent theme (a picker of Poké Balls), **Show sets in series** (new, OD-F), language, currency, price type, own card photos |
 | Scanner (`scanner`) | everyone | `ScannerSettingsCard`, Gemini fallback, scan diagnostics |
 | Notifications (`notifications`) | everyone | Telegram, price alerts, `NotificationsCard` (push) |
 | Data & sync (`data`) | admins | Sync and price sync actions, the new "Update prices" row (Q5), languages, fallbacks, digital sets, intervals, migration, debug, image cache, CSV export, backup and restore |
@@ -311,7 +329,7 @@ Removed: the portal grid, Home's Logout (now in Profile), the admin price-sync b
 - Controls move into iOS rows (label, description as Footnote, control on the right; long controls below the label). Switches are iOS switches (51×31, green when on). Nothing changes in the handlers.
 
 ### 5.7 Other pages
-- **Analytics** (pushed): a segmented control Investment | Movers | Rarity | Duplicates, opening on Investment (Q15).
+- **Analytics** (pushed): a segmented control Investment | Movers | Rarity | Duplicates, opening on Investment (Q15). Investment takes over Home's former value block: the period control (1W · 1M · 1Y · Max), P&L, realized P&L, and the product-value note as a tap popover. Its existing value-and-cost chart and figures stay.
 - **Products:** "+ Log purchase" in the nav bar; the list in the new style.
 - **Trades:** a segmented control Live trade | History.
 - **Leaderboard, Achievements, Compare, UserCollection, OfflineCenter, CardMigration, ScanQueue:** pushed pages with the nav bar back button and the new list styles. Their own back links and `SOCIAL_TABS`/`AnalyticsSectionNav` strips go as each page migrates.
@@ -348,8 +366,8 @@ Every z-index comes from the variables in §7.1; nothing else picks numbers. The
 - `<nav aria-label={t('nav.tabBar')}>` (new key), portaled to `document.body` as its own fixed element, never nested in another fixed element.
 - **Geometry:** a glass capsule 64 px tall, 12 px from the sides (max width 440 px, centred), its bottom edge at `max(8px, calc(var(--safe-bottom) - 10px))` from the bottom of the viewport, so it sits on the home-indicator area as in iOS 26. `--safe-bottom` caps the inset at 34 px (§11).
 - **Items:** two tabs on each side of the Scan circle. Each tab: a 24 px icon over a Caption 2 label (11/13), at least 44×44. Active tab: a pill behind icon and label (accent at 18 %), icon and label in `--color-tint`, `aria-current="page"`. Inactive: secondary label colour.
-- **Scan circle:** 58 px, accent fill, a `ScanLine` icon in `--color-on-accent`, raised so it overlaps the capsule's top edge by 14 px, with the label "Scan" on the label row. A yellow count badge at its top right; a pulse ring while jobs process (static ring under reduced motion); an active ring on `/scans*`. `aria-label` is composed: "Scan" or "Scan, 3 need review".
-- **Icons:** Home (`Home`), Collection (`Layers`), Search (`Search`), Profile (avatar or `User`). Only icons that exist in lucide-react 0.323.
+- **Scan button:** a 60 px **Poké Ball** whose top half is the theme accent (Q17, §7.12), with a small gloss highlight, raised so it overlaps the capsule's top edge by 16 px, with the label "Scan" on the label row. A yellow count badge at its top right; a yellow pulse ring while jobs process (static under reduced motion); a white ring on `/scans*`. `aria-label` is composed: "Scan" or "Scan, 3 need review".
+- **Icons:** Home (`Home`), Collection (`Layers`), Search (`Search`), Profile (the trainer's sprite, or `User`). Only icons that exist in lucide-react 0.323. Tab labels use the rounded display font (§7.6).
 - **Content padding:** `--content-bottom = calc(var(--tabbar-height) + var(--safe-bottom) + 16px)` on `main`.
 - **Hidden:** outside the shell; at 1024 px and wider; while the scanner overlay is open; while a text field has focus on a touch device (`useKeyboardOpen`, §6.12). Sheets cover it.
 - The scan badge comes from the `scan-jobs` query (polling every 3 s only while jobs are active, as today).
@@ -487,16 +505,20 @@ The semantic red (`#FF453A`) stays separate from a red accent. In the default th
 The `body` radial gradient, the animated `bg-breathe` gradient, the `#root::before` orbs, HomeScreen's `float-orb` orbs, glows and text shadows on numbers and buttons, and the 10–11 px uppercase tracked labels (each page's phase swaps them for Footnote or Caption styles). `#root > * { position: relative; z-index: 1 }` stays: it is harmless without the orbs, and removing it could shift absolutely positioned content in any top-level page. Fixed chrome is portaled instead (§3.6).
 
 ### 7.6 Typography
-- Font stack: `-apple-system, BlinkMacSystemFont, system-ui, sans-serif`, which is SF Pro on Apple devices. WebKit applies SF's optical sizes and tracking itself, so `letter-spacing` stays normal. The Google Fonts Inter link and its loader in `main.jsx` go (Q6).
+- Font stacks (both are system fonts, so nothing is downloaded):
+  - **text:** `-apple-system, BlinkMacSystemFont, system-ui, sans-serif` (SF Pro on Apple devices);
+  - **display:** `ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif` (SF Pro Rounded) for large titles, titles, tile numbers, tab labels, chips and buttons (OD-E).
+  
+  WebKit applies SF's optical sizes and tracking itself, so `letter-spacing` stays normal. The Google Fonts Inter link and its loader in `main.jsx` go (Q6).
 - Text styles, as Tailwind utilities (`text-large-title`, `text-title-1`, …):
 
 | Style | Size / line height | Weight in use |
 |---|---|---|
-| Display (Home value only) | 40/44 | bold |
-| Large Title | 34/41 | bold |
-| Title 1 | 28/34 | bold for headers |
-| Title 2 | 22/28 | bold for headers |
-| Title 3 | 20/25 | semibold |
+| Tile number | 30/34 | heavy (800), display font |
+| Large Title | 34/41 | heavy (800), display font |
+| Title 1 | 28/34 | heavy, display font, for headers |
+| Title 2 | 22/28 | heavy, display font, for headers |
+| Title 3 | 20/25 | heavy, display font (section titles) |
 | Headline | 17/22 | semibold |
 | Body | 17/22 | regular |
 | Callout | 16/21 | regular |
@@ -537,6 +559,47 @@ Sheets and pushes: `--ease-ios`, about 400 ms. Tab switches: instant. Pressed st
 | `.skeleton` | `--color-fill-quaternary` with a subtle shimmer; static under reduced motion |
 | `.card-detail-*`, `.trainer-card`, `.set-hero` | the new palette; glows removed |
 
+### 7.12 The Pokémon layer (OD-E)
+Colour and character come from the Pokémon world; the structure stays iOS. Everything here is a token or a shared component in `components/ios/`, so pages don't invent their own versions. The mockups show it in use.
+
+**Energy-type colours.** Eleven TCG types, each with a tile top, a tile bottom and a solid (`--type-<name>-top`, `-bottom`, `--type-<name>`). They are the same in every accent theme, so a Fire card always reads as Fire. Tile text sits anywhere on the tile, so both tile stops must give it 4.5:1; the tops below are darkened until they do (the mockups used lighter tops). P1 adds a unit test that checks every pair.
+
+| Type | Tile top | Tile bottom | Solid (chips, icons, glows) | Tile text |
+|---|---|---|---|---|
+| Grass | `#328438` | `#145A27` | `#43B04A` | white |
+| Fire | `#B4441F` | `#8A1D12` | `#F05A2B` | white |
+| Water | `#236BB4` | `#123F8C` | `#2F8FF0` | white |
+| Lightning | `#FFE56E` | `#F2A600` | `#F7C815` | `#1D1600` |
+| Psychic | `#8A3BA5` | `#551C78` | `#B84FDC` | white |
+| Fighting | `#995023` | `#6A2D0E` | `#CC6A2F` | white |
+| Darkness | `#343F50` | `#141A24` | `#46546A` | white |
+| Metal | `#606972` | `#3E4852` | `#94A2B0` | white |
+| Dragon | `#836919` | `#5A4207` | `#C9A227` | white |
+| Fairy | `#B35383` | `#86244F` | `#EF6FAE` | white |
+| Colorless | `#F5F1E6` | `#BDB39B` | `#E3DCCB` | `#1D1600` |
+
+The brand triad completes the palette: Pokémon red `#E3350D`, yellow `#FFCB05` and blue `#2A75BB`. `colourFor(key)` maps a set or series key to one of the eleven types with a stable hash, for banners and glows that have no colour of their own.
+
+**Energy symbols.** `EnergyIcon` draws one simple SVG per type (leaf, flame, drop, bolt, eye, fist, moon, hexagon, claw, sparkle, star) in white on a circle of the type's colour, or in `#1D1600` on Lightning and Colorless. They are generic shapes, not the official energy artwork.
+
+**Poké Ball.** One `PokeBall` SVG component whose top half takes a colour (the theme accent by default). It is the Scan button (Q17), the camera shutter, the centre of Set detail's progress ring, the theme picker, the "caught" mark in the Pokédex, the Start scanning icon and the sleeping offline illustration. Loading spinners keep `PokeBallLoader`.
+
+**Header blooms.** `HeaderBloom` draws a static radial glow behind a tab root's header, about 380 px tall. It is masked so it starts black under the status bar (no seam) and fades to black below. Home: accent and yellow. Collection: blue and accent. Search: blue and yellow. A series page and Set detail use their `colourFor` colour. It scrolls with the content, is never animated, and never sits behind lists or sheets.
+
+**Tiles.** `StatTile` (Home, Profile) and the Browse tiles have radius 22, the type gradient at 150°, a soft shadow in the type's solid at 55 %, a big rounded number, a label with an icon, and the energy symbol as a large, faint watermark.
+
+**HP bars.** `HpBar` shows every completion: 8 px, rounded; green above 50 %, yellow from 20 % to 50 %, red below 20 %, like a Pokémon's HP.
+
+**Holo and glows.** `.holo` adds a static rainbow sheen (`mix-blend-mode: screen`) to featured cards (Latest pulls, Top cards, the card sheet) and to the trainer card. Card tiles get a soft shadow in the card's type colour where the payload has `types` (Collection, Search, the card sheet). The set checklist and dashboard payloads have no `types`, so those tiles stay neutral. No animated shine is added; the card system's existing variant shimmer is unchanged.
+
+**Trainer card and gym badges.** `TrainerCard` (Profile) and `GymBadges` (eight hexagonal badges, coloured when earned).
+
+**Controls.** The segmented control's selected thumb is the accent with `--color-on-accent` text instead of iOS gray. Filled buttons get a subtle top-to-bottom accent gradient and a soft accent shadow. `TypeChip` is a capsule: the type's solid at 24 % over black, a 55 % inner outline, white text and the energy symbol; "All" is white with black text.
+
+**Series and set tiles.** `SeriesTile` and `SetTile` (§5.4): a logo area over a spotlight in the item's `colourFor` colour, name, years or set code, counts and an HP bar; a yellow "Releases …" strip and a green Complete badge when they apply.
+
+**Wording (Q18).** Some playful copy, in new strings only: "Latest pulls", "N caught" on the camera stack, "species caught" in the Pokédex. Existing strings keep their wording. New keys go into `en.js`; other languages show English until someone translates them.
+
 ## 8. PWA placement
 
 | Piece | Today | New | Behaviour |
@@ -544,7 +607,7 @@ Sheets and pushes: `--ease-ios`, about 400 ms. Tab switches: instant. Pressed st
 | `SyncIndicator` | fixed top right, `bg-card` (see-through) | inline in the nav bar's trailing slot, a glass capsule; still one instance, still hidden when idle | unchanged; test id, `data-state` and the live region stay |
 | `SyncSheet` | `Modal` | page sheet look via the legacy `Sheet` | unchanged |
 | `OfflineBanner` + `StaleDataLabel` | strip at the top + line above the page | one status line under the nav bar (§6.6) | conditions unchanged; both test ids stay |
-| `OfflineUnavailable` | replaces the page | same, in the content area with the tab bar visible; iOS empty-state style | unchanged; test id and texts stay |
+| `OfflineUnavailable` | replaces the page | same, in the content area with the tab bar visible; a sleeping Poké Ball above the existing text and links | unchanged; test id and texts stay |
 | `UpdateBanner` | portaled top banner | same place, iOS banner style (glass, radius 16, small filled "Update") | unchanged; test ids stay |
 | `InstallHint` | `Layout`, under Home | still `Layout` under Home, as an inset card; also a Profile row that opens it as a sheet | unchanged |
 | `LogoutGuardDialog` | `Modal` | an `ActionSheet` with the same four choices | unchanged; button names stay |
@@ -579,6 +642,17 @@ New shared pieces live in `frontend/src/components/ios/` and `frontend/src/navig
 | `IconButton` | `{ icon, label, variant: 'glass' \| 'gray' \| 'plain', size }` | 44 px hit area |
 | `Badge` | `{ count, max = 99, tone, dot }` | |
 | `HideValuesToggle` | none | eye / eye-off, `aria-pressed` |
+| `PokeBall` | `{ size, top = 'var(--color-accent)', gloss }` | SVG; Scan button, shutter, rings, theme picker (§7.12) |
+| `EnergyIcon` | `{ type, size }` | eleven symbols on type-coloured circles |
+| `TypeChip` | `{ type, selected, onPress }` | capsule; `type = 'all'` gives the white "All" chip |
+| `StatTile` | `{ type, icon, label, value, detail, to, sparkline }` | Home and Profile tiles; a link |
+| `HpBar` | `{ value, max }` | 50 % and 20 % thresholds |
+| `HeaderBloom` | `{ variant: 'home' \| 'collection' \| 'search', colour }` | static, masked at the top |
+| `TrainerCard`, `GymBadges` | `{ user, stats, badges }`, `{ earned, total }` | Profile |
+| `SeriesTile`, `SetTile` | `{ series \| set, owned, total, upcoming, complete, to }` | Sets and the series page |
+| `colourFor(key)` | `(string) => type` | stable hash into the type palette |
+| `groupSetsBySeries(sets)` | pure function | key, name, years, set count, owned and total, logo set id; unit-tested |
+| `useSetsView()` | `{ view: 'series' \| 'sets', setView }` | reads and writes the `sets_view` setting |
 | `navConfig.js` | `TABS`, `ROUTES`, `REDIRECTS`, `OUTSIDE_SHELL`, `PROFILE_GROUPS`, `SETTINGS_SECTIONS`, `matchRoute(path)`, `sectionForPath(path)`, `parentForPath(path)`, `titleKeyForPath(path)` | single source (§2) |
 | `tabMemory.js` | reducer + `useTabMemory()` | §6.3 |
 | `historyMirror.js` | reducer + `useHistoryMirror()` | §6.4 |
@@ -603,13 +677,14 @@ Every control on today's Settings page, its visibility rule (unchanged), and whe
 | G7 | General › Public profile › Show values publicly | feature on | Account |
 | G8 | General › Public profile › Profile link with Copy | feature on, public, handle set | Account |
 | G9 | General › Public profile › Save | feature on | Account |
-| G10 | General › Theme › Theme grid | everyone | Appearance |
+| G10 | General › Theme › Theme grid | everyone | Appearance (shown as Poké Balls) |
 | G11 | General › Multi-user › Multi-user mode switch and its warning modal | admins | Users & sign-in |
 | G12 | General › Appearance › Language | everyone | Appearance |
 | G13 | General › Appearance › Currency (dynamic list) | everyone | Appearance |
 | G14 | General › Appearance › Price type | everyone | Appearance |
 | G15 | General › Appearance › Prefer own card photos | everyone | Appearance |
 | G16 | General › Appearance › Delete all own card photos | everyone | Appearance |
+| A1 | (new) Show sets in series (`sets_view`, OD-F) | everyone | Appearance |
 | G17 | General › AI scanner › `ScannerSettingsCard` (provider setup, admin parts inside) | everyone | Scanner |
 | G18 | General › AI scanner › Gemini fallback | everyone | Scanner |
 | G19 | General › AI scanner › Scan diagnostics switch and Delete | everyone | Scanner |
@@ -673,6 +748,11 @@ The backend stays untouched; run its tests only if a phase touches it.
 - `historyMirror` reducer: PUSH, REPLACE, POP to a known and an unknown key, the 50-entry cap.
 - `useBack`: same section → `navigate(-1)`; other section → parent with `replace`; cold start → parent; `/scans` → previous screen or `/`.
 - `SegmentedControl` keyboard handling; `shouldDismiss` thresholds; the scanner's camera-or-fallback choice (supported, unsupported, denied, remembered denial); `useHideValues` masking.
+- The Pokémon layer: every type tile pair in §7.12 reaches 4.5:1 for its text colour; `colourFor` is stable; `HpBar` picks the right colour at 20 % and 50 %.
+- `groupSetsBySeries`: grouping by `series_id` or, without it, by series name; years; set counts; owned and total sums; the complete flag; newest series first; the logo set (the namesake set, else the newest).
+- `useSetsView`: `series` by default; saves through `updateSettings`.
+
+**Backend tests (P6a):** `parse_set_for_db` stores `series_id` and `series_logo`; `GET /sets/` returns `series_id`; `GET /api/images/set/{id}/series` serves and caches the series logo, falls back to the namesake set's logo, then to the newest set's logo, then to the bundled wordmark; the migration runs twice without error. Run the whole backend suite (`cd backend && python -m unittest discover -s tests -p 'test_*.py'`).
 
 **New Playwright tests** in `tests/visual/shell.spec.js`. They run in the mobile project (skipped in desktop) and in a new `webkit-iphone` project added to `playwright.webkit.config.js` (`devices['iPhone 13']`, WebKit, 390×844):
 - on every route of §4.2 the tab bar is visible and the right tab has `aria-current="page"` (none on `/scans*`, where the Scan button is active);
@@ -680,7 +760,8 @@ The backend stays untouched; run its tests only if a phase touches it.
 - every pushed page opened by deep link has a back button that lands on its parent;
 - Scan opens from every tab and closes back to the same page;
 - logging out from Profile shows the guard (the four-way case stays in the PWA suite);
-- the desktop project sees the sidebar and no tab bar.
+- the desktop project sees the sidebar and no tab bar;
+- Sets shows series by default, a series opens its sets, and with `sets_view` set to `sets` the page shows the plain set grid.
 
 Plus, in the PWA suite (`tests/pwa/shell-offline.spec.js`): offline, the tab bar stays, the status line shows, `/profile` renders cached numbers and `/analytics` shows `OfflineUnavailable`.
 
@@ -726,7 +807,7 @@ The owner gets the short checklist for the round, not this document.
 14. A sheet open over a long page: the page behind doesn't scroll.
 
 **Round 2 (milestone B, after P3 and P4)**
-1. Home: value, P&L, chart periods, the eye hides every amount, attention rows open the right pages, quick actions, Recently added, Most valuable, "Prices updated".
+1. Home: the tiles (Cards, Sets, Pokédex, and Value with its mode switch), the eye hides every amount, to-do cards open the right pages, quick actions, Latest pulls, Your sets with HP bars, Top cards, "Prices updated".
 2. Scan: how often the camera permission prompt appears (first launch, every launch, never); photo sharpness of a card; shutter count and the 50 limit; Photos from the library.
 3. Review: remove a photo, scan individually, Clear, Start scanning online → the scan page.
 4. Offline: Start scanning → "Saved on this device", the camera screen shows waiting batches, the upload happens after reconnecting.
@@ -736,7 +817,7 @@ The owner gets the short checklist for the round, not this document.
 **Round 3 (milestone C, after P5–P7)**
 1. Collection: segments, search, Sort menu, Filters sheet, 3-column grid, list view, a card (sheet, swipe down), CSV and PDF export, add a custom card.
 2. Card Lists → a binder → back; a deck → back; compare.
-3. Search: Browse, Sets, a set's stat cards, search in set, split variants, Pokédex → species → back.
+3. Search: the Browse tiles and Browse by type; Sets by series → a series → a set (stat cards, search in set, split variants) → back twice; the series logos after a sync; turn off Show sets in series and check the plain grid; Pokédex → species → back.
 4. Settings: each section; restore asks for the password; push can be enabled in Notifications; change password (Q13).
 5. Analytics segments; Trades; Products; Leaderboard; Achievements.
 6. Sign in (Passwords in a Safari tab; in the home-screen app through the edit menu); forced password change; the startup screen offline.
@@ -751,40 +832,50 @@ Every phase: a fresh worktree and a branch `feature/ios-ui-pNN-<slug>` cut from 
 
 **P1 — Foundations** (`feature/ios-ui-p01-foundations`; no navigation change)
 - Owns: `src/index.css`, `tailwind.config.js`, `index.html`, `src/main.jsx`, `public/manifest.json`, `scripts/pwa-assets.test.mjs`, `src/components/ios/*` (new), `src/components/ui/{Sheet,Modal,ConfirmDialog}.jsx`, `src/contexts/SettingsContext.jsx` (hide values only), one dev route line in `src/App.jsx`, `src/i18n/en.js` (new `ios` block), `docs/FRONTEND.md` (theme colour), snapshots.
-- Tasks: the tokens and mappings of §7.1–§7.3; the base cleanup of §7.5 and §6.12 (input size, tap highlight, `touch-action`, hover guards); the font stack and the removal of the Inter link and loader (Q6); `#000` for the manifest, `theme-color` and the fallback layer, with the asset test updated; the restyle of §7.11; the toaster style (§6.11); the primitives of §9 that P2 doesn't own (`SegmentedControl`, `ListSection`, `ListRow`, `Switch`, `SearchField`, `PageSheet`, `Menu`, `ActionSheet`, `Alert`, `Button`, `IconButton`, `Badge`, `HideValuesToggle`, `.glass`); `ConfirmDialog` → `Alert`; the legacy `Sheet` look and swipe; `useHideValues` with the masking in `formatPrice` (Q16; check that no caller feeds the result into an input); the `/__ios` gallery; unit tests; regenerated snapshots.
-- Accept: all tests green; every page renders in the new palette with no layout breaks at 390 and 1280 px; the see-through surfaces of §3.4 are solid; `/__ios` shows every primitive; no input zooms on an iPhone.
+- Tasks: the tokens and mappings of §7.1–§7.3 and the Pokémon layer tokens of §7.12 (type colours with the contrast test, brand triad, `colourFor`); the base cleanup of §7.5 and §6.12 (input size, tap highlight, `touch-action`, hover guards); the text and display font stacks and the removal of the Inter link and loader (Q6); `#000` for the manifest, `theme-color` and the fallback layer, with the asset test updated; the restyle of §7.11; the toaster style (§6.11); the primitives of §9 that P2 doesn't own (`SegmentedControl`, `ListSection`, `ListRow`, `Switch`, `SearchField`, `PageSheet`, `Menu`, `ActionSheet`, `Alert`, `Button`, `IconButton`, `Badge`, `HideValuesToggle`, `.glass`, and the Pokémon components `PokeBall`, `EnergyIcon`, `TypeChip`, `StatTile`, `HpBar`, `HeaderBloom`, `TrainerCard`, `GymBadges`, `SeriesTile`, `SetTile`, `.holo`); `ConfirmDialog` → `Alert`; the legacy `Sheet` look and swipe; `useHideValues` with the masking in `formatPrice` (Q16; check that no caller feeds the result into an input); the `/__ios` gallery; unit tests; regenerated snapshots.
+- Accept: all tests green, including the type-colour contrast test; every page renders in the new palette with no layout breaks at 390 and 1280 px; the see-through surfaces of §3.4 are solid; `/__ios` shows every primitive and Pokémon component; no input zooms on an iPhone.
 
 **P2 — Shell and navigation** (`feature/ios-ui-p02-shell`; **milestone A**, round 1)
 - Owns: `src/navigation/*` (new), `src/components/ios/{NavBar,LargeTitle,BackButton,TabBar,ScanButton,SidebarNav,StatusLine}.jsx`, `src/components/Layout.jsx`, `src/App.jsx`, `src/contexts/ScannerContext.jsx` (new), `src/pages/Profile.jsx` (new), `src/pages/Settings.jsx` (routing and the root list only), `src/pages/CardSearch.jsx` (one call: the camera button uses `openScanner()`), `src/components/sync/{SyncIndicator,OfflineBanner,StaleDataLabel}.jsx`, `src/offline/routes.js` (+ test), `src/i18n/en.js` (`nav` keys, new `profile` block, `settings.sections`), the PWA and visual specs of §12, `playwright.webkit.config.js`, `docs/FRONTEND.md`, `docs/PWA.md`.
-- Tasks: `navConfig` with its test; tab memory; history mirror and `useBack`; the `TabBar`; `ScannerContext` with the existing `UnifiedCardScanner` (camera-first comes in P4); the `NavBar` with interim mode and "own back"; `StatusLine`; `SyncIndicator` into the bar; `/profile`, including Log out and the eye; `/settings/:section` routing with the root list; the `/dashboard` redirect and the catch-all; `AppNav` and the Pokéball button removed from `Layout` (the files stay until P9; `PublicHomeButton` stays on `/u`); `SidebarNav`; `/profile` in `OFFLINE_ROUTES`; the spec updates and new specs; the route table and navigation docs.
+- Tasks: `navConfig` with its test; tab memory; history mirror and `useBack`; the `TabBar` with the Poké Ball Scan button (Q17); `ScannerContext` with the existing `UnifiedCardScanner` (camera-first comes in P4); the `NavBar` with interim mode and "own back"; `StatusLine`; `SyncIndicator` into the bar; `/profile` per §5.5 (trainer card, tiles, list, Log out, the eye); `/settings/:section` routing with the root list; the `/dashboard` redirect and the catch-all; `AppNav` and the Pokéball button removed from `Layout` (the files stay until P9; `PublicHomeButton` stays on `/u`); `SidebarNav`; `/profile` in `OFFLINE_ROUTES`; the `/sets/series/:seriesKey` route in `App.jsx`, `navConfig` and `OFFLINE_ROUTES`, rendering `Sets` (P6 reads the parameter); the spec updates and new specs; the route table and navigation docs.
 - Accept: every route in §4.2 shows the right tab, title and back target; all tests green in Chromium and WebKit; no page lost an action (old in-page back links remain until their phase); offline behaviour unchanged.
 - Gate: deploy candidate with the owner's OK, then iPhone round 1.
 
-After P2 merges, **P3–P7 can run in parallel**: they own different page files. Shared files (`index.css`, `tailwind.config.js`, `App.jsx`, `Layout.jsx`, `navConfig`, `components/ios/*`) change only through the coordinator; `en.js` changes only inside each phase's own namespaces.
+After P2 merges, **P3–P7 can run in parallel**: they own different page files. P6a touches only the backend and can run at any time after P0. Shared files (`index.css`, `tailwind.config.js`, `App.jsx`, `Layout.jsx`, `navConfig`, `components/ios/*`) change only through the coordinator; `en.js` changes only inside each phase's own namespaces.
 
 **P3 — Home** (`feature/ios-ui-p03-home`)
 - Owns: `src/pages/HomeScreen.jsx`, `src/components/pwa/InstallHint.jsx`, `en.js` (`home`).
-- Tasks: §5.1 with the existing queries plus `getCustomMatches` and `useOutbox`; the tap popover for the product-value note; the local avatar sprite.
-- Accept: "Hello," present; every attention row appears only with a non-zero count; offline Home renders from the read cache; nothing hover-only.
+- Tasks: §5.1 with the existing queries plus `getCustomMatches`, `useOutbox`, the cached sets list and the Pokédex summary; the Value tile with its mode button; the local avatar sprite. The product-value note moves to Analytics in P7.
+- Accept: "Hello," present; every to-do card appears only with a non-zero count; the Portfolio value | Capital invested switch still works; offline Home renders from the read cache; nothing hover-only.
 
 **P4 — Scan** (`feature/ios-ui-p04-scan`; with P3, **milestone B**, round 2)
 - Owns: `src/components/UnifiedCardScanner.jsx`, `src/components/BatchCameraCapture.jsx`, `src/contexts/ScannerContext.jsx`, `src/pages/ScanQueue.jsx`, `src/components/ScanReview.jsx` (restyle only), `en.js` (`scanner`), `tests/pwa/offline-scan.spec.js`, `tests/visual/scan-review.spec.js`.
-- Tasks: §5.3, the fallback and the remembered denial; the inbox badge on the camera screen; ScanQueue and ScanReview restyle.
+- Tasks: §5.3, the fallback and the remembered denial; the Poké Ball shutter, the yellow guide corners and the "N caught" badge (Q17, Q18); the inbox badge on the camera screen; ScanQueue and ScanReview restyle.
 - Accept: the PWA scan specs pass in Chromium and WebKit; the update guard holds while staged; recognition, outbox and queue logic unchanged.
 
 **P5 — Collection** (`feature/ios-ui-p05-collection`)
-- Owns: `src/pages/{Collection,Binders,BinderDetail,DeckEditor,DeckCompare,Wishlist}.jsx`, `src/components/CardItem.jsx`, the frame part of `src/components/UnifiedCard.jsx` (Q14), `en.js` (`collection`, `binders`, `wishlist`, `decks`), `collection-list` and `card-system-dialog` snapshots.
-- Tasks: §5.2; `sort` and `order` URL parameters; remove the three `COLLECTION_TABS` strips and the in-page back links.
+- Owns: `src/pages/{Collection,Binders,BinderDetail,DeckEditor,DeckCompare,Wishlist}.jsx`, `src/components/CardItem.jsx`, the frame part of `src/components/UnifiedCard.jsx` (Q14), `en.js` (`collection`, `binders`, `wishlist`, `decks`), `collection-list` and `card-system-dialog` snapshots, and the variant-chip tokens in `src/components/card-system/tokens.css` (a shared change, reviewed with the checklist in `docs/CARD_SYSTEM.md`).
+- Tasks: §5.2, including the type chips, the type glows and the foil variant chips; `sort` and `order` URL parameters; remove the three `COLLECTION_TABS` strips and the in-page back links.
 - Accept: every existing action is reachable from the menus; the four DeckEditor `header` tests pass.
 
 **P6 — Search** (`feature/ios-ui-p06-search`)
-- Owns: `src/pages/{CardSearch,Sets,SetDetail,Pokedex,PokedexSpecies}.jsx`, `en.js` (`cardSearch`, `sets`, `setDetail`, `pokedex`), `tests/visual/advanced-search.spec.js`.
-- Tasks: §5.4 (the Set detail upgrade only if Q1d is yes); the offline search state; remove CardSearch's own scanner buttons (the tab bar and "Scan a card instead" replace them).
-- Accept: URL state of search and sets unchanged; Browse works offline.
+- Owns: `src/pages/{CardSearch,Sets,SetDetail,Pokedex,PokedexSpecies}.jsx`, `src/utils/setSeries.js` (new: `groupSetsBySeries`), `src/hooks/useSetsView.js` (new), `en.js` (`cardSearch`, `sets`, `setDetail`, `pokedex`), `tests/visual/advanced-search.spec.js`.
+- Tasks: §5.4: the Browse tiles and Browse by type; the series view, the series page (inside `Sets.jsx`, keyed by `useParams().seriesKey`) and the sets view, following `sets_view`; series logos through P6a's `series` image type when the sets carry `series_id`, otherwise the namesake set's logo, else the newest set's; the Set detail upgrade (Q1d); Pokédex caught marks; the offline search state; remove CardSearch's own scanner buttons (the tab bar and "Scan a card instead" replace them).
+- Accept: URL state of search and sets unchanged; Browse, the series view and the series page work offline; each series total equals the sum of its sets.
+
+**P6a — Series logos, backend** (`feature/ios-ui-p06a-series-logos`; Q19, the one approved backend change; it can run at any time after P0)
+- Owns: `backend/models.py`, `backend/database.py` (migration list), `backend/services/pokemon_api.py`, `backend/schemas.py`, `backend/api/images.py`, new `backend/tests/test_series_logos.py`, `docs/BACKEND.md`.
+- Tasks:
+  - `Set` gains two nullable columns, `series_id` and `series_logo`, added through the existing migration list (`ALTER TABLE sets ADD COLUMN IF NOT EXISTS …`, as `abbreviation` was).
+  - The sync already fetches `/series/{id}` for every series (`services/pokemon_api.py`). Keep that series' `id` and `logo` with each of its sets (`_series_id`, `_series_logo`), and let `parse_set_for_db` store `series_id` and `series_logo` (`<logo>.webp`, the same convention as set logos).
+  - `SetBase` returns `series_id`. The logo URL stays on the server.
+  - `GET /api/images/set/{set_id}/series` serves the set's series logo through the existing image cache (`_get_or_fetch`, one cache key per language and series). Without a series logo it serves the namesake set's logo (the set whose name equals the series name), then the newest set's logo, then the bundled wordmark. The same visibility check as for set images applies.
+  - Existing installs fill the new columns on the next full sync; until then the frontend uses its fallback (P6).
+- Accept: the whole backend suite passes, including the new tests; the migration runs twice without error; no other API change; the sets payload grows only by `series_id`.
 
 **P7 — Profile, Settings and the rest** (`feature/ios-ui-p07-profile`; P5–P7 together are **milestone C**, round 3). May ship as two PRs with disjoint files: 7a (Profile polish, Settings sections, auth screens) and 7b (portfolio and social pages).
 - Owns: `src/pages/{Profile,Settings,Analytics,Products,Trades,Leaderboard,Achievements,Compare,UserCollection,OfflineCenter,CardMigration,Login}.jsx`, `src/components/{ScannerSettingsCard,AuthStartupScreen}.jsx`, `src/components/pwa/NotificationsCard.jsx`, `src/components/sync/{LogoutGuardDialog,SyncSheet}.jsx`, `ForcePasswordChangeScreen` in `src/App.jsx` (the only `App.jsx` change in this window), `en.js` (`settings`, `profile`, `analytics`, `products`, `trades`, `leaderboard`, `achievements`).
-- Tasks: §5.5–§5.8; the coverage checklist of §10, row by row; the logout guard as an action sheet; Analytics' order and default (Q15); remove `AnalyticsSectionNav` and `SOCIAL_TABS` strips.
+- Tasks: §5.5–§5.8; the coverage checklist of §10, row by row, including the new A1 switch (through `useSetsView` once P6 has merged, otherwise `updateSettings({ sets_view })` directly) and the Poké Ball theme picker; the logout guard as an action sheet; Analytics' order and default (Q15) and its new value block; remove `AnalyticsSectionNav` and `SOCIAL_TABS` strips.
 - Accept: every row of §10 ticked; the AutoFill markup byte-identical; all tests green.
 
 **P8 — Polish** (`feature/ios-ui-p08-polish`): the approved extras (pull to refresh, transitions), large-title tuning, a VoiceOver pass, a performance pass on the blur layers, a reduced-motion audit. Final iPhone checks.
@@ -818,37 +909,45 @@ After P2 merges, **P3–P7 can run in parallel**: they own different page files.
 | A Settings control disappears | the §10 checklist is part of P7's acceptance |
 | Light accent themes make white text unreadable | `--color-on-accent` per theme |
 | `useBack` misreads history after a reload or in a Safari tab | the history mirror resets on unknown keys and falls back to the parent; unit and deep-link tests |
+| The Pokémon layer makes screens busy or slow | colour lives in tiles, chips, card glows and static header blooms; lists, sheets and Settings stay calm; no animated shine; P8 performance pass |
+| Text on coloured tiles is hard to read | the tile colours are AA-checked by a unit test (§7.12) |
+| The series-logo change conflicts with upstream syncs | two nullable columns, one image type and a small change in `pokemon_api.py`, in its own tested PR (P6a) |
+| New playful strings stay English in other languages | only new keys use them; the English fallback is the documented behaviour (Q18) |
 
 ## 17. Decisions for the owner
 
-Recommendations first. "Yes to all recommendations" is a valid answer. Answers get recorded here, in the Answer column, before the P0 PR merges.
+The owner answered in the mockup page on 2026-10-19 and approved version 2. Q1–Q16 came with the first mockups, Q17–Q19 with version 2.
 
 **Mockups:** [PokéCollector iPhone Mockups](https://claude.ai/artifact/FVYGUzcRSuEeLZshZgWJAS) (a private Artifact, open only to the owner): every screen of §5 at 390×844, the tab bar states, the menus, and these questions with a Save button. Sample data only; the card pictures are stand-ins.
 
 | # | Question | Recommendation | Alternative | Answer |
 |---|---|---|---|---|
-| Q1 | Extras: (a) hide-values eye on Home and Profile; (b) pull to refresh on tab roots; (c) slide transitions for push and pop; (d) Set detail upgrade: stat cards, search in set, split variants; (e) recent searches | (a) yes, (b) yes in P8, (c) yes in P8 if smooth on the device, (d) yes in P6, (e) not in v1 | any subset | awaiting |
-| Q2 | Scan circle style | accent circle with a viewfinder icon (follows the accent theme; the badge stays legible) | Poké Ball circle (red and white in every theme) | awaiting |
-| Q3 | Grid density | 3 columns on phones in Collection and Set detail, list view for details; Search results keep 2 because their tiles carry add buttons | 3 everywhere | awaiting |
-| Q4 | Home quick actions | Wishlist, Card Lists, Sets, Analytics | another four | awaiting |
-| Q5 | Admin price sync | its own row "Update prices" in Settings › Data & sync (it is a different action from "Sync prices only"); Home shows "Prices updated …" | keep a small sync button on Home for admins | awaiting |
-| Q6 | Font | the system font everywhere; drop the Google Fonts Inter link | keep Inter for headings | awaiting |
-| Q7 | Search offline | Browse rows work; the search field is disabled | hide Search's field offline | awaiting |
-| Q8 | Not in v1 | long-press context menus on cards, swipe actions on rows, the tab bar shrinking on scroll | pick any for P8 | awaiting |
-| Q9 | Public `/u` pages | palette only | full redesign later | awaiting |
-| Q10 | iPad and desktop | a sidebar from 1024 px | tab bar everywhere | awaiting |
-| Q11 | Light mode | out of scope (the opaque black status bar can't change at runtime) | — | awaiting |
-| Q12 | Name of the middle segment | keep "Card Lists", the app's current English name for binders and decks (already translated in every language) | rename to "Binders" in English | awaiting |
-| Q13 | Change password and Sign out other devices | show them to every signed-in user in multi-user mode, under Settings › Account (the server already allows it) | keep them admin-only under Users | awaiting |
-| Q14 | Card detail on the iPhone | a page sheet that slides up, with a grabber and swipe down to close; the content stays the same | keep today's floating dialog (the card system's shared frame) | awaiting |
-| Q15 | Analytics | open on Investment, order Investment · Movers · Rarity · Duplicates | keep Duplicates first | awaiting |
-| Q16 | What the eye hides | every amount in the app (masked in `formatPrice`) | only portfolio totals on Home, Profile and Collection | awaiting |
+| Q1 | Extras: (a) hide-values eye on Home and Profile; (b) pull to refresh on tab roots; (c) slide transitions for push and pop; (d) Set detail upgrade: stat cards, search in set, split variants; (e) recent searches | (a) yes, (b) yes in P8, (c) yes in P8 if smooth on the device, (d) yes in P6, (e) not in v1 | any subset | **(a)–(d) yes, (e) not in v1**, as recommended |
+| Q2 | Scan circle style | accent circle with a viewfinder icon (follows the accent theme; the badge stays legible) | Poké Ball circle (red and white in every theme) | **Accent circle**, superseded by Q17 (a Poké Ball whose top half is the theme colour) |
+| Q3 | Grid density | 3 columns on phones in Collection and Set detail, list view for details; Search results keep 2 because their tiles carry add buttons | 3 everywhere | **As recommended** |
+| Q4 | Home quick actions | Wishlist, Card Lists, Sets, Analytics | another four | **As recommended** |
+| Q5 | Admin price sync | its own row "Update prices" in Settings › Data & sync (it is a different action from "Sync prices only"); Home shows "Prices updated …" | keep a small sync button on Home for admins | **As recommended** |
+| Q6 | Font | the system font everywhere; drop the Google Fonts Inter link | keep Inter for headings | **As recommended** |
+| Q7 | Search offline | Browse rows work; the search field is disabled | hide Search's field offline | **As recommended** |
+| Q8 | Not in v1 | long-press context menus on cards, swipe actions on rows, the tab bar shrinking on scroll | pick any for P8 | **As recommended** |
+| Q9 | Public `/u` pages | palette only | full redesign later | **As recommended** |
+| Q10 | iPad and desktop | a sidebar from 1024 px | tab bar everywhere | **As recommended** |
+| Q11 | Light mode | out of scope (the opaque black status bar can't change at runtime) | — | **As recommended** |
+| Q12 | Name of the middle segment | keep "Card Lists", the app's current English name for binders and decks (already translated in every language) | rename to "Binders" in English | **As recommended** |
+| Q13 | Change password and Sign out other devices | show them to every signed-in user in multi-user mode, under Settings › Account (the server already allows it) | keep them admin-only under Users | **As recommended** |
+| Q14 | Card detail on the iPhone | a page sheet that slides up, with a grabber and swipe down to close; the content stays the same | keep today's floating dialog (the card system's shared frame) | **As recommended** |
+| Q15 | Analytics | open on Investment, order Investment · Movers · Rarity · Duplicates | keep Duplicates first | **As recommended** |
+| Q16 | What the eye hides | every amount in the app (masked in `formatPrice`) | only portfolio totals on Home, Profile and Collection | **As recommended** |
+| Q17 | Scan button in version 2 | a Poké Ball whose top half is the theme colour | the plain theme-coloured circle of Q2 | **As recommended** |
+| Q18 | Playful wording | a little, in new strings only ("Latest pulls", "N caught", "species caught") | plain wording | **As recommended** |
+| Q19 | Series pictures | the logo of the series' own first set, with no server change | the server downloads the official series logos during sync | **The server downloads the series logos** (approved backend change, P6a) |
 
 **Decided in P0** (no answer needed; reasons in the sections named): offline-queued uploads are not counted on the Scan circle (§5.3); one status line for offline and saved data (§6.6); muted text uses systemGray (§7.1); accent text uses the light accent and black on light accents (§7.2, §7.3); Collection's "⋯" keeps Export PDF and has no Select (§5.2); Multi-user mode lives in "Users & sign-in" (§5.6); the tab bar hides while typing (§6.12); the bottom inset is capped at 34 px (§7.1); the history mirror for back (§6.4); `#root > *` stays (§7.5); `InstallHint` stays in `Layout` (§8); new shell tests also run in WebKit iPhone emulation (§12).
 
 ## 18. Docs to update
 - `docs/FRONTEND.md` (P2, then each phase): the Navigation section (`navConfig`, `TabBar`, `NavBar`, Profile, the Settings routes, `ScannerContext`) and the route table (`/profile`, `/settings/:section`, the `/dashboard` redirect, the catch-all).
 - `docs/PWA.md` (P2): where the sync indicator, the status line and Log out now live (it says "a small button at the top right" and describes the Home logout).
+- `docs/BACKEND.md` (P6a): the `series_id` and `series_logo` columns, the sync change and the `series` image type.
 - `README.md` (P9): screenshots and feature bullets.
 - This file stays as the rationale; its status banner changes when the work ships.
 
