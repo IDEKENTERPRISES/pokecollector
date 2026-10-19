@@ -241,16 +241,62 @@ def get_card_image(
     )
 
 
+def _series_logo_source(db: Session, card_set: Set) -> tuple[str, str] | None:
+    """Pick the (cache key, URL) for a set's series logo, or None for the wordmark.
+
+    Order: the series logo stored on the set, the namesake set's logo (the set in
+    the same series and language whose name equals the series name), then the
+    newest set's logo in that series.
+    """
+    lang = card_set.lang or "en"
+    if card_set.series_id and card_set.series_logo:
+        return f"series:{lang}:{card_set.series_id}", card_set.series_logo
+
+    if card_set.series_id:
+        in_series = (Set.series_id == card_set.series_id,)
+    elif card_set.series:
+        in_series = (Set.series == card_set.series,)
+    else:
+        return None
+    members = db.query(Set).filter(*in_series, Set.lang == lang, Set.images_logo.isnot(None))
+
+    if card_set.series:
+        namesake = members.filter(Set.name == card_set.series).first()
+        if namesake:
+            return f"set:{namesake.id}:logo", namesake.images_logo
+    newest = members.order_by(Set.release_date.desc().nullslast(), Set.id).first()
+    if newest:
+        return f"set:{newest.id}:logo", newest.images_logo
+    return None
+
+
 @router.get("/set/{set_id}/{image_type}")
 def get_set_image(set_id: str, image_type: str, db: Session = Depends(get_db)):
-    if image_type not in ("logo", "symbol"):
-        raise HTTPException(status_code=400, detail="image_type must be logo or symbol")
+    if image_type not in ("logo", "symbol", "series"):
+        raise HTTPException(status_code=400, detail="image_type must be logo, symbol or series")
 
     card_set = db.query(Set).filter(Set.id == set_id).first()
     if not card_set:
         raise HTTPException(status_code=404, detail="Set not found")
     if not _is_globally_visible_set_image(db, card_set):
         raise HTTPException(status_code=404, detail="Set not found")
+
+    if image_type == "series":
+        source = _series_logo_source(db, card_set)
+        if not source:
+            return _set_fallback_response()
+        cache_key, url = source
+        try:
+            data, content_type = _get_or_fetch(db, cache_key, url)
+        except HTTPException as exc:
+            if exc.status_code == 502:
+                return _set_fallback_response()
+            raise
+        return Response(
+            content=data,
+            media_type=content_type,
+            headers={"Cache-Control": "public, max-age=86400", **_IMAGE_SECURITY_HEADERS},
+        )
 
     url = card_set.images_logo if image_type == "logo" else card_set.images_symbol
     cache_key = f"set:{set_id}:{image_type}"

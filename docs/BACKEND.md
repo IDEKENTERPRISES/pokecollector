@@ -201,7 +201,7 @@ responses.
 | POST | `/api/sync/reschedule-prices` | Reschedule price sync |
 | GET | `/api/sync/status` | Sync status and history |
 | GET | `/api/images/card/{card_id}/{size}` | Card image proxy/cache |
-| GET | `/api/images/set/{set_id}/{image_type}` | Set logo/symbol proxy/cache |
+| GET | `/api/images/set/{set_id}/{image_type}` | Set `logo`/`symbol`/`series` proxy/cache; `series` serves the official series logo (see [Set series](#set-series-and-series-logos)) |
 | GET | `/api/images/product/{product_id}` | Token-gated, size-limited proxy for a validated product image |
 | GET | `/api/settings/` | Effective settings for current user |
 | GET | `/api/settings/scanner` | Typed provider/model readiness for the current user |
@@ -306,6 +306,17 @@ responses.
 - Per-user key/value table
 - Used for isolated user preferences and secrets
 - Unique constraint: `user_id + key`
+
+### Set series and series logos
+
+`Set` carries two nullable columns for the iPhone UI's sets-by-series view:
+
+- `series_id`: the TCGdex series ID (for example `sv`). `GET /api/sets/` returns it as `series_id`; the logo URL is never exposed.
+- `series_logo`: the series' official logo URL (`<logo>.webp`, the same convention as `images_logo`).
+
+Both are added by idempotent `ALTER TABLE sets ADD COLUMN IF NOT EXISTS` migrations. Existing installs fill them on the next full sync. During sync, `get_all_sets` already fetches `/series/{id}` for every series; it now keeps each series' `id` and `logo` on its sets (`_series_id`, `_series_logo`) and `parse_set_for_db` stores them (falling back to the embedded `serie` object). Every set-saving path skips `None` values, so a refresh without series data never clears them.
+
+`GET /api/images/set/{set_id}/series` serves the set's series logo through the shared `ImageCache` (key `series:{lang}:{series_id}`) under the same visibility check as `logo` and `symbol`. Without a stored series logo it falls back to the namesake set's logo (same series and language, name equal to the series name), then the newest set's logo in that series, then the bundled wordmark.
 
 ### Other Core Models
 
