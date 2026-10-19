@@ -1,5 +1,5 @@
 // createOutbox — the public surface of the offline outbox
-// (docs/PWA_OFFLINE_DESIGN.md §6.2.12). Nothing imports this module yet (P5/P6 wire it).
+// (docs/PWA_OFFLINE_DESIGN.md §6.2.12). The app builds it in `offline/OfflineProvider.jsx`.
 
 import { REQUIRED_SERVER_FEATURE } from '../constants.js'
 import { uuidv4 } from '../uuid.js'

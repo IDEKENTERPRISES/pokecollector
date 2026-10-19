@@ -8,13 +8,13 @@ The frontend uses Tailwind CSS v4, which requires Safari 16.4+, Chrome 111+, or 
 
 ## Installable web app
 
-The app can be added to an iPhone Home Screen (Share, then Add to Home Screen) and runs in its own window. This is installability only: there is no service worker yet, so nothing works offline.
+The app can be added to an iPhone Home Screen (Share, then Add to Home Screen) and runs in its own window. Installability needs no flag. Offline start needs the opt-in service worker described below.
 
 - `public/manifest.json` declares `id`, `scope`, `start_url: /`, `display: standalone`, `theme_color`/`background_color` `#08080f` and four icons (`any` and `maskable`, 192 and 512 px).
 - Icons live in `public/icons/` with a version suffix in the filename (`pc-*-v3.png`). nginx serves `.png` as `immutable` for a year, so a changed icon needs a new filename, not a query string. The older root icons stay for `og:image` and proxy allow-lists.
 - `index.html` links the 180 px opaque `apple-touch-icon` and sets the iOS meta tags (`apple-mobile-web-app-capable`, `mobile-web-app-capable`, `apple-mobile-web-app-title`, `apple-mobile-web-app-status-bar-style=black`).
 - `AppNav.jsx` pads the top strip and positions the floating Home button with `env(safe-area-inset-*)`, so they clear the notch and home indicator.
-- Standalone detection (not used by any component yet): `navigator.standalone === true || matchMedia('(display-mode: standalone)').matches`.
+- Standalone detection (`offline/capabilities.js`): `navigator.standalone === true || matchMedia('(display-mode: standalone)').matches`.
 - nginx revalidates `/`, `/index.html`, `/manifest.json` and SPA deep links (`Cache-Control: no-cache`); the security headers live in `nginx-security-headers.conf`, which `nginx.conf` includes in every location that sets its own `add_header`.
 - `scripts/pwa-assets.test.mjs` and `scripts/nginx-config.test.mjs` guard these files and run as part of `npm test`.
 

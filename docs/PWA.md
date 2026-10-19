@@ -1,6 +1,6 @@
 # Installable app and offline start (PWA)
 
-PokéCollector can be added to an iPhone Home Screen, and, when you switch it on, saves its own app files on the device so the app can start without a network. This page describes the behaviour that is shipped today. The design rationale and the later phases (offline scan queue, cached data, push) are in [`PWA_OFFLINE_DESIGN.md`](PWA_OFFLINE_DESIGN.md).
+PokéCollector can be added to an iPhone Home Screen, and, when you switch it on, saves its own app files on the device so the app can start without a network. This page describes the behaviour that is shipped today. The design rationale is in [`PWA_OFFLINE_DESIGN.md`](PWA_OFFLINE_DESIGN.md).
 
 ## Install on iPhone
 
@@ -40,7 +40,7 @@ Accepted values: `true`, `1`, `yes`, `on`, `false`, `0`, `no`, `off` (any case).
 
 - Saves the app's own files (`/assets/*`, icons, manifest) when it installs, then serves them from the device.
 - Opens pages from the network first (2.5 seconds), and falls back to a saved copy of the app shell when the network is down. Without a saved shell it shows a short bilingual "you are offline" page.
-- Saves public card, set and Pokédex images for faster loading (up to 800).
+- Saves public card, set and Pokédex images for faster loading (up to 800). Offline, a large card image that was never saved falls back to the small copy of the same card.
 - **It caches no user data.** API calls, your collection, prices, photos you took and scan results are never stored by it.
 - It never updates itself in the middle of your work. A bar offers **Update** when a new version is ready.
 
@@ -54,7 +54,7 @@ You never need to clear site data. Three levels, from least to most effort:
 
 1. **L1 – operator:** set `PWA_ENABLED=false` and recreate the frontend container. The next time a phone checks for an update (opening the app, or within 30 minutes of foregrounding it) the kill worker replaces the broken one, deletes its caches and unregisters itself.
 2. **L2 – any user, one URL:** open `https://YOUR-ADDRESS/?pc_sw=off`. The page unregisters every worker, deletes the `pc-*` caches, removes the parameter and reloads. It leaves your queued data untouched.
-3. **L3 – in-app reset:** a Reset button in the sync center arrives with the sync center in a later phase.
+3. **L3 – in-app reset:** with `OFFLINE_QUEUE_ENABLED` on, open **/offline** (the Offline center) and tap **Reset offline app data**. It unregisters the service worker, deletes the `pc-*` caches and the saved copies of your viewed data, and keeps items waiting to sync. The sync sheet itself has no reset button, and the Offline center needs the app to start, so L2 is the way out when it does not.
 
 L2 and L3 do not depend on `/sw.js`, so they also work when a proxy cached a stale worker.
 
@@ -74,7 +74,7 @@ Each device is enabled separately. If notifications stop, tap **Disable** and **
 
 ## Opening the app offline (cached sign-in)
 
-With `OFFLINE_QUEUE_ENABLED` on, the app remembers who was signed in (id, name, role, avatar; never the password or token) in this browser for up to 90 days. If the server cannot be reached when the app starts, it opens in a *degraded* state from that memory instead of the "Cannot reach PokéCollector" screen. The remembered user is only for display; the server checks every request. The app keeps retrying in the background and switches to normal as soon as the server answers. Without a remembered sign-in (first visit, after logout, expired, or a pending password change) the connection screen shows as before.
+With `OFFLINE_QUEUE_ENABLED` on, the app remembers who was signed in (id, name, role, avatar; never the password or token) in this browser for up to 90 days. If the server cannot be reached when the app starts, it opens in a *degraded* state from that memory instead of the "Cannot reach PokéCollector" screen. The remembered user is only for display; the server checks every request. The startup check gives up after 5 seconds, so a request that hangs (as iOS does for some offline requests) does not hold the app on the connection screen. The app keeps retrying in the background and switches to normal as soon as the server answers. Without a remembered sign-in (first visit, after logout, expired, or a pending password change) the connection screen shows as before.
 
 ## Logging out with unsynced items
 
@@ -98,7 +98,7 @@ With `OFFLINE_QUEUE_ENABLED` on, anything that waits on this device is visible:
 
 Items waiting here exist only on this device until they reach the server. The app asks the browser to protect its storage (`navigator.storage.persist()`), shows how much space is used, and keeps a marker so it can tell you when the browser deleted its offline data anyway ("Some offline data was removed by the browser…"). In a Safari tab (not the Home Screen app) it warns once an item is 3 days old, and more strongly after 7 days, because Safari can delete data of websites that were not opened for about a week. Sync items in the browser before adding the app to the Home Screen: the installed app has its own storage.
 
-Not shown yet: *Edit* on queued adds (arrives with the collection/wishlist phase).
+Only scan uploads are queued from the app. Offline collection and wishlist adds are not part of this work, so there is no *Edit* for queued adds; the sheet offers Retry and Discard only.
 
 ## What you can see offline
 
@@ -108,6 +108,7 @@ With `OFFLINE_QUEUE_ENABLED` on, the app keeps a copy of the data you have alrea
 - **Limits:** a single page of data over 5 MiB is skipped; the total stays under 20 MiB (the oldest data goes first); a copy older than 30 days, or saved by a different app version, is ignored.
 - **Per user:** each account on this device and server address has its own copy, in a separate browser database from the waiting items. Signing in as someone else deletes every other account's copy.
 - **Cleared at logout:** logging out (whatever you choose about waiting items; cancelling keeps you signed in) deletes your copy. **Reset offline app data** on /offline deletes every copy.
+- **Settings and exchange rates:** the last settings (per user) and exchange rate (per currency pair) are also kept in the browser, so an offline start keeps your currency instead of falling back to EUR. They are cleared at logout.
 - **Read-only:** you can look, but changes still need the server. Pages outside this list say "This page isn't available offline."
 
 ## Scanning without a connection
