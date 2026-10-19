@@ -63,7 +63,7 @@ function RouteLoader() {
 function ForcePasswordChangeScreen() {
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const { updateCurrentUser } = useAuth()
+  const { user, updateCurrentUser } = useAuth()
   const { t } = useSettings()
 
   const forceChangeMutation = useMutation({
@@ -86,15 +86,32 @@ function ForcePasswordChangeScreen() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-bg-primary px-4">
-      <form onSubmit={handleSubmit} className="w-full max-w-md rounded-2xl border border-border bg-bg-secondary p-6 shadow-xl space-y-4">
+      <form onSubmit={handleSubmit} method="post" action="/change-password" className="w-full max-w-md rounded-2xl border border-border bg-bg-secondary p-6 shadow-xl space-y-4">
         <div className="space-y-1">
           <h1 className="text-2xl font-bold text-text-primary">{t('settings.users.changePassword')}</h1>
           <p className="text-sm text-text-muted">{t('settings.users.forcePasswordChange')}</p>
         </div>
+        <input
+          type="text"
+          name="username"
+          id="force-change-username"
+          value={user?.username || ''}
+          onChange={() => {}}
+          autoComplete="username"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          tabIndex={-1}
+          aria-label={t('auth.username')}
+          className="sr-only"
+        />
         <div>
-          <label className="text-xs text-text-secondary mb-1 block">{t('settings.users.newPassword')}</label>
+          <label htmlFor="force-change-new-password" className="text-xs text-text-secondary mb-1 block">{t('settings.users.newPassword')}</label>
           <input
             type="password"
+            name="new-password"
+            id="force-change-new-password"
+            autoComplete="new-password"
             value={newPassword}
             onChange={(event) => setNewPassword(event.target.value)}
             className="input w-full"
@@ -102,9 +119,12 @@ function ForcePasswordChangeScreen() {
           />
         </div>
         <div>
-          <label className="text-xs text-text-secondary mb-1 block">{t('settings.users.confirmPassword')}</label>
+          <label htmlFor="force-change-confirm-password" className="text-xs text-text-secondary mb-1 block">{t('settings.users.confirmPassword')}</label>
           <input
             type="password"
+            name="confirm-password"
+            id="force-change-confirm-password"
+            autoComplete="new-password"
             value={confirmPassword}
             onChange={(event) => setConfirmPassword(event.target.value)}
             className="input w-full"
