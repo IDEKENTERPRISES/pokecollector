@@ -16,8 +16,13 @@ function res(body, { status = 200, type = 'basic', headers = {}, redirected = fa
 
 class FakeCache {
   constructor() { this.map = new Map() }
-  async put(key, response) { this.map.delete(String(key)); this.map.set(String(key), response) }
-  async match(key) { return this.map.get(String(key?.url ?? key)) }
+  async put(key, response) { const k = String(key?.url ?? key); this.map.delete(k); this.map.set(k, response) }
+  async match(key, options = {}) {
+    const k = String(key?.url ?? key)
+    if (!options.ignoreSearch) return this.map.get(k)
+    const bare = u => u.split('?')[0]
+    for (const [stored, response] of this.map) if (bare(stored) === bare(k)) return response
+  }
   async keys() { return [...this.map.keys()].map(url => ({ url })) }
   async delete(key) { return this.map.delete(String(key?.url ?? key)) }
 }
@@ -71,7 +76,7 @@ const classifyPath = (api, path, init) => api.classify(req(path, init), new URL(
 describe('placeholders', () => {
   it('is valid JS unreplaced and exposes helpers only in test mode', () => {
     const { api } = load()
-    expect(Object.keys(api).sort()).toEqual(['classify', 'isCacheableImage', 'trimCache', 'validatePrecache', 'validateShell'])
+    expect(Object.keys(api).sort()).toEqual(['classify', 'isCacheableImage', 'smallImagePath', 'trimCache', 'validatePrecache', 'validateShell'])
     expect(SOURCE).not.toMatch(/\bimport\s/)
     expect(SOURCE.split('\n').length).toBeLessThanOrEqual(350)
   })
@@ -141,6 +146,77 @@ describe('validateShell', () => {
     expect(api.validateShell(res(shell, { headers: { 'Content-Type': 'text/plain' } }), shell, set)).toBe(false)
     expect(api.validateShell(res(shell, { ...html, redirected: true }), shell, set)).toBe(false)
   })
+})
+
+describe('smallImagePath', () => {
+  const { api } = load()
+  it('maps a large card image to its small sibling', () => {
+    expect(api.smallImagePath('/api/images/card/sv1-1_en/large')).toBe('/api/images/card/sv1-1_en/small')
+    expect(api.smallImagePath('/api/images/card/en/x/large')).toBe('/api/images/card/en/x/small')
+  })
+  it('returns null for anything else', () => {
+    expect(api.smallImagePath('/api/images/card/sv1-1_en/small')).toBeNull()
+    expect(api.smallImagePath('/api/images/card/large')).toBeNull()
+    expect(api.smallImagePath('/api/images/set/x/large')).toBeNull()
+    expect(api.smallImagePath('/api/pokedex/images/25')).toBeNull()
+  })
+})
+
+describe('large image fallback', () => {
+  const png = (body = 'img') => res(body, { headers: { 'Content-Type': 'image/png' } })
+  const run = (listeners, request) => {
+    const waits = []
+    let responded
+    listeners.fetch({ request, waitUntil: p => waits.push(p), respondWith: p => { responded = p } })
+    return { responded, settle: () => Promise.all(waits) }
+  }
+  const withSmall = async (fetchImpl, smallUrl = '/api/images/card/c1/small') => {
+    const images = new FakeCache()
+    await images.put(ORIGIN + smallUrl, png('small'))
+    return { images, ...load({ fetchImpl, existingCaches: { 'pc-images-v1': images } }) }
+  }
+
+  it('serves the cached small copy when the network fails', async () => {
+    const { listeners } = await withSmall(async () => { throw new Error('offline') })
+    const { responded } = run(listeners, req('/api/images/card/c1/large'))
+    expect(await (await responded).text()).toBe('small')
+  })
+
+  it('matches the small copy ignoring the query string', async () => {
+    const { listeners } = await withSmall(async () => { throw new Error('offline') }, '/api/images/card/c1/small?v=3')
+    const { responded } = run(listeners, req('/api/images/card/c1/large?v=3'))
+    expect(await (await responded).text()).toBe('small')
+  })
+
+  it('falls back after 4 s when the network hangs, and stores a late answer', async () => {
+    let answer
+    const { listeners, images } = await withSmall(() => new Promise(resolve => { answer = resolve }))
+    const started = Date.now()
+    const { responded, settle } = run(listeners, req('/api/images/card/c1/large'))
+    expect(await (await responded).text()).toBe('small')
+    expect(Date.now() - started).toBeGreaterThanOrEqual(3900)
+    answer(png('large'))
+    await settle()
+    expect(await (await images.match(ORIGIN + '/api/images/card/c1/large')).text()).toBe('large')
+  }, 10000)
+
+  it('uses the network answer without delay and caches it', async () => {
+    const { listeners, images } = await withSmall(async () => png('large'))
+    const started = Date.now()
+    const { responded, settle } = run(listeners, req('/api/images/card/c1/large'))
+    expect(await (await responded).text()).toBe('large')
+    expect(Date.now() - started).toBeLessThan(1000)
+    await settle()
+    expect(await (await images.match(ORIGIN + '/api/images/card/c1/large')).text()).toBe('large')
+  })
+
+  it('without a small copy the network error or late answer is passed through', async () => {
+    const failing = load({ fetchImpl: async () => { throw new Error('offline') } })
+    await expect(run(failing.listeners, req('/api/images/card/c9/large')).responded).rejects.toThrow('offline')
+    const late = load({ fetchImpl: () => new Promise(resolve => setTimeout(() => resolve(png('late')), 4300)) })
+    const { responded } = run(late.listeners, req('/api/images/card/c9/large'))
+    expect(await (await responded).text()).toBe('late')
+  }, 10000)
 })
 
 describe('isCacheableImage', () => {
