@@ -15,6 +15,7 @@ class SetBase(BaseModel):
     images_symbol: Optional[str] = None
     images_logo: Optional[str] = None
     abbreviation: Optional[str] = None
+    series_id: Optional[str] = None
     is_new: bool = False
     is_digital: bool = False
     lang: str = "en"                    # TCGdex language code, never "both"
