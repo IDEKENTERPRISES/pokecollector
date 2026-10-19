@@ -311,7 +311,7 @@ feature pages do not invent competing labels.
 
 ### Scanner and review inbox
 
-`components/UnifiedCardScanner.jsx` is the capture-only entry point. It supports the native device camera and gallery uploads, stages one or more photos, allows per-photo individual recognition overrides, and includes an optional positioning guide beside **Take photo**. Every submission enqueues a persistent job and routes to the same review inbox, including a one-photo scan.
+`components/UnifiedCardScanner.jsx` is the capture-only entry point. It supports the native device camera and gallery uploads, stages one or more photos, allows per-photo individual recognition overrides, and includes an optional positioning guide beside **Take photo**. Every submission enqueues a persistent job and routes to the same review inbox, including a one-photo scan. With the offline queue on, submission goes through `offline/ops/scanSubmit.js` (`submitScanBatch`): chunks are saved to the outbox first, `outbox.sendNow` is called only when reachability is exactly `reachable` and is waited on for at most 5 s, otherwise the scanner closes with `sync.savedOffline`. The scanner also registers an update guard (`addUpdateGuard`) while photos are staged or a submit runs. With the queue off the old `enqueueScanJob` path runs unchanged.
 
 `pages/ScanQueue.jsx` and `components/ScanReview.jsx` show job progress, retry countdowns/reasons, sanitized source photos, ranked candidates, failed items, individual retry, dismissal, and collection-add review. The navigation badge counts outstanding items. A confirmed candidate id is sent when resolving an item so opted-in diagnostics can be labelled with human-reviewed ground truth.
 
@@ -344,7 +344,7 @@ Notable frontend API bindings include:
 
 ## Offline outbox
 
-`frontend/src/offline/` holds the client side of the offline queue designed in `docs/PWA_OFFLINE_DESIGN.md` (§6.2). The library is wired in by `OfflineProvider` (P5) and the sync center (P6); the scanner does not queue yet. Items are kept in IndexedDB and replayed from the page (Safari has no Background Sync); the server's `Idempotency-Key` contract makes a repeated send harmless.
+`frontend/src/offline/` holds the client side of the offline queue designed in `docs/PWA_OFFLINE_DESIGN.md` (§6.2). The library is wired in by `OfflineProvider` (P5) and the sync center (P6). The scanner queues scan photos through `ops/scanSubmit.js`. Items are kept in IndexedDB and replayed from the page (Safari has no Background Sync); the server's `Idempotency-Key` contract makes a repeated send harmless.
 
 ### Module map
 

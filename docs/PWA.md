@@ -90,6 +90,16 @@ Items waiting here exist only on this device until they reach the server. The ap
 
 Not shown yet: *Edit* on queued adds (arrives with the collection/wishlist phase) and anything about cached read-only pages (later phase).
 
+## Scanning without a connection
+
+With `OFFLINE_QUEUE_ENABLED` on, **Start scanning** never waits for the network. The photos are saved on the phone first; then:
+
+- If the server is known to be reachable, the app tries to upload straight away and waits at most about 5 seconds. If that finishes you land on the scan as before. If it does not, the scanner closes with "Saved on this device. It will sync automatically." and the upload carries on in the background.
+- If the server is not (yet) known to be reachable, the scanner closes at once with the same message and the photos upload when the server answers.
+- Each upload is sent exactly once: it carries a key the server uses to ignore a repeat, so a lost response does not create a second scan.
+
+Limits: 15 MB per photo, 12 photos or about 10 MB per waiting item (a bigger batch becomes several items, so several scan jobs), 50 photos per scan and 300 MB of waiting photos in total. If there is not enough space the scanner stays open with your photos and says so. The server's 14-day retention of scan photos starts when the upload arrives, not when you took the photo. HEIC/HEIF photos are stored and uploaded unchanged. While photos are staged or being saved, the "new version available" banner will not reload the page.
+
 ## Limitations
 
 - The first visit must happen online; there is nothing to start from before that.
