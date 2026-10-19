@@ -26,7 +26,7 @@ function renderLogin(lastUser) {
   return {
     html,
     form: attrs(html.match(/<form\b[^>]*>/)[0]),
-    username: tags.find((a) => a.autocomplete === 'username'),
+    username: tags.find((a) => a.autocomplete?.split(' ')[0] === 'username'),
     password: tags.find((a) => a.type === 'password'),
   }
 }
@@ -41,6 +41,9 @@ describe('Login Password AutoFill markup (iOS home-screen app)', () => {
       expect(form.action).toBeTruthy()
       expect(html).toContain('type="submit"')
       expect(username.name).toBe('username')
+      // 'webauthn' makes iOS treat the field as a sign-in field in non-Safari WebKit views
+      // (home-screen apps); it only adds passkey suggestions where a site offers passkeys.
+      expect(username.autocomplete).toBe('username webauthn')
       expect(username.id).toBeTruthy()
       expect(username.autocapitalize).toBe('none')
       expect(username.autocorrect).toBe('off')

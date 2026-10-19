@@ -89,7 +89,7 @@ export default function Login() {
                 id="login-username-saved"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                autoComplete="username"
+                autoComplete="username webauthn"
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
@@ -141,7 +141,7 @@ export default function Login() {
                   type="text"
                   name="username"
                   id="login-username"
-                  autoComplete="username"
+                  autoComplete="username webauthn"
                   autoCapitalize="none"
                   autoCorrect="off"
                   spellCheck={false}
