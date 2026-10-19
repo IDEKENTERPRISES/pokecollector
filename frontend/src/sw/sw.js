@@ -184,6 +184,65 @@ self.addEventListener('message', event => {
   }
 })
 
+// Web push (docs/PWA_OFFLINE_DESIGN.md §6.7). Always shows a notification: Apple revokes the
+// subscription of sites that receive pushes without showing one. The payload is Declarative
+// Web Push JSON ({web_push, notification:{title, body, navigate}}); only a string title and
+// body are used, anything else falls back to a generic notification.
+const DEFAULT_NOTIFICATION_TITLE = 'PokéCollector'
+
+function pushPayload(event) {
+  try {
+    const data = event.data ? event.data.json() : null
+    const note = data && typeof data === 'object' ? (data.notification || data) : null
+    if (note && typeof note.title === 'string' && note.title) {
+      return {
+        title: note.title.slice(0, 120),
+        body: typeof note.body === 'string' ? note.body.slice(0, 300) : '',
+        navigate: typeof note.navigate === 'string' ? note.navigate : '',
+      }
+    }
+  } catch {
+    // Not JSON: fall through to the generic notification.
+  }
+  return { title: DEFAULT_NOTIFICATION_TITLE, body: '', navigate: '' }
+}
+
+// Same-origin target only; anything else opens the app root.
+function safeNavigateUrl(navigate) {
+  try {
+    const url = new URL(navigate || '/', self.location.origin)
+    return url.origin === self.location.origin ? url.href : new URL('/', self.location.origin).href
+  } catch {
+    return new URL('/', self.location.origin).href
+  }
+}
+
+async function focusOrOpen(target) {
+  const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+  const open = windows.find(client => new URL(client.url).origin === self.location.origin)
+  if (open) {
+    try {
+      await open.focus()
+      if (typeof open.navigate === 'function') await open.navigate(target)
+      return
+    } catch {
+      // Fall through and open a new window.
+    }
+  }
+  await self.clients.openWindow(target)
+}
+
+self.addEventListener('push', event => {
+  const { title, body, navigate } = pushPayload(event)
+  const options = { body, data: { navigate: navigate || '/' } }
+  event.waitUntil(self.registration.showNotification(title, options))
+})
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close()
+  event.waitUntil(focusOrOpen(safeNavigateUrl(event.notification.data && event.notification.data.navigate)))
+})
+
 if (self.__PC_SW_TEST_MODE__) {
   self.__PC_SW_TEST__ = { classify, validatePrecache, validateShell, isCacheableImage, trimCache }
 }

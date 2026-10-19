@@ -62,6 +62,16 @@ L2 and L3 do not depend on `/sw.js`, so they also work when a proxy cached a sta
 
 Safari on iOS has a bug where a photo chosen from the library can upload as an empty file. When `PWA_ENABLED` or `OFFLINE_QUEUE_ENABLED` is on, uploads (scanner photos, collection card photos, CSV and backup restore) are first copied into memory (files up to 8 MiB) or re-sliced (larger files) with the original filename kept. If a photo still arrives empty the server answers with an explicit error instead of saving it. With both flags off the upload code behaves exactly as before.
 
+## Push notifications for price alerts
+
+Wishlist price alerts can also arrive as a notification, next to Telegram.
+
+1. Serve the app over HTTPS and set `PWA_ENABLED=true` (push needs the service worker).
+2. On iPhone, install the app first: Share, then **Add to Home Screen**, and open it from the Home Screen icon. Safari tabs cannot receive push; Settings then shows a hint instead of buttons.
+3. Open Settings, **Notifications**, and tap **Enable on this device**, then allow notifications. **Send test notification** checks that it works.
+
+Each device is enabled separately. If notifications stop, tap **Disable** and **Enable** again. A subscription the phone has dropped is removed from the server automatically the next time it fails. The server keeps its signing key in `./data/auth` (see [DEPLOYMENT.md](DEPLOYMENT.md)); losing it only means turning notifications on again. Details: [BACKEND.md](BACKEND.md#web-push).
+
 ## Opening the app offline (cached sign-in)
 
 With `OFFLINE_QUEUE_ENABLED` on, the app remembers who was signed in (id, name, role, avatar; never the password or token) in this browser for up to 90 days. If the server cannot be reached when the app starts, it opens in a *degraded* state from that memory instead of the "Cannot reach PokéCollector" screen. The remembered user is only for display; the server checks every request. The app keeps retrying in the background and switches to normal as soon as the server answers. Without a remembered sign-in (first visit, after logout, expired, or a pending password change) the connection screen shows as before.

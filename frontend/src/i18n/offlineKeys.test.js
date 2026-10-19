@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import de from './de.js'
 import en from './en.js'
 
-// P10 adds the push keys (pwa.push*) to both languages; until then neither has them.
 const keys = object => Object.keys(object).sort()
 
 describe('offline translations', () => {
@@ -14,6 +13,13 @@ describe('offline translations', () => {
 
   it('has the same pwa keys in German and English', () => {
     expect(keys(de.pwa)).toEqual(keys(en.pwa))
+  })
+
+  it('has the push keys in both languages', () => {
+    for (const key of ['pushTitle', 'pushDesc', 'pushEnable', 'pushDisable', 'pushTest', 'pushDenied', 'pushIosHint']) {
+      expect(typeof en.pwa[key], key).toBe('string')
+      expect(typeof de.pwa[key], key).toBe('string')
+    }
   })
 
   it('has no empty strings', () => {
