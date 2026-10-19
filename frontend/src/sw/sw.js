@@ -9,6 +9,7 @@ const IMAGES_NAME = 'pc-images-v1'
 const SHELL_KEY = '/shell'
 const IMAGE_CAP = 800
 const NAV_TIMEOUT_MS = 2500
+const LARGE_IMAGE_TIMEOUT_MS = 4000
 const IMAGE_PREFIXES = ['/api/images/card/', '/api/images/set/', '/api/pokedex/images/']
 
 const OFFLINE_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8">'
@@ -134,16 +135,56 @@ function handleNavigate(event) {
   event.respondWith(respond)
 }
 
+// '/api/images/card/{id}/large' -> '/api/images/card/{id}/small', or null for any other path.
+function smallImagePath(pathname) {
+  const match = /^(\/api\/images\/card\/.+)\/large$/.exec(pathname)
+  return match ? match[1] + '/small' : null
+}
+
+async function storeImage(cache, request, res) {
+  if (!isCacheableImage(res)) return
+  await cache.put(request, res.clone())
+  await trimCache(cache, IMAGE_CAP)
+}
+
+// Offline (or on a hung connection) the detail view's large image falls back to the small copy
+// the collection grid already cached. A late network answer is still stored for the next view.
+async function fetchLargeImage(event, cache, smallPath) {
+  const network = fetch(event.request)
+  const store = res => storeImage(cache, event.request, res).catch(() => {})
+  const smallCopy = () => cache.match(new URL(smallPath, self.location.origin).href, { ignoreSearch: true })
+  const timer = new Promise(resolve => setTimeout(() => resolve(null), LARGE_IMAGE_TIMEOUT_MS))
+  let res
+  try {
+    res = await Promise.race([network, timer])
+  } catch (err) {
+    const small = await smallCopy()
+    if (small) return small
+    throw err
+  }
+  if (res) {
+    event.waitUntil(store(res))
+    return res
+  }
+  const small = await smallCopy()
+  if (!small) {
+    const late = await network
+    event.waitUntil(store(late))
+    return late
+  }
+  event.waitUntil(network.then(store, () => {}))
+  return small
+}
+
 function handleImage(event) {
   event.respondWith((async () => {
     const cache = await caches.open(IMAGES_NAME)
     const hit = await cache.match(event.request)
     if (hit) return hit
+    const smallPath = smallImagePath(new URL(event.request.url).pathname)
+    if (smallPath) return fetchLargeImage(event, cache, smallPath)
     const res = await fetch(event.request)
-    if (isCacheableImage(res)) {
-      const copy = res.clone()
-      event.waitUntil(cache.put(event.request, copy).then(() => trimCache(cache, IMAGE_CAP)))
-    }
+    event.waitUntil(storeImage(cache, event.request, res).catch(() => {}))
     return res
   })())
 }
@@ -244,5 +285,5 @@ self.addEventListener('notificationclick', event => {
 })
 
 if (self.__PC_SW_TEST_MODE__) {
-  self.__PC_SW_TEST__ = { classify, validatePrecache, validateShell, isCacheableImage, trimCache }
+  self.__PC_SW_TEST__ = { classify, validatePrecache, validateShell, isCacheableImage, trimCache, smallImagePath }
 }
