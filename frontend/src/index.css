@@ -586,6 +586,7 @@ input:-webkit-autofill:focus {
 }
 
 /* Hand-written hover rules only apply on devices that really hover (design doc §6.12) */
+@layer components {
 @media (hover: hover) {
   .card-hover:hover {
     background: var(--color-elevated);
@@ -619,6 +620,7 @@ input:-webkit-autofill:focus {
     transform: scale(1.02);
     transition: transform 0.3s ease;
   }
+}
 }
 
 /* ===================== */

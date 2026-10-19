@@ -42,7 +42,7 @@ export default function Menu({ label, trigger, sections = [], align = 'end', con
   const close = useCallback((restoreFocus = true) => {
     setOpen(false)
     setPosition(null)
-    if (restoreFocus) requestAnimationFrame(() => triggerRef.current?.focus())
+    if (restoreFocus) triggerRef.current?.focus()
   }, [])
 
   // Measure after the menu is in the DOM, then place it. Re-place on resize or scroll.

@@ -28,6 +28,7 @@ The service worker is on by default in the container. `PWA_ENABLED=false` on the
 - `src/pwa/register.js` registers the worker (production, secure context, flag on), checks for updates when the app returns to the foreground, handles `?pc_sw=off` and exposes `addUpdateGuard(fn)` so features can block an update while work is in flight. `components/pwa/UpdateBanner.jsx` shows the update bar.
 - `src/utils/memoryBlob.js` copies upload files into memory when a PWA flag is on (WebKit empty-body bug); `api/client.js` uses it for its six multipart uploads.
 - Tests: `src/sw/sw.test.js` (worker loaded in a `node:vm` context), `scripts/build-sw.test.mjs`, `scripts/configure-pwa.test.mjs` run in `npm test`. `npm run test:pwa` builds with `VITE_PWA_DEFAULT=on`, serves `dist/` on port 4175 and drives real Chromium (`tests/pwa/`; install the browser with `npx playwright install chromium`).
+- CI runs the visual suites in the same Playwright image (`mcr.microsoft.com/playwright:v1.62.1-noble`) the Linux snapshots are generated in, so fonts and rendering match.
 - Shell scripts must keep LF line endings (`.gitattributes`); a CRLF entrypoint fails inside the container.
 
 ## Route Table

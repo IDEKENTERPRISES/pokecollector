@@ -25,6 +25,10 @@ permissions:
 jobs:
   card-system:
     runs-on: ubuntu-latest
+    # Same image the Linux snapshots are generated in, so fonts and rendering match.
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
+      options: --ipc=host
     defaults:
       run:
         working-directory: frontend
@@ -35,6 +39,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git init .
           git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           auth_header="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
@@ -55,9 +60,6 @@ jobs:
 
       - name: Build production frontend
         run: npm run build
-
-      - name: Install visual-test browsers
-        run: npx playwright install --with-deps chromium webkit
 
       - name: Run desktop and mobile visual regression tests
         run: npm run test:visual

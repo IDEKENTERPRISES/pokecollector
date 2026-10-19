@@ -21,7 +21,7 @@ export default function Sheet({ isOpen, onClose, title, children, className = ''
   const { t } = useSettings()
   const titleId = useId()
   const { dialogRef, onDialogKeyDown } = useDialogBehavior(isOpen, onClose, { restoreFocus })
-  const { panelRef, bind } = useSwipeDismiss({ enabled: isOpen, onDismiss: onClose })
+  const { panelRef, bind } = useSwipeDismiss({ enabled: isOpen && Boolean(onClose), onDismiss: onClose })
 
   // Lock body scroll while sheet is open
   useBodyScrollLock(isOpen && manageBodyScroll)

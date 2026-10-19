@@ -74,17 +74,26 @@ export function useSwipeDismiss({ onDismiss, beforeDismiss, enabled = true }) {
     try { event.currentTarget.releasePointerCapture?.(event.pointerId) } catch { /* already released */ }
     const height = panel.offsetHeight
     const dismiss = !cancelled && shouldDismiss({ dy: state.dy, velocity: state.velocity, height })
-    const allowed = dismiss && latest.current.beforeDismiss?.() !== false
+    const allowed = dismiss && Boolean(latest.current.onDismiss) && latest.current.beforeDismiss?.() !== false
     if (!allowed) {
       setTransform(panel, 0, true)
       return
     }
-    if (prefersReducedMotion()) {
+    // After onDismiss, a sheet that is still mounted (a close that is refused, e.g. while saving)
+    // springs back instead of staying slid off-screen.
+    const settle = () => {
       latest.current.onDismiss?.()
+      timer.current = setTimeout(() => {
+        const current = panelRef.current
+        if (current?.isConnected) setTransform(current, 0, true)
+      }, 100)
+    }
+    if (prefersReducedMotion()) {
+      settle()
       return
     }
     setTransform(panel, height, true)
-    timer.current = setTimeout(() => latest.current.onDismiss?.(), 280)
+    timer.current = setTimeout(settle, 280)
   }, [])
 
   const bind = {
