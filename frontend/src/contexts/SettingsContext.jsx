@@ -3,6 +3,7 @@ import en from '../i18n/en'
 import { priceFieldFromPrimary } from '../utils/prices'
 import { normalizeTcgdexLanguageCsv } from '../utils/tcgdexLanguages'
 import { useAuth } from './AuthContext'
+import { loadSettingsWithCache, readCachedRate, readCachedSettings, withRateCache } from '../offline/settingsCache'
 
 const TRANSLATION_LOADERS = {
   de: () => import('../i18n/de'),
@@ -66,15 +67,20 @@ function cacheLanguage(language) {
   }
 }
 
-function initialSettings() {
-  return { ...DEFAULT_SETTINGS, language: readCachedLanguage() || DEFAULT_SETTINGS.language }
+function initialSettings(userId) {
+  const cached = readCachedSettings(userId) || {}
+  return {
+    ...DEFAULT_SETTINGS,
+    ...cached,
+    language: readCachedLanguage() || cached.language || DEFAULT_SETTINGS.language,
+  }
 }
 
 const SettingsContext = createContext(null)
 
 export function SettingsProvider({ children }) {
   const { user, loading: authLoading, multiUser } = useAuth()
-  const [settings, setSettings] = useState(initialSettings)
+  const [settings, setSettings] = useState(() => initialSettings(user?.id))
   const [loaded, setLoaded] = useState(false)
   const [exchangeRate, setExchangeRate] = useState(1.0)
   const [exchangeRateReady, setExchangeRateReady] = useState(true)
@@ -90,17 +96,28 @@ export function SettingsProvider({ children }) {
     setLoaded(false)
     const token = localStorage.getItem('token')
     if (multiUser && !token) {
-      setSettings(initialSettings())
+      setSettings(initialSettings(user?.id))
       setLoaded(true)
       return
     }
 
     const headers = token && multiUser ? { Authorization: `Bearer ${token}` } : {}
-    fetch('/api/settings/', { headers })
+    // Stale-while-revalidate: show this user's cached settings now (the user is only known
+    // here, not at mount), then let the network copy replace them. A hanging offline request
+    // times out and loadSettingsWithCache falls back to the same cache.
+    const cached = readCachedSettings(user?.id)
+    if (cached) {
+      setSettings(prev => ({
+        ...prev,
+        ...cached,
+        language: readCachedLanguage() || cached.language || prev.language,
+      }))
+    }
+    loadSettingsWithCache(user?.id, signal => fetch('/api/settings/', { headers, signal })
       .then(r => {
         if (!r.ok) throw new Error('Settings load failed')
         return r.json()
-      })
+      }))
       .then(data => {
         const language = data.language === 'zh' ? 'zh-cn' : data.language
         cacheLanguage(language)
@@ -144,25 +161,27 @@ export function SettingsProvider({ children }) {
     if (authLoading || (multiUser && !token)) return
 
     const fetchExchangeRate = async (from, to, fallback) => {
-      try {
-        const headers = token && multiUser ? { Authorization: `Bearer ${token}` } : {}
+      const headers = token && multiUser ? { Authorization: `Bearer ${token}` } : {}
+      const rate = await withRateCache(user?.id, from, to, async signal => {
         const response = await fetch(`/api/settings/exchange-rate?from=${from}&to=${to}`, {
           headers,
+          signal,
         })
         if (!response.ok) throw new Error('Exchange rate lookup failed')
         const data = await response.json()
-        return Number(data.rate) || fallback
-      } catch {
-        return fallback
-      }
+        return Number(data.rate)
+      })
+      return rate ?? fallback
     }
 
     const curr = settings.currency || 'EUR'
     let cancelled = false
     if (curr === 'USD') {
-      setExchangeRateReady(false)
-      setExchangeRateCurrency(null)
-      setExchangeRate(1.1)
+      // A cached rate is applied at once (ready); the network refresh replaces it.
+      const cachedRate = readCachedRate(user?.id, 'EUR', 'USD')?.rate
+      setExchangeRateReady(Boolean(cachedRate))
+      setExchangeRateCurrency(cachedRate ? 'USD' : null)
+      setExchangeRate(cachedRate || 1.1)
       fetchExchangeRate('EUR', 'USD', 1.1).then(rate => {
         if (!cancelled) {
           setExchangeRate(rate)
@@ -174,6 +193,8 @@ export function SettingsProvider({ children }) {
       setExchangeRateReady(true)
       setExchangeRateCurrency('EUR')
       setExchangeRate(1.0)
+      const cachedUsd = readCachedRate(user?.id, 'USD', 'EUR')?.rate
+      if (cachedUsd) setUsdToEurRate(cachedUsd)
       fetchExchangeRate('USD', 'EUR', 0.91).then(rate => {
         if (!cancelled) setUsdToEurRate(rate)
       })
