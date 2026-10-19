@@ -461,4 +461,10 @@ export const getLeaderboard = (params = {}) => api.get('/social/leaderboard', { 
 export const compareUsers = (userId, params = {}) => api.get(`/social/compare/${userId}`, { params })
 export const getAchievements = (userId, params = {}) => api.get(`/social/achievements/${userId}`, { params })
 
+// Web push (docs/PWA_OFFLINE_DESIGN.md §6.7)
+export const getVapidPublicKey = () => api.get('/push/vapid-public-key').then(r => r.data)
+export const subscribePush = (subscription) => api.post('/push/subscribe', subscription).then(r => r.data)
+export const unsubscribePush = (endpoint) => api.delete('/push/subscribe', { data: { endpoint } })
+export const sendTestPush = () => api.post('/push/test').then(r => r.data)
+
 export default api

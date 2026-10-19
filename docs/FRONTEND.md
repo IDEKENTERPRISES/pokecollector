@@ -369,7 +369,8 @@ Notable frontend API bindings include:
 | `routes.js` | `OFFLINE_ROUTES` and `isOfflineRoute(pathname)`: pages that stay usable while the server is unreachable |
 | `useOffline.js` | `useOffline()`: two failed probes or `navigator.onLine === false` |
 | `syncToasts.js` | Coalesced "synced" / "failed" toasts and the last-synced time |
-| `OfflineProvider.jsx` | Owns the outbox, the logout guard (`runLogoutGuard`), storage protection and the eviction notice |
+| `readCache.js` | Read cache (P8): `persist`, `restore`, `purge`, `purgeOthers`, `purgeAll` over the `pokecollector-readcache` database (allow-listed TanStack queries per origin and user id; 5 MiB per query, 20 MiB total, 30 days, `appVersion` match) |
+| `OfflineProvider.jsx` | Owns the outbox, the logout guard (`runLogoutGuard`, which also purges the read cache), storage protection, the eviction notice and the read cache wiring: `purgeOthers` on user change, `restore` before protected routes mount on a degraded start (1.5 s cap), `persist` while signed in |
 
 ### Sync center components (P6)
 
@@ -377,6 +378,7 @@ All render nothing unless `OFFLINE_QUEUE_ENABLED` is on.
 
 | Component | Role |
 |-----------|------|
+| `components/sync/StaleDataLabel.jsx` | "Showing saved data from …" in `Layout` while a restored copy is shown and the server is not reachable; also exports `SavedAtContext`/`useSavedAt` |
 | `components/sync/SyncIndicator.jsx` | Floating button (offline / waiting / syncing / needs attention) mounted once in `Layout`; opens the sheet |
 | `components/sync/SyncSheet.jsx` | Sheet with Sync now, Automatic sync, item list (Retry / Discard), storage lines; also exports `SyncControls`, `SyncItemList`, `StorageSummary` for `/offline` |
 | `components/sync/OfflineBanner.jsx` | Banner at the top of `Layout` while offline |

@@ -84,7 +84,7 @@ Be kind. Be clear. Assume good intent. Keep feedback constructive.
 - Persistent Deck Builder for 20-, 40-, and 60-card lists, with editable targets, ownership totals, shortage warnings, validation, analytics, and probabilities
 - Explicit actions send missing Planned Binder or Deck copies to the global Wishlist
 - Convert between Planned and physical Binders, import/export Binder CSV files, and populate a physical Binder from an owned set
-- Wishlist with Telegram price alerts and profile-wide Private, Trade matches, or Public visibility
+- Wishlist with Telegram (and optional web push) price alerts and profile-wide Private, Trade matches, or Public visibility
 
 ### 📈 Prices, Portfolio & Analytics
 - Cardmarket EUR pricing and TCGPlayer USD pricing via TCGdex
@@ -349,7 +349,8 @@ If you are already locked out of multi-user mode, set `USER_MODE=single` in the 
 | `USER_MODE` | Pin the mode from the environment, overriding the stored setting and disabling the in-app toggle. `single` forces single-user (no login screen) and is the recovery hatch after a multi-user lockout; `multi` forces multi-user. Because `single` disables authentication, use it only on a local/LAN install and unset it once recovered. Unset means the in-app setting controls the mode. | *(unset)* |
 | `PUBLIC_MODE` | Enable SEO meta tags, Open Graph, and allow search engine indexing. Default blocks all crawlers. Recreate the frontend container after changing it. | `false` |
 | `PWA_ENABLED` | Let the frontend save its own files on the device for offline start (needs HTTPS). `false` removes an installed service worker. Recreate the frontend container after changing it. See [docs/PWA.md](docs/PWA.md). | `false` |
-| `OFFLINE_QUEUE_ENABLED` | Reserved for the offline scan queue; currently only enables the iOS photo-upload hardening. | `false` |
+| `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Optional web push (price alerts). Both are optional and are not passed through by the stock `docker-compose.yml`: the signing key is created in `./data/auth` on first use. See [docs/PWA.md](docs/PWA.md). | *(unset)* |
+| `OFFLINE_QUEUE_ENABLED` || `OFFLINE_QUEUE_ENABLED` | Reserved for the offline scan queue; currently only enables the iOS photo-upload hardening. | `false` |
 | `POKECOLLECTOR_VERSION` | Optional frontend and backend image-tag override for controlled deployments and rollbacks. Leave unset to use the exact release bundled with `docker-compose.yml`; `latest` is available only when deliberately requested. | Bundled release version |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | How long a login stays valid. Each login is also a server-side session that ends immediately on sign out, password change/reset, deactivation or "Sign out other devices". Upgrading from an earlier version signs everyone out once. | `10080` (7 days) |
 | `CORS_ORIGINS` | Comma-separated list of origins allowed to call the API from a browser on another site. Leave empty unless you host a separate web front end: the bundled UI is same-origin and native apps send no origin. While empty, browser writes from other sites are refused. | *(none)* |

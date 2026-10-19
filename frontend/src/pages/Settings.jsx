@@ -20,6 +20,7 @@ import Modal from '../components/ui/Modal'
 import PasswordPromptDialog from '../components/ui/PasswordPromptDialog'
 import AvatarPicker from '../components/AvatarPicker'
 import ScannerSettingsCard from '../components/ScannerSettingsCard'
+import NotificationsCard from '../components/pwa/NotificationsCard'
 import { formatDistanceToNow } from 'date-fns'
 import toast from 'react-hot-toast'
 import { TCGDEX_LANGUAGES, normalizeTcgdexLanguageCsv, tcgdexLanguageLabel } from '../utils/tcgdexLanguages'
@@ -1692,6 +1693,8 @@ export default function Settings() {
               {!priceAlertsEnabled && <div style={{ height: 0 }} />}
             </SettingsCard>
           </section>
+
+          <NotificationsCard />
         </>
       )}
 

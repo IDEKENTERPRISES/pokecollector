@@ -7,6 +7,7 @@ import { StorageSummary, SyncControls, SyncItemList } from '../components/sync/S
 import { useSettings } from '../contexts/SettingsContext'
 import { getCapabilities } from '../offline/capabilities'
 import { probe } from '../offline/outbox/probe'
+import { purgeAll } from '../offline/readCache'
 import { useOutbox } from '../offline/useOutbox'
 import { resetServiceWorker } from '../pwa/register'
 
@@ -88,6 +89,7 @@ export default function OfflineCenter() {
   const info = live?.serverInfo
 
   const reset = async () => {
+    await purgeAll()
     await resetServiceWorker()
     toast.success(t('pwa.resetDone'))
   }
