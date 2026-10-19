@@ -10,7 +10,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/pc-apple-touch-180-v3.png" />
     <!-- PWA Manifest -->
     <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#08080f" />
+    <meta name="theme-color" content="#000000" />
     <!-- iOS home-screen app -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -18,14 +18,9 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <!-- Dark fallback until the app stylesheet applies. The layer is declared first, so it has
          the lowest priority and every app style and theme still overrides it. -->
-    <style>@layer pc-fallback { html, body { background-color: #08080f; color: #fff; } }</style>
-    <!-- Fonts: media="print" keeps this optional stylesheet from blocking the first paint
-         (offline, iOS waits for a connection instead of failing it); main.jsx enables it once loaded. -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" media="print" data-pc-fonts />
+    <style>@layer pc-fallback { html, body { background-color: #000000; color: #fff; } }</style>
   </head>
-  <body class="bg-dark-bg text-white font-sans">
+  <body class="bg-bg text-white font-sans">
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

@@ -16,8 +16,8 @@ test('root canvas stays opaque without blocking vertical scrolling', async ({ pa
   })
 
   expect(initial).toEqual({
-    rootBackground: 'rgb(8, 8, 15)',
-    bodyBackground: 'rgb(8, 8, 15)',
+    rootBackground: 'rgb(0, 0, 0)',
+    bodyBackground: 'rgb(0, 0, 0)',
     rootOverflowX: 'hidden',
     bodyOverflowX: 'hidden',
   })
@@ -49,5 +49,5 @@ test('root canvas stays opaque without blocking vertical scrolling', async ({ pa
     document.documentElement.dataset.theme = 'fire'
     return getComputedStyle(document.documentElement).backgroundColor
   })
-  expect(themedRootBackground).toBe('rgb(15, 8, 5)')
+  expect(themedRootBackground).toBe('rgb(0, 0, 0)')
 })

@@ -16,14 +16,6 @@ if (savedTheme && savedTheme !== 'default') {
   document.documentElement.setAttribute('data-theme', savedTheme)
 }
 
-// index.html loads Google Fonts with media="print" so it never blocks the first paint;
-// switch it on once it has loaded. Offline it never loads and the system font is used.
-const fontSheet = document.querySelector('link[data-pc-fonts]')
-if (fontSheet) {
-  if (fontSheet.sheet) fontSheet.media = 'all'
-  else fontSheet.addEventListener('load', () => { fontSheet.media = 'all' }, { once: true })
-}
-
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -41,17 +33,27 @@ root.render(
       <App />
       <Toaster
         position="top-center"
+        containerStyle={{ top: 'calc(env(safe-area-inset-top, 0px) + 8px)' }}
         toastOptions={{
+          // iOS banner (design doc §6.11): glass, radius 14, Subheadline text
           style: {
-            background: '#1a1a2e',
-            color: '#fff',
-            border: '1px solid #2a2a4a',
+            background: 'var(--glass-bg)',
+            WebkitBackdropFilter: 'var(--glass-filter)',
+            backdropFilter: 'var(--glass-filter)',
+            color: 'var(--color-text-primary)',
+            border: '0.5px solid var(--glass-border)',
+            borderRadius: '14px',
+            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 8px 32px rgba(0,0,0,0.45)',
+            fontSize: '15px',
+            lineHeight: '20px',
+            maxWidth: '360px',
+            padding: '10px 14px',
           },
           success: {
-            iconTheme: { primary: '#10b981', secondary: '#fff' },
+            iconTheme: { primary: '#30d158', secondary: '#000' },
           },
           error: {
-            iconTheme: { primary: '#EE1515', secondary: '#fff' },
+            iconTheme: { primary: '#ff453a', secondary: '#000' },
           },
         }}
       />

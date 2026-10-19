@@ -8,28 +8,47 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Dark theme backgrounds — deep blue-black
+        // iOS dark palette: everything reads the CSS variables in index.css (design doc §7.1, §7.2)
         bg: {
           DEFAULT: 'var(--color-bg)',
           surface: 'var(--color-surface)',
           card: 'var(--color-card)',
           elevated: 'var(--color-elevated)',
+          // Aliases for classes that compiled to nothing before (bg-bg-primary, bg-bg-secondary)
+          primary: 'var(--color-bg)',
+          secondary: 'var(--color-surface)',
         },
+        // Top-level aliases (bg-card, bg-elevated and bg-surface compiled to nothing before)
+        surface: 'var(--color-surface)',
+        card: 'var(--color-card)',
+        elevated: 'var(--color-elevated)',
+        fill: {
+          DEFAULT: 'var(--color-fill)',
+          secondary: 'var(--color-fill-secondary)',
+          tertiary: 'var(--color-fill-tertiary)',
+          quaternary: 'var(--color-fill-quaternary)',
+        },
+        tint: 'var(--color-tint)',
+        accent: 'var(--color-accent)',
+        'on-accent': 'var(--color-on-accent)',
+        'label-tertiary': 'var(--color-text-tertiary)',
         border: {
-          DEFAULT: 'rgba(255,255,255,0.07)',
-          subtle: 'rgba(255,255,255,0.03)',
+          DEFAULT: 'var(--color-border)',
+          subtle: 'var(--color-border-subtle)',
         },
         text: {
-          primary: '#ffffff',
-          secondary: '#a0a0b8',
-          muted: '#606078',
+          primary: 'var(--color-text-primary)',
+          secondary: 'var(--color-text-secondary)',
+          muted: 'var(--color-text-muted)',
+          tertiary: 'var(--color-text-tertiary)',
         },
-        // Pokemon brand — richer, more saturated
+        // Pokemon brand: the fill accent follows the theme
         brand: {
           red: 'rgb(var(--color-brand-red-rgb) / <alpha-value>)',
           'red-light': 'var(--color-brand-red-light)',
           'red-dark': 'var(--color-brand-red-dark)',
-          'red-glow': 'rgba(227,0,11,0.35)',
+          'red-glow': 'transparent',
+          yellow: 'var(--color-yellow)',
         },
         // Status — keeping legacy names for backward compat
         pokemon: {
@@ -39,45 +58,56 @@ export default {
         },
         // Dark theme legacy aliases
         dark: {
-          bg: '#08080f',
-          surface: '#0f0f1a',
-          card: '#141422',
-          border: 'rgba(255,255,255,0.07)',
-          hover: '#1a1a2e',
+          bg: 'var(--color-bg)',
+          surface: 'var(--color-surface)',
+          card: 'var(--color-card)',
+          border: 'var(--color-border)',
+          hover: 'var(--color-elevated)',
         },
-        // Semantic status colors
+        // Semantic status colors (iOS dark system colours)
         green: {
-          DEFAULT: '#22c55e',
+          DEFAULT: 'var(--color-green)',
           subtle: '#052e16',
         },
         yellow: {
-          DEFAULT: '#eab308',
+          DEFAULT: 'var(--color-yellow)',
           subtle: '#1c1807',
         },
         blue: {
-          DEFAULT: '#3b82f6',
+          DEFAULT: 'var(--color-blue)',
           subtle: '#0c1a2e',
+        },
+        red: {
+          DEFAULT: 'var(--color-red)',
+        },
+        orange: {
+          DEFAULT: 'var(--color-orange)',
         },
         // Pokemon gold
         gold: '#f5c842',
         'gold-muted': 'rgba(245,200,66,0.15)',
         'gold-border': 'rgba(245,200,66,0.35)',
-        // Pokemon energy type colors
-        'type-fire': '#ff6b35',
-        'type-water': '#4fc3f7',
-        'type-grass': '#66bb6a',
-        'type-lightning': '#fdd835',
-        'type-psychic': '#ce93d8',
-        'type-fighting': '#ff7043',
-        'type-darkness': '#78909c',
-        'type-metal': '#b0bec5',
-        'type-dragon': '#9575cd',
-        'type-fairy': '#f48fb1',
-        'type-colorless': '#9e9e9e',
+        // Pokemon energy type colors (the solids of design doc §7.12)
+        'type-fire': 'var(--type-fire)',
+        'type-water': 'var(--type-water)',
+        'type-grass': 'var(--type-grass)',
+        'type-lightning': 'var(--type-lightning)',
+        'type-psychic': 'var(--type-psychic)',
+        'type-fighting': 'var(--type-fighting)',
+        'type-darkness': 'var(--type-darkness)',
+        'type-metal': 'var(--type-metal)',
+        'type-dragon': 'var(--type-dragon)',
+        'type-fairy': 'var(--type-fairy)',
+        'type-colorless': 'var(--type-colorless)',
+        'poke-red': 'var(--poke-red)',
+        'poke-yellow': 'var(--poke-yellow)',
+        'poke-blue': 'var(--poke-blue)',
       },
 
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
+        // System fonts only; nothing is downloaded (design doc §7.6)
+        sans: ['-apple-system', 'BlinkMacSystemFont', 'system-ui', 'sans-serif'],
+        display: ['ui-rounded', '"SF Pro Rounded"', '-apple-system', 'BlinkMacSystemFont', 'system-ui', 'sans-serif'],
       },
 
       fontSize: {
@@ -90,6 +120,31 @@ export default {
         '2xl': ['1.5rem', { lineHeight: '2rem' }],
         '3xl': ['1.875rem', { lineHeight: '2.25rem' }],
         '4xl': ['2.25rem', { lineHeight: '2.5rem' }],
+        // iOS text styles (design doc §7.6). The display font for the heavy ones comes from index.css.
+        'tile-number': ['30px', { lineHeight: '34px', fontWeight: '800' }],
+        'large-title': ['34px', { lineHeight: '41px', fontWeight: '800' }],
+        'title-1': ['28px', { lineHeight: '34px', fontWeight: '800' }],
+        'title-2': ['22px', { lineHeight: '28px', fontWeight: '800' }],
+        'title-3': ['20px', { lineHeight: '25px', fontWeight: '800' }],
+        headline: ['17px', { lineHeight: '22px', fontWeight: '600' }],
+        body: ['17px', { lineHeight: '22px', fontWeight: '400' }],
+        callout: ['16px', { lineHeight: '21px', fontWeight: '400' }],
+        subheadline: ['15px', { lineHeight: '20px', fontWeight: '400' }],
+        footnote: ['13px', { lineHeight: '18px', fontWeight: '400' }],
+        'caption-1': ['12px', { lineHeight: '16px', fontWeight: '400' }],
+        'caption-2': ['11px', { lineHeight: '13px', fontWeight: '400' }],
+      },
+
+      zIndex: {
+        navbar: 'var(--z-navbar)',
+        tabbar: 'var(--z-tabbar)',
+        sheet: 'var(--z-sheet)',
+        menu: 'var(--z-menu)',
+        scanner: 'var(--z-scanner)',
+      },
+
+      transitionTimingFunction: {
+        ios: 'var(--ease-ios)',
       },
 
       borderRadius: {
@@ -115,6 +170,7 @@ export default {
       maxHeight: {
         dvh: '100dvh',
         '85dvh': '85dvh',
+        '92dvh': '92dvh',
       },
 
       animation: {
@@ -143,9 +199,10 @@ export default {
       boxShadow: {
         card: '0 2px 8px rgba(0,0,0,0.4)',
         elevated: '0 4px 16px rgba(0,0,0,0.5)',
-        glow: '0 0 20px rgba(227,0,11,0.15)',
-        'glow-lg': '0 0 30px rgba(227,0,11,0.25)',
-        'glow-btn': '0 0 16px rgba(227,0,11,0.3)',
+        // The glows are gone (design doc §7.5); the names stay so call sites keep compiling
+        glow: 'none',
+        'glow-lg': 'none',
+        'glow-btn': 'none',
       },
     },
   },

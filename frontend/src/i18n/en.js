@@ -2045,6 +2045,31 @@ const en = {
     rareFinder: 'Rare Finder',
     rareFinderDesc: 'Own an Illustration Rare card',
   },
+
+  // Shared iPhone UI pieces (components/ios). Other languages show English until translated.
+  ios: {
+    done: 'Done',
+    hideValues: 'Hide values',
+    showValues: 'Show values',
+    clearSearch: 'Clear search',
+    dragToDismiss: 'Drag down to close',
+    discardChangesTitle: 'Discard changes?',
+    discardChangesMessage: 'Your changes will be lost.',
+    discard: 'Discard',
+    keepEditing: 'Keep editing',
+    complete: 'Complete',
+    releases: 'Releases {date}',
+    setsCount: '{count} sets',
+    ownedOfTotal: '{owned} of {total}',
+    idNo: 'ID No.',
+    cards: 'Cards',
+    sets: 'Sets',
+    pokedex: 'Pokédex',
+    gymBadges: 'Badges earned',
+    menu: 'Menu',
+    more: 'More',
+    loading: 'Loading',
+  },
 }
 
 export default en

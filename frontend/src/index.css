@@ -24,32 +24,89 @@
 }
 
 /* ─── CSS Custom Properties ──────────────────────────────────────────────── */
+/* iOS dark system palette on a pure black base (design doc §7.1). */
 :root {
-  --color-bg:          #08080f;
-  --color-surface:     #0f0f1a;
-  --color-card:        #141422;
-  --color-elevated:    #1a1a2e;
-  --color-border:      rgba(255,255,255,0.07);
-  --color-border-subtle: rgba(255,255,255,0.03);
+  --color-bg:          #000000;
+  --color-surface:     #1c1c1e;
+  --color-card:        #1c1c1e;
+  --color-elevated:    #2c2c2e;
+  --color-border:      rgba(255,255,255,0.12);
+  --color-border-subtle: rgba(255,255,255,0.06);
+
+  --color-fill:            rgba(120,120,128,0.36);
+  --color-fill-secondary:  rgba(120,120,128,0.32);
+  --color-fill-tertiary:   rgba(118,118,128,0.24);
+  --color-fill-quaternary: rgba(116,116,128,0.18);
 
   --color-text-primary:   #ffffff;
-  --color-text-secondary: #a0a0b8;
-  --color-text-muted:     #606078;
+  --color-text-secondary: rgba(235,235,245,0.6);
+  /* systemGray: 6.4:1 on black. The 30 % tertiary level is for placeholders and disabled text only. */
+  --color-text-muted:     #8e8e93;
+  --color-text-tertiary:  rgba(235,235,245,0.3);
 
+  /* Accent. Fills use brand-red; accent-coloured text and icons use the lighter tint. */
   --color-brand-red:       #e3000b;
   --color-brand-red-rgb:    227 0 11;
   --color-brand-red-light: #ff4d4d;
   --color-brand-red-dark:  #b80009;
+  --color-accent:          var(--color-brand-red);
+  --color-tint:            var(--color-brand-red-light);
+  --color-on-accent:       #ffffff;
 
-  --color-green:  #22c55e;
-  --color-yellow: #eab308;
-  --color-blue:   #3b82f6;
+  /* iOS dark semantic colours */
+  --color-green:  #30d158;
+  --color-red:    #ff453a;
+  --color-yellow: #ffd60a;
+  --color-orange: #ff9f0a;
+  --color-blue:   #0a84ff;
 
-  /* Safe area for notched phones */
+  /* Pokémon brand triad (design doc §7.12) */
+  --poke-red:    #e3350d;
+  --poke-yellow: #ffcb05;
+  --poke-blue:   #2a75bb;
+
+  /* Energy types: tile top, tile bottom, solid. Same in every accent theme.
+     Keep in step with src/components/ios/pokemon.js (a unit test compares them). */
+  --type-grass-top: #328438;     --type-grass-bottom: #145a27;     --type-grass: #43b04a;
+  --type-fire-top: #b4441f;      --type-fire-bottom: #8a1d12;      --type-fire: #f05a2b;
+  --type-water-top: #236bb4;     --type-water-bottom: #123f8c;     --type-water: #2f8ff0;
+  --type-lightning-top: #ffe56e; --type-lightning-bottom: #f2a600; --type-lightning: #f7c815;
+  --type-psychic-top: #8a3ba5;   --type-psychic-bottom: #551c78;   --type-psychic: #b84fdc;
+  --type-fighting-top: #995023;  --type-fighting-bottom: #6a2d0e;  --type-fighting: #cc6a2f;
+  --type-darkness-top: #343f50;  --type-darkness-bottom: #141a24;  --type-darkness: #46546a;
+  --type-metal-top: #606972;     --type-metal-bottom: #3e4852;     --type-metal: #94a2b0;
+  --type-dragon-top: #836919;    --type-dragon-bottom: #5a4207;    --type-dragon: #c9a227;
+  --type-fairy-top: #b35383;     --type-fairy-bottom: #86244f;     --type-fairy: #ef6fae;
+  --type-colorless-top: #f5f1e6; --type-colorless-bottom: #bdb39b; --type-colorless: #e3dccb;
+
+  /* Materials */
+  --glass-bg:     rgba(28,28,30,0.72);
+  --glass-filter: blur(24px) saturate(180%);
+  --glass-border: rgba(255,255,255,0.12);
+
+  /* Safe areas. The standalone bottom inset can read about 93px instead of 34, so cap it. */
+  --safe-top:    env(safe-area-inset-top, 0px);
+  --safe-bottom: min(env(safe-area-inset-bottom, 0px), 34px);
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
   --safe-area-top:    env(safe-area-inset-top, 0px);
 
-  /* Bottom nav height (used for main content padding) */
+  /* Bars and stacking (the update banner keeps its own 60 and 70) */
+  --navbar-height:  44px;
+  --tabbar-height:  64px;
+  --content-bottom: calc(var(--tabbar-height) + var(--safe-bottom) + 16px);
+  --z-navbar:  30;
+  --z-tabbar:  40;
+  --z-sheet:   50;
+  --z-menu:    55;
+  --z-scanner: 58;
+
+  --ease-ios: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* Fonts: system only, nothing is downloaded (design doc §7.6) */
+  --font-text:    -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-display: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+
+  /* Legacy: only the unused .pb-nav class reads this (removed in P9) */
   --bottom-nav-height: 4rem; /* 64px */
 }
 
@@ -58,14 +115,14 @@ input:-webkit-autofill,
 input:-webkit-autofill:hover,
 input:-webkit-autofill:focus {
   -webkit-text-fill-color: var(--color-text-primary);
-  -webkit-box-shadow: 0 0 0px 1000px var(--color-bg) inset;
+  -webkit-box-shadow: 0 0 0px 1000px var(--color-surface) inset;
   transition: background-color 5000s ease-in-out 0s;
 }
 
-/* ─── Scrollbar — premium dark ───────────────────────────────────────────── */
+/* ─── Scrollbar — quiet dark ─────────────────────────────────────────────── */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255,255,255,0.08) transparent;
+  scrollbar-color: rgba(255,255,255,0.12) transparent;
 }
 *::-webkit-scrollbar {
   width: 5px;
@@ -75,11 +132,8 @@ input:-webkit-autofill:focus {
   background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.14);
   border-radius: 3px;
-}
-*::-webkit-scrollbar-thumb:hover {
-  background: rgba(227,0,11,0.5);
 }
 
 /* ─── Base Typography — word-wrap everywhere ─────────────────────────────── */
@@ -98,6 +152,7 @@ input:-webkit-autofill:focus {
        propagated up from body does not reliably cover (white bars in Firefox
        on Android). Themed via [data-theme] on <html>, so use the variable. */
     background-color: var(--color-bg);
+    -webkit-tap-highlight-color: transparent;
   }
 
   html, body {
@@ -112,12 +167,13 @@ input:-webkit-autofill:focus {
   }
 
   body {
-    background: radial-gradient(ellipse 80% 40% at 50% -10%, rgba(227,0,11,0.07) 0%, transparent 60%), #08080f;
+    background-color: var(--color-bg);
     color: var(--color-text-primary);
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: var(--font-text);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     min-height: 100dvh;
+    touch-action: manipulation;
   }
 
   /* Global text overflow prevention */
@@ -144,46 +200,50 @@ input:-webkit-autofill:focus {
     height: auto;
     display: block;
   }
+
+  ::placeholder {
+    color: var(--color-text-tertiary);
+    opacity: 1;
+  }
 }
 
 /* ─── Component Classes ──────────────────────────────────────────────────── */
 @layer components {
 
-  /* ── Card — glass morphism ── */
+  /* ── Text styles: the display (rounded) font for titles and numbers ── */
+  .text-tile-number, .text-large-title, .text-title-1, .text-title-2, .text-title-3, .font-display {
+    font-family: var(--font-display);
+  }
+
+  /* ── Card — solid, no blur, no border ── */
   .card, .card-hover {
-    background: rgba(20, 20, 40, 0.6);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255,255,255,0.07);
+    background: var(--color-card);
     border-radius: 16px;
     padding: 1rem;
-    transition: all 0.2s ease;
+    transition: background-color 0.15s ease, opacity 0.1s ease;
   }
   .card-hover {
     cursor: pointer;
   }
-  .card-hover:hover {
-    border-color: rgba(227,0,11,0.3);
-    box-shadow: 0 0 20px rgba(227,0,11,0.1);
+  .card-hover:active {
+    opacity: 0.6;
   }
   .card-surface {
-    background: rgba(15, 15, 26, 0.8);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255,255,255,0.05);
+    background: var(--color-card);
     border-radius: 16px;
     padding: 1rem;
   }
 
-  /* ── Buttons — bold with glow ── */
+  /* ── Buttons — capsules ── */
   .btn-primary, .btn-primary-sm {
     @apply inline-flex items-center justify-center gap-2
-           text-white rounded-lg font-semibold
-           transition-all duration-200
+           rounded-full font-semibold
+           transition-all duration-150
            disabled:opacity-50 disabled:cursor-not-allowed
            select-none;
-    background: #e3000b;
-    box-shadow: 0 0 16px rgba(227,0,11,0.3);
+    color: var(--color-on-accent);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--color-brand-red) 88%, white) 0%, var(--color-brand-red) 100%);
+    box-shadow: 0 4px 14px color-mix(in srgb, var(--color-brand-red) 28%, transparent);
   }
   .btn-primary {
     @apply px-4 py-2.5 text-sm;
@@ -191,22 +251,18 @@ input:-webkit-autofill:focus {
   .btn-primary-sm {
     @apply px-3 py-1.5 text-xs;
   }
-  .btn-primary:hover, .btn-primary-sm:hover {
-    box-shadow: 0 0 24px rgba(227,0,11,0.45);
-    background: #cc000a;
-  }
   .btn-primary:active, .btn-primary-sm:active {
-    background: #b80009;
+    background: var(--color-brand-red-dark);
   }
 
   .btn-secondary, .btn-secondary-sm {
     @apply inline-flex items-center justify-center gap-2
-           text-text-secondary hover:text-text-primary
-           rounded-lg border border-border font-medium
-           transition-all duration-200
+           rounded-full font-medium
+           transition-all duration-150
            disabled:opacity-50 disabled:cursor-not-allowed
            select-none;
-    background: rgba(26, 26, 46, 0.72);
+    color: var(--color-text-primary);
+    background: var(--color-fill-tertiary);
   }
   .btn-secondary {
     @apply px-4 py-2.5 text-sm;
@@ -214,20 +270,18 @@ input:-webkit-autofill:focus {
   .btn-secondary-sm {
     @apply px-3 py-1.5 text-xs;
   }
-  .btn-secondary:hover, .btn-secondary-sm:hover {
-    background: rgba(35, 35, 58, 0.9);
-    border-color: rgba(255,255,255,0.14);
+  .btn-secondary:active, .btn-secondary-sm:active {
+    background: var(--color-fill-secondary);
   }
 
   .btn-ghost, .btn-ghost-sm {
     @apply inline-flex items-center justify-center gap-2
-           bg-transparent
-           text-text-secondary hover:text-text-primary
-           rounded-lg font-medium
-           transition-all duration-200
+           rounded-full font-medium
+           transition-all duration-150
            disabled:opacity-50 disabled:cursor-not-allowed
            select-none;
-    border: 1px solid rgba(255,255,255,0.07);
+    color: var(--color-text-secondary);
+    background: var(--color-fill-quaternary);
   }
   .btn-ghost {
     @apply px-4 py-2.5 text-sm;
@@ -235,66 +289,71 @@ input:-webkit-autofill:focus {
   .btn-ghost-sm {
     @apply px-3 py-1.5 text-xs;
   }
-  .btn-ghost:hover, .btn-ghost-sm:hover {
-    background: rgba(26, 26, 46, 0.8);
-    border-color: rgba(255,255,255,0.12);
+  .btn-ghost:active, .btn-ghost-sm:active {
+    background: var(--color-fill-tertiary);
   }
 
   .btn-danger {
     @apply inline-flex items-center justify-center gap-2
-           bg-transparent hover:bg-red-900/30 active:bg-red-900/40
-           text-red-400 hover:text-red-300
-           px-3 py-2 rounded-lg text-sm
+           bg-transparent
+           px-3 py-2 rounded-full text-sm
            transition-all duration-150;
+    color: var(--color-red);
+  }
+  .btn-danger:active {
+    background: color-mix(in srgb, var(--color-red) 16%, transparent);
   }
 
-  /* ── Inputs — sleek dark ── */
+  /* ── Inputs — iOS filled fields ── */
   .input, .input-sm {
-    background: rgba(15, 15, 26, 0.8);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 0.75rem;
+    background: var(--color-fill-tertiary);
+    border: none;
+    border-radius: 10px;
     color: var(--color-text-primary);
     width: 100%;
-    transition: all 0.2s ease;
+    transition: box-shadow 0.15s ease;
     outline: none;
   }
   .input {
     padding: 0.625rem 0.75rem;
+    min-height: 44px;
     font-size: 0.875rem;
   }
   .input-sm {
     padding: 0.5rem 0.75rem;
+    min-height: 36px;
     font-size: 0.75rem;
   }
   .input::placeholder, .input-sm::placeholder {
-    color: var(--color-text-muted);
+    color: var(--color-text-tertiary);
   }
-  .input:focus, .input-sm:focus {
-    border-color: rgba(227,0,11,0.4);
-    box-shadow: 0 0 0 3px rgba(227,0,11,0.1);
+  .input:focus-visible, .input-sm:focus-visible {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-tint) 70%, transparent);
   }
 
   .select, .select-sm {
-    background-color: rgba(15, 15, 26, 0.8);
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23f5f5f7' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-color: var(--color-fill-tertiary);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238e8e93' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 0.75rem center;
     background-size: 1rem 1rem;
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 0.75rem;
+    border: none;
+    border-radius: 10px;
     color: var(--color-text-primary);
     width: 100%;
-    transition: all 0.2s ease;
+    transition: box-shadow 0.15s ease;
     outline: none;
     appearance: none;
     cursor: pointer;
   }
   .select {
     padding: 0.625rem 2.25rem 0.625rem 0.75rem;
+    min-height: 44px;
     font-size: 0.875rem;
   }
   .select-sm {
     padding: 0.5rem 2.25rem 0.5rem 0.75rem;
+    min-height: 36px;
     font-size: 0.75rem;
   }
   .select option {
@@ -305,16 +364,17 @@ input:-webkit-autofill:focus {
     background-image: none;
     padding-right: 0.75rem;
   }
-  .select:focus, .select-sm:focus {
-    border-color: rgba(227,0,11,0.4);
-    box-shadow: 0 0 0 3px rgba(227,0,11,0.1);
+  .select:focus-visible, .select-sm:focus-visible {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-tint) 70%, transparent);
   }
-  /* ── Badges ── */
+
+  /* ── Badges — capsules on the iOS semantic colours ── */
   .badge, .badge-red, .badge-green, .badge-yellow, .badge-blue, .badge-gray, .badge-purple {
     @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium leading-none whitespace-nowrap flex-shrink-0;
   }
   .badge-red {
-    @apply bg-brand-red/20 text-brand-red;
+    background: color-mix(in srgb, var(--color-red) 20%, transparent);
+    color: var(--color-red);
   }
   .badge-green {
     @apply bg-green/20 text-green;
@@ -326,10 +386,12 @@ input:-webkit-autofill:focus {
     @apply bg-blue/20 text-blue;
   }
   .badge-gray {
-    @apply bg-bg-elevated text-text-muted;
+    background: var(--color-fill-tertiary);
+    color: var(--color-text-secondary);
   }
   .badge-purple {
-    @apply bg-purple-500/20 text-purple-400;
+    background: color-mix(in srgb, var(--type-psychic) 22%, transparent);
+    color: #d98cf0;
   }
 
   /* ── Section Headers ── */
@@ -337,7 +399,11 @@ input:-webkit-autofill:focus {
     @apply flex items-center justify-between gap-2 mb-3;
   }
   .section-title {
-    @apply text-base font-semibold text-text-primary;
+    font-family: var(--font-display);
+    font-size: 20px;
+    line-height: 25px;
+    font-weight: 800;
+    color: var(--color-text-primary);
   }
   .section-subtitle {
     @apply text-sm text-text-muted;
@@ -348,19 +414,23 @@ input:-webkit-autofill:focus {
     @apply space-y-4 pb-2;
   }
   .page-title {
-    @apply text-xl font-bold text-text-primary;
+    font-family: var(--font-display);
+    font-size: 22px;
+    line-height: 28px;
+    font-weight: 800;
+    color: var(--color-text-primary);
   }
 
-  /* ── Bottom Nav — frosted glass ── */
+  /* ── Bottom Nav — unused, removed in P9 ── */
   .bottom-nav {
     @apply fixed bottom-0 left-0 right-0 z-40
            flex items-stretch
            pb-[env(safe-area-inset-bottom,0px)]
            lg:hidden;
-    background: rgba(15, 15, 26, 0.85);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border-top: 1px solid rgba(255,255,255,0.06);
+    background: var(--glass-bg);
+    backdrop-filter: var(--glass-filter);
+    -webkit-backdrop-filter: var(--glass-filter);
+    border-top: 1px solid var(--glass-border);
   }
   .bottom-nav-item {
     @apply flex flex-col items-center justify-center gap-0.5
@@ -371,7 +441,7 @@ input:-webkit-autofill:focus {
     @apply text-brand-red;
   }
   .bottom-nav-inactive {
-    @apply text-text-muted hover:text-text-secondary;
+    @apply text-text-muted;
   }
 
   /* ── Safe area utilities ── */
@@ -387,13 +457,9 @@ input:-webkit-autofill:focus {
     animation: slideUp 0.25s ease-out;
   }
 
-  /* ── Stat Card — glass with top highlight ── */
+  /* ── Stat Card ── */
   .stat-card {
-    background: rgba(20, 20, 40, 0.5);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-top: 1px solid rgba(255,255,255,0.12);
+    background: var(--color-card);
     border-radius: 16px;
     padding: 0.75rem;
     display: flex;
@@ -401,10 +467,12 @@ input:-webkit-autofill:focus {
     gap: 0.25rem;
   }
   .stat-value {
+    font-family: var(--font-display);
     font-size: 1.5rem;
     font-weight: 800;
     line-height: 1;
-    color: white;
+    color: var(--color-text-primary);
+    font-variant-numeric: tabular-nums;
   }
   .stat-label {
     @apply text-xs text-text-muted;
@@ -412,21 +480,20 @@ input:-webkit-autofill:focus {
 
   /* ── List Item ── */
   .list-item, .list-item-hover {
-    @apply flex items-center gap-3 p-3 rounded-xl;
-    background: rgba(20, 20, 40, 0.6);
-    border: 1px solid rgba(255,255,255,0.07);
+    @apply flex items-center gap-3 p-3;
+    background: var(--color-card);
+    border-radius: 12px;
   }
   .list-item-hover {
     @apply transition-all duration-150 cursor-pointer;
   }
-  .list-item-hover:hover {
-    background: rgba(26, 26, 46, 0.8);
-    border-color: rgba(255,255,255,0.1);
+  .list-item-hover:active {
+    background: var(--color-elevated);
   }
 
   /* ── Divider ── */
   .divider {
-    border-top: 1px solid rgba(255,255,255,0.06);
+    border-top: 0.5px solid var(--color-border);
     margin: 0.75rem 0;
   }
 
@@ -443,7 +510,7 @@ input:-webkit-autofill:focus {
 
   /* ── Skeleton ── */
   .skeleton {
-    background: linear-gradient(90deg, rgba(20,20,40,0.5) 25%, rgba(30,30,50,0.5) 50%, rgba(20,20,40,0.5) 75%);
+    background: linear-gradient(90deg, var(--color-fill-quaternary) 25%, var(--color-fill-tertiary) 50%, var(--color-fill-quaternary) 75%);
     background-size: 200% 100%;
     animation: shimmer 1.5s ease-in-out infinite;
   }
@@ -486,62 +553,87 @@ input:-webkit-autofill:focus {
     flex: 1 1 0%;
   }
 
-  /* Progress bar red glow */
+  /* Progress bars: the glow is gone, the class stays so call sites keep compiling */
   .progress-glow {
-    box-shadow: 0 0 6px rgba(227,0,11,0.5);
+    box-shadow: none;
   }
 
-  /* Pokemon card — hover lift + glow */
+  /* Pokemon card — quiet lift */
   .pokemon-card-glow {
-    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-  }
-  .pokemon-card-glow:hover {
-    transform: scale(1.03);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 16px rgba(227,0,11,0.2);
-    border-color: rgba(227,0,11,0.35);
+    transition: transform 0.2s ease;
   }
 
   /* Card image — crisp rendering */
   .card-image-wrapper img {
     transition: filter 0.2s ease;
   }
-  .pokemon-card-glow:hover .card-image-wrapper img {
-    filter: brightness(1.05) saturate(1.1);
-  }
 
   /* Scrollbar styling */
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: rgba(227,0,11,0.4); }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 3px; }
 
   /* No scrollbar utility */
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* Pressed state for tappable chrome: visible within 100 ms */
+  .ios-press { transition: opacity 0.1s ease; }
+  .ios-press:active { opacity: 0.6; }
+
+  /* Chrome and card tiles are not text-selectable and have no callout menu */
+  .no-callout { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
+}
+
+/* Hand-written hover rules only apply on devices that really hover (design doc §6.12) */
+@media (hover: hover) {
+  .card-hover:hover {
+    background: var(--color-elevated);
+  }
+  .btn-primary:hover, .btn-primary-sm:hover {
+    background: var(--color-brand-red-dark);
+  }
+  .btn-secondary:hover, .btn-secondary-sm:hover {
+    background: var(--color-fill-secondary);
+  }
+  .btn-ghost:hover, .btn-ghost-sm:hover {
+    background: var(--color-fill-tertiary);
+    color: var(--color-text-primary);
+  }
+  .btn-danger:hover {
+    background: color-mix(in srgb, var(--color-red) 14%, transparent);
+  }
+  .list-item-hover:hover {
+    background: var(--color-elevated);
+  }
+  .pokemon-card-glow:hover {
+    transform: scale(1.03);
+  }
+  .pokemon-card-glow:hover .card-image-wrapper img {
+    filter: brightness(1.05) saturate(1.1);
+  }
+  .binder-card:hover {
+    transform: scale(1.04);
+  }
+  .binder-card:hover img {
+    transform: scale(1.02);
+    transition: transform 0.3s ease;
+  }
 }
 
 /* ===================== */
 /* POKEMON VISUAL SYSTEM */
 /* ===================== */
 
-/* Trainer Card — the hero widget on Dashboard */
+/* Trainer Card — the older hero widget (the new one is components/ios/TrainerCard) */
 .trainer-card {
-  background: linear-gradient(135deg, #1a2040 0%, #0d1530 60%, #1a1030 100%);
-  border: 2px solid rgba(245,200,66,0.5);
+  background: linear-gradient(135deg, var(--color-elevated) 0%, var(--color-card) 100%);
   border-radius: 16px;
-  box-shadow: 0 0 40px rgba(245,200,66,0.12), 0 0 80px rgba(245,200,66,0.05), 0 8px 32px rgba(0,0,0,0.5);
   position: relative;
   overflow: hidden;
 }
 .trainer-card::before {
-  content: '';
-  position: absolute;
-  top: -50%;
-  right: -20%;
-  width: 400px;
-  height: 400px;
-  background: radial-gradient(circle, rgba(245,200,66,0.04) 0%, transparent 60%);
-  pointer-events: none;
+  content: none;
 }
 
 /* Pokeball watermark rings (decorative) */
@@ -674,12 +766,14 @@ input:-webkit-autofill:focus {
     animation: none;
     opacity: 0.16;
   }
+  .skeleton {
+    animation: none;
+  }
 }
 
 /* Binder grid — looks like a real Pokemon binder */
 .binder-grid {
-  background: rgba(10,14,26,0.8);
-  border: 1px solid rgba(255,255,255,0.06);
+  background: var(--color-card);
   border-radius: 16px;
   padding: 12px;
 }
@@ -693,13 +787,6 @@ input:-webkit-autofill:focus {
   transition: all 0.2s ease;
 }
 .binder-card img {
-  transition: transform 0.3s ease;
-}
-.binder-card:hover {
-  transform: scale(1.04);
-}
-.binder-card:hover img {
-  transform: scale(1.02);
   transition: transform 0.3s ease;
 }
 
@@ -717,12 +804,11 @@ input:-webkit-autofill:focus {
 .bg-gold { background-color: #f5c842; }
 .border-gold { border-color: rgba(245,200,66,0.4); }
 
-/* HP bar — like Pokemon game */
+/* HP bar — like Pokemon game (the old class names; components/ios/HpBar is the new one) */
 .hp-bar-track {
   height: 8px;
-  background: rgba(0,0,0,0.4);
+  background: var(--color-fill-tertiary);
   border-radius: 4px;
-  border: 1px solid rgba(255,255,255,0.05);
   overflow: hidden;
 }
 .hp-bar-fill {
@@ -730,41 +816,13 @@ input:-webkit-autofill:focus {
   border-radius: 4px;
   transition: width 0.5s ease;
 }
-.hp-bar-fill.healthy { background: linear-gradient(90deg, #4caf50, #8bc34a); }
-.hp-bar-fill.medium { background: linear-gradient(90deg, #ff9800, #ffc107); }
-.hp-bar-fill.low { background: linear-gradient(90deg, #e3000b, #ff5722); }
+.hp-bar-fill.healthy { background: var(--color-green); }
+.hp-bar-fill.medium { background: var(--color-yellow); }
+.hp-bar-fill.low { background: var(--color-red); }
 
-/* ================================================ */
-/* GAME UI — ANIMATED BACKGROUND                    */
-/* ================================================ */
-@keyframes bg-breathe {
-  0%, 100% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-}
-
-body {
-  /* Keep an opaque colour in the shorthand — without it the shorthand resets
-     background-color to transparent and the gradient image is the only thing
-     standing between the user and the default white canvas. */
-  background: linear-gradient(-45deg, #06080f, #08060e, #060c0e, #080810) var(--color-bg);
-  background-size: 400% 400%;
-  animation: bg-breathe 25s ease infinite;
-}
-
-/* Energy orbs — ambient colored glows in background */
-#root::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  background:
-    radial-gradient(ellipse 280px 220px at 12% 18%, rgba(227,0,11,0.07) 0%, transparent 100%),
-    radial-gradient(ellipse 350px 250px at 88% 12%, rgba(79,195,247,0.05) 0%, transparent 100%),
-    radial-gradient(ellipse 220px 300px at 75% 82%, rgba(102,187,106,0.04) 0%, transparent 100%),
-    radial-gradient(ellipse 180px 180px at 25% 72%, rgba(245,200,66,0.03) 0%, transparent 100%);
-  pointer-events: none;
-  z-index: 0;
-}
-
+/* The page keeps a flat black canvas: the animated gradient and the glow orbs are gone.
+   This rule stays: it lifts every direct child of #root above any absolutely positioned
+   content, which is why fixed chrome is portaled into document.body instead. */
 #root > * { position: relative; z-index: 1; }
 
 /* ================================================ */
@@ -790,21 +848,17 @@ body {
   transition: background 0.3s ease;
 }
 .card-detail-overlay.open {
-  background: rgba(0,0,0,0.85);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(0,0,0,0.6);
 }
 .card-detail-panel {
   width: 100%;
   max-width: 640px;
   max-height: 90dvh;
   overflow-y: auto;
-  background: linear-gradient(180deg, #0f1224 0%, #0a0d1a 100%);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-bottom: none;
-  border-radius: 24px 24px 0 0;
+  background: var(--color-surface);
+  border-radius: 16px 16px 0 0;
   transform: translateY(100%);
-  transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+  transition: transform 0.4s var(--ease-ios);
   padding-bottom: env(safe-area-inset-bottom, 20px);
 }
 .card-detail-overlay.open .card-detail-panel {
@@ -818,8 +872,7 @@ body {
   }
   .card-detail-panel {
     max-height: 85dvh;
-    border-radius: 24px;
-    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 16px;
     transform: scale(0.92) translateY(16px);
     opacity: 0;
     transition: transform 0.3s ease, opacity 0.3s ease;
@@ -837,14 +890,13 @@ body {
   position: relative;
   overflow: hidden;
   border-radius: 20px;
-  border: 1px solid rgba(255,255,255,0.1);
-  background: linear-gradient(135deg, #0f1428 0%, #1a0f28 50%, #0f1428 100%);
+  background: var(--color-card);
   min-height: 180px;
 }
 .set-hero-glow {
   position: absolute;
   inset: 0;
-  background: radial-gradient(ellipse 60% 60% at 70% 50%, rgba(227,0,11,0.12) 0%, transparent 70%);
+  background: none;
 }
 .set-hero-logo {
   max-height: 100px;
@@ -864,9 +916,8 @@ body {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.02em;
 }
-/* ─── HomeScreen: floating energy orb animation ─────────────────────────── */
+/* HomeScreen: floating energy orb animation. Unused once P3 rebuilds Home; removed in P9. */
 @keyframes float-orb {
   0%, 100% { transform: translateY(0px) scale(1); }
   33%       { transform: translateY(-20px) scale(1.05); }
@@ -886,91 +937,130 @@ body {
 .energy-rare    { background: rgba(245,200,66,0.15); color: #f5c842; border: 1px solid rgba(245,200,66,0.35); }
 .energy-ultra   { background: rgba(227,0,11,0.15); color: #ff5252; border: 1px solid rgba(227,0,11,0.35); }
 
-/* ─── Pokemon Type Themes ────────────────────────────────────────────────── */
+/* ================================================ */
+/* MATERIALS AND POKEMON LAYER (components/ios)     */
+/* ================================================ */
+
+/* Liquid-glass approximation for bars, sheets, menus, alerts and toasts. Blur only these. */
+.glass {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  border: 0.5px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 8px 32px rgba(0,0,0,0.45);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass { background: #1c1c1e; }
+}
+
+/* Static rainbow sheen for featured cards and the trainer card. No animation. */
+.holo { position: relative; isolation: isolate; }
+.holo::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  opacity: 0.55;
+  background: linear-gradient(115deg,
+    rgba(255,70,70,0) 15%,
+    rgba(255,214,10,0.28) 30%,
+    rgba(48,209,88,0.24) 42%,
+    rgba(10,132,255,0.28) 54%,
+    rgba(191,90,242,0.28) 66%,
+    rgba(255,70,70,0) 82%);
+}
+
+/* iOS sheet and menu motion. Off under reduced motion. */
+@keyframes ios-sheet-in { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes ios-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ios-menu-in { from { opacity: 0; transform: scale(0.92); } to { opacity: 1; transform: scale(1); } }
+@keyframes ios-alert-in { from { opacity: 0; transform: scale(1.1); } to { opacity: 1; transform: scale(1); } }
+.ios-sheet-in { animation: ios-sheet-in 0.4s var(--ease-ios); }
+.ios-fade-in { animation: ios-fade-in 0.2s ease; }
+.ios-menu-in { animation: ios-menu-in 0.15s ease-out; }
+.ios-alert-in { animation: ios-alert-in 0.2s var(--ease-ios); }
+@media (prefers-reduced-motion: reduce) {
+  .ios-sheet-in, .ios-fade-in, .ios-menu-in, .ios-alert-in { animation: none; }
+}
+
+/* Accent text: the lighter tint, so small accent-coloured text passes AA on black.
+   Unlayered on purpose: it must beat Tailwind's layered .text-brand-red utility. */
+.text-brand-red { color: var(--color-tint); }
+
+/* No input zoom on iPhone: Safari zooms any field under 16px. Unlayered, so it beats Tailwind's
+   layered text-xs/text-sm utilities and no call site needs to change. Desktop keeps compact sizes. */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="image"]):not([type="hidden"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* ─── Accent themes: only the accent changes, the base stays pure black ───── */
 [data-theme="fire"] {
-  --color-bg:          #0f0805;
-  --color-surface:     #1a0f08;
-  --color-card:        #221408;
-  --color-elevated:    #2e1a0a;
   --color-brand-red:   #ff6b35;
   --color-brand-red-rgb:    255 107 53;
   --color-brand-red-light: #ff9466;
   --color-brand-red-dark:  #cc5528;
+  --color-on-accent:   #000000;
 }
 
 [data-theme="water"] {
-  --color-bg:          #050a10;
-  --color-surface:     #081220;
-  --color-card:        #0c1a2e;
-  --color-elevated:    #10223a;
   --color-brand-red:   #4fc3f7;
   --color-brand-red-rgb:    79 195 247;
   --color-brand-red-light: #81d4fa;
   --color-brand-red-dark:  #2196f3;
+  --color-on-accent:   #000000;
 }
 
 [data-theme="grass"] {
-  --color-bg:          #050f08;
-  --color-surface:     #081a0f;
-  --color-card:        #0c2214;
-  --color-elevated:    #102e1a;
   --color-brand-red:   #66bb6a;
   --color-brand-red-rgb:    102 187 106;
   --color-brand-red-light: #81c784;
   --color-brand-red-dark:  #43a047;
+  --color-on-accent:   #000000;
 }
 
 [data-theme="electric"] {
-  --color-bg:          #0f0d05;
-  --color-surface:     #1a1608;
-  --color-card:        #221e0a;
-  --color-elevated:    #2e280e;
   --color-brand-red:   #fdd835;
   --color-brand-red-rgb:    253 216 53;
   --color-brand-red-light: #ffee58;
   --color-brand-red-dark:  #f9a825;
+  --color-on-accent:   #000000;
 }
 
 [data-theme="psychic"] {
-  --color-bg:          #0d050f;
-  --color-surface:     #16081a;
-  --color-card:        #1e0c22;
-  --color-elevated:    #28102e;
   --color-brand-red:   #ce93d8;
   --color-brand-red-rgb:    206 147 216;
   --color-brand-red-light: #e1bee7;
   --color-brand-red-dark:  #ab47bc;
+  --color-on-accent:   #000000;
 }
 
 [data-theme="dragon"] {
-  --color-bg:          #08050f;
-  --color-surface:     #100a1a;
-  --color-card:        #180f24;
-  --color-elevated:    #20142e;
   --color-brand-red:   #9575cd;
   --color-brand-red-rgb:    149 117 205;
   --color-brand-red-light: #b39ddb;
   --color-brand-red-dark:  #7e57c2;
+  --color-on-accent:   #000000;
 }
 
 [data-theme="dark"] {
-  --color-bg:          #050505;
-  --color-surface:     #0a0a0a;
-  --color-card:        #121212;
-  --color-elevated:    #1a1a1a;
   --color-brand-red:   #78909c;
   --color-brand-red-rgb:    120 144 156;
   --color-brand-red-light: #90a4ae;
   --color-brand-red-dark:  #546e7a;
+  --color-on-accent:   #000000;
 }
 
 [data-theme="fairy"] {
-  --color-bg:          #0f050a;
-  --color-surface:     #1a0812;
-  --color-card:        #220c18;
-  --color-elevated:    #2e1020;
   --color-brand-red:   #f48fb1;
   --color-brand-red-rgb:    244 143 177;
   --color-brand-red-light: #f8bbd0;
   --color-brand-red-dark:  #ec407a;
+  --color-on-accent:   #000000;
 }
