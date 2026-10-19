@@ -59,11 +59,13 @@ export const login = (username, password) => {
   }).then(r => r.data)
 }
 
-export const getMe = ({ withoutToken = false, preserveSession = false } = {}) => api.get('/auth/me', {
+export const getMe = ({ withoutToken = false, preserveSession = false, timeout } = {}) => api.get('/auth/me', {
   skipAuthentication: withoutToken,
   preserveSessionOnUnauthorized: preserveSession,
+  ...(timeout ? { timeout } : {}),
 }).then(r => r.data)
-export const getAuthMode = () => api.get('/auth/mode', {
+export const getAuthMode = ({ timeout } = {}) => api.get('/auth/mode', {
+  ...(timeout ? { timeout } : {}),
   // Mode discovery is public. A leftover token must not influence bootstrap
   // or let a transient/invalid response destroy the stored session.
   skipAuthentication: true,
