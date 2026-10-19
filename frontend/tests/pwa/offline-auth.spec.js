@@ -76,6 +76,14 @@ async function seedItem(page, userId) {
   }, userId)
 }
 
+// Logout clears the read cache before it reloads, so the page may still be on the old document
+// (or between two documents) when the URL first reads /login; retry until a stable one answers.
+async function expectStorageCleared(page, key) {
+  await expect(async () => {
+    expect(await page.evaluate(name => localStorage.getItem(name), key)).toBeNull()
+  }).toPass({ timeout: 10000 })
+}
+
 // The page may still be navigating right after a logout; retry until a stable document answers.
 async function countItems(page) {
   let count
@@ -189,8 +197,8 @@ test.describe('logout guard', () => {
     await expectFourWayDialog(page)
     await dialogButtons(page).keep.click()
     await page.waitForURL('**/login')
-    expect(await page.evaluate(() => localStorage.getItem('token'))).toBeNull()
-    expect(await page.evaluate(key => localStorage.getItem(key), SNAPSHOT_KEY)).toBeNull()
+    await expectStorageCleared(page, 'token')
+    await expectStorageCleared(page, SNAPSHOT_KEY)
     expect(await countItems(page)).toBe(1)
   })
 
@@ -225,6 +233,6 @@ test.describe('logout guard', () => {
     await logoutOnHome(page).click()
     await page.waitForURL('**/login')
     await expect(page.getByRole('button', { name: 'Log out and keep items' })).toHaveCount(0)
-    expect(await page.evaluate(() => localStorage.getItem('token'))).toBeNull()
+    await expectStorageCleared(page, 'token')
   })
 })
