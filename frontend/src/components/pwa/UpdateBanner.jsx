@@ -55,7 +55,10 @@ export default function UpdateBanner() {
       className="fixed inset-x-0 top-0 z-[60] flex justify-center px-4"
       style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
     >
-      <div className="flex w-full max-w-md items-center gap-3 rounded-xl border border-border bg-bg-secondary px-4 py-3 shadow-xl">
+      <div
+        className="flex w-full max-w-md items-center gap-3 rounded-xl border border-border px-4 py-3 shadow-xl"
+        style={{ backgroundColor: 'var(--color-card)' }}
+      >
         <div className="min-w-0 flex-1 text-sm text-text-primary">
           <p>{t('pwa.updateAvailable')}</p>
           {blocked && <p className="text-xs text-text-muted">{t('pwa.updateBlocked')}</p>}
