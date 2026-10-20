@@ -10,6 +10,7 @@ import { probe } from '../offline/outbox/probe'
 import { purgeAll } from '../offline/readCache'
 import { useOutbox } from '../offline/useOutbox'
 import { resetServiceWorker } from '../pwa/register'
+import { useNavBar } from '../navigation/useNavBar'
 
 function appVersion() {
   // eslint-disable-next-line no-undef
@@ -58,8 +59,11 @@ function Capability({ label, ok }) {
   )
 }
 
+const NAV_BAR = {}
+
 export default function OfflineCenter() {
   const { t } = useSettings()
+  useNavBar(NAV_BAR)
   const { enabled, outbox, reachability } = useOutbox()
   const [unavailable, setUnavailable] = useState(false)
   const [live, setLive] = useState(null)
@@ -96,7 +100,7 @@ export default function OfflineCenter() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-4 py-6" data-testid="offline-center">
-      <h1 className="text-xl font-bold text-text-primary">{t('sync.centerTitle')}</h1>
+      <h1 className="sr-only">{t('sync.centerTitle')}</h1>
 
       <Section title={t('pwa.connection')}>
         <p className="text-sm text-text-primary" data-testid="connection-state" data-state={state}>{stateText}</p>

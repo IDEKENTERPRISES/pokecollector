@@ -545,9 +545,11 @@ test('Wishlist price tabs reuse the complete shared card price details', async (
 
 test('real Analytics duplicate list stays visually aligned with Collection', async ({ page }) => {
   await page.goto('/analytics')
-  await expect(page.getByRole('heading', { name: 'Analytics' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Analytics' })).toBeAttached()
+  // Analytics opens on Investment (Q15); the duplicate list is behind the Duplicates segment.
+  await page.getByRole('radio', { name: 'Duplicates' }).click()
   await expectVisibleArtwork(page)
-  await expect(page.locator('main')).toHaveScreenshot('analytics-duplicates.png')
+  await expect(page.locator('main')).toHaveScreenshot('analytics-duplicates.png', { stylePath: 'tests/visual/hide-shell.css' })
 })
 
 test('trade history opens a prefilled edit draft and submits immutable values', async ({ page }) => {
