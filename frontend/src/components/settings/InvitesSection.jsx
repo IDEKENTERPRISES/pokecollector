@@ -63,13 +63,11 @@ function formatDate(value) {
 function CreateInviteSheet({ isOpen, onClose }) {
   const { t } = useSettings()
   const queryClient = useQueryClient()
-  const [role, setRole] = useState('trainer')
   const [days, setDays] = useState(7)
   const [note, setNote] = useState('')
   const [created, setCreated] = useState(null)
 
   const reset = () => {
-    setRole('trainer')
     setDays(7)
     setNote('')
     setCreated(null)
@@ -80,7 +78,7 @@ function CreateInviteSheet({ isOpen, onClose }) {
   }
 
   const mutation = useMutation({
-    mutationFn: () => createInvite({ role, expiresInDays: days, note: note.trim() || undefined }),
+    mutationFn: () => createInvite({ expiresInDays: days, note: note.trim() || undefined }),
     onSuccess: data => {
       setCreated({ ...data, link: inviteLink(data.token) })
       queryClient.invalidateQueries({ queryKey: ['invites'] })
@@ -140,20 +138,7 @@ function CreateInviteSheet({ isOpen, onClose }) {
         </div>
       ) : (
         <div className="space-y-5 p-4">
-          <div className="space-y-2">
-            <p className="text-footnote text-text-secondary">{t('invites.role')}</p>
-            <SegmentedControl
-              ariaLabel={t('invites.role')}
-              size="md"
-              value={role}
-              onChange={setRole}
-              options={[
-                { value: 'trainer', label: t('invites.roleTrainer') },
-                { value: 'admin', label: t('invites.roleAdmin') },
-              ]}
-            />
-            {role === 'admin' && <p className="text-footnote text-yellow">{t('invites.adminWarning')}</p>}
-          </div>
+          <p className="text-body text-text-secondary" data-testid="invite-joins-as">{t('invites.joinsAs')}</p>
           <div className="space-y-2">
             <p className="text-footnote text-text-secondary">{t('invites.expires')}</p>
             <SegmentedControl
@@ -237,7 +222,7 @@ export default function InvitesSection() {
           <ListRow
             key={invite.id}
             testId={`invite-row-${invite.id}`}
-            title={invite.note || (invite.role === 'admin' ? t('invites.roleAdmin') : t('invites.roleTrainer'))}
+            title={invite.note || t('invites.roleTrainer')}
             subtitle={subtitle(invite)}
             trailing={<StatusChip status={invite.status} label={t(`invites.status.${invite.status}`)} />}
             onClick={invite.status === 'pending' ? () => setRevoking(invite) : undefined}

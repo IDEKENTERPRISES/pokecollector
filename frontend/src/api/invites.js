@@ -5,8 +5,9 @@ import api from './client'
 
 const publicCall = { skipAuthentication: true, preserveSessionOnUnauthorized: true }
 
-export const createInvite = ({ role = 'trainer', expiresInDays = 7, note } = {}) =>
-  api.post('/auth/invites', { role, expires_in_days: expiresInDays, ...(note ? { note } : {}) }).then(r => r.data)
+// Every invite creates a trainer account; there is no role option.
+export const createInvite = ({ expiresInDays = 7, note } = {}) =>
+  api.post('/auth/invites', { expires_in_days: expiresInDays, ...(note ? { note } : {}) }).then(r => r.data)
 export const getInvites = () => api.get('/auth/invites').then(r => r.data)
 export const revokeInvite = id => api.delete(`/auth/invites/${id}`).then(r => r.data)
 export const getAuditLog = ({ limit = 25, before } = {}) =>

@@ -13,6 +13,7 @@ function installApi(page, { signedIn = false, checks = {} } = {}) {
     accepted: null,
     nextId: 1,
     revokes: [],
+    created: [],
   }
   const log = (action, details = {}) => state.audit.unshift({
     id: state.audit.length + 1,
@@ -66,10 +67,11 @@ function installApi(page, { signedIn = false, checks = {} } = {}) {
       }
       if (path === '/api/auth/invites' && request.method() === 'POST') {
         const body = request.postDataJSON()
+        state.created.push(body)
         const invite = {
           id: state.nextId++,
           status: 'pending',
-          role: body.role,
+          role: 'trainer',
           note: body.note ?? null,
           created_at: '2026-10-20T10:00:00Z',
           expires_at: '2026-10-27T10:00:00Z',
@@ -80,7 +82,7 @@ function installApi(page, { signedIn = false, checks = {} } = {}) {
           revoked_by: null,
         }
         state.invites.unshift(invite)
-        log('invite.created', { role: body.role, note: body.note ?? null })
+        log('invite.created', { role: 'trainer', note: body.note ?? null })
         return json({ ...invite, token: 'secret-token-123', link: 'http://example.test/invite/secret-token-123' })
       }
       if (path === '/api/auth/invites') return json(state.invites)
@@ -151,7 +153,8 @@ test.describe('admin invites', () => {
     await expect(page.getByText('No invites yet.')).toBeVisible()
 
     await page.getByTestId('invite-create').click()
-    await page.getByRole('radio', { name: 'Admin' }).click()
+    await expect(page.getByTestId('invite-joins-as')).toHaveText('Joins as Trainer')
+    await expect(page.getByRole('radio', { name: 'Admin' })).toHaveCount(0)
     await page.getByRole('radio', { name: '30 days' }).click()
     await page.getByLabel('Note (optional)').fill('for Brock')
     await page.getByRole('button', { name: 'Create link' }).click()
@@ -162,7 +165,9 @@ test.describe('admin invites', () => {
     await page.getByTestId('invite-copy').click()
     await expect(page.getByText('Link copied')).toBeVisible()
     expect(await page.evaluate(() => window.__copied)).toEqual([expect.stringMatching(/\/invite\/secret-token-123$/)])
-    expect(state.invites[0]).toMatchObject({ role: 'admin', note: 'for Brock' })
+    expect(state.invites[0]).toMatchObject({ role: 'trainer', note: 'for Brock' })
+    expect(state.created[0]).not.toHaveProperty('role')
+    expect(state.created[0]).toMatchObject({ expires_in_days: 30, note: 'for Brock' })
 
     await page.getByRole('button', { name: 'Done' }).click()
     const row = page.getByTestId('invite-row-1')

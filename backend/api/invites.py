@@ -1,7 +1,7 @@
 """Invite links and the audit log (mounted under /api/auth).
 
 Admins issue single-use, expiring invite links; whoever opens one can create an account with the
-invite's role. Only a hash of the token is stored. Every step is written to the audit log.
+a trainer account (invites never create admins). Only a hash of the token is stored. Every step is written to the audit log.
 """
 
 import hashlib
@@ -46,8 +46,12 @@ MIN_USERNAME = 2
 MAX_USERNAME = 32
 
 
+INVITE_ROLE = "trainer"  # invites never create admins
+
+
 class CreateInviteRequest(BaseModel):
-    role: Literal["trainer", "admin"] = "trainer"
+    # Not an option: every invite is a trainer invite. A body that names another role is refused.
+    role: str | None = None
     expires_in_days: Literal[1, 7, 30] = 7
     note: str | None = Field(default=None, max_length=200)
 
@@ -141,6 +145,8 @@ def create_invite(
 ):
     _require_admin(current_user)
     _require_multi_user(db)
+    if data.role is not None and data.role != INVITE_ROLE:
+        raise HTTPException(status_code=400, detail="Invites can only create trainer accounts")
     token = secrets.token_urlsafe(32)
     now = _now()
     invite = Invite(
@@ -148,7 +154,7 @@ def create_invite(
         created_by=current_user.id,
         created_at=now,
         expires_at=now + timedelta(days=data.expires_in_days),
-        role=data.role,
+        role=INVITE_ROLE,
         note=(data.note or "").strip() or None,
     )
     db.add(invite)
@@ -320,7 +326,7 @@ def accept_invite(token: str, data: AcceptInviteRequest, request: Request, db: S
     user = User(
         username=username,
         hashed_password=hash_password(data.password),
-        role=invite.role,
+        role=INVITE_ROLE,  # whatever an old row says, an invite only ever makes a trainer
         is_active=True,
         must_change_password=False,
     )

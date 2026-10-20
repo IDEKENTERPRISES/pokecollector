@@ -130,19 +130,39 @@ class AdminInviteTests(InviteApiTests):
         self.assertNotIn("token", listing.json()[0])
         self.assertEqual(listing.json()[0]["note"], "for Brock")
 
-    def test_role_and_expiry_options(self):
+    def test_expiry_options(self):
         headers = self.login("admin")
-        admin_invite = self.create_invite(headers=headers, role="admin", expires_in_days=30).json()
+        month = self.create_invite(headers=headers, expires_in_days=30).json()
         short = self.create_invite(headers=headers, expires_in_days=1).json()
-        self.assertEqual(admin_invite["role"], "admin")
-        expires = datetime.fromisoformat(admin_invite["expires_at"].rstrip("Z"))
+        expires = datetime.fromisoformat(month["expires_at"].rstrip("Z"))
         self.assertAlmostEqual((expires - datetime.utcnow()).total_seconds(), 30 * 86400, delta=60)
         expires = datetime.fromisoformat(short["expires_at"].rstrip("Z"))
         self.assertAlmostEqual((expires - datetime.utcnow()).total_seconds(), 86400, delta=60)
 
+    def test_invites_can_only_create_trainers(self):
+        headers = self.login("admin")
+        for role in ("admin", "owner", ""):
+            response = self.create_invite(headers=headers, role=role)
+            self.assertEqual(response.status_code, 400, role)
+            self.assertEqual(response.json()["detail"], "Invites can only create trainer accounts")
+        db = self.Session()
+        self.assertEqual(db.query(Invite).count(), 0)
+        db.close()
+        self.assertEqual(self.audit_actions(), [])
+        # Naming the only allowed role is harmless.
+        self.assertEqual(self.create_invite(headers=headers, role="trainer").json()["role"], "trainer")
+
+    def test_a_legacy_admin_invite_still_only_creates_a_trainer(self):
+        token = self.create_invite().json()["token"]
+        db = self.Session()
+        db.query(Invite).update({"role": "admin"})
+        db.commit()
+        db.close()
+        body = self.accept(token).json()
+        self.assertEqual(body["user"]["role"], "trainer")
+
     def test_invalid_options_are_rejected(self):
         headers = self.login("admin")
-        self.assertEqual(self.create_invite(headers=headers, role="owner").status_code, 422)
         self.assertEqual(self.create_invite(headers=headers, expires_in_days=3).status_code, 422)
 
     def test_listing_shows_every_status_with_creator_and_user(self):
@@ -197,13 +217,13 @@ class AdminInviteTests(InviteApiTests):
 
 class AcceptInviteTests(InviteApiTests):
     def test_check_reports_validity_without_details(self):
-        token = self.create_invite(role="admin").json()["token"]
+        token = self.create_invite().json()["token"]
         response = self.anon.get(f"/api/auth/invites/{token}/check")
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(set(body), {"valid", "role", "expires_at"})
         self.assertTrue(body["valid"])
-        self.assertEqual(body["role"], "admin")
+        self.assertEqual(body["role"], "trainer")
         self.assertEqual(self.anon.get("/api/auth/invites/nonsense/check").json(), {"valid": False, "reason": "not_found"})
 
     def test_check_reasons_for_used_revoked_and_expired(self):
@@ -223,18 +243,18 @@ class AcceptInviteTests(InviteApiTests):
                 {"valid": False, "reason": reason},
             )
 
-    def test_accept_creates_the_user_with_the_invite_role_and_signs_in(self):
-        token = self.create_invite(role="admin").json()["token"]
+    def test_accept_creates_a_trainer_and_signs_in(self):
+        token = self.create_invite().json()["token"]
         response = self.accept(token, username="  brock  ")
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
         self.assertEqual(body["user"]["username"], "brock")
-        self.assertEqual(body["user"]["role"], "admin")
+        self.assertEqual(body["user"]["role"], "trainer")
         self.assertFalse(body["user"]["must_change_password"])
 
         db = self.Session()
         user = db.query(User).filter(User.username == "brock").one()
-        self.assertEqual(user.role, "admin")
+        self.assertEqual(user.role, "trainer")
         self.assertTrue(verify_password(PASSWORD, user.hashed_password))
         self.assertEqual(db.query(UserSession).filter(UserSession.user_id == user.id).count(), 1)
         invite = db.query(Invite).one()
@@ -359,7 +379,7 @@ class AuditLogTests(InviteApiTests):
         )
 
     def test_created_entry_records_actor_target_ip_and_agent(self):
-        invite = self.create_invite(role="admin", note="hello").json()
+        invite = self.create_invite(note="hello").json()
         row = self.audit_rows("invite.created")[0]
         db = self.Session()
         admin = db.query(User).filter(User.username == "admin").one()
@@ -369,7 +389,7 @@ class AuditLogTests(InviteApiTests):
         self.assertEqual(row.ip, "8.8.4.4")
         self.assertEqual(row.user_agent, "pytest-agent")
         details = json.loads(row.details)
-        self.assertEqual((details["role"], details["note"]), ("admin", "hello"))
+        self.assertEqual((details["role"], details["note"]), ("trainer", "hello"))
         self.assertNotIn(invite["token"], row.details)
 
     def test_accepted_entries_carry_the_new_user_id_and_no_actor(self):

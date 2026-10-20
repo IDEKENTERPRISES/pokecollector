@@ -28,7 +28,7 @@ export default function InviteAccept() {
     checkInvite(token)
       .then(result => {
         if (cancelled) return
-        setCheck(result.valid ? { state: 'valid', role: result.role } : { state: 'invalid', reason: result.reason })
+        setCheck(result.valid ? { state: 'valid' } : { state: 'invalid', reason: result.reason })
       })
       .catch(() => {
         if (cancelled) return
@@ -94,7 +94,6 @@ export default function InviteAccept() {
 
         {check.state === 'valid' && (
           <form onSubmit={handleSubmit} method="post" action="/invite" className="space-y-5" data-testid="invite-form">
-            {check.role === 'admin' && <p className="text-footnote text-yellow">{t('invites.page.asAdmin')}</p>}
             <div className="overflow-hidden rounded-xl bg-card">
               <label htmlFor="invite-username" className={labelClass}>{t('invites.page.username')}</label>
               <input

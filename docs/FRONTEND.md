@@ -211,7 +211,7 @@ Defined in `frontend/src/components/TabNav.jsx`.
 
 ### Invites and the audit log
 
-- `components/settings/InvitesSection.jsx` is mounted in Settings › Users & sign-in (admins, multi-user mode): **Invite someone** opens a page sheet (role, expiry of 1, 7 or 30 days, optional note); after creating, the sheet shows the link once with **Copy** (clipboard API, with a `execCommand` fallback) and **Share** (`navigator.share`, shown only where it exists). The list shows each invite with a status chip; a pending invite opens an action sheet to **Revoke**.
+- `components/settings/InvitesSection.jsx` is mounted in Settings › Users & sign-in (admins, multi-user mode): **Invite someone** opens a page sheet ("Joins as Trainer" as plain text, expiry of 1, 7 or 30 days, optional note; there is no role picker, invites only create trainers); after creating, the sheet shows the link once with **Copy** (clipboard API, with a `execCommand` fallback) and **Share** (`navigator.share`, shown only where it exists). The list shows each invite with a status chip; a pending invite opens an action sheet to **Revoke**.
 - `components/settings/AuditLogSheet.jsx` is the **Audit log** row's sheet: newest first, with who, when, from which address and a short detail, loaded 25 at a time.
 - `api/invites.js` holds the calls; the check and accept calls never send the stored token. Strings are in the `invites` and `audit` namespaces of `en.js`.
 - Tests: `src/api/invites.test.js`, `src/components/settings/InvitesSection.test.jsx`, `tests/visual/invites.spec.js`.
