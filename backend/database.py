@@ -66,6 +66,8 @@ def _run_migrations(conn):
         # Series id and official logo for the iPhone UI's sets-by-series view
         "ALTER TABLE sets ADD COLUMN IF NOT EXISTS series_id VARCHAR",
         "ALTER TABLE sets ADD COLUMN IF NOT EXISTS series_logo VARCHAR",
+        # End-of-sync retry counts of transient TCGdex failures
+        "ALTER TABLE sync_log ADD COLUMN IF NOT EXISTS retry_summary TEXT",
         # Add variant column to collection table
         "ALTER TABLE collection ADD COLUMN IF NOT EXISTS variant VARCHAR",
         # Add binder_type column to binders table
