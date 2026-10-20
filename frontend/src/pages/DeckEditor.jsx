@@ -1,10 +1,11 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Copy, Download, Heart, Layers3, PackageCheck, Pencil, Plus, Trash2, Upload } from 'lucide-react'
+import { Copy, Download, Heart, Layers3, PackageCheck, Pencil, Plus, Trash2, Upload } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { addBinderCardsToWishlist, addDeckEntry, convertDeckToPlanned, convertDeckToReal, deleteDeck, deleteDeckEntry, duplicateDeck, exportBinderCsv, getBinderEntryEquivalentPrints, getCollection, getDeck, importBinderCsv, switchBinderEntryCard, updateDeck } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
+import { useNavBar } from '../navigation/useNavBar'
 import { useConfirmDialog } from '../contexts/ConfirmDialogContext'
 import { useDeckQuantitySync } from '../hooks/useDeckQuantitySync'
 import DeckCompositionBar from '../components/decks/DeckCompositionBar'
@@ -35,6 +36,8 @@ export default function DeckEditor() {
   const [showCsvImportModal, setShowCsvImportModal] = useState(false)
   const label = (key, values) => Object.entries(values).reduce((text, [name, value]) => text.replace(`{${name}}`, value), t(key))
   const { data: deck, isLoading } = useQuery({ queryKey: ['deck', deckId], queryFn: () => getDeck(deckId).then(response => response.data) })
+  const navOptions = useMemo(() => ({ title: deck?.name || '', backLabel: t('nav.binders') }), [deck?.name, t])
+  useNavBar(navOptions)
   const { data: collection = [] } = useQuery({ queryKey: ['deck-picker-collection'], queryFn: () => getCollection({}).then(response => response.data) })
 
   const onSuccess = () => { invalidateDeck(queryClient, deckId); queryClient.invalidateQueries({ queryKey: ['deck-allocation'] }) }
@@ -147,10 +150,6 @@ export default function DeckEditor() {
   return (
     <div className="space-y-4 pb-6">
       <header className="space-y-4">
-        <button onClick={() => navigate('/binders')} className="btn-ghost py-1.5 text-sm">
-          <ArrowLeft size={14} /> {t('nav.binders')}
-        </button>
-
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">

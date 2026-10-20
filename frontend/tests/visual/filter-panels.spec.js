@@ -215,17 +215,20 @@ test('binder contents filter dynamically and preserve quick controls', async ({ 
 })
 
 test('Sets updates URL filters dynamically while quick search remains local', async ({ page }) => {
+  // The default view groups sets by series, so the filters apply to the series tiles.
   await page.goto('/sets')
+  await page.getByRole('button', { name: 'Filters' }).click()
   const series = page.getByLabel('All Series')
   await series.selectOption('Filter Series')
   await expectDynamicUrl(page, 'series', 'Filter Series')
-  await expect(page.getByText('Other Set', { exact: true })).toHaveCount(0)
+  await expect(page.getByTestId('series-grid').getByText('Other Series', { exact: true })).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Clear', exact: true }).click()
   await expect(series).toHaveValue('')
-  await expect(page).not.toHaveURL(/(?:\?|&)series=/)
+  await expect(page).not.toHaveURL(/[?&]series=/)
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
 
   await page.getByPlaceholder('Filter sets...').fill('Filter Set')
-  await expect(page.getByText('Other Set', { exact: true })).toHaveCount(0)
-  await expect(page).not.toHaveURL(/(?:\?|&)series=/)
+  await expect(page.getByTestId('series-grid').getByText('Other Series', { exact: true })).toHaveCount(0)
+  await expect(page).not.toHaveURL(/[?&]series=/)
 })

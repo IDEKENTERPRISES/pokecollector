@@ -1,7 +1,8 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2, Package, Star, Download, Upload, X, Heart, HelpCircle } from 'lucide-react'
+import { useNavBar } from '../navigation/useNavBar'
+import { Plus, Trash2, Package, Star, Download, Upload, X, Heart, HelpCircle } from 'lucide-react'
 import { getBinderCards, removeCardFromBinder, removeBinderEntry, addCardToBinder, addCollectionItemToBinder, getCollection, updateBinderEntry, getBinderEntryEquivalentPrints, getBinderPrintOptimization, applyBinderPrintOptimization, switchBinderEntryCard, addBinderEntryToWishlist, addBinderCardsToWishlist, convertWishlistBinderToCollection, convertCollectionBinderToWishlist, importBinderCsv, exportBinderCsv, getApiErrorMessage } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import toast from 'react-hot-toast'
@@ -109,6 +110,8 @@ export default function BinderDetail() {
   })
 
   const binder = data?.binder
+  const navOptions = useMemo(() => ({ title: binder?.name || '', backLabel: t('nav.binders') }), [binder?.name, t])
+  useNavBar(navOptions)
   const binderType = binder?.binder_type || 'collection'
   const isWishlist = binderType === 'wishlist'
   const isCollection = binderType === 'collection'
@@ -427,10 +430,6 @@ export default function BinderDetail() {
 
   return (
     <div className="space-y-4 pb-2">
-      <button onClick={() => navigate('/binders')} className="btn-ghost text-sm py-1.5">
-        <ArrowLeft size={14} /> {t('nav.binders')}
-      </button>
-
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
