@@ -43,140 +43,121 @@ export default function Login() {
     }
   }
 
+  const fieldClass = 'w-full bg-transparent px-4 pb-2.5 pt-0.5 text-body text-text-primary placeholder:text-text-tertiary outline-none'
+  const labelClass = 'block px-4 pt-2.5 text-footnote text-text-secondary'
+  const submitClass = 'flex min-h-[50px] w-full items-center justify-center rounded-full bg-accent px-6 text-headline text-on-accent shadow-[0_4px_14px_color-mix(in_srgb,var(--color-accent)_28%,transparent)] disabled:opacity-40 ios-press'
+
   return (
-    <div className="relative min-h-screen overflow-hidden bg-bg-primary">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.08),_transparent_32%),radial-gradient(circle_at_bottom_right,_rgba(227,0,11,0.18),_transparent_28%)]" />
-      <div className="absolute inset-0 backdrop-blur-[2px]" />
+    <div className="min-h-screen bg-bg px-4 pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(48px,env(safe-area-inset-top))]">
+      <div className="mx-auto w-full max-w-md">
+        <header className="mb-8">
+          <p className="text-footnote font-semibold text-text-secondary">PokéCollector</p>
+          <h1 className="mt-1 text-large-title text-text-primary">
+            {lastUser && !showSwitchUser ? t('auth.welcomeBack') : t('auth.login')}
+          </h1>
+          <p className="mt-1 text-subheadline text-text-secondary">{t('auth.signInToCollection')}</p>
+        </header>
 
-      <div className="relative flex min-h-screen items-center justify-center p-4 sm:p-6">
-        <div
-          className="w-full max-w-md rounded-[2rem] border border-border bg-bg-card p-6 shadow-2xl backdrop-blur-xl sm:p-8"
-          style={{ backgroundColor: 'rgba(26, 26, 46, 0.78)' }}
-        >
-          <div className="mb-8 text-center">
-            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-text-muted">PokéCollector</p>
-            <h1 className="mt-4 text-3xl font-semibold text-text-primary">
-              {lastUser && !showSwitchUser ? t('auth.welcomeBack') : t('auth.login')}
-            </h1>
-            <p className="mt-2 text-sm text-text-muted">{t('auth.signInToCollection')}</p>
-          </div>
-
-          {lastUser && !showSwitchUser ? (
-            <form onSubmit={handleSubmit} method="post" action="/login" className="space-y-5">
-              <div className="flex flex-col items-center text-center">
-                <div
-                  className={`flex items-center justify-center rounded-full border border-white/10 bg-bg-primary shadow-[0_20px_50px_rgba(0,0,0,0.35)] ${
-                    lastUserAvatar ? 'h-28 w-28' : 'h-24 w-24'
-                  }`}
-                  style={{ backgroundColor: 'rgba(10, 10, 15, 0.82)' }}
-                >
-                  {lastUserAvatar ? (
-                    <img
-                      src={`https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/${lastUserAvatar}.gif`}
-                      alt={`${lastUser} avatar`}
-                      className="w-16 h-16 pixelated"
-                    />
-                  ) : (
-                    <User size={40} className="text-text-primary" />
-                  )}
-                </div>
-                <p className="mt-4 text-xl font-semibold text-text-primary">{lastUser}</p>
+        {lastUser && !showSwitchUser ? (
+          <form onSubmit={handleSubmit} method="post" action="/login" className="space-y-5">
+            <div className="flex flex-col items-center text-center">
+              <div className="flex h-24 w-24 items-center justify-center rounded-full border border-border bg-card">
+                {lastUserAvatar ? (
+                  <img
+                    src={`https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/${lastUserAvatar}.gif`}
+                    alt={`${lastUser} avatar`}
+                    className="w-16 h-16 pixelated"
+                  />
+                ) : (
+                  <User size={40} className="text-text-primary" />
+                )}
               </div>
+              <p className="mt-3 text-title-3 text-text-primary">{lastUser}</p>
+            </div>
 
+            <input
+              type="text"
+              name="username"
+              id="login-username-saved"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoComplete="username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              tabIndex={-1}
+              aria-label={t('auth.username')}
+              className="sr-only"
+            />
+
+            <div className="overflow-hidden rounded-xl bg-card">
+              <label htmlFor="login-password-saved" className={labelClass}>{t('auth.password')}</label>
+              <input
+                type="password"
+                name="password"
+                id="login-password-saved"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className={fieldClass}
+                autoFocus
+                required
+              />
+            </div>
+
+            <button type="submit" disabled={loading || !password} className={submitClass}>
+              {loading ? t('auth.signingIn') : t('auth.login')}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowSwitchUser(true)
+                setUsername('')
+                setPassword('')
+              }}
+              className="mx-auto block min-h-[44px] text-body text-tint"
+            >
+              {t('auth.switchUser')}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleSubmit} method="post" action="/login" className="space-y-5">
+            <div className="overflow-hidden rounded-xl bg-card">
+              <label htmlFor="login-username" className={labelClass}>{t('auth.username')}</label>
               <input
                 type="text"
                 name="username"
-                id="login-username-saved"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                id="login-username"
                 autoComplete="username"
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
-                tabIndex={-1}
-                aria-label={t('auth.username')}
-                className="sr-only"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className={fieldClass}
+                autoFocus
+                required
               />
+              <div className="mx-4 h-[0.5px] bg-border" aria-hidden="true" />
+              <label htmlFor="login-password" className={labelClass}>{t('auth.password')}</label>
+              <input
+                type="password"
+                name="password"
+                id="login-password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className={fieldClass}
+                required
+              />
+            </div>
 
-              <div>
-                <label htmlFor="login-password-saved" className="mb-1 block text-xs text-text-secondary">{t('auth.password')}</label>
-                <input
-                  type="password"
-                  name="password"
-                  id="login-password-saved"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="input w-full"
-                  autoFocus
-                  required
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading || !password}
-                className="btn-primary w-full"
-              >
-                {loading ? t('auth.signingIn') : t('auth.login')}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setShowSwitchUser(true)
-                  setUsername('')
-                  setPassword('')
-                }}
-                className="mx-auto block text-sm text-text-muted transition-colors hover:text-text-primary"
-              >
-                {t('auth.switchUser')}
-              </button>
-            </form>
-          ) : (
-            <form onSubmit={handleSubmit} method="post" action="/login" className="space-y-4">
-              <div>
-                <label htmlFor="login-username" className="mb-1 block text-xs text-text-secondary">{t('auth.username')}</label>
-                <input
-                  type="text"
-                  name="username"
-                  id="login-username"
-                  autoComplete="username"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="input w-full"
-                  autoFocus
-                  required
-                />
-              </div>
-
-              <div>
-                <label htmlFor="login-password" className="mb-1 block text-xs text-text-secondary">{t('auth.password')}</label>
-                <input
-                  type="password"
-                  name="password"
-                  id="login-password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="input w-full"
-                  required
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading || !username || !password}
-                className="btn-primary w-full"
-              >
-                {loading ? t('auth.signingIn') : t('auth.login')}
-              </button>
-            </form>
-          )}
-        </div>
+            <button type="submit" disabled={loading || !username || !password} className={submitClass}>
+              {loading ? t('auth.signingIn') : t('auth.login')}
+            </button>
+          </form>
+        )}
       </div>
     </div>
   )
