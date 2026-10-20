@@ -60,6 +60,18 @@ class BackupCommandTests(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
+    def test_non_admin_cannot_download_a_backup(self):
+        trainer = SimpleNamespace(role="trainer")
+        with self.assertRaises(HTTPException) as raised:
+            backup_api.download_backup(include="full", current_user=trainer)
+        self.assertEqual(raised.exception.status_code, 403)
+
+    def test_non_admin_cannot_clear_the_image_cache(self):
+        trainer = SimpleNamespace(role="trainer")
+        with self.assertRaises(HTTPException) as raised:
+            backup_api.clear_image_cache(current_user=trainer)
+        self.assertEqual(raised.exception.status_code, 403)
+
     def test_full_backup_excludes_only_image_cache_rows(self):
         completed = subprocess.CompletedProcess([], 0, "", "")
         with patch.object(backup_api, "BACKUP_DIR", self.temp_dir.name), \

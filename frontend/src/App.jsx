@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useParams } from 'react-router-dom'
 import { Suspense, lazy, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
+import AppErrorBoundary from './components/AppErrorBoundary'
 import PokeBallLoader from './components/PokeBallLoader'
 import AuthStartupScreen from './components/AuthStartupScreen'
 import { SettingsProvider } from './contexts/SettingsContext'
@@ -236,6 +237,7 @@ function ProtectedRoutes() {
 
 export default function App() {
   return (
+    <AppErrorBoundary>
     <AuthProvider>
       <SettingsProvider>
         <OfflineProvider>
@@ -261,5 +263,6 @@ export default function App() {
         </OfflineProvider>
       </SettingsProvider>
     </AuthProvider>
+    </AppErrorBoundary>
   )
 }
