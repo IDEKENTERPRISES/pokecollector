@@ -39,7 +39,13 @@ export default function StatTile({ type, icon, label, value, detail, to, sparkli
     color: text,
     background: `linear-gradient(150deg, var(--type-${key}-top), var(--type-${key}-bottom))`,
     boxShadow: `0 8px 20px color-mix(in srgb, var(--type-${key}) 55%, transparent)`,
+    containerType: 'inline-size',
   }
+  // The value shrinks to the tile's width (container query units) instead of truncating: about
+  // 0.62 em per character, never below 14 px nor above the 30 px tile number.
+  const valueStyle = typeof value === 'string' || typeof value === 'number'
+    ? { fontSize: `clamp(14px, calc(100cqw / ${Math.max(String(value).length, 1) * 0.62}), 30px)`, lineHeight: 1.15 }
+    : undefined
 
   const body = (
     <>
@@ -50,7 +56,7 @@ export default function StatTile({ type, icon, label, value, detail, to, sparkli
         {iconNode}
         <span className="truncate">{label}</span>
       </span>
-      <span className="relative mt-1 block truncate text-tile-number font-display tabular-nums">{value}</span>
+      <span className="relative mt-1 block whitespace-nowrap text-tile-number font-display tabular-nums" style={valueStyle}>{value}</span>
       {detail && <span className="relative block truncate text-caption-1 opacity-90">{detail}</span>}
       {sparkline && <span className="relative block"><Sparkline values={sparkline} colour={text} /></span>}
       {children}
