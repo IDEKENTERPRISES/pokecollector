@@ -52,7 +52,7 @@ describe('groupSetsBySeries', () => {
     expect(groups[0].sets.map(s => s.id)).toEqual(['sv2', 'sv1'])
   })
   it('uses the series route when sets carry series_id, else the namesake or newest set logo', () => {
-    expect(groups[0].logo).toMatch(/^/api/images/set/sv[12]/series$/)
+    expect(groups[0].logo).toMatch(/^\/api\/images\/set\/sv[12]\/series$/)
     expect(groups[2].logo).toBe('/api/images/set/base1/logo')
     expect(groups[1].logo).toBe('/api/images/set/swsh2/logo')
   })
