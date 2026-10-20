@@ -154,6 +154,16 @@ function ThemePicker({ theme, setTheme, themes, label }) {
 function PasswordCard({ t }) {
   const [currentPw, setCurrentPw] = useState('')
   const [newPw, setNewPw] = useState('')
+  const logoutOthersMut = useMutation({
+    mutationFn: () => logoutOtherDevices(),
+    onSuccess: () => toast.success(t('settings.users.otherDevicesSignedOut')),
+    onError: (e) => toast.error(e.response?.data?.detail || t('common.error')),
+  })
+  const changePwMut = useMutation({
+    mutationFn: (data) => changePassword(data),
+    onSuccess: () => { toast.success(t('settings.users.passwordChanged')); setCurrentPw(''); setNewPw('') },
+    onError: (e) => toast.error(e.response?.data?.detail || t('common.error')),
+  })
   return (
     <section className="space-y-1">
       <SectionHeader title={t('settings.users.changePassword')} />
@@ -1555,15 +1565,15 @@ export default function Settings() {
                   🗑️ {t('settings.clearImageCache')}
                 </button>
               </SettingsRow>
-              <SettingsRow label={t('settings.csvExport')} description={t('settings.csvExportDesc')}>
+              {user?.role === 'admin' && <SettingsRow label={t('settings.csvExport')} description={t('settings.csvExportDesc')}>
                 <button
                   onClick={() => exportCSV(exportParams)}
                   className={rowButton('gray')}
                 >
                   <Download size={13} /> {t('settings.exportButton')}
                 </button>
-              </SettingsRow>
-              <SettingsRow label={t('settings.backupDownload')} description={t('settings.backupDownloadDesc')} stacked>
+              </SettingsRow>}
+              {user?.role === 'admin' && <SettingsRow label={t('settings.backupDownload')} description={t('settings.backupDownloadDesc')} stacked>
                 <div className="flex flex-col gap-3 items-start">
                   <div className="flex flex-wrap gap-1.5">
                     {[
@@ -1607,24 +1617,36 @@ export default function Settings() {
                     <Download size={13} /> {t('settings.backupButton')}
                   </button>
                 </div>
-              </SettingsRow>
-              <SettingsRow label={t('settings.backupImport')} description={t('settings.backupImportDesc')}>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={restoring}
-                  className={rowButton('gray')}
-                >
-                  <Upload size={13} /> {restoring ? t('settings.importing') : t('settings.importButton')}
-                </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".sql"
-                  className="hidden"
-                  onChange={handleRestoreUpload}
-                />
-              </SettingsRow>
+              </SettingsRow>}
             </SettingsCard>
+          </section>
+
+          {user?.role === 'admin' && (
+            <section className="space-y-1">
+              <SectionHeader title={t('settings.backupImport')} />
+              <SettingsCard>
+                <SettingsRow label={t('settings.backupImport')} description={t('settings.backupImportDesc')}>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={restoring}
+                    className={rowButton('danger')}
+                  >
+                    <Upload size={13} /> {restoring ? t('settings.importing') : t('settings.importButton')}
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="hidden"
+                    onChange={handleRestoreUpload}
+                  />
+                </SettingsRow>
+              </SettingsCard>
+              <p className="px-4 pt-1.5 text-footnote text-text-secondary">{t('settings.restoreFooter')}</p>
+            </section>
+          )}
+
+          <section>
             <PasswordPromptDialog
               isOpen={Boolean(restorePromptFile)}
               onClose={() => setRestorePromptFile(null)}
@@ -1827,16 +1849,6 @@ function UsersTab({ t, queryClient }) {
   const deleteMut = useMutation({
     mutationFn: (id) => deleteUser(id),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['users'] }); toast.success(t('settings.users.userDeleted')) },
-    onError: (e) => toast.error(e.response?.data?.detail || t('common.error')),
-  })
-  const logoutOthersMut = useMutation({
-    mutationFn: () => logoutOtherDevices(),
-    onSuccess: () => toast.success(t('settings.users.otherDevicesSignedOut')),
-    onError: (e) => toast.error(e.response?.data?.detail || t('common.error')),
-  })
-  const changePwMut = useMutation({
-    mutationFn: (data) => changePassword(data),
-    onSuccess: () => { toast.success(t('settings.users.passwordChanged')); setCurrentPw(''); setNewPw('') },
     onError: (e) => toast.error(e.response?.data?.detail || t('common.error')),
   })
 
