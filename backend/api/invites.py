@@ -11,7 +11,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import update
+from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -123,16 +123,6 @@ def serialize_invite(invite: Invite, users: dict[int, User], now: datetime | Non
     }
 
 
-def _link_for(request: Request, token: str) -> str:
-    origin = request.headers.get("origin")
-    if not origin:
-        referer = request.headers.get("referer") or ""
-        parts = referer.split("/", 3)
-        origin = "/".join(parts[:3]) if len(parts) >= 3 and referer.startswith("http") else None
-    base = (origin or str(request.base_url)).rstrip("/")
-    return f"{base}/invite/{token}"
-
-
 # ── Admin endpoints ──────────────────────────────────────────────────────────
 
 
@@ -173,8 +163,8 @@ def create_invite(
     db.refresh(invite)
     result = serialize_invite(invite, {current_user.id: current_user}, now)
     # The raw token is returned here and never again.
+    # (The client builds the link from its own address; the server derives no URL from Origin or Referer.)
     result["token"] = token
-    result["link"] = _link_for(request, token)
     return result
 
 
@@ -257,7 +247,14 @@ def _lookup(db: Session, token: str) -> tuple[Invite | None, str | None]:
     if invite is None:
         return None, "not_found"
     status = invite_status(invite)
-    return invite, None if status == "pending" else status
+    if status != "pending":
+        return invite, status
+    # The link is only as good as the admin who made it: a deleted, deactivated or demoted creator
+    # takes their pending links with them.
+    creator = db.query(User).filter(User.id == invite.created_by).first() if invite.created_by else None
+    if creator is None or not creator.is_active or creator.role != "admin":
+        return invite, "revoked"
+    return invite, None
 
 
 def _throttled(request: Request) -> None:
@@ -320,7 +317,8 @@ def accept_invite(token: str, data: AcceptInviteRequest, request: Request, db: S
             detail=f"Username must be {MIN_USERNAME}-{MAX_USERNAME} characters",
         )
     validate_new_password(data.password)
-    if db.query(User).filter(User.username == username).first():
+    # Case-insensitive, so an invitee cannot register "Admin" next to "admin".
+    if db.query(User).filter(func.lower(User.username) == username.lower()).first():
         raise HTTPException(status_code=400, detail="Username already exists")
 
     user = User(

@@ -107,14 +107,15 @@ class AdminInviteTests(InviteApiTests):
         self.assertEqual(body["status"], "pending")
         self.assertEqual(body["created_by"]["username"], "admin")
         self.assertTrue(body["token"])
-        self.assertTrue(body["link"].endswith(f"/invite/{body['token']}"))
+        self.assertNotIn("link", body)
         expires = datetime.fromisoformat(body["expires_at"].rstrip("Z"))
         self.assertAlmostEqual((expires - datetime.utcnow()).total_seconds(), 7 * 86400, delta=60)
 
-    def test_link_uses_the_browser_origin_when_sent(self):
-        headers = {**self.login("admin"), "Origin": "https://cards.example.test"}
-        body = self.create_invite(headers=headers).json()
-        self.assertEqual(body["link"], f"https://cards.example.test/invite/{body['token']}")
+    def test_the_server_builds_no_link_from_request_headers(self):
+        headers = {**self.login("admin"), "Origin": "https://evil.example.test", "Referer": "https://evil.example.test/x"}
+        response = self.create_invite(headers=headers)
+        self.assertNotIn("link", response.json())
+        self.assertNotIn("evil.example.test", response.text)
 
     def test_token_is_stored_only_as_a_hash_and_never_listed_again(self):
         headers = self.login("admin")
@@ -325,6 +326,62 @@ class AcceptInviteTests(InviteApiTests):
             self.accept("guess")
         response = self.anon.post("/api/auth/login", data={"username": "admin", "password": PASSWORD})
         self.assertEqual(response.status_code, 200)
+
+
+class CreatorRecheckTests(InviteApiTests):
+    def make_invite_by(self, mutate):
+        """An invite from a second admin, then `mutate(db, user)` changes that admin."""
+        db = self.Session()
+        db.add(User(username="boss2", hashed_password=hash_password(PASSWORD), role="admin", is_active=True))
+        db.commit()
+        db.close()
+        token = self.create_invite(headers=self.login("boss2")).json()["token"]
+        db = self.Session()
+        mutate(db, db.query(User).filter(User.username == "boss2").one())
+        db.commit()
+        db.close()
+        return token
+
+    def assert_revoked_everywhere(self, token):
+        self.assertEqual(self.anon.get(f"/api/auth/invites/{token}/check").json(), {"valid": False, "reason": "revoked"})
+        response = self.accept(token)
+        self.assertEqual((response.status_code, response.json()["detail"]["reason"]), (410, "revoked"))
+        db = self.Session()
+        self.assertIsNone(db.query(User).filter(User.username == "brock").first())
+        db.close()
+        rejected = self.audit_rows("invite.rejected")
+        self.assertEqual(json.loads(rejected[-1].details)["reason"], "revoked")
+
+    def test_an_invite_dies_with_a_deleted_creator(self):
+        def delete(db, user):
+            db.query(Invite).update({"created_by": None})  # what ON DELETE SET NULL does
+            db.query(UserSession).delete()
+            db.delete(user)
+        self.assert_revoked_everywhere(self.make_invite_by(delete))
+
+    def test_an_invite_dies_with_a_deactivated_creator(self):
+        self.assert_revoked_everywhere(self.make_invite_by(lambda db, user: setattr(user, "is_active", False)))
+
+    def test_an_invite_dies_with_a_demoted_creator(self):
+        self.assert_revoked_everywhere(self.make_invite_by(lambda db, user: setattr(user, "role", "trainer")))
+
+    def test_an_invite_from_a_healthy_admin_still_works(self):
+        token = self.make_invite_by(lambda db, user: None)
+        self.assertTrue(self.anon.get(f"/api/auth/invites/{token}/check").json()["valid"])
+        self.assertEqual(self.accept(token).status_code, 200)
+
+
+class UsernameCaseTests(InviteApiTests):
+    def test_usernames_are_unique_ignoring_case(self):
+        token = self.create_invite().json()["token"]
+        for name in ("Admin", "ADMIN", "MISTY", "mIsTy"):
+            response = self.accept(token, name)
+            self.assertEqual(response.status_code, 400, name)
+            self.assertEqual(response.json()["detail"], "Username already exists")
+        db = self.Session()
+        self.assertEqual(db.query(User).count(), 2)
+        db.close()
+        self.assertEqual(self.accept(token, "Brock").status_code, 200)
 
 
 class SingleUserTests(InviteApiTests):
