@@ -16,7 +16,21 @@ const USER = { id: 1, username: 'Shell Reviewer', role: 'admin', is_active: true
 
 const lookup = key => key.split('.').reduce((node, part) => node?.[part], en)
 
-async function installApi(page, { onLogout } = {}) {
+// `queue` switches the offline queue flag on (the dev server's default is off), which the sync
+// center at /offline needs: with the queue off that page redirects Home.
+async function installApi(page, { onLogout, queue = false } = {}) {
+  if (queue) {
+    await page.addInitScript(() => {
+      const add = () => {
+        const meta = document.createElement('meta')
+        meta.name = 'pokecollector-pwa'
+        meta.content = 'sw=0;queue=1'
+        document.head.appendChild(meta)
+      }
+      if (document.head) add()
+      else document.addEventListener('DOMContentLoaded', add)
+    })
+  }
   await page.addInitScript(user => {
     localStorage.setItem('token', 'shell-test-token')
     localStorage.setItem('user', JSON.stringify(user))
@@ -66,7 +80,7 @@ test.describe('shell on a phone', () => {
   for (const route of ROUTES) {
     const url = sample(route.path)
     test(`${route.path} shows the tab bar, the right tab, title and back target`, async ({ page }) => {
-      await installApi(page)
+      await installApi(page, { queue: route.path === '/offline' })
       await page.goto(url)
       await expect(page.getByTestId('tab-bar'), url).toBeVisible()
       await expect(page.getByTestId('nav-bar'), url).toBeVisible()
@@ -112,7 +126,7 @@ test.describe('shell on a phone', () => {
   for (const route of pushed) {
     const url = sample(route.path)
     test(`${route.path}: back lands on the parent`, async ({ page }) => {
-      await installApi(page)
+      await installApi(page, { queue: route.path === '/offline' })
       await page.goto(url)
       await expect(page.getByTestId('nav-title')).toHaveText(lookup(titleKeyForPath(url)))
       // The page may register its own nav bar options as its chunk loads, which re-renders the bar
