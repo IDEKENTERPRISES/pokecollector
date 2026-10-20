@@ -311,3 +311,16 @@ test('a failed atomic add keeps the current review open and does not advance', a
   expect(api.resolvedCards).toEqual([])
   expect(api.items.find(item => item.id === 11).resolved).toBe(false)
 })
+
+test('the inbox lists a batch as a row and words the review count for one and for many', async ({ page }) => {
+  const api = await installScanReviewApi(page)
+  await page.goto('/scans')
+  const row = page.getByRole('button', { name: /4\/4 processed/ })
+  await expect(row).toBeVisible()
+  await expect(row).toContainText('2 need review')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+
+  api.items.find(item => item.id === 12).resolved = true
+  await page.goto('/scans')
+  await expect(page.getByRole('button', { name: /4\/4 processed/ })).toContainText('1 needs review')
+})

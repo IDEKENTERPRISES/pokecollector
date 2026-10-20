@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { AlertTriangle, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Loader2, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react'
 import { fetchScanCandidateImage, fetchScanJobItemImage } from '../api/client'
 import CardImage from './CardImage'
+import Button from './ios/Button'
 import { useDialogBehavior } from './ui/dialogBehavior'
 import { formatRetryCountdown } from '../utils/retryCountdown'
 
@@ -629,14 +630,14 @@ function CandidateGrid({ jobId, itemId, matches, onSelect, onZoom, t }) {
             // still warming up.
             onMouseEnter={() => prefetchImage(hdImage)}
             onTouchStart={() => prefetchImage(hdImage)}
-            className="group relative flex flex-col transition-all duration-200 hover:rotate-1 hover:shadow-glow"
+            className="group relative flex flex-col"
           >
             <button
               type="button"
               onClick={() => onZoom(match, matchIndex)}
               aria-label={t('scanner.compareCandidate')}
               title={t('scanner.compareCandidate')}
-              className="relative aspect-[2.5/3.5] w-full overflow-hidden rounded-xl text-left ring-1 ring-white/5 transition-all duration-200 group-hover:ring-2 group-hover:ring-brand-red/30 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-red"
+              className="ios-press relative aspect-[2.5/3.5] w-full overflow-hidden rounded-xl text-left ring-1 ring-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tint"
             >
               {match.image ? (
                 // CardImage, not a bare <img>: a candidate URL failing to load
@@ -649,15 +650,15 @@ function CandidateGrid({ jobId, itemId, matches, onSelect, onZoom, t }) {
                 // small thumbnails elsewhere reads as unexplained, same
                 // complaint this is fixing in the first place.
                 <CardImage src={match.image} alt={match.name}
-                  className="h-full w-full object-cover shadow-lg transition-transform duration-300 group-hover:scale-[1.02]" />
+                  className="h-full w-full object-cover" />
               ) : (
-                <div className="flex h-full w-full items-center justify-center rounded-xl bg-bg-surface">
-                  <span className="p-1 text-center text-[9px] text-text-muted">{match.name}</span>
+                <div className="flex h-full w-full items-center justify-center rounded-xl bg-card">
+                  <span className="p-1 text-center text-caption-1 text-text-secondary">{match.name}</span>
                 </div>
               )}
               {match.printed_total_mismatch && (
                 <span
-                  className="absolute left-1 top-1 rounded border border-amber-400 bg-amber-500/90 px-1 py-0.5 text-[8px] font-black leading-none text-black"
+                  className="absolute left-1.5 top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-yellow px-1 text-caption-1 font-bold leading-none text-black"
                   title={t('scanner.printedTotalMismatch')}
                   aria-label={t('scanner.printedTotalMismatch')}
                 >
@@ -666,15 +667,15 @@ function CandidateGrid({ jobId, itemId, matches, onSelect, onZoom, t }) {
               )}
             </button>
 
-            <div className="flex items-start gap-1 pt-1">
+            <div className="flex items-start gap-1 pt-1.5">
               <div className="min-w-0 flex-1">
-                <p className="line-clamp-2 text-[10px] font-bold leading-tight text-white">{match.name}</p>
+                <p className="line-clamp-2 text-footnote font-semibold leading-tight text-text-primary">{match.name}</p>
                 {(match.set_abbreviation || match.number) && (
-                  <p className="text-[9px] font-mono font-semibold text-brand-red/80">
+                  <p className="text-caption-1 font-mono font-semibold text-tint">
                     {`${(match.set_abbreviation || '').toUpperCase()} ${match.number || ''}`.trim()}
                   </p>
                 )}
-                {match.rarity && <p className="truncate text-[9px] text-text-muted">{match.rarity}</p>}
+                {match.rarity && <p className="truncate text-caption-1 text-text-secondary">{match.rarity}</p>}
               </div>
               {onSelect && (
                 <button
@@ -682,10 +683,11 @@ function CandidateGrid({ jobId, itemId, matches, onSelect, onZoom, t }) {
                   onClick={() => onSelect(match)}
                   title={t('scanner.addToCollection')}
                   aria-label={t('scanner.addToCollection')}
-                  className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full transition-transform hover:scale-110 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-red"
-                  style={{ background: '#e3000b', boxShadow: '0 0 12px rgba(227,0,11,0.5)' }}
+                  className="ios-press relative flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-accent text-on-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tint"
                 >
-                  <Plus size={15} className="text-white" />
+                  {/* Keeps a 44 px target around the 32 px circle */}
+                  <span aria-hidden="true" className="absolute -inset-1.5" />
+                  <Plus size={16} aria-hidden="true" />
                 </button>
               )}
             </div>
@@ -704,10 +706,10 @@ function PhotoThumb({ url, onZoom, t }) {
     <div className="w-24 flex-shrink-0 self-start space-y-1.5">
       <button type="button" onClick={onZoom} disabled={!url}
         title={t('scanner.expandCard')} aria-label={t('scanner.expandCard')}
-        className="grid aspect-[2.5/3.5] w-full place-items-center overflow-hidden rounded-xl border border-white/10 bg-bg-primary/50 ring-1 ring-transparent transition-all hover:ring-brand-red/40 disabled:cursor-default">
+        className="ios-press grid aspect-[2.5/3.5] w-full place-items-center overflow-hidden rounded-xl bg-black ring-1 ring-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tint disabled:cursor-default">
         {url
           ? <img src={url} alt={t('scanner.yourPhoto')} className="h-full w-full object-contain" />
-          : <Camera size={28} className="text-text-muted opacity-50" />}
+          : <Camera size={28} aria-hidden="true" className="text-text-tertiary" />}
       </button>
     </div>
   )
@@ -744,22 +746,29 @@ export function ScanItemPanel({ jobId, item, onAdd, onRetry, onDismiss, onReview
         type="button"
         onClick={() => setExpanded(true)}
         title={t('scanner.showDetails')}
-        className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-left transition-colors hover:bg-white/[0.06]"
+        aria-expanded="false"
+        data-scan-item={item.id}
+        className="ios-press flex min-h-[44px] w-full items-center gap-3 rounded-xl bg-card px-3 py-2 text-left"
       >
-        <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border border-green/40 bg-green/20">
-          <Check size={13} className="text-green" />
+        <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-green/20">
+          <Check size={13} aria-hidden="true" className="text-green" />
         </span>
         <span className="flex min-w-0 flex-1 items-baseline gap-2">
-          <span className="truncate text-sm font-bold text-white">{label}</span>
-          {numberLabel && <span className="font-mono text-[11px] text-brand-red/80">{numberLabel}</span>}
+          <span className="truncate text-body font-semibold text-text-primary">{label}</span>
+          {numberLabel && <span className="font-mono text-footnote text-text-secondary">{numberLabel}</span>}
         </span>
-        <ChevronDown size={15} className="flex-shrink-0 text-text-muted" />
+        <ChevronDown size={16} aria-hidden="true" className="flex-shrink-0 text-text-tertiary" />
       </button>
     )
   }
 
   return (
-    <article className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+    <article
+      tabIndex={-1}
+      data-scan-item={item.id}
+      aria-label={`${t('scanner.photoNumber')} ${item.position + 1}${item.recognized?.name ? `: ${item.recognized.name}` : ''}`}
+      className="rounded-[20px] bg-card p-4 outline-none"
+    >
       {photoExpanded && (
         <CardZoomModal card={null} photoUrl={photoUrl} onClose={() => {
           setPhotoExpanded(false)
@@ -780,41 +789,41 @@ export function ScanItemPanel({ jobId, item, onAdd, onRetry, onDismiss, onReview
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-text-muted">
+              <p className="text-caption-1 font-semibold uppercase tracking-wide text-text-secondary">
                 {t('scanner.photoNumber')} {item.position + 1}
               </p>
               {item.recognized?.name && (
-                <p className="truncate text-base font-bold text-white">{item.recognized.name}</p>
+                <p className="truncate text-headline text-text-primary">{item.recognized.name}</p>
               )}
               {item.recognized?.number && (
-                <p className="text-xs text-text-muted">Nr. {item.recognized.number}</p>
+                <p className="text-footnote text-text-secondary">Nr. {item.recognized.number}</p>
               )}
               {item.recognized?._gemini_fallback_used && (
-                <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-blue/30 bg-blue-subtle px-2 py-0.5 text-[10px] font-semibold text-blue">
-                  <Sparkles size={10} /> {t('scanner.geminiFallbackUsed')}
+                <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-blue/20 px-2 py-0.5 text-caption-1 font-semibold text-blue">
+                  <Sparkles size={10} aria-hidden="true" /> {t('scanner.geminiFallbackUsed')}
                 </span>
               )}
             </div>
             <div className="flex flex-shrink-0 items-center gap-1.5">
               {item.resolved && (
                 <button type="button" onClick={() => setExpanded(false)}
-                  title={t('scanner.hideDetails')} aria-label={t('scanner.hideDetails')}
-                  className="btn-ghost px-2 py-1 text-xs text-text-muted hover:text-white">
-                  <ChevronUp size={14} />
+                  title={t('scanner.hideDetails')} aria-label={t('scanner.hideDetails')} aria-expanded="true"
+                  className="ios-press relative grid h-8 w-8 place-items-center rounded-full bg-fill-tertiary text-text-secondary">
+                  <span aria-hidden="true" className="absolute -inset-1.5" />
+                  <ChevronUp size={16} aria-hidden="true" />
                 </button>
               )}
               {!active && !item.resolved && (
-                <button type="button" onClick={() => onDismiss(item)}
-                  className="btn-ghost border-brand-red/30 px-2 py-1 text-xs text-brand-red hover:bg-brand-red/10">
-                  <Trash2 size={14} /> {t('scanner.dismissScan')}
-                </button>
+                <Button variant="tinted" size="sm" destructive icon={Trash2} onClick={() => onDismiss(item)}>
+                  {t('scanner.dismissScan')}
+                </Button>
               )}
             </div>
           </div>
 
           {active && (
-            <p className="mt-3 flex items-center gap-2 text-sm text-text-muted">
-              <Loader2 size={14} className="animate-spin" />
+            <p role="status" className="mt-3 flex items-center gap-2 text-subheadline text-text-secondary">
+              <Loader2 size={14} aria-hidden="true" className="animate-spin" />
               {item.status === 'retrying'
                 ? formatRetryCountdown(item.next_attempt_at, t, retryNow, item.retry_reason)
                 : t('scanner.itemProcessing')}
@@ -823,24 +832,23 @@ export function ScanItemPanel({ jobId, item, onAdd, onRetry, onDismiss, onReview
 
           {(item.status === 'failed' || noMatches) && (
             <div className="mt-3 space-y-3">
-              <p role="alert" className={`rounded-xl border px-3 py-2 text-sm ${
+              <p role="alert" className={`rounded-xl px-3 py-2 text-subheadline ${
                 item.status === 'failed'
-                  ? 'border-brand-red/20 bg-brand-red/10 text-brand-red'
-                  : 'border-border bg-bg-card text-text-muted'
+                  ? 'bg-red/15 text-red'
+                  : 'bg-fill-tertiary text-text-secondary'
               }`}>
                 {item.error || t(noMatches ? 'scanner.noMatches' : 'scanner.recognitionFailed')}
               </p>
               {!item.resolved && (
-                <button type="button" onClick={() => onRetry(item)} disabled={!item.has_image}
-                  className="btn-secondary justify-center">
+                <Button variant="gray" icon={RefreshCw} onClick={() => onRetry(item)} disabled={!item.has_image}>
                 {/* Retrying always drops the item out of a composite grid onto
                     its own request — "individually" only describes something
                     actually changing when the item was composited to begin
                     with. An item that was already individual (the reviewer's
                     own choice, or the only option under a single-image-only
                     provider) just gets a plain retry. */}
-                  <RefreshCw size={14} /> {item.batch_mode ? t('scanner.retryIndividually') : t('common.retry')}
-                </button>
+                  {item.batch_mode ? t('scanner.retryIndividually') : t('common.retry')}
+                </Button>
               )}
             </div>
           )}
@@ -849,7 +857,7 @@ export function ScanItemPanel({ jobId, item, onAdd, onRetry, onDismiss, onReview
 
       {item.status === 'done' && item.matches?.length > 0 && (
         <div className="mt-4">
-          <p className="mb-3 text-[10px] font-black uppercase tracking-[0.2em] text-text-muted">
+          <p className="mb-3 text-footnote font-semibold uppercase tracking-wide text-text-secondary">
             {t('scanner.bestMatches')} ({item.matches.length})
           </p>
           <CandidateGrid

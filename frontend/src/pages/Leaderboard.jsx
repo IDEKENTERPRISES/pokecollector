@@ -1,37 +1,25 @@
 import { useMemo, useState } from 'react'
 import { Navigate, useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowUpDown, Trophy, Globe } from 'lucide-react'
+import { ArrowUpDown, ChevronRight, Globe, Trophy } from 'lucide-react'
 import { getLeaderboard } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import { useAuth } from '../contexts/AuthContext'
 import { useNavBar } from '../navigation/useNavBar'
+import { typeVar } from '../components/ios/pokemon'
 import { resolveCardImageUrl } from '../utils/imageUrl'
 import { CardIdentity } from '../components/card-system'
 import { CardModal } from '../components/CardItem'
+import { TrainerAvatar, countLabel, PODIUM_TYPES } from './socialParts'
 
 const NAV_BAR = {}
 const SORT_OPTIONS = ['total_value', 'total_cards', 'unique_cards', 'sets_completed', 'pnl']
-
-function rankLabel(rank) {
-  if (rank === 1) return '🥇'
-  if (rank === 2) return '🥈'
-  if (rank === 3) return '🥉'
-  return `#${rank}`
-}
-
-function TrainerAvatar({ avatarId, username }) {
-  if (!avatarId) {
-    return <img src="/pokeball.svg" alt={username} className="h-12 w-12 shrink-0 rounded-full border border-border bg-bg-card p-2" />
-  }
-
-  return (
-    <img
-      src={`https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/${avatarId}.gif`}
-      alt={username}
-      className="h-12 w-12 shrink-0 rounded-full border border-border bg-bg-card p-1 pixelated"
-    />
-  )
+const SORT_LABEL_KEYS = {
+  total_value: 'value',
+  total_cards: 'cards',
+  unique_cards: 'uniqueCards',
+  sets_completed: 'setsCompleted',
+  pnl: 'pnl',
 }
 
 export default function Leaderboard() {
@@ -62,122 +50,148 @@ export default function Leaderboard() {
 
   return (
     <div className="page-container">
-      <div className="card relative overflow-hidden">
-        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_top_right,rgba(255,213,79,0.16),transparent_40%)]" />
-        <div className="relative flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-bold text-text-primary flex items-center gap-2">
-              <Trophy size={22} className="text-yellow" />
-              {t('leaderboard.title')}
-            </h1>
-            <p className="mt-1 text-sm text-text-secondary">{rows.length} {t('leaderboard.trainers')}</p>
+      <div className="relative overflow-hidden rounded-xl bg-card p-4">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,203,5,0.18),transparent_45%)]" />
+        <div className="relative flex items-center gap-3">
+          <Trophy size={28} className="flex-shrink-0 text-yellow" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <h1 className="text-title-3 font-display font-bold text-text-primary">{t('leaderboard.title')}</h1>
+            <p className="text-footnote text-text-secondary">{countLabel(t, 'leaderboard.trainerCount', rows.length)}</p>
           </div>
-          <div className="w-full max-w-[220px]">
-            <label className="mb-1 block text-xs text-text-muted">{t('leaderboard.sortBy')}</label>
-            <div className="relative">
-              <ArrowUpDown size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-              <select className="select pl-9" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-                {SORT_OPTIONS.map((key) => (
-                  <option key={key} value={key}>{t(`leaderboard.${key === 'total_value' ? 'value' : key === 'total_cards' ? 'cards' : key === 'unique_cards' ? 'uniqueCards' : key === 'sets_completed' ? 'setsCompleted' : 'pnl'}`)}</option>
-                ))}
-              </select>
-            </div>
+        </div>
+        <div className="relative mt-3">
+          <label htmlFor="leaderboard-sort" className="mb-1 block text-footnote text-text-secondary">{t('leaderboard.sortBy')}</label>
+          <div className="relative">
+            <ArrowUpDown size={14} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+            <select id="leaderboard-sort" className="select pl-9" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+              {SORT_OPTIONS.map((key) => <option key={key} value={key}>{t(`leaderboard.${SORT_LABEL_KEYS[key]}`)}</option>)}
+            </select>
           </div>
         </div>
       </div>
 
       {isLoading ? (
         <div className="space-y-3">
-          {[...Array(5)].map((_, index) => <div key={index} className="skeleton h-28 rounded-2xl" />)}
+          {[...Array(5)].map((_, index) => <div key={index} className="skeleton h-28 rounded-xl" />)}
         </div>
       ) : error ? (
-        <div className="card text-sm text-brand-red">{t('leaderboard.loadFailed')}</div>
+        <div className="card text-sm text-red" role="alert">{t('leaderboard.loadFailed')}</div>
       ) : rows.length === 0 ? (
         <div className="card text-center py-16 text-text-muted">{t('leaderboard.noTrainers')}</div>
       ) : (
-        <div className="space-y-3">
+        <ol className="space-y-3" aria-label={t('leaderboard.title')}>
           {rows.map((trainer, index) => {
+            const rank = index + 1
             const bestCard = trainer.most_valuable_card
             const pnl = Number(trainer.pnl ?? 0)
             const positive = pnl >= 0
+            const isSelf = trainer.user_id === currentUser?.id
+            const podium = PODIUM_TYPES[rank]
+            const value = formatPrice(trainer.total_value)
+            // Rank, name, then score: the order VoiceOver reads the row in.
+            const summary = [
+              t('leaderboard.rankLabel').replace('{rank}', rank),
+              trainer.username,
+              `${t('leaderboard.value')} ${value}`,
+            ].join(', ')
+            const header = (
+              <>
+                <span
+                  aria-hidden="true"
+                  className="grid h-10 min-w-10 flex-shrink-0 place-items-center rounded-full bg-fill-tertiary text-headline font-display font-black"
+                  style={podium ? {
+                    background: `linear-gradient(to bottom, ${typeVar(podium, 'top')}, ${typeVar(podium, 'bottom')})`,
+                    color: podium === 'lightning' ? '#1D1600' : '#fff',
+                  } : undefined}
+                >
+                  {rank}
+                </span>
+                <TrainerAvatar avatarId={trainer.avatar_id} size={48} />
+                <span className="min-w-0 flex-1 text-left">
+                  <span className="block truncate text-headline text-text-primary">{trainer.username}</span>
+                  <span className="block text-footnote text-text-secondary">{trainer.role}</span>
+                </span>
+                <span className="flex-shrink-0 text-body font-semibold text-yellow tabular-nums">{value}</span>
+                {!isSelf && <ChevronRight size={18} strokeWidth={2.25} className="flex-shrink-0 text-text-tertiary" aria-hidden="true" />}
+              </>
+            )
             return (
-              <div
-                key={trainer.user_id}
-                role={trainer.user_id !== currentUser?.id ? "button" : undefined}
-                onClick={() => trainer.user_id !== currentUser?.id && navigate(`/leaderboard/compare/${trainer.user_id}`)}
-                className={`w-full rounded-2xl border border-border bg-bg-card p-4 text-left transition-all ${trainer.user_id !== currentUser?.id ? 'hover:border-yellow/40 hover:bg-bg-elevated cursor-pointer' : ''}`}
-              >
-                <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_35rem] lg:items-center lg:gap-6">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <div className="flex h-12 min-w-12 items-center justify-center rounded-2xl bg-bg-primary text-lg font-black">
-                      {rankLabel(index + 1)}
-                    </div>
-                    <TrainerAvatar avatarId={trainer.avatar_id} username={trainer.username} />
-                    <div className="min-w-0">
-                      <div className="flex min-w-0 items-center gap-1.5">
-                        <p className="truncate text-lg font-semibold text-text-primary">{trainer.username}</p>
-                        {trainer.public_handle && (
-                          <Link
-                            to={`/u/${trainer.public_handle}`}
-                            onClick={(e) => e.stopPropagation()}
-                            title={t('leaderboard.viewPublicProfile')}
-                            className="shrink-0 text-text-muted hover:text-brand-red transition-colors"
-                          >
-                            <Globe size={14} />
-                          </Link>
-                        )}
-                      </div>
-                      <p className="text-xs uppercase tracking-[0.2em] text-text-muted">{trainer.role}</p>
-                      {trainer.user_id !== currentUser?.id && (
-                      <div className="mt-1 flex min-w-0 gap-2">
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); navigate(`/collection/user/${trainer.user_id}`) }}
-                          className="truncate text-[10px] font-semibold text-brand-red hover:text-brand-red/80"
-                        >
-                          {t('leaderboard.viewCollection')}
-                        </button>
-                      </div>
-                      )}
-                    </div>
-                  </div>
+              <li key={trainer.user_id} className="overflow-hidden rounded-xl bg-card">
+                {isSelf ? (
+                  <div role="group" aria-label={summary} className="flex items-center gap-3 px-4 py-3">{header}</div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/leaderboard/compare/${trainer.user_id}`)}
+                    aria-label={`${summary}. ${t('leaderboard.compareWith').replace('{name}', trainer.username)}`}
+                    className="flex w-full items-center gap-3 px-4 py-3 active:bg-elevated"
+                  >
+                    {header}
+                  </button>
+                )}
 
-                  <div className="grid grid-cols-2 gap-3 lg:grid-cols-[6rem_5rem_15rem_6rem] lg:items-center lg:gap-4">
-                    <div>
-                      <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">{t('leaderboard.value')}</p>
-                      <p className="mt-1 text-sm font-semibold text-yellow">{formatPrice(trainer.total_value)}</p>
-                    </div>
-                    <div>
-                      <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">{t('leaderboard.cards')}</p>
-                      <p className="mt-1 text-sm font-semibold text-text-primary">{Number(trainer.total_cards ?? 0).toLocaleString()}</p>
-                    </div>
-                    <div className="col-span-2 min-w-0 lg:col-span-1">
-                      <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">{t('leaderboard.bestCard')}</p>
-                      {bestCard ? (
+                <dl className="grid grid-cols-3 gap-2 border-t border-border px-4 py-3 text-center">
+                  <div>
+                    <dt className="text-footnote text-text-secondary">{t('leaderboard.cards')}</dt>
+                    <dd className="text-body font-semibold text-text-primary tabular-nums">{Number(trainer.total_cards ?? 0).toLocaleString()}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-footnote text-text-secondary">{t('leaderboard.setsCompleted')}</dt>
+                    <dd className="text-body font-semibold text-text-primary tabular-nums">{Number(trainer.sets_completed ?? 0).toLocaleString()}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-footnote text-text-secondary">{t('leaderboard.pnl')}</dt>
+                    <dd className={`text-body font-semibold tabular-nums ${positive ? 'text-green' : 'text-red'}`}>
+                      {positive ? '+' : ''}{formatPrice(pnl)}
+                    </dd>
+                  </div>
+                </dl>
+
+                {(bestCard || !isSelf || trainer.public_handle) && (
+                  <div className="space-y-2 border-t border-border px-4 py-3">
+                    {bestCard && (
+                      <div>
+                        <p className="mb-1 text-footnote text-text-secondary">{t('leaderboard.bestCard')}</p>
                         <CardIdentity
-                          className="mt-1 w-full max-w-full"
+                          className="w-full max-w-full"
                           card={bestCard}
                           image={resolveCardImageUrl(bestCard)}
                           name={bestCard.name}
                           subtext={formatPrice(bestCard.price_market)}
-                          onClick={(event) => { event.stopPropagation(); setSelectedCard(bestCard) }}
+                          onClick={() => setSelectedCard(bestCard)}
                         />
-                      ) : (
-                        <p className="mt-1 text-sm text-text-muted">-</p>
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">{t('leaderboard.pnl')}</p>
-                      <p className={`mt-1 text-sm font-semibold ${positive ? 'text-green' : 'text-brand-red'}`}>
-                        {positive ? '+' : ''}{formatPrice(pnl)}
-                      </p>
-                    </div>
+                      </div>
+                    )}
+                    {(!isSelf || trainer.public_handle) && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {!isSelf && (
+                          <button
+                            type="button"
+                            onClick={() => navigate(`/collection/user/${trainer.user_id}`)}
+                            aria-label={t('leaderboard.openCollection').replace('{name}', trainer.username)}
+                            className="ios-press inline-flex h-9 items-center rounded-full bg-fill-tertiary px-3 text-footnote font-semibold text-tint"
+                          >
+                            {t('leaderboard.viewCollection')}
+                          </button>
+                        )}
+                        {trainer.public_handle && (
+                          <Link
+                            to={`/u/${trainer.public_handle}`}
+                            aria-label={t('leaderboard.publicProfileOf').replace('{name}', trainer.username)}
+                            className="ios-press inline-flex h-9 items-center gap-1.5 rounded-full bg-fill-tertiary px-3 text-footnote font-semibold text-tint"
+                          >
+                            <Globe size={14} aria-hidden="true" />
+                            {t('leaderboard.viewPublicProfile')}
+                          </Link>
+                        )}
+                      </div>
+                    )}
                   </div>
-                </div>
-              </div>
+                )}
+              </li>
             )
           })}
-        </div>
+        </ol>
       )}
       {selectedCard && (
         <CardModal
