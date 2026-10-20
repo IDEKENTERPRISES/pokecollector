@@ -98,9 +98,11 @@ test.describe('shell on a phone', () => {
       if (route.kind === 'root' || isOwnBack(url)) {
         await expect(back, url).toHaveCount(0)
       } else {
+        // Always just "Back" (owner feedback); the parent is only in the accessible name.
+        await expect(back, url).toHaveText(en.common.back)
         const labelKey = backLabelKeyForPath(url)
         // The scan inbox goes back to the previous screen: Home after a cold start.
-        await expect(back, url).toHaveText(labelKey ? lookup(labelKey) : en.nav.home)
+        await expect(back, url).toHaveAttribute('aria-label', en.nav.backTo.replace('{name}', labelKey ? lookup(labelKey) : en.nav.home))
       }
     })
   }
@@ -324,7 +326,8 @@ test.describe('shell on a phone', () => {
 
     await page.getByTestId('profile-settings').click()
     await expect(page.getByTestId('nav-title')).toHaveText('Settings')
-    await expect(page.getByRole('button', { name: 'Back, Profile' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Back to Profile' })).toBeVisible()
+    await expect(page.getByTestId('nav-back')).toHaveText('Back')
     await expect(page.locator('main')).toBeFocused()
     expect(await page.title()).toBe('Settings · PokéCollector')
   })
