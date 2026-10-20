@@ -1012,14 +1012,14 @@ export default function Settings() {
                 <button
                   type="button"
                   onClick={() => setShowAvatarPicker(true)}
-                  className="flex items-center gap-3 rounded-full bg-fill-tertiary py-1.5 pl-1.5 pr-4 ios-press"
+                  className="flex items-center gap-2 rounded-full bg-fill-tertiary py-1 pl-1 pr-3.5 ios-press"
                 >
-                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-card">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-card">
                     {user?.avatar_id ? (
                       <img
                         src={`https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/${user.avatar_id}.gif`}
                         alt={`${user.username} avatar`}
-                        className="h-12 w-12 pixelated"
+                        className="h-9 w-9 pixelated"
                       />
                     ) : (
                       <User size={24} className="text-text-muted" />
@@ -1531,8 +1531,8 @@ export default function Settings() {
             <SectionHeader title={t('settings.sectionData')} />
             <SettingsCard>
               {user?.role === 'admin' && (
-                <SettingsRow label={t('settings.debugMode')} description={t('settings.debugModeDesc')}>
-                  <div className="flex items-center gap-2 justify-end">
+                <SettingsRow label={t('settings.debugMode')} description={t('settings.debugModeDesc')} stacked>
+                  <div className="flex items-center justify-between gap-2">
                     <button
                       onClick={handleDownloadDebugLog}
                       className={rowButton('gray')}
@@ -1562,7 +1562,7 @@ export default function Settings() {
                   }}
                   className={rowButton('danger')}
                 >
-                  🗑️ {t('settings.clearImageCache')}
+                  <Trash2 size={13} /> {t('common.clear')}
                 </button>
               </SettingsRow>
               {user?.role === 'admin' && <SettingsRow label={t('settings.csvExport')} description={t('settings.csvExportDesc')}>
