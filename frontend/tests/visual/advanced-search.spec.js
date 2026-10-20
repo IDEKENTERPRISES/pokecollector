@@ -125,12 +125,12 @@ test('updates Card Search filters and URL dynamically without reloading', async 
   page.on('request', request => {
     if (request.resourceType() === 'document') documentRequests += 1
   })
-  await page.goto('/search')
-
-  await page.locator('#card-search-sort-by').selectOption('name')
-  await expect(page).toHaveURL(/sort_by=name/)
+  // A query shows the results toolbar; its Filters sheet holds the language, sort and filter controls.
+  await page.goto('/search?q=Rule')
 
   await page.getByRole('button', { name: 'Filters' }).click()
+  await page.locator('#card-search-sort-by').selectOption('name')
+  await expect(page).toHaveURL(/sort_by=name/)
   await expect(page.getByRole('heading', { name: 'Normal filters' })).toBeVisible()
   const advanced = page.getByRole('button', { name: 'Advanced filters' })
   await expect(advanced).toHaveAttribute('aria-expanded', 'false')
@@ -144,7 +144,7 @@ test('updates Card Search filters and URL dynamically without reloading', async 
   await expect(page).toHaveURL(/rule_text=draw(?:\+|%20)3(?:\+|%20)cards/)
   await expect(page.getByRole('button', { name: 'Rule Text Result', exact: true })).toBeVisible()
   expect(requests.search).not.toHaveLength(0)
-  expect(requests.search.every(value => value === 'draw 3 cards')).toBe(true)
+  expect(requests.search.filter(Boolean).every(value => value === 'draw 3 cards')).toBe(true)
   await expect(page.getByRole('dialog')).toBeVisible()
   expect(documentRequests).toBe(1)
 
