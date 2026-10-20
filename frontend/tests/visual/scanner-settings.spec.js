@@ -173,7 +173,7 @@ async function installApi(page, user = USER, initialConfiguration = scannerConfi
 
 async function stageScannerBatch(page) {
   await page.goto('/search')
-  await page.getByTestId('scan-button').click()
+  await page.locator('[data-testid="scan-button"]:visible, [data-testid="sidebar-nav"] button:has-text("Scan cards"):visible').first().click()
   await page.locator('input[type="file"][multiple]').setInputFiles([
     { name: 'first.jpg', mimeType: 'image/jpeg', buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
     { name: 'second.jpg', mimeType: 'image/jpeg', buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
@@ -559,7 +559,7 @@ test('shows the limited-mode warning inside the card scanner', async ({ page }) 
   })
   await page.goto('/search')
 
-  await page.getByTestId('scan-button').click()
+  await page.locator('[data-testid="scan-button"]:visible, [data-testid="sidebar-nav"] button:has-text("Scan cards"):visible').first().click()
   await expect(page.getByText('Limited scanner mode', { exact: true })).toBeVisible()
   await expect(page.getByText('AI comparison with reference images is disabled', { exact: false })).toBeVisible()
 })
