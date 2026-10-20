@@ -63,10 +63,10 @@ export default function DeckCompare() {
   const choose = (side, value) => setParams(current => { const next = new URLSearchParams(current); next.set(side, value); return next })
   const swap = () => setParams(current => { const next = new URLSearchParams(current); next.set('left', rightId || ''); next.set('right', leftId || ''); return next })
   const deck = data?.decks
-  const allCards = data?.cards?.changes || []
+  const allCards = Array.isArray(data?.cards?.changes) ? data.cards.changes : []
   const cards = allCards.filter(card => showUnchanged || card.status !== 'unchanged')
   const cardNames = [...new Set(allCards.map(card => card.name))]
-  const effectMax = Math.max(...(data?.effects?.changes || []).flatMap(row => [row.left, row.right]), 1)
+  const effectMax = Math.max(...(Array.isArray(data?.effects?.changes) ? data.effects.changes : []).flatMap(row => [row.left, row.right]), 1)
   const compositionRows = Object.keys(COMPOSITION_KEYS).map(metric => ({
     metric,
     left: Number(deck?.left?.composition_counts?.[metric] || 0),
