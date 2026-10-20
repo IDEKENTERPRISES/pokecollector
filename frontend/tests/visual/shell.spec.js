@@ -132,6 +132,8 @@ test.describe('shell on a phone', () => {
     await expect(title).toHaveText('Profile')
     await expect(page).toHaveURL(/\/profile$/)
 
+    // Reduced motion makes the scroll to the top instant (smooth scrolling stalls in headless WebKit).
+    await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.goto('/search')
     await expect(title).toHaveText('Search')
     await page.evaluate(() => {
@@ -152,7 +154,7 @@ test.describe('shell on a phone', () => {
       await page.getByTestId('scan-button').click()
       await expect(page.getByText('0/50 Photos')).toBeVisible()
       await expect(page.getByTestId('tab-bar')).toHaveCount(0)
-      await page.keyboard.press('Escape')
+      await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).first().click()
       await expect(page.getByText('0/50 Photos')).toBeHidden()
       await expect(page.getByTestId('tab-bar')).toBeVisible()
       await expect(page).toHaveURL(new RegExp(`${path === '/' ? '/$' : `${path}$`}`))
