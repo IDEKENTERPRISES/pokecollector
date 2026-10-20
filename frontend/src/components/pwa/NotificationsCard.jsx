@@ -73,28 +73,27 @@ export default function NotificationsCard() {
 
   return (
     <section className="space-y-1" data-testid="notifications-card">
-      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted px-1 mb-3">
+      <p className="px-4 pb-1.5 text-footnote text-text-secondary">
         {t('pwa.pushTitle')}
       </p>
       <div
-        className="rounded-2xl overflow-hidden px-4 py-3.5 space-y-3"
-        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
+        className="overflow-hidden rounded-xl bg-card px-4 py-3 space-y-3"
       >
-        <p className="text-xs text-text-muted" style={{ overflowWrap: 'anywhere' }}>{t('pwa.pushDesc')}</p>
-        {hint && <p className="text-xs text-text-secondary" role="status">{hint}</p>}
+        <p className="text-footnote text-text-secondary" style={{ overflowWrap: 'anywhere' }}>{t('pwa.pushDesc')}</p>
+        {hint && <p className="text-footnote text-text-secondary" role="status">{hint}</p>}
         {supported && permission !== 'denied' && (
           <div className="flex flex-wrap gap-2">
             {subscribed ? (
               <>
-                <button type="button" className="btn-primary-sm" disabled={busy} onClick={handleTest}>
+                <button type="button" className="inline-flex min-h-[36px] items-center justify-center rounded-full bg-accent px-4 text-subheadline font-semibold text-on-accent ios-press disabled:opacity-40" disabled={busy} onClick={handleTest}>
                   {t('pwa.pushTest')}
                 </button>
-                <button type="button" className="btn-secondary" disabled={busy} onClick={handleDisable}>
+                <button type="button" className="inline-flex min-h-[36px] items-center justify-center rounded-full bg-fill-tertiary px-4 text-subheadline font-semibold text-text-primary ios-press disabled:opacity-40" disabled={busy} onClick={handleDisable}>
                   {t('pwa.pushDisable')}
                 </button>
               </>
             ) : (
-              <button type="button" className="btn-primary-sm" disabled={busy} onClick={handleEnable}>
+              <button type="button" className="inline-flex min-h-[36px] items-center justify-center rounded-full bg-accent px-4 text-subheadline font-semibold text-on-accent ios-press disabled:opacity-40" disabled={busy} onClick={handleEnable}>
                 {t('pwa.pushEnable')}
               </button>
             )}

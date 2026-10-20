@@ -52,7 +52,7 @@ export default function CardStateIndicators({
         const label = translatedVariantLabel(t, variant)
         const quantityVisible = showQuantity && (alwaysShowQuantity || quantity > 1)
         const title = quantityVisible ? `${label} ×${quantity}` : label
-        return <span key={variant} title={title} aria-label={title} className={clsx('inline-flex items-center gap-0.5 rounded border px-1 py-0.5 text-[10px] font-bold leading-none shadow-xs', meta?.className || 'bg-zinc-700 text-white border-zinc-500')}>
+        return <span key={variant} title={title} aria-label={title} data-variant={variant} className={clsx('pc-variant-chip inline-flex items-center gap-0.5 rounded border px-1 py-0.5 text-[10px] font-bold leading-none shadow-xs', meta?.className || 'bg-zinc-700 text-white border-zinc-500')}>
           {Icon ? <Icon size={compact ? 10 : 11} strokeWidth={2.5} aria-hidden /> : (meta?.code || variant.slice(0, 3).toUpperCase())}
           {quantityVisible && <span>×{quantity}</span>}
         </span>
@@ -80,7 +80,7 @@ export function CardStateLegend({
         const meta = VARIANT_PILL_META[variant]
         return (
           <div key={variant} className="flex items-center gap-2 min-w-0">
-            <span className={clsx('inline-flex flex-shrink-0 items-center rounded border p-1 text-[10px] font-bold leading-none shadow-xs', meta?.className || 'bg-zinc-700 text-white border-zinc-500')}>
+            <span data-variant={variant} className={clsx('pc-variant-chip inline-flex flex-shrink-0 items-center rounded border p-1 text-[10px] font-bold leading-none shadow-xs', meta?.className || 'bg-zinc-700 text-white border-zinc-500')}>
               {Icon ? <Icon size={11} strokeWidth={2.5} aria-hidden /> : (meta?.code || variant.slice(0, 3).toUpperCase())}
             </span>
             <span className="text-xs leading-tight text-text-secondary" title={translatedVariantLabel(t, variant)}>

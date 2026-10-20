@@ -1,11 +1,14 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Trash2, Edit2, Check, X, Heart, Filter, SortAsc, ChevronUp, ChevronDown, Library, BookOpen, Minus, Plus } from 'lucide-react'
+import { Trash2, Edit2, Check, X, Heart, Filter, SlidersHorizontal, MoreHorizontal, Minus, Plus } from 'lucide-react'
 import { getWishlist, removeFromWishlist, updateWishlistItem } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import { useConfirmDialog } from '../contexts/ConfirmDialogContext'
 import { CardDialog, CardIdentity, CardPriceDetails, CardRow, getCardSetNumber } from '../components/card-system'
-import TabNav from '../components/TabNav'
+import CollectionHeader from '../components/collection/CollectionHeader'
+import IconButton from '../components/ios/IconButton'
+import Menu from '../components/ios/Menu'
+import { useNavBar } from '../navigation/useNavBar'
 import toast from 'react-hot-toast'
 import { resolveCardImageUrl } from '../utils/imageUrl'
 import { getEffectiveCardPrice } from '../utils/prices'
@@ -154,12 +157,6 @@ export default function Wishlist() {
     queryFn: () => getWishlist().then(r => r.data),
   })
 
-  const COLLECTION_TABS = [
-    { to: '/collection', label: t('nav.collection'), icon: Library },
-    { to: '/binders', label: t('nav.binders'), icon: BookOpen },
-    { to: '/wishlist', label: t('nav.wishlist'), icon: Heart, badge: items.length },
-  ]
-
   const removeMutation = useMutation({
     mutationFn: (id) => removeFromWishlist(id),
     onSuccess: () => {
@@ -226,18 +223,42 @@ export default function Wishlist() {
     return result
   }, [items, filterSet, filterRarity, filterMinPrice, filterMaxPrice, filterHasAlert, sortBy, sortOrder, pricePrimaryField])
 
+  // The wishlist's own actions (sort and filters) live in the nav bar's "⋯" menu.
+  const hasItems = items.length > 0
+  const navOptions = useMemo(() => ({
+    title: t('nav.collection'),
+    trailing: (
+      <Menu
+        label={t('wishlist.menuLabel')}
+        trigger={<IconButton icon={MoreHorizontal} label={t('wishlist.menuLabel')} />}
+        sections={[
+          [
+            ['created_at', 'wishlist.sortAdded'],
+            ['price', 'wishlist.sortPrice'],
+            ['name', 'wishlist.sortName'],
+          ].map(([key, labelKey]) => ({
+            id: key,
+            label: t(labelKey),
+            checked: sortBy === key,
+            disabled: !hasItems,
+            onSelect: () => setSortBy(key),
+          })),
+          [
+            { id: 'asc', label: t('wishlist.orderAscending'), checked: sortOrder === 'asc', disabled: !hasItems, onSelect: () => setSortOrder('asc') },
+            { id: 'desc', label: t('wishlist.orderDescending'), checked: sortOrder === 'desc', disabled: !hasItems, onSelect: () => setSortOrder('desc') },
+          ],
+          [
+            { id: 'filters', label: t('wishlist.filtersTitle'), icon: SlidersHorizontal, disabled: !hasItems, onSelect: () => setShowFilters(current => !current) },
+          ],
+        ]}
+      />
+    ),
+  }), [t, sortBy, sortOrder, hasItems])
+  useNavBar(navOptions)
+
   return (
-    <div className="space-y-4 pb-2">
-      <TabNav tabs={COLLECTION_TABS} />
-      <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
-        <div className="min-w-0">
-          <h1 className="text-xl font-bold text-text-primary flex items-center gap-2">
-            <Heart size={24} className="text-brand-red" />
-            {t('wishlist.title')}
-          </h1>
-          <p className="text-sm text-text-secondary mt-1">{t('wishlist.subtitle')}</p>
-        </div>
-      </div>
+    <div className="relative isolate space-y-4 pb-2">
+      <CollectionHeader active="wishlist" subtitle={t('wishlist.subtitle')} />
 
       {isLoading ? (
         <div className="space-y-3">
@@ -254,18 +275,6 @@ export default function Wishlist() {
           {/* Sort & Filter Bar */}
           <div className="card space-y-3">
             <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2">
-                <SortAsc size={14} className="text-text-muted" />
-                <select className="select text-sm py-1.5 w-40" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-                  <option value="created_at">{t('wishlist.sortAdded')}</option>
-                  <option value="price">{t('wishlist.sortPrice')}</option>
-                  <option value="name">{t('wishlist.sortName')}</option>
-                </select>
-                <button onClick={() => setSortOrder(o => o === 'asc' ? 'desc' : 'asc')} aria-label={sortOrder === 'asc' ? t('common.sortDescending') : t('common.sortAscending')} className="btn-ghost py-1.5 px-2">
-                  {sortOrder === 'asc' ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                </button>
-              </div>
-
               <button onClick={() => setShowFilters(current => !current)}
                 className={`btn-ghost text-sm py-1.5 ${showFilters || hasActiveFilters ? 'border-brand-red/30 text-brand-red' : ''}`}>
                 <Filter size={14} /> {t('common.filter')}

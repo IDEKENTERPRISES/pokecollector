@@ -28,3 +28,23 @@
     --pc-card-art-radius-comparison: var(--pc-card-art-radius);
   }
 }
+
+/* Variant chips (Holo, Reverse Holo, First Edition, Normal) get a foil look: a diagonal sheen
+   over a per-variant gradient (design doc 7.12). Colours stay dark enough for white or black
+   text at 4.5:1; the chip's own Tailwind background colour remains as the fallback. */
+:root {
+  --pc-variant-foil-sheen: linear-gradient(115deg, rgb(255 255 255 / 0.34) 0%, rgb(255 255 255 / 0) 40%, rgb(255 255 255 / 0.2) 64%, rgb(255 255 255 / 0) 100%);
+  --pc-variant-normal-foil: linear-gradient(135deg, #5b5b63, #3f3f46);
+  --pc-variant-holo-foil: linear-gradient(135deg, #9333ea, #6d28d9 55%, #4338ca);
+  --pc-variant-reverse-foil: linear-gradient(135deg, #1f78e8, #0b4fc2);
+  --pc-variant-first-foil: linear-gradient(135deg, #ffe066, #f2b705);
+}
+
+.pc-variant-chip {
+  background-image: var(--pc-variant-foil-sheen), var(--pc-variant-foil, none);
+}
+
+.pc-variant-chip[data-variant="Normal"] { --pc-variant-foil: var(--pc-variant-normal-foil); }
+.pc-variant-chip[data-variant="Holo"] { --pc-variant-foil: var(--pc-variant-holo-foil); }
+.pc-variant-chip[data-variant="Reverse Holo"] { --pc-variant-foil: var(--pc-variant-reverse-foil); }
+.pc-variant-chip[data-variant="First Edition"] { --pc-variant-foil: var(--pc-variant-first-foil); }

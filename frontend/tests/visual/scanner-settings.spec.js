@@ -273,13 +273,13 @@ test('Gemini fallback is opt-in and persists through user settings', async ({ pa
   const api = await installApi(page)
   await page.goto('/settings/scanner')
 
-  const fallback = page.getByRole('button', {
+  const fallback = page.getByRole('switch', {
     name: 'Fall back to Gemini when unsure',
   })
-  await expect(fallback).toHaveAttribute('aria-pressed', 'false')
+  await expect(fallback).toHaveAttribute('aria-checked', 'false')
   await fallback.click()
 
-  await expect(fallback).toHaveAttribute('aria-pressed', 'true')
+  await expect(fallback).toHaveAttribute('aria-checked', 'true')
   await expect.poll(api.settingsWrites).toContainEqual({
     scanner_gemini_fallback: 'true',
   })
