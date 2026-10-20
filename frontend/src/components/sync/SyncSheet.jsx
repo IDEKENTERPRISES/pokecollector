@@ -4,7 +4,7 @@ import {
   AlertTriangle, Camera, Clock3, CloudOff, Heart, Loader2, PlusCircle, RefreshCw, ShieldCheck,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import Modal from '../ui/Modal'
+import PageSheet from '../ios/PageSheet'
 import ConfirmDialog from '../ui/ConfirmDialog'
 import { useSettings } from '../../contexts/SettingsContext'
 import { useOffline } from '../../offline/useOffline'
@@ -285,7 +285,13 @@ export default function SyncSheet({ isOpen, onClose }) {
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={t('sync.centerTitle')} size="md">
+    <PageSheet
+      isOpen={isOpen}
+      onClose={onClose}
+      title={t('sync.centerTitle')}
+      leading={<span />}
+      trailing={{ label: t('ios.done'), onPress: onClose }}
+    >
       <div className="space-y-5 p-5" data-testid="sync-sheet">
         {offline && (
           <p className="flex items-start gap-2 text-xs text-text-secondary">
@@ -305,6 +311,6 @@ export default function SyncSheet({ isOpen, onClose }) {
           </button>
         </div>
       </div>
-    </Modal>
+    </PageSheet>
   )
 }

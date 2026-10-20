@@ -1,11 +1,11 @@
 import { useMemo } from 'react'
-import { Navigate, useParams, useNavigate } from 'react-router-dom'
+import { Navigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Award, ArrowLeft, Trophy } from 'lucide-react'
+import { Award } from 'lucide-react'
 import { getAchievements } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { useSettings } from '../contexts/SettingsContext'
-import TabNav from '../components/TabNav'
+import { useNavBar } from '../navigation/useNavBar'
 
 function TrainerAvatar({ avatarId, username }) {
   if (!avatarId) {
@@ -21,15 +21,13 @@ function TrainerAvatar({ avatarId, username }) {
   )
 }
 
+const NAV_BAR = {}
+
 export default function Achievements() {
   const { userId } = useParams()
-  const navigate = useNavigate()
   const { user, multiUser } = useAuth()
   const { t, pricePrimaryField } = useSettings()
-  const SOCIAL_TABS = [
-    { to: '/leaderboard', label: t('nav.leaderboard'), icon: Trophy },
-    { to: '/achievements', label: t('nav.achievements'), icon: Award },
-  ]
+  useNavBar(NAV_BAR)
   const activeUserId = userId || user?.id
   const isOtherUser = userId && Number(userId) !== user?.id
 
@@ -51,15 +49,9 @@ export default function Achievements() {
 
   return (
     <div className="page-container">
-      <TabNav tabs={SOCIAL_TABS} />
       <div className="card relative overflow-hidden">
         <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_top_right,rgba(255,138,101,0.16),transparent_40%)]" />
         <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            {isOtherUser && (
-              <button onClick={() => navigate(-1)} className="flex items-center gap-1.5 text-sm text-text-muted hover:text-text-primary transition-colors mb-2 sm:mb-0 sm:absolute sm:-top-1 sm:left-0">
-                <ArrowLeft size={14} /> {t('common.back')}
-              </button>
-            )}
           <div className="flex items-center gap-3">
             <TrainerAvatar avatarId={data?.avatar_id || user?.avatar_id} username={data?.username || user?.username || 'Trainer'} />
             <div>
