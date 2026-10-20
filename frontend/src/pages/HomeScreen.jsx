@@ -158,12 +158,12 @@ export default function HomeScreen() {
   const scansActive = hasActiveScanJobs(scanJobs)
 
   // Same keys as the Sets page and Profile, so the read cache and the other pages share them.
-  const { data: tracker = [] } = useQuery({
+  const { data: trackerData } = useQuery({
     queryKey: ['investment-tracker', '1M', pricePrimaryField],
     queryFn: () => getInvestmentTracker({ period: '1m', price_field: pricePrimaryField }).then(r => r.data),
     refetchInterval: 120000,
   })
-  const { data: sets = [] } = useQuery({
+  const { data: setsData } = useQuery({
     queryKey: ['sets', 'all'],
     queryFn: () => getSets({ lang: 'all' }).then(r => r.data),
   })
@@ -174,13 +174,16 @@ export default function HomeScreen() {
     enabled: !offline,
     retry: false,
   })
-  const { data: customMatches = [] } = useQuery({
+  const { data: customMatchesData } = useQuery({
     queryKey: ['custom-matches'],
     queryFn: () => getCustomMatches().then(r => r.data),
     enabled: !offline,
     retry: false,
   })
 
+  const sets = Array.isArray(setsData) ? setsData : []
+  const customMatches = Array.isArray(customMatchesData) ? customMatchesData : []
+  const tracker = Array.isArray(trackerData) ? trackerData : []
   const trainerName = user?.username || 'Trainer'
 
   const portfolioDisplayMode = settings?.portfolio_display_mode === 'capital_invested' ? 'capital_invested' : 'portfolio_value'
