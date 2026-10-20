@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import en from '../../i18n/en'
 import { StatusChip, copyText } from './InvitesSection'
-import { auditDetailText } from './AuditLogSheet'
+import { auditActionLabel, auditDetailText } from './AuditLogSheet'
 
 const t = key => key.split('.').reduce((node, part) => node?.[part], en) ?? key
 
@@ -60,9 +60,13 @@ describe('auditDetailText', () => {
     expect(auditDetailText({ action: 'invite.revoked', details: {} }, t)).toBe('')
   })
 
+  it('falls back to the raw action for an unknown one', () => {
+    expect(auditActionLabel('user.something_new', t)).toBe('user.something_new')
+  })
+
   it('has a label for every audit action the backend writes', () => {
     for (const action of ['invite.created', 'invite.revoked', 'invite.accepted', 'invite.rejected', 'user.created_via_invite']) {
-      expect(typeof en.audit.actions[action]).toBe('string')
+      expect(auditActionLabel(action, t)).not.toBe(action)
     }
   })
 })

@@ -119,11 +119,11 @@ const en = {
     system: 'Not signed in',
     from: 'From {ip}',
     actions: {
-      'invite.created': 'Invite created',
-      'invite.revoked': 'Invite revoked',
-      'invite.accepted': 'Invite accepted',
-      'invite.rejected': 'Invite refused',
-      'user.created_via_invite': 'Account created from an invite',
+      invite_created: 'Invite created',
+      invite_revoked: 'Invite revoked',
+      invite_accepted: 'Invite accepted',
+      invite_rejected: 'Invite refused',
+      user_created_via_invite: 'Account created from an invite',
     },
     details: {
       role: 'Role {role}',

@@ -5,6 +5,13 @@ import { getAuditLog } from '../../api/invites'
 import { useSettings } from '../../contexts/SettingsContext'
 import PageSheet from '../ios/PageSheet'
 
+/** The label of an audit action (keys use underscores: `invite.created` is `invite_created`). */
+export function auditActionLabel(action, t) {
+  const key = `audit.actions.${String(action).replaceAll('.', '_')}`
+  const label = t(key)
+  return label === key ? action : label
+}
+
 /** One short line of detail for an entry, from the fields the server stored. */
 export function auditDetailText(entry, t) {
   const details = entry.details || {}
@@ -54,7 +61,7 @@ export default function AuditLogSheet({ isOpen, onClose }) {
             const detail = auditDetailText(entry, t)
             return (
               <li key={entry.id} className="space-y-0.5 px-4 py-3" data-testid="audit-entry">
-                <p className="text-body font-semibold">{t(`audit.actions.${entry.action}`) || entry.action}</p>
+                <p className="text-body font-semibold">{auditActionLabel(entry.action, t)}</p>
                 <p className="text-footnote text-text-secondary">
                   {entry.actor_username || t('audit.system')} · {formatWhen(entry.created_at)}
                 </p>

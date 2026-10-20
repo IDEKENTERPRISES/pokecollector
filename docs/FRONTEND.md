@@ -38,6 +38,7 @@ Routes are defined in `frontend/src/App.jsx`.
 | Route | Component File | Notes |
 |------|----------------|-------|
 | `/login` | `pages/Login.jsx` | Multi-user login screen |
+| `/invite/:token` | `pages/InviteAccept.jsx` | Public, outside the shell: checks an invite link, shows why it fails (expired, used, revoked, not valid) or the account form (trainer name, password, confirmation with `autocomplete` `username` / `new-password`), then signs the new account in and opens Home |
 | `/` | `pages/HomeScreen.jsx` | Home tab root |
 | `/dashboard` | redirect | Redirects to `/` (`pages/Dashboard.jsx` stays until P9) |
 | `/profile` | `pages/Profile.jsx` | Profile tab root: trainer card, shortcut tiles, Settings / Sync & offline / migration / install rows, Log out (multi-user), app version. Works offline from cached data |
@@ -207,6 +208,13 @@ Defined in `frontend/src/components/TabNav.jsx`.
 ### `pages/Achievements.jsx`
 
 - Shows achievements for current user or another user when `:userId` is present
+
+### Invites and the audit log
+
+- `components/settings/InvitesSection.jsx` is mounted in Settings › Users & sign-in (admins, multi-user mode): **Invite someone** opens a page sheet (role, expiry of 1, 7 or 30 days, optional note); after creating, the sheet shows the link once with **Copy** (clipboard API, with a `execCommand` fallback) and **Share** (`navigator.share`, shown only where it exists). The list shows each invite with a status chip; a pending invite opens an action sheet to **Revoke**.
+- `components/settings/AuditLogSheet.jsx` is the **Audit log** row's sheet: newest first, with who, when, from which address and a short detail, loaded 25 at a time.
+- `api/invites.js` holds the calls; the check and accept calls never send the stored token. Strings are in the `invites` and `audit` namespaces of `en.js`.
+- Tests: `src/api/invites.test.js`, `src/components/settings/InvitesSection.test.jsx`, `tests/visual/invites.spec.js`.
 
 ### `pages/Settings.jsx`
 
