@@ -43,7 +43,7 @@ export default function Login() {
     }
   }
 
-  const fieldClass = 'w-full bg-transparent px-4 pb-2.5 pt-0.5 text-body text-text-primary placeholder:text-text-tertiary outline-none'
+  const fieldClass = 'w-full bg-transparent px-4 pb-2.5 pt-0.5 text-body text-text-primary placeholder:text-text-tertiary outline-hidden'
   const labelClass = 'block px-4 pt-2.5 text-footnote text-text-secondary'
   const submitClass = 'flex min-h-[50px] w-full items-center justify-center rounded-full bg-accent px-6 text-headline text-on-accent shadow-[0_4px_14px_color-mix(in_srgb,var(--color-accent)_28%,transparent)] disabled:opacity-40 ios-press'
 

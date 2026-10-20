@@ -87,7 +87,7 @@ function ForcePasswordChangeScreen() {
     forceChangeMutation.mutate(newPassword)
   }
 
-  const fieldClass = 'w-full bg-transparent px-4 pb-2.5 pt-0.5 text-body text-text-primary outline-none'
+  const fieldClass = 'w-full bg-transparent px-4 pb-2.5 pt-0.5 text-body text-text-primary outline-hidden'
   const labelClass = 'block px-4 pt-2.5 text-footnote text-text-secondary'
 
   return (
