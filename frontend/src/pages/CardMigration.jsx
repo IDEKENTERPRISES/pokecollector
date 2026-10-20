@@ -8,6 +8,7 @@ import toast from 'react-hot-toast'
 import { resolveCardImageUrl } from '../utils/imageUrl'
 import { invalidateCardState, invalidateTcgdexFilterLanguages } from '../utils/queryInvalidation'
 import { CardDisplay } from '../components/card-system'
+import { useNavBar } from '../navigation/useNavBar'
 
 function CardPreview({ card, label, match = false }) {
   const { t } = useSettings()
@@ -97,8 +98,11 @@ function MatchCard({ match, onMigrate, onDismiss, migrating, dismissing }) {
   )
 }
 
+const NAV_BAR = {}
+
 export default function CardMigration() {
   const { t } = useSettings()
+  useNavBar(NAV_BAR)
   const queryClient = useQueryClient()
   const [actionId, setActionId] = useState(null)
   const [actionType, setActionType] = useState(null)
@@ -137,8 +141,8 @@ export default function CardMigration() {
   return (
     <div className="max-w-5xl space-y-4 pb-2">
       <div>
-        <h1 className="text-xl font-bold text-text-primary">{t('migration.title')}</h1>
-        <p className="text-sm text-text-secondary mt-1">{t('migration.subtitle')}</p>
+        <h1 className="sr-only">{t('migration.title')}</h1>
+        <p className="text-sm text-text-secondary">{t('migration.subtitle')}</p>
       </div>
 
       {isLoading ? (

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -6,10 +6,10 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
   AreaChart, Area
 } from 'recharts'
-import { TrendingUp, TrendingDown, Copy, BarChart3, Activity, Plus, X, ShoppingCart, Info } from 'lucide-react'
+import { TrendingUp, TrendingDown, Plus, X, ShoppingCart, Info } from 'lucide-react'
 import {
   getDuplicates, getTopMovers, getRarityStats,
-  getInvestmentTracker, getTradeStats, getAnalyticsNewSets, getProducts, createProduct
+  getInvestmentTracker, getDashboard, getTradeStats, getAnalyticsNewSets, getProducts, createProduct
 } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import { CollectionCardIdentity, CollectionCardRow, OwnPhotoOverlayBadge, showsOwnPhoto, useCollectionPhotoUrl } from '../components/CollectionCardImage'
@@ -17,11 +17,15 @@ import { CardModal } from '../components/CardItem'
 import { format, parseISO } from 'date-fns'
 import clsx from 'clsx'
 import PeriodSelector, { CARD_PERIODS, PERIOD_DAYS } from '../components/PeriodSelector'
-import AnalyticsSectionNav from '../components/AnalyticsSectionNav'
+import SegmentedControl from '../components/ios/SegmentedControl'
+import { useNavBar } from '../navigation/useNavBar'
+import { portfolioApiPeriod, PORTFOLIO_PERIODS } from '../utils/portfolioChart'
 import toast from 'react-hot-toast'
 import { hasCatalogueImage, resolveCardImageUrl } from '../utils/imageUrl'
 import MoneyInput from '../components/MoneyInput'
 import { parseMoneyInputValue } from '../utils/moneyInput'
+
+const NAV_BAR = {}
 
 const RARITY_COLORS = [
   '#EF1515', '#3b82f6', '#22c55e', '#eab308', '#8b5cf6',
@@ -47,6 +51,46 @@ function CustomTooltip({ active, payload, label, formatPrice }) {
     )
   }
   return null
+}
+
+// Tap popover for the product-value note (was a hover tooltip on Home).
+function ProductValueNote({ label, explanation }) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef(null)
+  useEffect(() => {
+    if (!open) return undefined
+    const close = (event) => {
+      if (event.type === 'keydown' ? event.key === 'Escape' : !rootRef.current?.contains(event.target)) setOpen(false)
+    }
+    window.addEventListener('keydown', close)
+    window.addEventListener('pointerdown', close)
+    return () => {
+      window.removeEventListener('keydown', close)
+      window.removeEventListener('pointerdown', close)
+    }
+  }, [open])
+
+  return (
+    <span ref={rootRef} className="relative inline-flex">
+      <button
+        type="button"
+        aria-label={label}
+        aria-expanded={open}
+        onClick={() => setOpen(value => !value)}
+        className="ios-press inline-flex h-8 w-8 items-center justify-center rounded-full text-yellow focus-visible:outline-2 focus-visible:outline-tint"
+      >
+        <Info size={16} aria-hidden="true" />
+      </button>
+      {open && (
+        <span
+          role="note"
+          className="absolute right-0 top-full z-30 mt-1 block w-[min(18rem,calc(100vw-2rem))] rounded-xl border border-hairline bg-card px-3 py-2 text-left text-footnote text-text-secondary shadow-xl"
+        >
+          {explanation}
+        </span>
+      )}
+    </span>
+  )
 }
 
 function AddExpenseModal({ onClose, onSuccess }) {
@@ -156,10 +200,12 @@ function AddExpenseModal({ onClose, onSuccess }) {
 }
 
 export default function Analytics() {
-  const { t, formatPrice, pricePrimaryField, currencySymbol, settings } = useSettings()
+  const { t, formatPrice, pricePrimaryField, currencySymbol, settings, updateSettings } = useSettings()
+  useNavBar(NAV_BAR)
   const [moversPeriod, setMoversPeriod] = useState('7d')
   const [moversSort, setMoversSort] = useState('percentage')
-  const [activeTab, setActiveTab] = useState('duplicates')
+  const [chartPeriod, setChartPeriod] = useState('MAX')
+  const [activeTab, setActiveTab] = useState('investment')
   const [showExpenseModal, setShowExpenseModal] = useState(false)
   const [selectedCard, setSelectedCard] = useState(null)
   const [selectedImageSource, setSelectedImageSource] = useState('catalogue')
@@ -200,8 +246,15 @@ export default function Analytics() {
   })
 
   const { data: investmentData = [], isLoading: investLoading } = useQuery({
-    queryKey: ['investment-tracker', pricePrimaryField],
-    queryFn: () => getInvestmentTracker({ price_field: pricePrimaryField }).then(r => r.data),
+    queryKey: ['investment-tracker', chartPeriod, pricePrimaryField],
+    queryFn: () => getInvestmentTracker({ period: portfolioApiPeriod(chartPeriod), price_field: pricePrimaryField }).then(r => r.data),
+  })
+
+  // The headline numbers Home used to show: the same dashboard query and fields.
+  const { data: dashboard } = useQuery({
+    queryKey: ['dashboard', pricePrimaryField],
+    queryFn: () => getDashboard({ price_field: pricePrimaryField }).then(r => r.data),
+    refetchInterval: 60000,
   })
 
   const { data: tradeStats = null } = useQuery({
@@ -219,12 +272,12 @@ export default function Analytics() {
     queryFn: () => getAnalyticsNewSets().then(r => r.data),
   })
 
-  const tabs = [
-    { key: 'duplicates', label: t('analytics.duplicates'), icon: Copy },
-    { key: 'movers', label: t('analytics.topMovers'), icon: TrendingUp },
-    { key: 'rarity', label: t('analytics.rarityStats'), icon: BarChart3 },
-    { key: 'investment', label: t('analytics.investment'), icon: Activity },
-  ]
+  const tabs = useMemo(() => [
+    { value: 'investment', label: t('analytics.investment') },
+    { value: 'movers', label: t('analytics.segMovers') },
+    { value: 'rarity', label: t('analytics.segRarity') },
+    { value: 'duplicates', label: t('analytics.duplicates') },
+  ], [t])
 
   const chartData = investmentData.map(s => ({
     date: format(parseISO(s.date), 'MMM d'),
@@ -238,18 +291,40 @@ export default function Analytics() {
   // Investment summary
   const latestSnapshot = investmentData.length > 0 ? investmentData[investmentData.length - 1] : null
   const totalProductsCost = products.reduce((sum, p) => sum + (p.purchase_price || 0), 0)
-  const productsNeedingReviewCount = products.filter(p => p.lifecycle_status === 'review').length
   const performanceCostBasis = latestSnapshot?.performance_cost_basis ?? latestSnapshot?.cost ?? 0
   const realizedValue = latestSnapshot?.realized_value ?? 0
   const totalPnl = latestSnapshot?.pnl ?? 0
   const hasTradeStats = tradeStats && tradeStats.trade_count > 0
 
+  // Headline block (formerly on Home): value or capital, P&L, realized P&L and the product-value note.
+  const headTotalValue = Number(dashboard?.total_value ?? 0)
+  const headTotalCost = Number(dashboard?.total_cost ?? 0)
+  const headCostBasis = Number(dashboard?.performance_cost_basis ?? headTotalCost)
+  const headPnl = Number(dashboard?.pnl ?? 0)
+  const headPnlPct = headCostBasis > 0 ? (headPnl / headCostBasis) * 100 : 0
+  const headPnlPositive = headPnl >= 0
+  const headRealizedPnl = Number(dashboard?.realized_pnl ?? 0)
+  const headRealizedValue = Number(dashboard?.realized_value ?? 0)
+  const displayMode = settings?.portfolio_display_mode === 'capital_invested' ? 'capital_invested' : 'portfolio_value'
+  const showingPortfolioValue = displayMode === 'portfolio_value'
+  const headlineValue = showingPortfolioValue ? headTotalValue : headTotalCost
+  const headlineLabel = showingPortfolioValue ? t('home.portfolioValue') : t('home.capitalInvested')
+  const headFallbackCount = Number(dashboard?.product_value_fallback_count ?? 0)
+  const headReviewCount = Number(dashboard?.products_needing_review_count ?? 0)
+  const productValueExplanation = [
+    headReviewCount > 0 ? `${headReviewCount} ${t('home.productsNeedReview')}` : '',
+    headFallbackCount > 0 ? `${headFallbackCount} ${t('home.productValueFallback')}` : '',
+  ].filter(Boolean).join(' ')
+  const setDisplayMode = (mode) => {
+    if (mode === displayMode) return
+    updateSettings({ portfolio_display_mode: mode }).catch(() => toast.error(t('home.displayModeSaveFailed')))
+  }
+
   return (
     <div className="space-y-4 pb-2">
-      <AnalyticsSectionNav />
       <div>
-        <h1 className="text-xl font-bold text-text-primary">{t('analytics.title')}</h1>
-        <p className="text-sm text-text-secondary mt-1">{t('analytics.subtitle')}</p>
+        <h1 className="sr-only">{t('analytics.title')}</h1>
+        <p className="text-footnote text-text-secondary">{t('analytics.subtitle')}</p>
       </div>
 
       {newSets.length > 0 && (
@@ -260,22 +335,13 @@ export default function Analytics() {
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="overflow-x-auto border-b border-border pb-1 -mx-1 px-1">
-        <div className="flex gap-2 min-w-max">
-          {tabs.map(({ key, label, icon: Icon }) => (
-            <button key={key} onClick={() => setActiveTab(key)}
-              className={clsx(
-                'flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium transition-all',
-                activeTab === key
-                  ? 'bg-brand-red/20 text-brand-red border-b-2 border-brand-red'
-                  : 'text-text-secondary hover:text-text-primary'
-              )}>
-              <Icon size={14} /> {label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <SegmentedControl
+        size="md"
+        ariaLabel={t('analytics.segmentsLabel')}
+        options={tabs}
+        value={activeTab}
+        onChange={setActiveTab}
+      />
 
       {/* Duplicates Tab */}
       {activeTab === 'duplicates' && (
@@ -501,7 +567,58 @@ export default function Analytics() {
       {/* Investment Tracker Tab */}
       {activeTab === 'investment' && (
         <div className="space-y-4">
-          {/* Header with expense button */}
+          {/* Period, display mode and headline figures: the value block that left Home. */}
+          <SegmentedControl
+            ariaLabel={t('analytics.periodLabel')}
+            options={PORTFOLIO_PERIODS.map(p => ({ value: p.key, label: p.label }))}
+            value={chartPeriod}
+            onChange={setChartPeriod}
+          />
+          <SegmentedControl
+            ariaLabel={t('home.portfolioDisplayMode')}
+            options={[
+              { value: 'portfolio_value', label: t('home.portfolioValue') },
+              { value: 'capital_invested', label: t('home.capitalInvested') },
+            ]}
+            value={displayMode}
+            onChange={setDisplayMode}
+          />
+          <div className="card text-center space-y-2" data-testid="analytics-headline">
+            <div className="flex items-center justify-center gap-1">
+              <p className="text-footnote text-text-secondary">{headlineLabel}</p>
+              {showingPortfolioValue && productValueExplanation && (
+                <ProductValueNote label={`${headlineLabel}: ${t('home.details')}`} explanation={productValueExplanation} />
+              )}
+            </div>
+            <p className="text-4xl font-black tracking-tight" style={{ color: showingPortfolioValue ? '#f5c842' : '#4fc3f7' }}>
+              {formatPrice(headlineValue)}
+            </p>
+            <div className="flex flex-col items-center gap-1.5">
+              <div
+                className="flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-black"
+                style={{
+                  background: headPnlPositive ? 'rgba(102,187,106,0.12)' : 'rgba(227,0,11,0.12)',
+                  color: headPnlPositive ? '#66bb6a' : '#e3000b',
+                }}
+              >
+                {headPnlPositive ? <TrendingUp size={15} /> : <TrendingDown size={15} />}
+                <span>{headPnlPositive ? '+' : ''}{formatPrice(headPnl)}</span>
+                {headCostBasis > 0 && <span className="opacity-75">({headPnlPositive ? '+' : ''}{headPnlPct.toFixed(1)}%)</span>}
+              </div>
+              {(headRealizedValue > 0 || headRealizedPnl !== 0) && (
+                <span
+                  className="rounded-full px-2.5 py-1 text-footnote font-semibold"
+                  style={{
+                    background: headRealizedPnl >= 0 ? 'rgba(102,187,106,0.1)' : 'rgba(227,0,11,0.1)',
+                    color: headRealizedPnl >= 0 ? '#66bb6a' : '#e3000b',
+                  }}
+                >
+                  {t('analytics.realizedPnl')}: {headRealizedPnl >= 0 ? '+' : '-'}{formatPrice(Math.abs(headRealizedPnl))}
+                </span>
+              )}
+            </div>
+          </div>
+
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div>
               <p className="text-sm text-text-secondary">{t('analytics.portfolioDesc')}</p>
@@ -539,20 +656,6 @@ export default function Analytics() {
                 </div>
               ))}
             </div>
-          )}
-
-          {latestSnapshot?.product_value_fallback_count > 0 && (
-            <p className="flex items-start gap-2 rounded-lg border border-yellow/20 bg-yellow/5 px-3 py-2 text-xs text-text-muted">
-              <Info size={14} className="mt-0.5 shrink-0 text-yellow" aria-hidden="true" />
-              <span>{latestSnapshot.product_value_fallback_count} {t('home.productValueFallback')}</span>
-            </p>
-          )}
-
-          {productsNeedingReviewCount > 0 && (
-            <p className="flex items-start gap-2 rounded-lg border border-yellow/20 bg-yellow/5 px-3 py-2 text-xs text-text-muted">
-              <Info size={14} className="mt-0.5 shrink-0 text-yellow" aria-hidden="true" />
-              <span>{productsNeedingReviewCount} {t('home.productsNeedReview')}</span>
-            </p>
           )}
 
           {chartData.some(point => point.legacy) && (

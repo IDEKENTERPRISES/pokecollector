@@ -12,7 +12,6 @@ import { CardRow } from '../components/card-system'
 import CollectionCardImage from '../components/CollectionCardImage'
 import MoneyInput from '../components/MoneyInput'
 import PeriodSelector, { PRODUCT_PERIODS, getPeriodCutoff } from '../components/PeriodSelector'
-import AnalyticsSectionNav from '../components/AnalyticsSectionNav'
 import Modal from '../components/ui/Modal'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
@@ -29,6 +28,7 @@ import { invalidateCardState, invalidateTcgdexFilterLanguages } from '../utils/q
 import { buildProductDisplayRows, summarizeProductBatch } from '../utils/productBatches'
 import { useDynamicFilterUrlState } from '../hooks/useDynamicFilterUrlState'
 import PrintingDetailBadges from '../components/PrintingDetailBadges'
+import { useNavBar } from '../navigation/useNavBar'
 
 const PRODUCT_TYPES = ['Booster Pack', 'Booster Box', 'Elite Trainer Box', 'Tin', 'Bundle', 'Collection Box', 'Blister', 'Other']
 const PRODUCT_FILTER_DEFINITIONS = {
@@ -752,6 +752,18 @@ export default function Products() {
   const { t, formatPrice, pricePrimaryField } = useSettings()
   const confirmDialog = useConfirmDialog()
   const [creating, setCreating] = useState(false)
+  const navBar = useMemo(() => ({
+    trailing: (
+      <button
+        type="button"
+        onClick={() => setCreating(true)}
+        className="ios-press inline-flex h-9 items-center gap-1 rounded-full px-3 text-body font-semibold text-tint focus-visible:outline-2 focus-visible:outline-tint"
+      >
+        <Plus size={16} aria-hidden="true" /> {t('products.logPurchase')}
+      </button>
+    ),
+  }), [t])
+  useNavBar(navBar)
   const [editingId, setEditingId] = useState(null)
   const [cardProductId, setCardProductId] = useState(null)
   const [expandedBatchIds, setExpandedBatchIds] = useState(() => new Set())
@@ -924,18 +936,12 @@ export default function Products() {
 
   return (
     <div className="space-y-4 pb-2">
-      <AnalyticsSectionNav />
-      <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="min-w-0">
-          <h1 className="text-xl font-bold text-text-primary">{t('products.title')}</h1>
-          <p className="text-sm text-text-secondary mt-1">{t('products.subtitle')}</p>
+          <h1 className="sr-only">{t('products.title')}</h1>
+          <p className="text-footnote text-text-secondary">{t('products.subtitle')}</p>
         </div>
-        <div className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
-          <PeriodSelector value={period} onChange={setPeriod} periods={PRODUCT_PERIODS} />
-          <button onClick={() => setCreating(true)} className="btn-primary justify-center whitespace-nowrap">
-            <Plus size={16} /> {t('products.logPurchase')}
-          </button>
-        </div>
+        <PeriodSelector value={period} onChange={setPeriod} periods={PRODUCT_PERIODS} />
       </div>
 
       {reviewProducts.length > 0 && (
