@@ -5,7 +5,10 @@ from database import get_db
 from models import SyncLog, User
 from services.sync_service import perform_sync, perform_price_sync
 import datetime
+import json
 import logging
+
+from services import sync_progress
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -26,6 +29,15 @@ def _ensure_utc_z(dt) -> str:
     return utc_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
+def _retry_payload(sync_log: SyncLog):
+    """{retried, recovered, still_failing, permanent} of the end-of-sync retries, or None."""
+    try:
+        data = json.loads(sync_log.retry_summary) if sync_log.retry_summary else None
+    except (TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def _sync_log_payload(sync_log: SyncLog | None):
     if not sync_log:
         return None
@@ -37,6 +49,7 @@ def _sync_log_payload(sync_log: SyncLog | None):
         "sets_updated": sync_log.sets_updated,
         "sync_type": sync_log.sync_type,
         "error_message": sync_log.error_message,
+        "retry": _retry_payload(sync_log),
     }
 
 
@@ -205,6 +218,7 @@ def get_sync_status(
             "status": s.status,
             "error_message": s.error_message,
             "sync_type": s.sync_type,
+            "retry": _retry_payload(s),
         }
         for s in recent_syncs
     ]
@@ -212,6 +226,8 @@ def get_sync_status(
     return {
         "is_running": _sync_running,
         "is_price_sync_running": _price_sync_running,
+        # {kind, stage, done, total} while a sync runs (total 0 = size not known yet), else None
+        "progress": sync_progress.snapshot(),
         "last_sync": _sync_log_payload(last_sync),
         "last_full_sync": _sync_log_payload(last_full_sync),
         "last_price_sync": _sync_log_payload(last_price_sync),

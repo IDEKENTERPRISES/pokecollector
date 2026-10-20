@@ -13,6 +13,7 @@ from models import Card, Set
 from services import pokemon_api
 from services.card_fallbacks import apply_cross_language_fallbacks
 from services.card_upsert import upsert_card
+from services.sync_retry import is_transient_error
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,7 @@ def enrich_cards_metadata(
     commit_every: int = 50,
     force: bool = False,
     ignore_cooldown: bool = False,
+    on_progress=None,
 ) -> dict:
     """Enrich up to limit cards, atomically claiming each upstream attempt.
 
@@ -159,6 +161,11 @@ def enrich_cards_metadata(
     while an optimistic timestamp comparison still rejects stale concurrent
     claims. ``commit_every`` remains accepted for compatibility; claims and
     results are committed per card so they are visible to concurrent workers.
+
+    A transient upstream failure (5xx, 429, timeout, connection error) gives the
+    claim back, so it does not start the seven-day cooldown, and lists the card
+    in ``transient`` as ``(card_id, exception)`` for the caller to retry.
+    ``on_progress(done, total)`` is called after each selected card.
     """
     del commit_every
     result = {
@@ -168,6 +175,7 @@ def enrich_cards_metadata(
         "failed": 0,
         "deferred": 0,
         "ids": [],
+        "transient": [],
     }
     selected: list[tuple[str, datetime.datetime | None]] = []
     for card in cards:
@@ -180,7 +188,9 @@ def enrich_cards_metadata(
         if force or _card_missing_key_metadata(card):
             selected.append((card.id, card.last_metadata_enrichment_attempt_at))
 
-    for card_id, observed_attempt_at in selected:
+    for index, (card_id, observed_attempt_at) in enumerate(selected, start=1):
+        if on_progress:
+            on_progress(index - 1, len(selected))
         attempted_at = datetime.datetime.utcnow()
         cooldown_cutoff = attempted_at - METADATA_ENRICHMENT_COOLDOWN
         if ignore_cooldown:
@@ -230,7 +240,22 @@ def enrich_cards_metadata(
             db.rollback()
             result["failed"] += 1
             logger.warning("Failed to enrich card metadata for %s: %s", card_id, exc)
+            if is_transient_error(exc):
+                # Not the card's fault: give the claim back so the next attempt is not
+                # locked out for the cooldown.
+                result["transient"].append((card_id, exc))
+                try:
+                    db.query(Card).filter(Card.id == card_id).update(
+                        {Card.last_metadata_enrichment_attempt_at: observed_attempt_at},
+                        synchronize_session=False,
+                    )
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    logger.exception("Could not release the metadata claim for %s", card_id)
 
+    if on_progress and selected:
+        on_progress(len(selected), len(selected))
     return result
 
 
@@ -263,6 +288,7 @@ def enrich_missing_card_metadata(
     db: Session,
     *,
     limit: int = DEFAULT_METADATA_ENRICHMENT_PER_FULL_SYNC,
+    on_progress=None,
 ) -> dict:
     """Enrich a bounded batch of catalogue cards that still only have brief set-list data."""
     cooldown_cutoff = datetime.datetime.utcnow() - METADATA_ENRICHMENT_COOLDOWN
@@ -294,4 +320,4 @@ def enrich_missing_card_metadata(
         .limit(limit)
         .all()
     )
-    return enrich_cards_metadata(db, candidates, limit=limit, force=True)
+    return enrich_cards_metadata(db, candidates, limit=limit, force=True, on_progress=on_progress)
