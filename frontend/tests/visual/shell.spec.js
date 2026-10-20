@@ -102,7 +102,10 @@ test.describe('shell on a phone', () => {
   })
 
   // A deep-linked pushed page has a back button that lands on its parent (one test per route).
-  const pushed = ROUTES.filter(route => route.kind === 'pushed' && !isOwnBack(sample(route.path)) && parentForPath(sample(route.path)))
+  // The deck editor registers its own nav bar (with its back button) only once it has a deck, which
+  // this mock does not provide; its back target is covered by the unit tests of `useBack`.
+  const NEEDS_PAGE_DATA = new Set(['/decks/:deckId'])
+  const pushed = ROUTES.filter(route => route.kind === 'pushed' && !NEEDS_PAGE_DATA.has(route.path) && !isOwnBack(sample(route.path)) && parentForPath(sample(route.path)))
   test('there are pushed pages with a back button to check', () => {
     expect(pushed.length).toBeGreaterThan(8)
   })
@@ -111,8 +114,13 @@ test.describe('shell on a phone', () => {
     test(`${route.path}: back lands on the parent`, async ({ page }) => {
       await installApi(page)
       await page.goto(url)
-      await page.getByTestId('nav-back').click()
-      await expect(page, url).toHaveURL(new RegExp(`${parentForPath(url)}$`))
+      await expect(page.getByTestId('nav-title')).toHaveText(lookup(titleKeyForPath(url)))
+      // The page may register its own nav bar options as its chunk loads, which re-renders the bar
+      // under the pointer; retry the tap until it lands.
+      await expect(async () => {
+        await page.getByTestId('nav-back').click({ timeout: 3000 })
+        await expect(page).toHaveURL(new RegExp(`${parentForPath(url)}$`), { timeout: 3000 })
+      }, url).toPass({ timeout: 25000 })
     })
   }
 
