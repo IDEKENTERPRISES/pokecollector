@@ -49,6 +49,10 @@ describe('Login Password AutoFill markup (iOS home-screen app)', () => {
       expect(password.id).toBeTruthy()
       expect(password.autocomplete).toBe('current-password')
       expect(html).not.toMatch(/autocomplete="off"|readonly/i)
+      // The Home Screen webview needs a real, focusable username field to offer an account.
+      expect(username.tabindex).toBeUndefined()
+      expect(username.class ?? '').not.toContain('sr-only')
+      expect(username.type).toBe('text')
     })
   }
 

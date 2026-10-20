@@ -562,7 +562,7 @@ test('real Analytics duplicate list stays visually aligned with Collection', asy
 
 test('trade history opens a prefilled edit draft and submits immutable values', async ({ page }) => {
   await page.goto('/trades')
-  await page.getByRole('button', { name: 'History' }).click()
+  await page.getByRole('radio', { name: 'History' }).click()
   await expect(page.getByText('Misty')).toBeVisible()
   await page.getByRole('button', { name: 'Edit' }).click()
 
