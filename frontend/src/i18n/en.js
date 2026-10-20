@@ -94,6 +94,8 @@ const en = {
       submitting: 'Creating account...',
       failed: 'Could not create the account.',
       home: 'Go to sign in',
+      signedIn: "You're signed in as {name}. Sign out to create a new account with this invite.",
+      signOut: 'Sign out',
       reasons: {
         not_found: 'This invite link is not valid.',
         used: 'This invite has already been used.',
@@ -101,6 +103,7 @@ const en = {
         expired: 'This invite has expired.',
         multi_user_off: 'Invites are not available right now.',
         unreachable: 'Could not check this invite. Try again in a moment.',
+        throttled: 'Too many attempts. Try again in a few minutes.',
       },
       ask: 'Ask the person who invited you for a new link.',
     },

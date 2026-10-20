@@ -6,7 +6,7 @@ import { expect, test } from '@playwright/test'
 const ADMIN = { id: 1, username: 'Prof Oak', role: 'admin', is_active: true, must_change_password: false, avatar_id: null }
 const NEW_USER = { id: 9, username: 'brock', role: 'trainer', avatar_id: null, must_change_password: false }
 
-function installApi(page, { signedIn = false, checks = {} } = {}) {
+function installApi(page, { signedIn = false, checks = {}, throttleCheck = false } = {}) {
   const state = {
     invites: [],
     audit: [],
@@ -14,6 +14,7 @@ function installApi(page, { signedIn = false, checks = {} } = {}) {
     nextId: 1,
     revokes: [],
     created: [],
+    loggedOut: false,
   }
   const log = (action, details = {}) => state.audit.unshift({
     id: state.audit.length + 1,
@@ -56,9 +57,14 @@ function installApi(page, { signedIn = false, checks = {} } = {}) {
       if (path === '/api/dashboard/') return json({ total_cards: 1, owned_sets: 1, recent_additions: [], top_cards: [] })
       if (path === '/api/cards/recognize/jobs') return json({ jobs: [] })
       if (path === '/api/sync/status') return json({ is_running: false, is_price_sync_running: false })
+      if (path === '/api/auth/logout') {
+        state.loggedOut = true
+        return json({})
+      }
       if (path === '/api/auth/users') return json([{ ...ADMIN, created_at: '2026-01-01' }])
 
       const check = path.match(/^\/api\/auth\/invites\/([^/]+)\/check$/)
+      if (check && throttleCheck) return route.fulfill({ status: 429, json: { detail: 'Too many invalid invite attempts. Try again later.' } })
       if (check) return json(checks[check[1]] ?? { valid: false, reason: 'not_found' })
       const accept = path.match(/^\/api\/auth\/invites\/([^/]+)\/accept$/)
       if (accept) {
@@ -128,6 +134,28 @@ test.describe('invite page', () => {
     await expect(page).toHaveURL(/\/$/)
     expect(state.accepted).toEqual({ token: 'good', username: 'brock', password: 'correct horse battery' })
     expect(await page.evaluate(() => localStorage.getItem('token'))).toBe('new-user-token')
+  })
+
+  test('a throttled check says to try again later', async ({ page }) => {
+    await installApi(page, { throttleCheck: true })
+    await page.goto('/invite/anything')
+    await expect(page.getByTestId('invite-invalid')).toContainText('Too many attempts. Try again in a few minutes.')
+    await expect(page.getByTestId('invite-form')).toHaveCount(0)
+  })
+
+  test('a signed-in visitor is asked to sign out first and gets no form', async ({ page }) => {
+    const state = await installApi(page, { signedIn: true, checks: { good: { valid: true, role: 'trainer', expires_at: '2026-10-27T10:00:00Z' } } })
+    await page.goto('/invite/good')
+
+    const notice = page.getByTestId('invite-signed-in')
+    await expect(notice).toContainText("You're signed in as Prof Oak. Sign out to create a new account with this invite.")
+    await expect(page.getByTestId('invite-form')).toHaveCount(0)
+    // The stored session is untouched until the visitor chooses to sign out.
+    expect(await page.evaluate(() => localStorage.getItem('token'))).toBe('invite-test-token')
+
+    await page.getByRole('button', { name: 'Sign out' }).click()
+    await expect.poll(() => state.loggedOut).toBe(true)
+    await page.waitForURL('**/login')
   })
 
   for (const [reason, message] of [

@@ -15,13 +15,14 @@ const MIN_PASSWORD_LENGTH = 10
 export default function InviteAccept() {
   const { token } = useParams()
   const navigate = useNavigate()
-  const { loginUser } = useAuth()
+  const { user, logout, loginUser } = useAuth()
   const { t } = useSettings()
   const [check, setCheck] = useState({ state: 'checking' })
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [done, setDone] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -30,9 +31,9 @@ export default function InviteAccept() {
         if (cancelled) return
         setCheck(result.valid ? { state: 'valid' } : { state: 'invalid', reason: result.reason })
       })
-      .catch(() => {
+      .catch(error => {
         if (cancelled) return
-        setCheck({ state: 'invalid', reason: 'unreachable' })
+        setCheck({ state: 'invalid', reason: error?.response?.status === 429 ? 'throttled' : 'unreachable' })
       })
     return () => { cancelled = true }
   }, [token])
@@ -48,11 +49,13 @@ export default function InviteAccept() {
       const data = await acceptInvite(token, { username: username.trim(), password })
       localStorage.setItem('lastUser', data.user.username)
       localStorage.setItem('lastUserAvatar', data.user.avatar_id || '')
+      setDone(true)
       loginUser(data.access_token, data.user)
       navigate('/', { replace: true })
     } catch (error) {
       const reason = error?.response?.data?.detail?.reason
-      if (reason) setCheck({ state: 'invalid', reason })
+      if (error?.response?.status === 429) toast.error(t('invites.page.reasons.throttled'))
+      else if (reason) setCheck({ state: 'invalid', reason })
       else toast.error(inviteErrorMessage(error, t('invites.page.failed')))
     } finally {
       setSubmitting(false)
@@ -72,17 +75,31 @@ export default function InviteAccept() {
           <p className="mt-1 text-subheadline text-text-secondary">{t('invites.page.subtitle')}</p>
         </header>
 
-        {check.state === 'checking' && (
+        {user && !done && (
+          // Never silently replace a signed-in session: sign out first (the normal user-switch path).
+          <div className="space-y-5" data-testid="invite-signed-in">
+            <div className="rounded-xl bg-card px-4 py-4">
+              <p className="text-body text-text-primary">
+                {t('invites.page.signedIn').replace('{name}', user.username)}
+              </p>
+            </div>
+            <button type="button" onClick={() => { logout() }} className={submitClass}>
+              {t('invites.page.signOut')}
+            </button>
+          </div>
+        )}
+
+        {!(user && !done) && check.state === 'checking' && (
           <p role="status" className="text-body text-text-secondary">{t('invites.page.checking')}</p>
         )}
 
-        {check.state === 'invalid' && (
+        {!(user && !done) && check.state === 'invalid' && (
           <div className="space-y-5" data-testid="invite-invalid">
             <div className="rounded-xl bg-card px-4 py-4">
               <p className="text-headline text-text-primary" data-reason={check.reason}>
                 {t(`invites.page.reasons.${check.reason}`)}
               </p>
-              {check.reason !== 'multi_user_off' && check.reason !== 'unreachable' && (
+              {!['multi_user_off', 'unreachable', 'throttled'].includes(check.reason) && (
                 <p className="mt-1 text-subheadline text-text-secondary">{t('invites.page.ask')}</p>
               )}
             </div>
@@ -92,7 +109,7 @@ export default function InviteAccept() {
           </div>
         )}
 
-        {check.state === 'valid' && (
+        {!(user && !done) && check.state === 'valid' && (
           <form onSubmit={handleSubmit} method="post" action="/invite" className="space-y-5" data-testid="invite-form">
             <div className="overflow-hidden rounded-xl bg-card">
               <label htmlFor="invite-username" className={labelClass}>{t('invites.page.username')}</label>
