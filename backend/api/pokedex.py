@@ -1,14 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
 from database import get_db
 from models import User
+from services.client_ip import client_ip
 from services.display_language import get_tcgdex_display_language
-from services.pokedex import aggregate_pokedex, pokedex_summary, species_detail
+from services.pokedex import MAX_DEX_ID, aggregate_pokedex, pokedex_summary, species_detail
 from services.pokedex_forms import FORM_FAMILY_PATTERN, get_entry
-from services.pokedex_images import cache_path, fetch_image
+from services.pokedex_images import ANIMATED_MAX_DEX_ID, cache_path, fetch_image, media_type
+from services.pokedex_splash import (
+    SEEN_MAX_CHARS,
+    decode_seen,
+    splash_cache_warmer,
+    splash_entry,
+    splash_throttle,
+)
 from services.tcgdex_languages import is_supported_tcgdex_language, normalize_tcgdex_language
 
 router = APIRouter()
@@ -73,6 +81,68 @@ def get_species_image(kind: str, entry_id: str):
         media_type="image/png",
         headers={"Cache-Control": "public, max-age=604800"},
     )
+
+
+@router.get("/images/{kind}/{dex_id}.gif", include_in_schema=False)
+def get_species_animation(kind: str, dex_id: int):
+    """An animated pixel sprite for the splash screen, cached like the PNGs above. Species
+    without one (after Black/White, or missing upstream) get the static sprite instead."""
+    if kind not in {"animated", "showdown"} or not 1 <= dex_id <= MAX_DEX_ID:
+        raise HTTPException(status_code=404, detail="Image not found")
+    candidates = [(kind, dex_id)] if kind == "showdown" or dex_id <= ANIMATED_MAX_DEX_ID else []
+    for image_kind, image_id in [*candidates, ("sprites", dex_id)]:
+        try:
+            path = cache_path(image_kind, image_id)
+            if not path.is_file():
+                path = fetch_image(image_kind, image_id)
+        except Exception:
+            path = None
+        if path and path.is_file():
+            return FileResponse(
+                path,
+                media_type=media_type(image_kind),
+                headers={"Cache-Control": "public, max-age=604800"},
+            )
+    raise HTTPException(status_code=404, detail="Image not found")
+
+
+@router.get("/splash")
+def get_splash(
+    request: Request,
+    response: Response,
+    lang: str | None = Query(None, max_length=16),
+    seen: str | None = Query(None, max_length=SEEN_MAX_CHARS),
+    dex_id: int | None = Query(None, alias="id", ge=1, le=MAX_DEX_ID),
+):
+    """One random species for the launch splash screen (about 0.5 KB).
+
+    Public, because it only serves public Pokédex data and runs before sign-in, but throttled
+    per client. ``seen`` is the device's shuffle bag (see services/pokedex_splash.py)."""
+    retry_after = splash_throttle.hit(client_ip(request))
+    if retry_after:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests",
+            headers={"Retry-After": str(retry_after), "Cache-Control": "no-store"},
+        )
+    response.headers["Cache-Control"] = "no-store"
+    return splash_entry(lang=lang, seen=decode_seen(seen), requested_id=dex_id)
+
+
+@router.get("/splash/cache")
+def get_splash_cache(current_user: User = Depends(get_current_user)):
+    """Progress of the admin warm-up of the splash cache."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return splash_cache_warmer.status()
+
+
+@router.post("/splash/cache")
+def start_splash_cache(current_user: User = Depends(get_current_user)):
+    """Download every species' splash data and sprite in the background (about 10 minutes)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return splash_cache_warmer.start()
 
 
 @router.get("/{entry_id}")

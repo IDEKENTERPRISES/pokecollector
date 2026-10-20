@@ -1,4 +1,4 @@
-"""Persistent local cache for National Pokédex sprites and official artwork."""
+"""Persistent local cache for National Pokédex sprites, animated sprites and official artwork."""
 
 from __future__ import annotations
 
@@ -12,11 +12,18 @@ import httpx
 
 MAX_DEX_ID = 1025
 MAX_IMAGE_ID = 20000  # PokeAPI form IDs currently use the 10000 range.
+# Black/White's animated sprites cover the first five generations only.
+ANIMATED_MAX_DEX_ID = 649
 CACHE_ROOT = Path(os.environ.get("POKEDEX_IMAGE_CACHE_DIR", "/app/data/pokedex-images"))
 URLS = {
     "sprites": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{dex_id}.png",
     "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/{dex_id}.png",
+    # The splash screen's pixel sprites (services/pokedex_splash.py).
+    "animated": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/{dex_id}.gif",
+    "showdown": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/showdown/{dex_id}.gif",
 }
+EXTENSIONS = {"sprites": "png", "artwork": "png", "animated": "gif", "showdown": "gif"}
+MEDIA_TYPES = {"png": "image/png", "gif": "image/gif"}
 USER_AGENT = "pokecollector-pokedex-cache/1.0"
 
 
@@ -36,16 +43,27 @@ def validate_dex_id(dex_id: int) -> int:
 def cache_path(kind: str, dex_id: int) -> Path:
     validate_kind(kind)
     validate_dex_id(dex_id)
-    return CACHE_ROOT / kind / f"{dex_id}.png"
+    return CACHE_ROOT / kind / f"{dex_id}.{EXTENSIONS[kind]}"
 
 
-def fetch_image(kind: str, dex_id: int, *, refresh: bool = False, client: httpx.Client | None = None) -> Path | None:
+def media_type(kind: str) -> str:
+    return MEDIA_TYPES[EXTENSIONS[validate_kind(kind)]]
+
+
+def fetch_image(
+    kind: str,
+    dex_id: int,
+    *,
+    refresh: bool = False,
+    client: httpx.Client | None = None,
+    timeout: float = 30.0,
+) -> Path | None:
     path = cache_path(kind, dex_id)
     if path.is_file() and not refresh:
         return path
     path.parent.mkdir(parents=True, exist_ok=True)
     owns_client = client is None
-    client = client or httpx.Client(timeout=30.0, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
+    client = client or httpx.Client(timeout=timeout, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
     try:
         response = client.get(URLS[kind].format(dex_id=dex_id))
         if response.status_code == 404:
