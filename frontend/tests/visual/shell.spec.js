@@ -216,18 +216,6 @@ test.describe('shell on a phone', () => {
   })
 
   // Touch events as a finger would send them; a plain Event with `touches` works in every engine.
-  const pull = (page, { from = 120, to = 360 } = {}) => page.evaluate(({ from, to }) => {
-    const send = (type, y) => {
-      const event = new Event(type, { bubbles: true, cancelable: true })
-      Object.defineProperty(event, 'touches', { value: type === 'touchend' ? [] : [{ clientY: y }] })
-      document.body.dispatchEvent(event)
-    }
-    send('touchstart', from)
-    send('touchmove', from + 40)
-    send('touchmove', to)
-    return () => send('touchend', to)
-  }, { from, to })
-
   async function pullAndRelease(page, options) {
     await page.evaluate(({ from = 120, to = 360 }) => {
       const send = (type, y) => {
@@ -241,7 +229,6 @@ test.describe('shell on a phone', () => {
       send('touchend', to)
     }, options ?? {})
   }
-  void pull
 
   test('pull to refresh on a tab root refetches the page and shows the indicator', async ({ page }) => {
     const counts = {}
