@@ -28,6 +28,7 @@ import toast from 'react-hot-toast'
 import { TCGDEX_LANGUAGES, normalizeTcgdexLanguageCsv, tcgdexLanguageLabel } from '../utils/tcgdexLanguages'
 import { APP_LANGUAGES } from '../utils/appLanguages'
 import { invalidateCollectionPhotoState, invalidateTcgdexFilterLanguages } from '../utils/queryInvalidation'
+import InvitesSection from '../components/settings/InvitesSection'
 import ListRow from '../components/ios/ListRow'
 import ListSection from '../components/ios/ListSection'
 import PokeBall from '../components/ios/PokeBall'
@@ -154,6 +155,16 @@ function ThemePicker({ theme, setTheme, themes, label }) {
 function PasswordCard({ t }) {
   const [currentPw, setCurrentPw] = useState('')
   const [newPw, setNewPw] = useState('')
+  const logoutOthersMut = useMutation({
+    mutationFn: () => logoutOtherDevices(),
+    onSuccess: () => toast.success(t('settings.users.otherDevicesSignedOut')),
+    onError: (e) => toast.error(e.response?.data?.detail || t('common.error')),
+  })
+  const changePwMut = useMutation({
+    mutationFn: (data) => changePassword(data),
+    onSuccess: () => { toast.success(t('settings.users.passwordChanged')); setCurrentPw(''); setNewPw('') },
+    onError: (e) => toast.error(e.response?.data?.detail || t('common.error')),
+  })
   return (
     <section className="space-y-1">
       <SectionHeader title={t('settings.users.changePassword')} />
@@ -1002,14 +1013,14 @@ export default function Settings() {
                 <button
                   type="button"
                   onClick={() => setShowAvatarPicker(true)}
-                  className="flex items-center gap-3 rounded-full bg-fill-tertiary py-1.5 pl-1.5 pr-4 ios-press"
+                  className="flex items-center gap-2 rounded-full bg-fill-tertiary py-1 pl-1 pr-3.5 ios-press"
                 >
-                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-card">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-card">
                     {user?.avatar_id ? (
                       <img
                         src={`https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/${user.avatar_id}.gif`}
                         alt={`${user.username} avatar`}
-                        className="h-12 w-12 pixelated"
+                        className="h-9 w-9 pixelated"
                       />
                     ) : (
                       <User size={24} className="text-text-muted" />
@@ -1521,8 +1532,8 @@ export default function Settings() {
             <SectionHeader title={t('settings.sectionData')} />
             <SettingsCard>
               {user?.role === 'admin' && (
-                <SettingsRow label={t('settings.debugMode')} description={t('settings.debugModeDesc')}>
-                  <div className="flex items-center gap-2 justify-end">
+                <SettingsRow label={t('settings.debugMode')} description={t('settings.debugModeDesc')} stacked>
+                  <div className="flex items-center justify-between gap-2">
                     <button
                       onClick={handleDownloadDebugLog}
                       className={rowButton('gray')}
@@ -1552,18 +1563,18 @@ export default function Settings() {
                   }}
                   className={rowButton('danger')}
                 >
-                  🗑️ {t('settings.clearImageCache')}
+                  <Trash2 size={13} /> {t('common.clear')}
                 </button>
               </SettingsRow>
-              <SettingsRow label={t('settings.csvExport')} description={t('settings.csvExportDesc')}>
+              {user?.role === 'admin' && <SettingsRow label={t('settings.csvExport')} description={t('settings.csvExportDesc')}>
                 <button
                   onClick={() => exportCSV(exportParams)}
                   className={rowButton('gray')}
                 >
                   <Download size={13} /> {t('settings.exportButton')}
                 </button>
-              </SettingsRow>
-              <SettingsRow label={t('settings.backupDownload')} description={t('settings.backupDownloadDesc')} stacked>
+              </SettingsRow>}
+              {user?.role === 'admin' && <SettingsRow label={t('settings.backupDownload')} description={t('settings.backupDownloadDesc')} stacked>
                 <div className="flex flex-col gap-3 items-start">
                   <div className="flex flex-wrap gap-1.5">
                     {[
@@ -1607,24 +1618,36 @@ export default function Settings() {
                     <Download size={13} /> {t('settings.backupButton')}
                   </button>
                 </div>
-              </SettingsRow>
-              <SettingsRow label={t('settings.backupImport')} description={t('settings.backupImportDesc')}>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={restoring}
-                  className={rowButton('gray')}
-                >
-                  <Upload size={13} /> {restoring ? t('settings.importing') : t('settings.importButton')}
-                </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".sql"
-                  className="hidden"
-                  onChange={handleRestoreUpload}
-                />
-              </SettingsRow>
+              </SettingsRow>}
             </SettingsCard>
+          </section>
+
+          {user?.role === 'admin' && (
+            <section className="space-y-1">
+              <SectionHeader title={t('settings.backupImport')} />
+              <SettingsCard>
+                <SettingsRow label={t('settings.backupImport')} description={t('settings.backupImportDesc')}>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={restoring}
+                    className={rowButton('danger')}
+                  >
+                    <Upload size={13} /> {restoring ? t('settings.importing') : t('settings.importButton')}
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="hidden"
+                    onChange={handleRestoreUpload}
+                  />
+                </SettingsRow>
+              </SettingsCard>
+              <p className="px-4 pt-1.5 text-footnote text-text-secondary">{t('settings.restoreFooter')}</p>
+            </section>
+          )}
+
+          <section>
             <PasswordPromptDialog
               isOpen={Boolean(restorePromptFile)}
               onClose={() => setRestorePromptFile(null)}
@@ -1787,7 +1810,10 @@ export default function Settings() {
       )}
 
       {activeSection === 'users' && user?.role === 'admin' && multiUser && (
-        <UsersTab t={t} queryClient={queryClient} />
+        <>
+          <UsersTab t={t} queryClient={queryClient} />
+          <InvitesSection />
+        </>
       )}
 
       <AvatarPicker
@@ -1827,16 +1853,6 @@ function UsersTab({ t, queryClient }) {
   const deleteMut = useMutation({
     mutationFn: (id) => deleteUser(id),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['users'] }); toast.success(t('settings.users.userDeleted')) },
-    onError: (e) => toast.error(e.response?.data?.detail || t('common.error')),
-  })
-  const logoutOthersMut = useMutation({
-    mutationFn: () => logoutOtherDevices(),
-    onSuccess: () => toast.success(t('settings.users.otherDevicesSignedOut')),
-    onError: (e) => toast.error(e.response?.data?.detail || t('common.error')),
-  })
-  const changePwMut = useMutation({
-    mutationFn: (data) => changePassword(data),
-    onSuccess: () => { toast.success(t('settings.users.passwordChanged')); setCurrentPw(''); setNewPw('') },
     onError: (e) => toast.error(e.response?.data?.detail || t('common.error')),
   })
 

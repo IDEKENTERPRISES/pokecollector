@@ -6,9 +6,11 @@ import InstallHint from '../components/pwa/InstallHint'
 import { StorageSummary, SyncControls, SyncItemList } from '../components/sync/SyncSheet'
 import { useSettings } from '../contexts/SettingsContext'
 import { getCapabilities } from '../offline/capabilities'
+import { offlineCenterGate } from '../offline/centerGate'
 import { probe } from '../offline/outbox/probe'
 import { purgeAll } from '../offline/readCache'
 import { useOutbox } from '../offline/useOutbox'
+import { readPwaFlags } from '../pwa/flags'
 import { resetServiceWorker } from '../pwa/register'
 import { useNavBar } from '../navigation/useNavBar'
 
@@ -86,7 +88,10 @@ export default function OfflineCenter() {
 
   useEffect(() => { readBuildId().then(setBuildId) }, [])
 
-  if (!enabled) return <Navigate to="/" replace />
+  // Redirect only when the queue is really off; the outbox appears a moment after the first render.
+  const gate = offlineCenterGate({ queueFlag: readPwaFlags().queue, indexedDB: capabilities.indexedDB, enabled })
+  if (gate === 'redirect') return <Navigate to="/" replace />
+  if (gate === 'wait') return <div role="status" aria-label={t('ios.loading')} data-testid="offline-center-loading" className="min-h-[40vh]" />
 
   const state = live?.state || reachability.state
   const stateText = state === 'reachable' ? t('pwa.reachable') : state === 'captive' ? t('pwa.captive') : state === 'unknown' ? '…' : t('pwa.unreachable')

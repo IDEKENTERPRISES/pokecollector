@@ -1,11 +1,14 @@
-import { useMemo, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Copy, Download, Heart, Layers3, PackageCheck, Pencil, Plus, Trash2, Upload } from 'lucide-react'
+import { MoreHorizontal, Copy, Download, Heart, Layers3, PackageCheck, Pencil, Plus, Trash2, Upload } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { addBinderCardsToWishlist, addDeckEntry, convertDeckToPlanned, convertDeckToReal, deleteDeck, deleteDeckEntry, duplicateDeck, exportBinderCsv, getBinderEntryEquivalentPrints, getCollection, getDeck, importBinderCsv, switchBinderEntryCard, updateDeck } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import { useNavBar } from '../navigation/useNavBar'
+import HpBar from '../components/ios/HpBar'
+import IconButton from '../components/ios/IconButton'
+import Menu from '../components/ios/Menu'
 import { useConfirmDialog } from '../contexts/ConfirmDialogContext'
 import { useDeckQuantitySync } from '../hooks/useDeckQuantitySync'
 import DeckCompositionBar from '../components/decks/DeckCompositionBar'
@@ -36,8 +39,6 @@ export default function DeckEditor() {
   const [showCsvImportModal, setShowCsvImportModal] = useState(false)
   const label = (key, values) => Object.entries(values).reduce((text, [name, value]) => text.replace(`{${name}}`, value), t(key))
   const { data: deck, isLoading } = useQuery({ queryKey: ['deck', deckId], queryFn: () => getDeck(deckId).then(response => response.data) })
-  const navOptions = useMemo(() => ({ title: deck?.name || '', backLabel: t('nav.binders') }), [deck?.name, t])
-  useNavBar(navOptions)
   const { data: collection = [] } = useQuery({ queryKey: ['deck-picker-collection'], queryFn: () => getCollection({}).then(response => response.data) })
 
   const onSuccess = () => { invalidateDeck(queryClient, deckId); queryClient.invalidateQueries({ queryKey: ['deck-allocation'] }) }
@@ -105,7 +106,7 @@ export default function DeckEditor() {
       return { succeededIds, failed, updatedDeck }
     },
     onSuccess: ({ succeededIds, failed, updatedDeck }) => {
-      if (updatedDeck?.entries) queryClient.setQueryData(['deck', String(deckId)], updatedDeck)
+      if (Array.isArray(updatedDeck?.entries)) queryClient.setQueryData(['deck', String(deckId)], updatedDeck)
       queryClient.invalidateQueries({ queryKey: ['decks'] })
       queryClient.invalidateQueries({ queryKey: ['deck-allocation'] })
       if (failed.length === 0) toast.success(`${t('common.add')} ${succeededIds.length} ✓`)
@@ -114,7 +115,7 @@ export default function DeckEditor() {
     },
   })
   const { optimisticQuantities, pendingEntryIds, changeQuantity } = useDeckQuantitySync({ deckId, queryClient, onError: showDeckMutationError })
-  const entries = sortDeckEntries((deck?.entries || []).map(entry => optimisticQuantities[entry.id] === undefined ? entry : { ...entry, required_quantity: optimisticQuantities[entry.id] }))
+  const entries = sortDeckEntries((Array.isArray(deck?.entries) ? deck.entries : []).map(entry => optimisticQuantities[entry.id] === undefined ? entry : { ...entry, required_quantity: optimisticQuantities[entry.id] }))
   const activeEntry = viewerIndex === null ? null : entries?.[viewerIndex]
   const { data: equivalentPrints, isLoading: equivalentPrintsLoading } = useQuery({
     queryKey: ['binder-entry-equivalents', deckId, activeEntry?.id],
@@ -130,6 +131,40 @@ export default function DeckEditor() {
     },
     onError: error => toast.error(error.response?.data?.detail || t('binderTypes.printSwitchFailed')),
   })
+  // Secondary actions live in the nav bar's "⋯" menu; "Add cards" is the one primary action.
+  const realDeck = deck?.binder_type === 'physical_deck'
+  const buildNavOptions = () => {
+    const manage = []
+    if (deck) {
+      manage.push(realDeck
+        ? { id: 'convert', label: t('decks.convertToPlanned'), icon: Layers3, disabled: convertMutation.isPending, onSelect: async () => { if (await confirm({ title: t('decks.convertToPlanned'), message: t('decks.convertToPlannedConfirm') })) convertMutation.mutate('deck') } }
+        : { id: 'convert', label: t('decks.convertToReal'), icon: PackageCheck, disabled: convertMutation.isPending || deck.shared_missing_copy_count > 0, onSelect: async () => { if (await confirm({ title: t('decks.convertToReal'), message: t('decks.convertToRealConfirm') })) convertMutation.mutate('physical_deck') } })
+      manage.push({ id: 'details', label: t('decks.editDetails'), icon: Pencil, onSelect: () => setDetailsOpen(value => !value) })
+      if (!realDeck) manage.push({ id: 'missing', label: t('binderTypes.addMissingToWishlist'), icon: Heart, disabled: wishlistMutation.isPending || deck.missing_copy_count === 0, onSelect: () => wishlistMutation.mutate() })
+    }
+    const data = []
+    if (!realDeck) data.push({ id: 'import', label: t('binderTypes.importDeckList'), icon: Upload, disabled: importMutation.isPending, onSelect: () => setShowCsvImportModal(true) })
+    data.push({ id: 'export', label: t('binderTypes.exportDeckList'), icon: Download, disabled: exportMutation.isPending || entries.length === 0, onSelect: () => exportMutation.mutate() })
+    data.push({ id: 'duplicate', label: t('decks.duplicate'), icon: Copy, disabled: duplicateMutation.isPending, onSelect: () => duplicateMutation.mutate() })
+    return {
+      title: deck?.name || '',
+      backLabel: t('nav.binders'),
+      trailing: deck ? (
+        <Menu
+          label={t('binders.actionsLabel')}
+          trigger={<IconButton icon={MoreHorizontal} label={t('binders.actionsLabel')} />}
+          sections={[
+            manage,
+            data,
+            [{ id: 'delete', label: t('common.delete'), icon: Trash2, destructive: true, disabled: deleteMutation.isPending, onSelect: async () => { if (await confirm({ title: t('common.delete'), message: label('decks.deleteConfirm', { name: deck.name }) })) deleteMutation.mutate() } }],
+          ]}
+        />
+      ) : null,
+    }
+  }
+  const navOptions = buildNavOptions()
+  useNavBar(navOptions)
+
   if (isLoading) return <div className="skeleton h-96 rounded-xl" />
   if (!deck) return null
 
@@ -149,36 +184,29 @@ export default function DeckEditor() {
 
   return (
     <div className="space-y-4 pb-6">
-      <header className="space-y-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="h-3 w-3 flex-shrink-0 rounded-full" style={{ backgroundColor: deck.color || '#8b5cf6' }} />
-              {isRealDeck ? <PackageCheck size={20} className="flex-shrink-0" style={{ color: deck.color || '#22c55e' }} /> : <Layers3 size={20} className="flex-shrink-0" style={{ color: deck.color || '#8b5cf6' }} />}
-              <h1 className="truncate text-xl font-bold text-text-primary">{deck.name}</h1>
-              <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${isRealDeck ? 'bg-green/20 text-green' : 'bg-purple-500/20 text-purple-300'}`}>
-                {isRealDeck ? t('binderTypes.realDeck') : t('binderTypes.plannedDeck')}
-              </span>
-            </div>
-            {deck.description && <p className="mt-1 text-sm text-text-secondary">{deck.description}</p>}
-            <p className="mt-1 text-xs text-text-muted">{progress.current} / {progress.target} {t('decks.cards')} · {t(`decks.format${deck.format || 'Casual'}`)}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button className="btn-primary flex-shrink-0" onClick={() => setDeckPickerOpen(!pickerOpen)} aria-expanded={pickerOpen} aria-controls="deck-owned-cards-content"><Plus size={16} /> {t('decks.addCards')}</button>
-            {isRealDeck ? (
-              <button className="btn-ghost flex-shrink-0 px-2" disabled={convertMutation.isPending} onClick={async () => { if (await confirm({ title: t('decks.convertToPlanned'), message: t('decks.convertToPlannedConfirm') })) convertMutation.mutate('deck') }}><Layers3 size={16} /> {t('decks.convertToPlanned')}</button>
-            ) : (
-              <button className="btn-ghost flex-shrink-0 px-2" disabled={convertMutation.isPending || deck.shared_missing_copy_count > 0} onClick={async () => { if (await confirm({ title: t('decks.convertToReal'), message: t('decks.convertToRealConfirm') })) convertMutation.mutate('physical_deck') }} title={deck.shared_missing_copy_count > 0 ? t('decks.convertToRealUnavailable') : t('decks.convertToRealHelp')}><PackageCheck size={16} /> {t('decks.convertToReal')}</button>
-            )}
-            <button className="btn-ghost px-3" onClick={() => setDetailsOpen(value => !value)} aria-expanded={detailsOpen} aria-label={t('decks.editDetails')}><Pencil size={17} /></button>
-            {!isRealDeck && <button className="btn-ghost flex-shrink-0 px-2" disabled={wishlistMutation.isPending || deck.missing_copy_count === 0} onClick={() => wishlistMutation.mutate()} title={t('binderTypes.addMissingToWishlist')} aria-label={t('binderTypes.addMissingToWishlist')}><Heart size={16} /> {t('binderTypes.addMissingShort')}</button>}
-            {!isRealDeck && <button className="btn-ghost flex-shrink-0 px-2" disabled={importMutation.isPending} onClick={() => setShowCsvImportModal(true)} title={t('binderTypes.importDeckList')} aria-label={t('binderTypes.importDeckList')}><Upload size={16} /> CSV</button>}
-            <button className="btn-ghost flex-shrink-0 px-2" disabled={exportMutation.isPending || entries.length === 0} onClick={() => exportMutation.mutate()} title={t('binderTypes.exportDeckList')} aria-label={t('binderTypes.exportDeckList')}><Download size={16} /> CSV</button>
-            <button className="btn-ghost px-3" disabled={duplicateMutation.isPending} onClick={() => duplicateMutation.mutate()} title={t('decks.duplicate')} aria-label={t('decks.duplicate')}><Copy size={16} /></button>
-            <button className="btn-ghost px-3 text-brand-red hover:text-brand-red" disabled={deleteMutation.isPending} title={t('common.delete')} aria-label={t('common.delete')} onClick={async () => { if (await confirm({ title: t('common.delete'), message: label('decks.deleteConfirm', { name: deck.name }) })) deleteMutation.mutate() }}><Trash2 size={16} /></button>
-            <input ref={csvInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={event => { const file = event.target.files?.[0]; if (file) importMutation.mutate(file); event.target.value = '' }} />
+      <header className="space-y-3">
+        <div className="flex items-center gap-3">
+          <span
+            className="grid h-12 w-12 flex-shrink-0 place-items-center rounded-xl"
+            style={{ background: `color-mix(in srgb, ${deck.color || (isRealDeck ? '#22c55e' : '#8b5cf6')} 28%, #000)` }}
+          >
+            {isRealDeck ? <PackageCheck size={22} style={{ color: deck.color || '#22c55e' }} aria-hidden="true" /> : <Layers3 size={22} style={{ color: deck.color || '#8b5cf6' }} aria-hidden="true" />}
+          </span>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-title-3 font-bold text-text-primary">{deck.name}</h1>
+            <p className="text-footnote text-text-secondary">
+              <span className={isRealDeck ? 'text-green' : 'text-purple-300'}>{isRealDeck ? t('binderTypes.realDeck') : t('binderTypes.plannedDeck')}</span>
+              {' · '}{t(`decks.format${deck.format || 'Casual'}`)}
+            </p>
           </div>
         </div>
+        {deck.description && <p className="text-sm text-text-secondary">{deck.description}</p>}
+        <div className="space-y-1.5">
+          <HpBar value={progress.current} max={progress.target} label={t('binderTypes.progress')} />
+          <p className="text-footnote text-text-secondary">{progress.current} / {progress.target} {t('decks.cards')}</p>
+        </div>
+        <button className="btn-primary w-full justify-center sm:w-auto" onClick={() => setDeckPickerOpen(!pickerOpen)} aria-expanded={pickerOpen} aria-controls="deck-owned-cards-content"><Plus size={16} /> {t('decks.addCards')}</button>
+        <input ref={csvInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={event => { const file = event.target.files?.[0]; if (file) importMutation.mutate(file); event.target.value = '' }} />
       </header>
 
       {detailsOpen && <form onSubmit={saveDetails} className="card grid gap-3 md:grid-cols-[1fr_10rem_10rem_auto] md:items-end">
@@ -190,7 +218,7 @@ export default function DeckEditor() {
        </form>}
        {!isRealDeck && deck.shared_missing_copy_count > 0 && <p className="rounded-lg bg-yellow/10 px-3 py-2 text-sm text-yellow">{label('decks.unavailableAfterAllocations', { count: deck.shared_missing_copy_count })}</p>}
 
-      <div className="inline-flex rounded-xl border border-border bg-bg-card p-1" role="tablist"><button type="button" role="tab" aria-selected={view === 'editor'} className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${view === 'editor' ? 'bg-brand-red text-white shadow' : 'text-text-secondary hover:text-text-primary'}`} onClick={() => setView('editor')}>{t('decks.editor')}</button><button type="button" role="tab" aria-selected={view === 'analytics'} className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${view === 'analytics' ? 'bg-brand-red text-white shadow' : 'text-text-secondary hover:text-text-primary'}`} onClick={() => setView('analytics')}>{t('decks.analytics')}</button></div>
+      <div className="inline-flex rounded-full bg-fill-tertiary p-0.5" role="tablist"><button type="button" role="tab" aria-selected={view === 'editor'} className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${view === 'editor' ? 'bg-brand-red text-white shadow' : 'text-text-secondary hover:text-text-primary'}`} onClick={() => setView('editor')}>{t('decks.editor')}</button><button type="button" role="tab" aria-selected={view === 'analytics'} className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${view === 'analytics' ? 'bg-brand-red text-white shadow' : 'text-text-secondary hover:text-text-primary'}`} onClick={() => setView('analytics')}>{t('decks.analytics')}</button></div>
 
       {view === 'analytics' ? <DeckAnalyticsPanel analysis={deck.analysis} deckId={deckId} entries={entries} t={t} /> : <div className="space-y-3">
         <CardListPicker

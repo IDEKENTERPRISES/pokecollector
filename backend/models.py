@@ -181,6 +181,42 @@ class UserSession(Base):
     user_agent = Column(String(255), nullable=True)
 
 
+class Invite(Base):
+    """An admin-issued invitation to create an account. Only the SHA-256 of the token is stored,
+    so a database leak does not expose usable links. Single use; status is derived from the
+    timestamps (pending, used, expired, revoked)."""
+    __tablename__ = "invites"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token_hash = Column(String(64), unique=True, nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    role = Column(String, default="trainer", nullable=False)
+    note = Column(String(200), nullable=True)
+    used_at = Column(DateTime, nullable=True)
+    used_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    revoked_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class AuditLog(Base):
+    """Append-only record of security-relevant actions. The actor is a plain id (no foreign key)
+    so entries outlive a deleted account."""
+    __tablename__ = "audit_log"
+    __table_args__ = (Index("ix_audit_log_created_at", "created_at"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    actor_user_id = Column(Integer, nullable=True)
+    action = Column(String(64), nullable=False, index=True)
+    target_type = Column(String(32), nullable=True)
+    target_id = Column(String(64), nullable=True)
+    ip = Column(String(64), nullable=True)
+    user_agent = Column(String(255), nullable=True)
+    details = Column(Text, nullable=True)  # JSON text
+
+
 collection_printing_detail_tags = Table(
     "collection_printing_detail_tags",
     Base.metadata,

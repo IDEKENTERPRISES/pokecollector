@@ -304,6 +304,11 @@ async function installApiFixtures(page) {
   })
 }
 
+// Secondary deck and binder actions live in the nav bar's "⋯" menu (F4).
+async function openActionsMenu(page) {
+  await page.getByRole('button', { name: 'Card list actions' }).click()
+}
+
 async function expandDeckPicker(page) {
   const expand = page.getByRole('button', { name: 'Add cards' })
   if (await expand.getAttribute('aria-expanded') !== 'true') await expand.click()
@@ -335,7 +340,8 @@ test('legacy physical-deck workflow redirects to the unified Deck editor', async
   await page.goto('/decks/1/build')
   await page.waitForURL('**/decks/1')
   await expect(page.getByRole('heading', { name: 'Visual Practice Deck' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Make Real Deck' })).toBeVisible()
+  await openActionsMenu(page)
+  await expect(page.getByRole('menuitem', { name: 'Make Real Deck' })).toBeVisible()
 })
 
 test('Real Deck uses the unified editor without a manual assignment step', async ({ page }) => {
@@ -349,9 +355,10 @@ test('Real Deck uses the unified editor without a manual assignment step', async
   await page.route('**/api/decks/1', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(realDeck) }))
   await page.goto('/decks/1')
   await expect(page.getByText('Real Deck', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Make Planned Deck' })).toBeVisible()
+  await openActionsMenu(page)
+  await expect(page.getByRole('menuitem', { name: 'Make Planned Deck' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Physical deck (optional)' })).toHaveCount(0)
-  await expect(page.locator('header').getByRole('button', { name: 'Add missing to wishlist' })).toHaveCount(0)
+  await expect(page.getByRole('menuitem', { name: 'Add missing to wishlist' })).toHaveCount(0)
 })
 
 test('deck editor expands structured validation details', async ({ page }) => {
@@ -463,7 +470,8 @@ test('deck comparison presents card deltas and compact mobile-safe sections', as
 
 test('deck editor duplicates a deck into an independent editor route', async ({ page }) => {
   await page.goto('/decks/1')
-  await page.locator('header').getByRole('button', { name: 'Duplicate' }).click()
+  await openActionsMenu(page)
+  await page.getByRole('menuitem', { name: 'Duplicate' }).click()
   await page.waitForURL('**/decks/99')
   await expect(page.getByRole('heading', { name: 'Visual Practice Deck (Copy)' })).toBeVisible()
 })
@@ -661,7 +669,8 @@ test('Planned Binder uses the advanced shared card picker controls', async ({ pa
 
 test('Deck CSV import explains the format before choosing a file', async ({ page }) => {
   await page.goto('/decks/1')
-  await page.locator('header').getByRole('button', { name: 'Import deck list (CSV)' }).click()
+  await openActionsMenu(page)
+  await page.getByRole('menuitem', { name: 'Import deck list (CSV)' }).click()
   await expect(page.getByRole('heading', { name: 'Card List CSV import' })).toBeVisible()
   await expect(page.getByText('Import cards and required quantities into this deck from a CSV file.')).toBeVisible()
   await expect(page.getByText('set_code,number,required_quantity,lang,variant,condition,printing_details,collection_item_id')).toBeVisible()
@@ -682,7 +691,9 @@ test('Deck and Card List controls are translated in German', async ({ page }) =>
     }),
   }))
   await page.goto('/decks/1')
-  await expect(page.getByRole('button', { name: 'In echtes Deck umwandeln' })).toBeVisible()
+  await openActionsMenu(page)
+  await expect(page.getByRole('menuitem', { name: 'In echtes Deck umwandeln' })).toBeVisible()
+  await page.keyboard.press('Escape')
   await expect(page.getByRole('button', { name: 'Karten hinzufügen' })).toBeVisible()
   await page.getByRole('button', { name: /Deckprüfung/ }).click()
   await expect(page.getByText('Das Deck enthält 24 von 40 Karten.')).toBeVisible()
@@ -692,7 +703,8 @@ test('Deck and Card List controls are translated in German', async ({ page }) =>
   await expect(page.getByText('Elektro', { exact: true })).toBeVisible()
   await page.getByRole('tab', { name: 'Zuverlässigkeit' }).click()
   await expect(page.getByText('Was wird hier gezeigt?')).toBeVisible()
-  await page.locator('header').getByRole('button', { name: 'Deckliste importieren (CSV)' }).click()
+  await openActionsMenu(page)
+  await page.getByRole('menuitem', { name: 'Deckliste importieren (CSV)' }).click()
   await expect(page.getByRole('heading', { name: 'Kartenliste aus CSV importieren' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'CSV-Datei auswählen' })).toBeVisible()
 })
@@ -950,4 +962,53 @@ test('shared picker keeps exact physical Binder copies independently selectable'
   await expect(copies).toHaveCount(2)
   await expect(copies.nth(0)).toBeDisabled()
   await expect(copies.nth(1)).toBeEnabled()
+})
+
+test('Optimise opens as a page sheet whose content is inside the viewport', async ({ page }) => {
+  const card = {
+    id: collection[0].card_id,
+    binder_card_id: 501,
+    name: 'Visual card 1',
+    set_id: 'visual-set_en',
+    set_name: 'Visual Set',
+    number: '001',
+    required_quantity: 1,
+    owned_quantity: 1,
+    missing_quantity: 0,
+    quantity: 1,
+    price_market: 9,
+    images_small: collection[0].card.images_small,
+  }
+  const print = (name, price) => ({ ...card, name, card: card, price_market: price })
+  await page.route('**/api/binders/10/cards*', route => route.fulfill({ json: { binder: plannedBinder, cards: [card], available_collection_item_quantities: {} } }))
+  await page.route('**/api/binders/10/optimize-prints*', route => route.fulfill({
+    json: {
+      change_count: 1,
+      total_savings: 4,
+      recommendations: [{
+        binder_card_id: 501,
+        current: print('Visual card 1', 9),
+        suggested: print('Visual card 1 cheaper', 5),
+        current_price: 9,
+        suggested_price: 5,
+        required_quantity: 1,
+        total_savings: 4,
+      }],
+    },
+  }))
+  await page.goto('/binders/10')
+  await openActionsMenu(page)
+  await page.getByRole('menuitem', { name: 'Optimize prints' }).click()
+
+  const sheet = page.getByRole('dialog', { name: 'Optimize prints' })
+  await expect(sheet).toBeVisible()
+  const viewport = page.viewportSize()
+  // The sheet slides in; wait for it to settle, then it must sit fully inside the viewport.
+  await expect.poll(async () => {
+    const box = await sheet.boundingBox()
+    return box.y >= 0 && box.y + box.height <= viewport.height + 1
+  }).toBe(true)
+  const content = page.getByTestId('optimize-sheet-content')
+  await expect(content.getByText('Suggested print')).toBeVisible()
+  await expect(sheet.getByRole('button', { name: 'Apply optimization' })).toBeInViewport()
 })

@@ -10,7 +10,7 @@ import { resolveSetImageUrl } from '../utils/imageUrl'
 import TcgdexLanguageSelect from '../components/TcgdexLanguageSelect'
 import { useVisibleTcgdexLanguages } from '../hooks/useVisibleTcgdexLanguages'
 import { normalizeTcgdexLanguage, tcgdexLanguageBadgeClass, tcgdexLanguageLabel } from '../utils/tcgdexLanguages'
-import SeriesTile from '../components/ios/SeriesTile'
+import SeriesTile, { FallbackImage } from '../components/ios/SeriesTile'
 import SetTile from '../components/ios/SetTile'
 import HpBar from '../components/ios/HpBar'
 import HeaderBloom from '../components/ios/HeaderBloom'
@@ -448,9 +448,13 @@ export default function Sets() {
       {activeGroup ? (
         <header className="flex items-center gap-4 pt-2" data-testid="series-header">
           <div className="grid h-20 w-28 flex-shrink-0 place-items-center rounded-2xl bg-black/30 p-2">
-            {activeGroup.logo
-              ? <img src={activeGroup.logo} alt={activeGroup.name} className="max-h-full max-w-full object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]" />
-              : <span className="text-title-3 font-display text-center">{activeGroup.name}</span>}
+            <FallbackImage
+              sources={activeGroup.logoCandidates ?? []}
+              fallback={activeGroup.name}
+              alt={activeGroup.name}
+              className="max-h-full max-w-full object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]"
+              fallbackClassName="text-title-3 font-display text-center"
+            />
           </div>
           <div className="min-w-0 flex-1 space-y-1.5">
             <h1 className="truncate text-title-2 font-display">{activeGroup.name}</h1>
@@ -508,7 +512,7 @@ export default function Sets() {
           {groups.map(group => (
             <SeriesTile
               key={group.key}
-              series={{ key: group.key, name: group.name, logo: group.logo, years: group.years, setCount: group.setCount }}
+              series={{ key: group.key, name: group.name, logo: group.logo, logoCandidates: group.logoCandidates, years: group.years, setCount: group.setCount }}
               owned={group.owned}
               total={group.total}
               complete={group.complete}

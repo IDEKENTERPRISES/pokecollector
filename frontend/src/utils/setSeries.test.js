@@ -52,9 +52,13 @@ describe('groupSetsBySeries', () => {
     expect(groups[0].sets.map(s => s.id)).toEqual(['sv2', 'sv1'])
   })
   it('uses the series route when sets carry series_id, else the namesake or newest set logo', () => {
-    expect(groups[0].logo).toMatch(/^\/api\/images\/set\/sv[12]\/series$/)
+    expect(groups[0].logo).toMatch(/^\/api\/images\/set\/sv[12]\/series\?v=\d+$/)
     expect(groups[2].logo).toBe('/api/images/set/base1/logo')
     expect(groups[1].logo).toBe('/api/images/set/swsh2/logo')
+  })
+  it('lists the series route first, then the namesake or newest set logo, without repeats', () => {
+    expect(groups[0].logoCandidates).toEqual([groups[0].logo, '/api/images/set/sv2/logo'])
+    expect(groups[2].logoCandidates).toEqual(['/api/images/set/base1/logo'])
   })
   it('handles an empty list', () => {
     expect(groupSetsBySeries([])).toEqual([])

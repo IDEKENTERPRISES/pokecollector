@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import { useSettings } from '../../contexts/SettingsContext'
@@ -12,8 +13,22 @@ function CompleteBadge({ label }) {
   )
 }
 
+/**
+ * An image that walks down `sources` when one fails to load and shows `fallback` (the item's name)
+ * when none does, so a failed logo is never a blank.
+ */
+export function FallbackImage({ sources, fallback, alt = '', className, fallbackClassName }) {
+  const key = sources.join('|')
+  const [failed, setFailed] = useState(0)
+  useEffect(() => setFailed(0), [key])
+  const src = sources[failed]
+  return src
+    ? <img src={src} alt={alt} loading="lazy" onError={() => setFailed(count => count + 1)} className={className} />
+    : <span className={fallbackClassName}>{fallback}</span>
+}
+
 /** Logo area over a spotlight in the item's colour. Shared by SeriesTile and SetTile. */
-export function TileArtwork({ logo, name, colourKey, className = '' }) {
+export function TileArtwork({ logo, logoSources, name, colourKey, className = '' }) {
   const type = colourFor(colourKey ?? name)
   return (
     <div
@@ -22,9 +37,12 @@ export function TileArtwork({ logo, name, colourKey, className = '' }) {
         background: `radial-gradient(ellipse 80% 90% at 50% 45%, color-mix(in srgb, var(--type-${type}) 55%, transparent), color-mix(in srgb, var(--type-${type}-bottom) 80%, #000) 85%)`,
       }}
     >
-      {logo
-        ? <img src={logo} alt="" loading="lazy" className="max-h-[64px] max-w-full object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]" />
-        : <span className="text-title-3 font-display text-center text-white drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]">{name}</span>}
+      <FallbackImage
+        sources={logoSources ?? (logo ? [logo] : [])}
+        fallback={name}
+        className="max-h-[64px] max-w-full object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]"
+        fallbackClassName="text-title-3 font-display text-center text-white drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]"
+      />
     </div>
   )
 }
@@ -45,7 +63,7 @@ export default function SeriesTile({ series, owned = 0, total = 0, complete = fa
   )
   const body = (
     <>
-      <TileArtwork logo={series.logo} name={series.name} colourKey={series.key} />
+      <TileArtwork logo={series.logo} logoSources={series.logoCandidates} name={series.name} colourKey={series.key} />
       <div className="space-y-1.5 p-3">
         <div className="flex items-start justify-between gap-2">
           <p className="min-w-0 truncate text-headline text-text-primary">{series.name}</p>

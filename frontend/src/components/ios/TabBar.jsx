@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -50,6 +50,9 @@ function TrainerSprite({ avatarId }) {
   )
 }
 
+// The Profile page is a lazy route chunk; fetch it before the first tap (idle, or as the finger lands).
+const preloadProfile = () => import('../../pages/Profile').catch(() => {})
+
 function Tab({ tab, active, onPress, avatarId, label }) {
   const Icon = NAV_ICONS[tab.key]
   return (
@@ -57,6 +60,8 @@ function Tab({ tab, active, onPress, avatarId, label }) {
       href={tab.root}
       aria-current={active ? 'page' : undefined}
       data-testid={`tab-${tab.key}`}
+      onPointerDown={tab.key === 'profile' ? preloadProfile : undefined}
+      onPointerEnter={tab.key === 'profile' ? preloadProfile : undefined}
       onClick={event => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.button) return
         event.preventDefault()
@@ -90,6 +95,13 @@ export default function TabBar() {
   const { user } = useAuth()
   const { isOpen: scannerOpen, openScanner } = useScanner()
   const keyboardOpen = useKeyboardOpen()
+
+  useEffect(() => {
+    const idle = window.requestIdleCallback ?? (cb => window.setTimeout(cb, 1500))
+    const cancel = window.cancelIdleCallback ?? window.clearTimeout
+    const handle = idle(preloadProfile)
+    return () => cancel(handle)
+  }, [])
 
   const { data: scanData } = useQuery({
     queryKey: SCAN_JOBS_QUERY_KEY,

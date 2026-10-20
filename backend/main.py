@@ -179,9 +179,11 @@ async def debug_request_logging(request: Request, call_next):
 # Include routers
 from api import auth, cards, collection, sets, wishlist, binders, decks, dashboard, analytics, sync, products, trades, export, backup, settings, images, social, pokedex, public, profile, scan_jobs, community, push
 from api.github import router as github_router
+from api.invites import router as invites_router
 from api.recognize import router as recognize_router
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(invites_router, prefix="/api/auth", tags=["invites"])
 
 # Failed logins are throttled per client address and per username inside the login
 # handler itself (see services/login_throttle.py).

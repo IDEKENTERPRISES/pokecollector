@@ -57,7 +57,7 @@ export const REDIRECTS = Object.freeze([
 ])
 
 /** Pages rendered outside the shell: no tab bar and no nav bar. A trailing `/*` matches the whole subtree. */
-export const OUTSIDE_SHELL = Object.freeze(['/login', '/u/*', '/__card-system', '/__ios'])
+export const OUTSIDE_SHELL = Object.freeze(['/login', '/invite/*', '/u/*', '/__card-system', '/__ios'])
 
 /** Settings sections (design doc §5.6), in display order. Hidden sections are left out, never disabled. */
 export const SETTINGS_SECTIONS = Object.freeze([

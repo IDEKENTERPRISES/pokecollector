@@ -2,7 +2,11 @@ import { useState, useMemo, useRef, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavBar } from '../navigation/useNavBar'
-import { Plus, Trash2, Package, Star, Download, Upload, X, Heart, HelpCircle } from 'lucide-react'
+import HpBar from '../components/ios/HpBar'
+import IconButton from '../components/ios/IconButton'
+import Menu from '../components/ios/Menu'
+import PageSheet from '../components/ios/PageSheet'
+import { MoreHorizontal, Sparkles, Plus, Trash2, Package, Star, Download, Upload, X, Heart, HelpCircle } from 'lucide-react'
 import { getBinderCards, removeCardFromBinder, removeBinderEntry, addCardToBinder, addCollectionItemToBinder, getCollection, updateBinderEntry, getBinderEntryEquivalentPrints, getBinderPrintOptimization, applyBinderPrintOptimization, switchBinderEntryCard, addBinderEntryToWishlist, addBinderCardsToWishlist, convertWishlistBinderToCollection, convertCollectionBinderToWishlist, importBinderCsv, exportBinderCsv, getApiErrorMessage } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import toast from 'react-hot-toast'
@@ -110,8 +114,6 @@ export default function BinderDetail() {
   })
 
   const binder = data?.binder
-  const navOptions = useMemo(() => ({ title: binder?.name || '', backLabel: t('nav.binders') }), [binder?.name, t])
-  useNavBar(navOptions)
   const binderType = binder?.binder_type || 'collection'
   const isWishlist = binderType === 'wishlist'
   const isCollection = binderType === 'collection'
@@ -366,6 +368,37 @@ export default function BinderDetail() {
     onError: (e) => toast.error(e.response?.data?.detail || t('binderTypes.optimizePrintsFailed')),
   })
 
+  // Secondary actions live in the nav bar's "⋯" menu; "Add cards" is the one primary action.
+  const hasCards = Array.isArray(data?.cards) && data.cards.length > 0
+  const navOptions = useMemo(() => {
+    const items = []
+    if (isCollection) {
+      items.push({ id: 'convert', label: t('binderTypes.convertCollection'), icon: Star, disabled: convertCollectionMutation.isPending, onSelect: () => setConversionTarget('wishlist') })
+    }
+    items.push({ id: 'optimize', label: t('binderTypes.optimizePrints'), icon: Sparkles, disabled: !hasCards, onSelect: () => setShowPrintOptimizer(true) })
+    if (isWishlist) {
+      items.push({ id: 'missing', label: t('binderTypes.addMissingToWishlist'), icon: Heart, disabled: bulkWishlistMutation.isPending || !hasCards, onSelect: () => bulkWishlistMutation.mutate() })
+    }
+    return {
+      title: binder?.name || '',
+      backLabel: t('nav.binders'),
+      trailing: (
+        <Menu
+          label={t('binders.actionsLabel')}
+          trigger={<IconButton icon={MoreHorizontal} label={t('binders.actionsLabel')} />}
+          sections={[
+            items,
+            [
+              { id: 'import', label: t('binderTypes.importCsv'), icon: Upload, disabled: importMutation.isPending, onSelect: () => setShowCsvImportModal(true) },
+              { id: 'export', label: t('binderTypes.exportCsv'), icon: Download, disabled: exportMutation.isPending || !hasCards, onSelect: () => exportMutation.mutate() },
+            ],
+          ]}
+        />
+      ),
+    }
+  }, [t, binder?.name, isCollection, isWishlist, hasCards, convertCollectionMutation, bulkWishlistMutation, importMutation, exportMutation])
+  useNavBar(navOptions)
+
   useEffect(() => {
     if (binderType === 'deck') navigate(`/decks/${binderId}`, { replace: true })
   }, [binderId, binderType, navigate])
@@ -373,8 +406,8 @@ export default function BinderDetail() {
   if (isLoading) return <div className="skeleton h-64 rounded-xl" />
   if (binderType === 'deck') return <div className="skeleton h-64 rounded-xl" />
 
-  const cards = data?.cards || []
-  const unavailableCollectionItemIds = new Set(data?.unavailable_collection_item_ids || [])
+  const cards = Array.isArray(data?.cards) ? data.cards : []
+  const unavailableCollectionItemIds = new Set(Array.isArray(data?.unavailable_collection_item_ids) ? data.unavailable_collection_item_ids : [])
   const ownedCount = data?.owned_count ?? cards.reduce((sum, c) => sum + Math.min(c.owned_quantity || 0, c.required_quantity || 1), 0)
   const totalCount = data?.total_required_count ?? data?.total_count ?? cards.length
   const uniqueCount = data?.unique_count ?? new Set(cards.map(card => card.id)).size
@@ -388,7 +421,9 @@ export default function BinderDetail() {
   const progressPct = totalCount > 0 ? Math.round((ownedCount / totalCount) * 100) : 0
   const canConvertWishlist = canConvertWishlistBinder(isWishlist, totalCount, missingCount)
   const binderSets = [...new Set(cards.map(c => c.set_name || c.set_id).filter(Boolean))].sort()
-  const printOptimizationRecommendations = printOptimizationData?.recommendations || []
+  const printOptimizationRecommendations = Array.isArray(printOptimizationData?.recommendations) ? printOptimizationData.recommendations : []
+  const hasOptimizations = printOptimizationRecommendations.length > 0
+  const equivalentList = Array.isArray(equivalentPrintsData?.equivalents) ? equivalentPrintsData.equivalents : []
   const selectedPrintOptimizationIdSet = new Set(selectedPrintOptimizationIds)
   const selectedPrintOptimizationCount = printOptimizationRecommendations.filter(item => selectedPrintOptimizationIdSet.has(item.binder_card_id)).length
   const selectedPrintOptimizationSavings = printOptimizationRecommendations.reduce(
@@ -428,143 +463,80 @@ export default function BinderDetail() {
     setSelectedPrintOptimizationIds(allPrintOptimizationsSelected ? [] : printOptimizationRecommendations.map(item => item.binder_card_id))
   }
 
+  const typeTone = isWishlist ? 'text-yellow' : 'text-blue'
+  const stats = [
+    [t('binderTypes.required'), totalCount, 'text-text-primary'],
+    [t('binderTypes.owned'), ownedCount, 'text-green'],
+    [t('binderTypes.missing'), missingCount, 'text-red'],
+    ...(isWishlist ? [[t('binderTypes.currentValue'), hasMissingCurrentValueData ? t('binderTypes.noPriceData') : formatPrice(currentValue), hasMissingCurrentValueData ? 'text-text-muted' : 'text-yellow']] : []),
+    [isWishlist ? t('binderTypes.costToComplete') : t('binderTypes.binderValue'), hasMissingPriceData ? t('binderTypes.noPriceData') : formatPrice(displayedValue), hasMissingPriceData ? 'text-text-muted' : 'text-yellow'],
+  ]
+
   return (
     <div className="space-y-4 pb-2">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: binder?.color }} />
-            {binder?.icon_pokemon_id ? (
-              <img src={`${SPRITE_BASE_URL}/${binder.icon_pokemon_id}.gif`} alt="" className="h-8 w-8 pixelated flex-shrink-0" loading="lazy" />
-            ) : isWishlist ? (
-              <Star size={20} className="flex-shrink-0" style={{ color: binder?.color }} />
-            ) : (
-              <Package size={20} className="flex-shrink-0" style={{ color: binder?.color }} />
-            )}
-            <h1 className="text-xl font-bold text-text-primary truncate">{binder?.name}</h1>
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
-              isWishlist ? 'bg-yellow/20 text-yellow' : 'bg-blue/20 text-blue'
-            }`}>
-              {isWishlist ? `⭐ ${t('binderTypes.planned')}` : `📦 ${t('binderTypes.collection')}`}
-            </span>
-          </div>
-          {binder?.description && <p className="text-sm text-text-secondary mt-1">{binder.description}</p>}
-          <p className="text-xs text-text-muted mt-1">{formatBinderCountSummary(totalCount, uniqueCount, t)}</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={() => {
-              if (showSearch) clearPickerSelection()
-              setShowSearch(!showSearch)
-            }}
-            className="btn-primary flex-shrink-0"
-          >
-            <Plus size={16} /> {t('binders.addCards')}
-          </button>
-          {isCollection && (
-            <button
-              type="button"
-              onClick={() => setConversionTarget('wishlist')}
-              className="btn-ghost flex-shrink-0 px-2"
-              disabled={convertCollectionMutation.isPending}
-              title={t('binderTypes.convertCollection')}
-              aria-label={t('binderTypes.convertCollection')}
-            >
-              <Star size={16} className="flex-shrink-0" /> {t('binderTypes.convertCollection')}
-            </button>
+      <div className="flex items-center gap-3">
+        <span
+          className="grid h-12 w-12 flex-shrink-0 place-items-center overflow-hidden rounded-xl"
+          style={{ background: `color-mix(in srgb, ${binder?.color || '#3b82f6'} 28%, #000)` }}
+        >
+          {binder?.icon_pokemon_id ? (
+            <img src={`${SPRITE_BASE_URL}/${binder.icon_pokemon_id}.gif`} alt="" className="h-9 w-9 pixelated object-contain" loading="lazy" />
+          ) : isWishlist ? (
+            <Star size={22} style={{ color: binder?.color }} aria-hidden="true" />
+          ) : (
+            <Package size={22} style={{ color: binder?.color }} aria-hidden="true" />
           )}
-          <button
-            onClick={() => setShowPrintOptimizer(true)}
-            className="btn-ghost flex-shrink-0 px-2"
-            disabled={cards.length === 0}
-            title={t('binderTypes.optimizePrints')}
-            aria-label={t('binderTypes.optimizePrints')}
-          >
-            <Star size={16} /> {t('binderTypes.optimizeShort')}
-          </button>
-          {isWishlist && (
-            <button
-              onClick={() => bulkWishlistMutation.mutate()}
-              className="btn-ghost flex-shrink-0 px-2"
-              disabled={bulkWishlistMutation.isPending || cards.length === 0}
-              title={t('binderTypes.addMissingToWishlist')}
-              aria-label={t('binderTypes.addMissingToWishlist')}
-            >
-              <Heart size={16} /> {t('binderTypes.addMissingShort')}
-            </button>
-          )}
-          <button
-            onClick={() => setShowCsvImportModal(true)}
-            className="btn-ghost flex-shrink-0 px-2"
-            disabled={importMutation.isPending}
-            title={t('binderTypes.importCsv')}
-            aria-label={t('binderTypes.importCsv')}
-          >
-            <Upload size={16} /> CSV
-          </button>
-          <button
-            onClick={() => exportMutation.mutate()}
-            className="btn-ghost flex-shrink-0 px-2"
-            disabled={exportMutation.isPending || cards.length === 0}
-            title={t('binderTypes.exportCsv')}
-            aria-label={t('binderTypes.exportCsv')}
-          >
-            <Download size={16} /> CSV
-          </button>
-          <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportFile} />
-        </div>
-      </div>
-
-      <div className={isWishlist ? "grid grid-cols-2 md:grid-cols-5 gap-2" : "grid grid-cols-2 md:grid-cols-4 gap-2"}>
-        <div className="card p-3"><p className="text-xs text-text-muted">{t('binderTypes.required')}</p><p className="text-lg font-bold text-text-primary">{totalCount}</p></div>
-        <div className="card p-3"><p className="text-xs text-text-muted">{t('binderTypes.owned')}</p><p className="text-lg font-bold text-green">{ownedCount}</p></div>
-        <div className="card p-3"><p className="text-xs text-text-muted">{t('binderTypes.missing')}</p><p className="text-lg font-bold text-brand-red">{missingCount}</p></div>
-        {isWishlist && (
-          <div className="card p-3">
-            <p className="text-xs text-text-muted">{t('binderTypes.currentValue')}</p>
-            <p className={`text-lg font-bold ${hasMissingCurrentValueData ? 'text-text-muted' : 'text-yellow'}`}>
-              {hasMissingCurrentValueData ? t('binderTypes.noPriceData') : formatPrice(currentValue)}
-            </p>
-          </div>
-        )}
-        <div className="card p-3">
-          <p className="text-xs text-text-muted">{isWishlist ? t('binderTypes.costToComplete') : t('binderTypes.binderValue')}</p>
-          <p className={`text-lg font-bold ${hasMissingPriceData ? 'text-text-muted' : 'text-yellow'}`}>
-            {hasMissingPriceData ? t('binderTypes.noPriceData') : formatPrice(displayedValue)}
+        </span>
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-title-3 font-bold text-text-primary">{binder?.name}</h1>
+          <p className="text-footnote text-text-secondary">
+            <span className={typeTone}>{isWishlist ? t('binderTypes.planned') : t('binderTypes.collection')}</span>
+            {' · '}{formatBinderCountSummary(totalCount, uniqueCount, t)}
           </p>
         </div>
       </div>
+      {binder?.description && <p className="text-sm text-text-secondary">{binder.description}</p>}
 
-      {isWishlist && cards.length > 0 && (
-        <div className="card space-y-3">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-text-primary">{t('binderTypes.progress')}</span>
-            <span className="text-sm text-text-secondary">
-              {ownedCount} {t('binderTypes.ownedOf')} {totalCount} {t('binderTypes.cards')} ({progressPct}%)
-            </span>
-          </div>
-          <div className="w-full bg-border rounded-full h-3">
-            <div className="bg-green h-3 rounded-full transition-all duration-500" style={{ width: `${progressPct}%` }} />
-          </div>
-          <div className="flex justify-between text-xs text-text-muted mt-1">
-            <span className="text-green">{ownedCount} {t('binderTypes.owned')}</span>
-            <span className="text-brand-red">{missingCount} {t('binderTypes.missing')}</span>
-          </div>
-          {canConvertWishlist && (
-            <div className="flex items-center justify-between gap-3 border-t border-border pt-3 flex-wrap">
-              <p className="text-xs text-green">{t('binderTypes.convertWishlistReady')}</p>
-              <button
-                type="button"
-                className="btn-primary justify-center"
-                disabled={convertWishlistMutation.isPending}
-                onClick={() => setConversionTarget('collection')}
-              >
-                <Package size={16} /> {t('binderTypes.convertWishlist')}
-              </button>
+      <button
+        onClick={() => {
+          if (showSearch) clearPickerSelection()
+          setShowSearch(!showSearch)
+        }}
+        className="btn-primary w-full justify-center sm:w-auto"
+      >
+        <Plus size={16} /> {t('binders.addCards')}
+      </button>
+      <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportFile} />
+
+      <div className="space-y-3 rounded-2xl bg-card p-4">
+        <div className={`grid gap-3 ${isWishlist ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-3'}`}>
+          {stats.map(([statLabel, value, tone]) => (
+            <div key={statLabel} className="min-w-0">
+              <p className="truncate text-footnote text-text-muted">{statLabel}</p>
+              <p className={`truncate text-title-3 font-bold ${tone}`}>{value}</p>
             </div>
-          )}
+          ))}
         </div>
-      )}
+        {isWishlist && cards.length > 0 && (
+          <div className="space-y-1.5">
+            <HpBar value={ownedCount} max={totalCount} label={t('binderTypes.progress')} />
+            <p className="text-footnote text-text-secondary">{ownedCount} {t('binderTypes.ownedOf')} {totalCount} {t('binderTypes.cards')} ({progressPct}%)</p>
+          </div>
+        )}
+        {isWishlist && canConvertWishlist && (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-footnote text-green">{t('binderTypes.convertWishlistReady')}</p>
+            <button
+              type="button"
+              className="btn-primary justify-center"
+              disabled={convertWishlistMutation.isPending}
+              onClick={() => setConversionTarget('collection')}
+            >
+              <Package size={16} /> {t('binderTypes.convertWishlist')}
+            </button>
+          </div>
+        )}
+      </div>
 
       <CardListPicker
         key={binderType}
@@ -624,13 +596,13 @@ export default function BinderDetail() {
       )}
 
       {cards.length > 0 && (
-        <div className="card p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
           <input
             type="text"
             value={binderFilterQuery}
             onChange={(e) => setBinderFilterQuery(e.target.value)}
             placeholder={t('binderTypes.filterBinderCards')}
-            className="input text-sm py-2"
+            className="input col-span-2 text-sm py-2 lg:col-span-4"
           />
           <select aria-label={t('binderTypes.allSets')} className="select text-sm py-2" value={binderFilterSet} onChange={(e) => updateBinderFilter('binderFilterSet', e.target.value)}>
             <option value="">{t('binderTypes.allSets')}</option>
@@ -653,7 +625,7 @@ export default function BinderDetail() {
                 <option key={option} value={option}>{t(`binderTypes.sort.${option}`)}</option>
               ))}
           </select>
-          <div className="flex flex-wrap items-center sm:col-span-2 lg:col-span-4">
+          <div className="col-span-2 flex flex-wrap items-center lg:col-span-4">
             <button type="button" className="btn-ghost" onClick={clearBinderFilters}>{t('common.clear')}</button>
           </div>
         </div>
@@ -692,123 +664,109 @@ export default function BinderDetail() {
         />
       )}
 
-      {showPrintOptimizer && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs md:flex md:items-center md:justify-center md:bg-black/80" onClick={() => setShowPrintOptimizer(false)}>
-          <div
-            className="fixed bottom-0 left-0 right-0 rounded-t-2xl max-h-[90dvh] overflow-y-auto bg-bg-surface border-t border-border md:static md:rounded-2xl md:border md:max-w-3xl md:w-full md:max-h-[85vh]"
-            onClick={e => e.stopPropagation()}
+      <PageSheet
+        isOpen={showPrintOptimizer}
+        onClose={() => setShowPrintOptimizer(false)}
+        title={t('binderTypes.optimizePrints')}
+        footer={hasOptimizations && !printOptimizationError ? (
+          <button
+            type="button"
+            className="btn-primary w-full justify-center"
+            disabled={applyPrintOptimizationMutation.isPending || selectedPrintOptimizationCount === 0}
+            onClick={() => applyPrintOptimizationMutation.mutate(selectedPrintOptimizationIds)}
           >
-            <div className="flex justify-center pt-3 pb-1 md:hidden"><div className="w-10 h-1 bg-border rounded-full" /></div>
-            <div className="p-5 space-y-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h2 className="text-base font-bold text-text-primary">{t('binderTypes.optimizePrints')}</h2>
-                  <p className="text-xs text-text-secondary mt-1">{t('binderTypes.optimizePrintsHelp')}</p>
-                </div>
-                <button onClick={() => setShowPrintOptimizer(false)} className="text-text-muted hover:text-text-primary flex-shrink-0 p-1" aria-label={t('common.close')}>
-                  <X size={18} />
-                </button>
-              </div>
+            {applyPrintOptimizationMutation.isPending ? t('binderTypes.optimizingPrints') : t('binderTypes.applyOptimization')}
+          </button>
+        ) : undefined}
+      >
+        <div className="space-y-4 p-4" data-testid="optimize-sheet-content">
+          <p className="text-xs text-text-secondary">{t('binderTypes.optimizePrintsHelp')}</p>
+      {printOptimizationLoading && <p className="text-sm text-text-muted text-center py-6">{t('binderTypes.optimizingPrints')}</p>}
 
-              {printOptimizationLoading && <p className="text-sm text-text-muted text-center py-6">{t('binderTypes.optimizingPrints')}</p>}
+      {printOptimizationError && (
+        <p className="rounded-xl bg-brand-red/10 p-4 text-sm text-brand-red text-center">
+          {printOptimizationErrorData?.response?.data?.detail || t('binderTypes.optimizePrintsFailed')}
+        </p>
+      )}
 
-              {printOptimizationError && (
-                <p className="rounded-xl bg-brand-red/10 p-4 text-sm text-brand-red text-center">
-                  {printOptimizationErrorData?.response?.data?.detail || t('binderTypes.optimizePrintsFailed')}
-                </p>
-              )}
+      {!printOptimizationLoading && !printOptimizationError && (printOptimizationData?.recommendations || []).length === 0 && (
+        <p className="rounded-xl bg-bg-card/60 p-4 text-sm text-text-muted text-center">{t('binderTypes.noPrintOptimizations')}</p>
+      )}
 
-              {!printOptimizationLoading && !printOptimizationError && (printOptimizationData?.recommendations || []).length === 0 && (
-                <p className="rounded-xl bg-bg-card/60 p-4 text-sm text-text-muted text-center">{t('binderTypes.noPrintOptimizations')}</p>
-              )}
-
-              {!printOptimizationError && (printOptimizationData?.recommendations || []).length > 0 && (
-                <>
-                  <div className="rounded-xl bg-yellow/10 px-3 py-2 text-xs text-yellow space-y-1">
-                    <p>{t('binderTypes.optimizePrintsSummary')}: {printOptimizationData.change_count} · {formatPrice(printOptimizationData.total_savings || 0)}</p>
-                    <p>{t('binderTypes.selectedOptimizationSummary')}: {selectedPrintOptimizationCount} · {formatPrice(selectedPrintOptimizationSavings)}</p>
-                  </div>
-                  <label className="inline-flex items-center gap-2 text-xs text-text-secondary">
+      {!printOptimizationError && (printOptimizationData?.recommendations || []).length > 0 && (
+        <>
+          <div className="rounded-xl bg-yellow/10 px-3 py-2 text-xs text-yellow space-y-1">
+            <p>{t('binderTypes.optimizePrintsSummary')}: {printOptimizationData.change_count} · {formatPrice(printOptimizationData.total_savings || 0)}</p>
+            <p>{t('binderTypes.selectedOptimizationSummary')}: {selectedPrintOptimizationCount} · {formatPrice(selectedPrintOptimizationSavings)}</p>
+          </div>
+          <label className="inline-flex items-center gap-2 text-xs text-text-secondary">
+            <input
+              type="checkbox"
+              className="accent-brand-red"
+              checked={allPrintOptimizationsSelected}
+              onChange={toggleAllPrintOptimizations}
+            />
+            {t('binderTypes.selectAllOptimizations')}
+          </label>
+          <div className="space-y-2">
+            {printOptimizationData.recommendations.map((item) => {
+              const isSelected = selectedPrintOptimizationIdSet.has(item.binder_card_id)
+              return (
+                <div key={item.binder_card_id} className={`rounded-xl border p-3 ${isSelected ? 'border-yellow/40 bg-yellow/5' : 'border-border bg-bg-card/60'}`}>
+                  <div className="flex items-start gap-3">
                     <input
                       type="checkbox"
-                      className="accent-brand-red"
-                      checked={allPrintOptimizationsSelected}
-                      onChange={toggleAllPrintOptimizations}
+                      className="mt-2 accent-brand-red"
+                      checked={isSelected}
+                      onChange={() => togglePrintOptimizationSelection(item.binder_card_id)}
+                      aria-label={t('cardSearch.select')}
                     />
-                    {t('binderTypes.selectAllOptimizations')}
-                  </label>
-                  <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
-                    {printOptimizationData.recommendations.map((item) => {
-                      const isSelected = selectedPrintOptimizationIdSet.has(item.binder_card_id)
-                      return (
-                        <div key={item.binder_card_id} className={`rounded-xl border p-3 ${isSelected ? 'border-yellow/40 bg-yellow/5' : 'border-border bg-bg-card/60'}`}>
-                          <div className="flex items-start gap-3">
-                            <input
-                              type="checkbox"
-                              className="mt-2 accent-brand-red"
-                              checked={isSelected}
-                              onChange={() => togglePrintOptimizationSelection(item.binder_card_id)}
-                              aria-label={t('cardSearch.select')}
-                            />
-                            <div className="min-w-0 flex-1">
-                              <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_32px_minmax(0,1fr)_auto] md:items-center">
-                                <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border bg-bg-elevated/50 p-2">
-                                  <CollectionCardDisplay variant="compact-artwork" item={{ id: item.current.collection_item_id, has_scan_photo: item.current.has_scan_photo, card: item.current.card }} card={item.current} image={resolveCardImageUrl(item.current)} alt={item.current.name} variantEffectSource={item.current.variant} />
-                                  <div className="min-w-0">
-                                    <p className="text-[9px] font-bold uppercase tracking-wide text-text-muted">{t('binderTypes.currentPrint')}</p>
-                                    <p className="truncate text-xs font-semibold text-text-primary">{item.current.set_name || item.current.set_id} #{item.current.number}</p>
-                                    <p className="text-[11px] text-text-muted">{item.current_price ? formatPrice(item.current_price) : t('binderTypes.noPriceDataShort')}</p>
-                                    {(item.current.variant || item.current.condition) && <p className="truncate text-[10px] text-text-muted">{[item.current.variant, item.current.condition].filter(Boolean).join(' · ')}</p>}
-                                  </div>
-                                </div>
-                                <span className="mx-auto text-sm font-bold text-green">
-                                  <span className="md:hidden">↓</span>
-                                  <span className="hidden md:inline">→</span>
-                                </span>
-                                <div className="flex min-w-0 items-center gap-2 rounded-lg border border-green/30 bg-green/5 p-2">
-                                  <CollectionCardDisplay variant="compact-artwork" item={{ id: item.suggested.collection_item_id, has_scan_photo: item.suggested.has_scan_photo, card: item.suggested.card }} card={item.suggested} image={resolveCardImageUrl(item.suggested)} alt={item.suggested.name} variantEffectSource={item.suggested.variant} />
-                                  <div className="min-w-0">
-                                    <p className="text-[9px] font-bold uppercase tracking-wide text-green">{t('binderTypes.suggestedPrint')}</p>
-                                    <p className="truncate text-xs font-semibold text-text-primary">{item.suggested.set_name || item.suggested.set_id} #{item.suggested.number}</p>
-                                    <p className="text-[11px] text-green">{formatPrice(item.suggested_price)}</p>
-                                    {(item.suggested.variant || item.suggested.condition) && <p className="truncate text-[10px] text-text-muted">{[item.suggested.variant, item.suggested.condition].filter(Boolean).join(' · ')}</p>}
-                                  </div>
-                                </div>
-                                <button
-                                  type="button"
-                                  className="btn-ghost justify-center border-green/30 text-green"
-                                  disabled={applyPrintOptimizationMutation.isPending}
-                                  onClick={() => applyPrintOptimizationMutation.mutate([item.binder_card_id])}
-                                >
-                                  {t('binderTypes.switchPrint')}
-                                </button>
-                              </div>
-                              <p className="mt-2 text-[11px] text-text-muted">
-                                {item.required_quantity}x · {t('binderTypes.estimatedSavings')}: {formatPrice(item.total_savings)}
-                              </p>
-                            </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_32px_minmax(0,1fr)_auto] md:items-center">
+                        <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border bg-bg-elevated/50 p-2">
+                          <CollectionCardDisplay variant="compact-artwork" item={{ id: item.current.collection_item_id, has_scan_photo: item.current.has_scan_photo, card: item.current.card }} card={item.current} image={resolveCardImageUrl(item.current)} alt={item.current.name} variantEffectSource={item.current.variant} />
+                          <div className="min-w-0">
+                            <p className="text-[9px] font-bold uppercase tracking-wide text-text-muted">{t('binderTypes.currentPrint')}</p>
+                            <p className="truncate text-xs font-semibold text-text-primary">{item.current.set_name || item.current.set_id} #{item.current.number}</p>
+                            <p className="text-[11px] text-text-muted">{item.current_price ? formatPrice(item.current_price) : t('binderTypes.noPriceDataShort')}</p>
+                            {(item.current.variant || item.current.condition) && <p className="truncate text-[10px] text-text-muted">{[item.current.variant, item.current.condition].filter(Boolean).join(' · ')}</p>}
                           </div>
                         </div>
-                      )
-                    })}
+                        <span className="mx-auto text-sm font-bold text-green">
+                          <span className="md:hidden">↓</span>
+                          <span className="hidden md:inline">→</span>
+                        </span>
+                        <div className="flex min-w-0 items-center gap-2 rounded-lg border border-green/30 bg-green/5 p-2">
+                          <CollectionCardDisplay variant="compact-artwork" item={{ id: item.suggested.collection_item_id, has_scan_photo: item.suggested.has_scan_photo, card: item.suggested.card }} card={item.suggested} image={resolveCardImageUrl(item.suggested)} alt={item.suggested.name} variantEffectSource={item.suggested.variant} />
+                          <div className="min-w-0">
+                            <p className="text-[9px] font-bold uppercase tracking-wide text-green">{t('binderTypes.suggestedPrint')}</p>
+                            <p className="truncate text-xs font-semibold text-text-primary">{item.suggested.set_name || item.suggested.set_id} #{item.suggested.number}</p>
+                            <p className="text-[11px] text-green">{formatPrice(item.suggested_price)}</p>
+                            {(item.suggested.variant || item.suggested.condition) && <p className="truncate text-[10px] text-text-muted">{[item.suggested.variant, item.suggested.condition].filter(Boolean).join(' · ')}</p>}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn-ghost justify-center border-green/30 text-green"
+                          disabled={applyPrintOptimizationMutation.isPending}
+                          onClick={() => applyPrintOptimizationMutation.mutate([item.binder_card_id])}
+                        >
+                          {t('binderTypes.switchPrint')}
+                        </button>
+                      </div>
+                      <p className="mt-2 text-[11px] text-text-muted">
+                        {item.required_quantity}x · {t('binderTypes.estimatedSavings')}: {formatPrice(item.total_savings)}
+                      </p>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button type="button" className="btn-ghost justify-center" onClick={() => setShowPrintOptimizer(false)}>{t('common.cancel')}</button>
-                    <button
-                      type="button"
-                      className="btn-primary justify-center"
-                      disabled={applyPrintOptimizationMutation.isPending || selectedPrintOptimizationCount === 0}
-                      onClick={() => applyPrintOptimizationMutation.mutate(selectedPrintOptimizationIds)}
-                    >
-                      {applyPrintOptimizationMutation.isPending ? t('binderTypes.optimizingPrints') : t('binderTypes.applyOptimization')}
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+                </div>
+              )
+            })}
           </div>
-        </div>
+        </>
       )}
+        </div>
+      </PageSheet>
 
       <CardSelectionQuantityModal
         t={t}
@@ -936,11 +894,11 @@ export default function BinderDetail() {
                     {equivalentPrintsLoading && <span className="text-xs text-text-muted">{t('common.loading')}</span>}
                   </div>
 
-                  {!equivalentPrintsLoading && (equivalentPrintsData?.equivalents || []).length === 0 && (
+                  {!equivalentPrintsLoading && equivalentList.length === 0 && (
                     <p className="text-xs text-text-muted">{t('binderTypes.noEquivalentPrints')}</p>
                   )}
 
-                  {(equivalentPrintsData?.equivalents || []).length > 0 && (
+                  {equivalentList.length > 0 && (
                     <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                       {equivalentPrintsData.equivalents.map((print) => {
                         const imageUrl = resolveCardImageUrl(print)

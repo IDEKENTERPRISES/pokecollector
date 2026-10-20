@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useParams } from 'react-router-dom'
 import { Suspense, lazy, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
+import AppErrorBoundary from './components/AppErrorBoundary'
 import PokeBallLoader from './components/PokeBallLoader'
 import AuthStartupScreen from './components/AuthStartupScreen'
 import { SettingsProvider } from './contexts/SettingsContext'
@@ -34,6 +35,7 @@ const CardMigration = lazy(() => import('./pages/CardMigration'))
 const ScanQueue = lazy(() => import('./pages/ScanQueue'))
 const OfflineCenter = lazy(() => import('./pages/OfflineCenter'))
 const Login = lazy(() => import('./pages/Login'))
+const InviteAccept = lazy(() => import('./pages/InviteAccept'))
 const Leaderboard = lazy(() => import('./pages/Leaderboard'))
 const Compare = lazy(() => import('./pages/Compare'))
 const Achievements = lazy(() => import('./pages/Achievements'))
@@ -236,6 +238,7 @@ function ProtectedRoutes() {
 
 export default function App() {
   return (
+    <AppErrorBoundary>
     <AuthProvider>
       <SettingsProvider>
         <OfflineProvider>
@@ -245,6 +248,7 @@ export default function App() {
               {import.meta.env.DEV && <Route path="/__card-system" element={lazyRoute(<CardSystemGallery />)} />}
               {import.meta.env.DEV && <Route path="/__ios" element={lazyRoute(<IosGallery />)} />}
               <Route path="/login" element={lazyRoute(<Login />)} />
+              <Route path="/invite/:token" element={lazyRoute(<InviteAccept />)} />
               <Route path="/u" element={<PublicRoutes />}>
                 <Route index element={lazyRoute(<PublicDirectory />)} />
                 <Route path=":handle" element={lazyRoute(<PublicProfile />)} />
@@ -261,5 +265,6 @@ export default function App() {
         </OfflineProvider>
       </SettingsProvider>
     </AuthProvider>
+    </AppErrorBoundary>
   )
 }

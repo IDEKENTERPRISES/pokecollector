@@ -16,7 +16,21 @@ const USER = { id: 1, username: 'Shell Reviewer', role: 'admin', is_active: true
 
 const lookup = key => key.split('.').reduce((node, part) => node?.[part], en)
 
-async function installApi(page, { onLogout } = {}) {
+// `queue` switches the offline queue flag on (the dev server's default is off), which the sync
+// center at /offline needs: with the queue off that page redirects Home.
+async function installApi(page, { onLogout, queue = false } = {}) {
+  if (queue) {
+    await page.addInitScript(() => {
+      const add = () => {
+        const meta = document.createElement('meta')
+        meta.name = 'pokecollector-pwa'
+        meta.content = 'sw=0;queue=1'
+        document.head.appendChild(meta)
+      }
+      if (document.head) add()
+      else document.addEventListener('DOMContentLoaded', add)
+    })
+  }
   await page.addInitScript(user => {
     localStorage.setItem('token', 'shell-test-token')
     localStorage.setItem('user', JSON.stringify(user))
@@ -62,10 +76,11 @@ const sample = pattern => SAMPLE[pattern] ?? pattern
 test.describe('shell on a phone', () => {
   test.skip(({ viewport }) => viewport.width >= 1024, 'the phone shell is not shown at desktop width')
 
-  test('every route shows the tab bar, the right tab, title and back target', async ({ page }) => {
-    await installApi(page)
-    for (const route of ROUTES) {
-      const url = sample(route.path)
+  // One test per route: a fresh page each time (one long test made WebKit in CI run out of steam).
+  for (const route of ROUTES) {
+    const url = sample(route.path)
+    test(`${route.path} shows the tab bar, the right tab, title and back target`, async ({ page }) => {
+      await installApi(page, { queue: route.path === '/offline' })
       await page.goto(url)
       await expect(page.getByTestId('tab-bar'), url).toBeVisible()
       await expect(page.getByTestId('nav-bar'), url).toBeVisible()
@@ -86,8 +101,8 @@ test.describe('shell on a phone', () => {
         // The scan inbox goes back to the previous screen: Home after a cold start.
         await expect(back, url).toHaveText(labelKey ? lookup(labelKey) : en.nav.home)
       }
-    }
-  })
+    })
+  }
 
   test('redirects: /dashboard, /decks and unknown paths', async ({ page }) => {
     await installApi(page)
@@ -100,17 +115,28 @@ test.describe('shell on a phone', () => {
     await expect(page.getByTestId('tab-bar')).toBeVisible()
   })
 
-  test('a deep-linked pushed page has a back button that lands on its parent', async ({ page }) => {
-    await installApi(page)
-    const pushed = ROUTES.filter(route => route.kind === 'pushed' && !isOwnBack(sample(route.path)) && parentForPath(sample(route.path)))
+  // A deep-linked pushed page has a back button that lands on its parent (one test per route).
+  // The deck editor registers its own nav bar (with its back button) only once it has a deck, which
+  // this mock does not provide; its back target is covered by the unit tests of `useBack`.
+  const NEEDS_PAGE_DATA = new Set(['/decks/:deckId'])
+  const pushed = ROUTES.filter(route => route.kind === 'pushed' && !NEEDS_PAGE_DATA.has(route.path) && !isOwnBack(sample(route.path)) && parentForPath(sample(route.path)))
+  test('there are pushed pages with a back button to check', () => {
     expect(pushed.length).toBeGreaterThan(8)
-    for (const route of pushed) {
-      const url = sample(route.path)
-      await page.goto(url)
-      await page.getByTestId('nav-back').click()
-      await expect(page, url).toHaveURL(new RegExp(`${parentForPath(url)}$`))
-    }
   })
+  for (const route of pushed) {
+    const url = sample(route.path)
+    test(`${route.path}: back lands on the parent`, async ({ page }) => {
+      await installApi(page, { queue: route.path === '/offline' })
+      await page.goto(url)
+      await expect(page.getByTestId('nav-title')).toHaveText(lookup(titleKeyForPath(url)))
+      // The page may register its own nav bar options as its chunk loads, which re-renders the bar
+      // under the pointer; retry the tap until it lands.
+      await expect(async () => {
+        await page.getByTestId('nav-back').click({ timeout: 3000 })
+        await expect(page).toHaveURL(new RegExp(`${parentForPath(url)}$`), { timeout: 3000 })
+      }, url).toPass({ timeout: 25000 })
+    })
+  }
 
   test('tabs: switching remembers the stack, re-tapping goes to the root, then to the top', async ({ page }) => {
     await installApi(page)
