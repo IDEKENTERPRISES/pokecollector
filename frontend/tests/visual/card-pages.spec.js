@@ -482,7 +482,7 @@ test('real Collection list keeps shared artwork, identity, and fallback treatmen
   await expect(page.locator(
     '.unified-card-frame[style*="--pc-card-border-image"]:visible',
   ).first()).toBeVisible()
-  await expect(page.locator('main')).toHaveScreenshot('collection-list.png')
+  await expect(page.locator('main')).toHaveScreenshot('collection-list.png', { stylePath: 'tests/visual/hide-shell.css' })
 })
 
 test('Collection price tabs reuse the complete shared card price details', async ({ page }) => {
@@ -622,7 +622,7 @@ test('Card Lists overview includes deck metadata without technical inventory con
   await expect(page.getByText('Planned Deck', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('Casual · 40 cards').first()).toBeVisible()
   await expect(page.getByText('24 cards')).toBeVisible()
-  const deckCard = page.locator('.card').filter({ hasText: 'Visual Practice Deck' }).first()
+  const deckCard = page.getByTestId('card-list-row').filter({ hasText: 'Visual Practice Deck' }).first()
   const titleBox = await deckCard.getByRole('heading', { name: 'Visual Practice Deck' }).boundingBox()
   const typeBox = await deckCard.getByText('Planned Deck', { exact: true }).boundingBox()
   expect(typeBox.y).toBeGreaterThan(titleBox.y)

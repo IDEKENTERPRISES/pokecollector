@@ -1,11 +1,16 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
-import { Plus, Trash2, Edit2, BookOpen, Star, Package, PackageCheck, Check, X, Library, Heart, Globe, Lock, Copy, Layers3 } from 'lucide-react'
-import { getBinders, createBinder, updateBinder, updateDeck, deleteBinder, getWishlist, getProfile } from '../api/client'
+import { Link } from 'react-router-dom'
+import { Plus, Trash2, Edit2, BookOpen, Star, Package, PackageCheck, Check, X, Globe, Copy, Layers3, MoreHorizontal, ChevronRight } from 'lucide-react'
+import { getBinders, createBinder, updateBinder, updateDeck, deleteBinder, getProfile } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import { useConfirmDialog } from '../contexts/ConfirmDialogContext'
-import TabNav from '../components/TabNav'
+import CollectionHeader from '../components/collection/CollectionHeader'
+import IconButton from '../components/ios/IconButton'
+import ListSection from '../components/ios/ListSection'
+import Menu from '../components/ios/Menu'
+import PageSheet from '../components/ios/PageSheet'
+import { useNavBar } from '../navigation/useNavBar'
 import AvatarPicker from '../components/AvatarPicker'
 import toast from 'react-hot-toast'
 import { invalidateTcgdexFilterLanguages } from '../utils/queryInvalidation'
@@ -173,21 +178,14 @@ function BinderForm({ initial = {}, onSubmit, onCancel, loading }) {
 }
 
 export default function Binders() {
-  const navigate = useNavigate()
   const { t } = useSettings()
   const confirmDialog = useConfirmDialog()
   const queryClient = useQueryClient()
   const [creating, setCreating] = useState(false)
-  const [editingId, setEditingId] = useState(null)
+  const [editingBinder, setEditingBinder] = useState(null)
   const { data: binderData = [], isLoading } = useQuery({
     queryKey: ['binders'],
     queryFn: () => getBinders().then(r => r.data),
-  })
-
-  const { data: wishlistItems = [] } = useQuery({
-    queryKey: ['wishlist'],
-    queryFn: () => getWishlist().then(r => r.data),
-    staleTime: 60000,
   })
 
   const { data: profileData } = useQuery({
@@ -200,11 +198,14 @@ export default function Binders() {
   const publicProfilesEnabled = !!profileData?.feature_enabled
   const binders = Array.isArray(binderData) ? binderData : []
 
-  const COLLECTION_TABS = [
-    { to: '/collection', label: t('nav.collection'), icon: Library },
-    { to: '/binders', label: t('nav.binders'), icon: BookOpen },
-    { to: '/wishlist', label: t('nav.wishlist'), icon: Heart, badge: wishlistItems.length },
-  ]
+  // "+" is the one create action of this page: it opens the form, which picks the list type.
+  const navOptions = useMemo(() => ({
+    title: t('nav.collection'),
+    trailing: (
+      <IconButton icon={Plus} label={t('binders.newCardList')} onClick={() => setCreating(true)} />
+    ),
+  }), [t])
+  useNavBar(navOptions)
 
   const createMutation = useMutation({
     mutationFn: createBinder,
@@ -225,7 +226,7 @@ export default function Binders() {
       queryClient.invalidateQueries({ queryKey: ['binders'] })
       queryClient.invalidateQueries({ queryKey: ['decks'] })
       invalidateTcgdexFilterLanguages(queryClient)
-      setEditingId(null)
+      setEditingBinder(null)
     },
     onError: (error) => toast.error(error.response?.data?.detail || t('binders.updateFailed')),
   })
@@ -261,31 +262,53 @@ export default function Binders() {
     }
   }
 
-  return (
-    <div className="space-y-4 pb-2">
-      <TabNav tabs={COLLECTION_TABS} />
-      <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
-        <div className="min-w-0">
-          <h1 className="text-xl font-bold text-text-primary">{t('binders.title')}</h1>
-          <p className="text-sm text-text-secondary mt-1">{t('binders.subtitle')}</p>
-        </div>
-        <button onClick={() => setCreating(true)} className="btn-primary">
-          <Plus size={16} /> {t('binders.newCardList')}
-        </button>
-      </div>
+  const canShare = (binder) => binder.binder_type !== 'wishlist' && publicProfilesEnabled
+  const showShareHint = publicProfilesEnabled && !profileIsPublic && binders.some(canShare)
 
-      {creating && (
-        <div className="card border-brand-red/30">
-          <h3 className="text-base font-semibold text-text-primary mb-4">{t('binders.createCardList')}</h3>
-          <BinderForm onSubmit={(data) => createMutation.mutate(data)} onCancel={() => setCreating(false)} loading={createMutation.isPending} />
-        </div>
-      )}
+  const rowMenuSections = (binder, isDeck) => {
+    const sections = [[
+      { id: 'edit', label: t('common.edit'), icon: Edit2, onSelect: () => setEditingBinder(binder) },
+    ]]
+    if (canShare(binder) && profileIsPublic) {
+      const share = [{
+        id: 'public',
+        label: t('binders.sharePublicly'),
+        checked: !!binder.is_public,
+        disabled: publicToggleMutation.isPending,
+        onSelect: () => publicToggleMutation.mutate({ id: binder.id, is_public: !binder.is_public, isDeck }),
+      }]
+      if (binder.is_public && publicHandle) {
+        share.push({ id: 'link', label: t('binders.copyPublicLink'), icon: Copy, onSelect: () => copyPublicBinderLink(binder.id, isDeck) })
+      }
+      sections.push(share)
+    }
+    sections.push([{
+      id: 'delete',
+      label: t('common.delete'),
+      icon: Trash2,
+      destructive: true,
+      onSelect: async () => {
+        const confirmed = await confirmDialog({
+          title: t('common.delete'),
+          message: t('binders.deleteConfirm').replace('{name}', binder.name),
+          confirmLabel: t('common.delete'),
+          destructive: true,
+        })
+        if (confirmed) deleteMutation.mutate(binder.id)
+      },
+    }])
+    return sections
+  }
+
+  return (
+    <div className="relative isolate space-y-4 pb-2">
+      <CollectionHeader active="lists" subtitle={t('binders.subtitle')} />
 
       {isLoading ? (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => <div key={i} className="skeleton h-40 rounded-xl" />)}
+        <div className="space-y-2">
+          {[...Array(4)].map((_, i) => <div key={i} className="skeleton h-16 rounded-xl" />)}
         </div>
-      ) : binders.length === 0 && !creating ? (
+      ) : binders.length === 0 ? (
         <div className="card text-center py-20">
           <BookOpen size={48} className="mx-auto mb-4 text-text-muted" />
           <p className="text-text-muted">{t('binders.empty')}</p>
@@ -295,126 +318,105 @@ export default function Binders() {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          {binders.map((binder) => {
-            const isWishlist = binder.binder_type === 'wishlist'
-            const isPlannedDeck = binder.binder_type === 'deck'
-            const isRealDeck = binder.binder_type === 'physical_deck'
-            const isDeck = isPlannedDeck || isRealDeck
-            const TypeIcon = isRealDeck ? PackageCheck : isPlannedDeck ? Layers3 : isWishlist ? Star : BookOpen
-            const totalCount = binder.card_count || 0
-            const uniqueCount = binder.unique_card_count || 0
-            const showUniqueCount = uniqueCount > 0 && uniqueCount !== totalCount
-            return (
-              <div key={binder.id}>
-                {editingId === binder.id ? (
-                  <div className="card">
-                    <BinderForm initial={binder}
-                      onSubmit={(data) => updateMutation.mutate({ id: binder.id, data })}
-                      onCancel={() => setEditingId(null)} loading={updateMutation.isPending} />
-                  </div>
-                ) : (
-                  <div className="card cursor-pointer hover:border-opacity-50 group relative"
-                    style={{ borderColor: `${binder.color}30` }}
-                    onClick={() => navigate(isDeck ? `/decks/${binder.id}` : `/binders/${binder.id}`)}>
-                    <div className="absolute top-0 left-0 right-0 h-1 rounded-t-xl" style={{ backgroundColor: binder.color }} />
-                    <div className="pt-2">
+        <div className="-mx-4 sm:-mx-4">
+          <ListSection header={t('binders.title')} footer={showShareHint ? t('binders.enablePublicProfileHint') : undefined}>
+            {binders.map((binder) => {
+              const isWishlist = binder.binder_type === 'wishlist'
+              const isPlannedDeck = binder.binder_type === 'deck'
+              const isRealDeck = binder.binder_type === 'physical_deck'
+              const isDeck = isPlannedDeck || isRealDeck
+              const TypeIcon = isRealDeck ? PackageCheck : isPlannedDeck ? Layers3 : isWishlist ? Star : BookOpen
+              const totalCount = binder.card_count || 0
+              const uniqueCount = binder.unique_card_count || 0
+              const showUniqueCount = uniqueCount > 0 && uniqueCount !== totalCount
+              const typeLabel = isRealDeck ? t('binderTypes.realDeck') : isPlannedDeck ? t('binderTypes.plannedDeck') : isWishlist ? t('binderTypes.planned') : t('binderTypes.collection')
+              const typeTone = isRealDeck ? 'text-green' : isPlannedDeck ? 'text-purple-300' : isWishlist ? 'text-yellow' : 'text-blue'
+              return (
+                <div
+                  key={binder.id}
+                  data-testid="card-list-row"
+                  className="relative flex items-center after:pointer-events-none after:absolute after:bottom-0 after:left-[68px] after:right-0 after:h-[0.5px] after:bg-border last:after:hidden"
+                >
+                  <Link
+                    to={isDeck ? `/decks/${binder.id}` : `/binders/${binder.id}`}
+                    className="ios-press flex min-h-[64px] min-w-0 flex-1 items-center gap-3 py-2.5 pl-4 pr-1 text-left"
+                  >
+                    <span
+                      className="grid h-11 w-11 flex-shrink-0 place-items-center overflow-hidden rounded-[11px]"
+                      style={{ background: `color-mix(in srgb, ${binder.color || '#EF1515'} 28%, #000)` }}
+                    >
                       {binder.icon_pokemon_id ? (
-                        <img src={`${SPRITE_BASE_URL}/${binder.icon_pokemon_id}.gif`} alt="" className="max-h-10 max-w-10 object-contain mb-2 pixelated" loading="lazy" />
+                        <img src={`${SPRITE_BASE_URL}/${binder.icon_pokemon_id}.gif`} alt="" className="max-h-9 max-w-9 object-contain pixelated" loading="lazy" />
                       ) : (
-                        <TypeIcon size={32} className="mb-3" style={{ color: binder.color }} />
+                        <TypeIcon size={22} style={{ color: binder.color }} aria-hidden="true" />
                       )}
-                      <h3 className="mb-1 truncate pr-10 text-sm font-semibold text-text-primary">{binder.name}</h3>
-                      <div className="mt-1.5">
-                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                          isRealDeck ? 'bg-green/20 text-green' : isPlannedDeck ? 'bg-purple-500/20 text-purple-300' : isWishlist ? 'bg-yellow/20 text-yellow' : 'bg-blue/20 text-blue'
-                        }`}>
-                          <TypeIcon size={11} /> {isRealDeck ? t('binderTypes.realDeck') : isPlannedDeck ? t('binderTypes.plannedDeck') : isWishlist ? t('binderTypes.planned') : t('binderTypes.collection')}
-                        </span>
-                      </div>
-                      {binder.description && (
-                        <p className="text-xs text-text-muted mt-1 line-clamp-2">{binder.description}</p>
-                      )}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <h3 className="truncate text-body font-medium text-text-primary">{binder.name}</h3>
+                      <span className={`flex items-center gap-1 text-footnote ${typeTone}`}>
+                        <TypeIcon size={11} aria-hidden="true" /><span>{typeLabel}</span>
+                      </span>
                       {isDeck && (
-                        <p className="text-xs text-yellow mt-1">{t(`decks.format${binder.format || 'Casual'}`)} · {binder.target_size || 60} {t('binders.cards')}</p>
+                        <span className="block truncate text-footnote text-text-secondary">{t(`decks.format${binder.format || 'Casual'}`)} · {binder.target_size || 60} {t('binders.cards')}</span>
                       )}
-                      <p className="text-sm text-text-secondary mt-2">
+                      {binder.description && (
+                        <span className="block truncate text-footnote text-text-secondary">{binder.description}</span>
+                      )}
+                      <span className="block text-footnote text-text-secondary">
                         {totalCount} {totalCount === 1 ? t('binders.card') : t('binders.cards')}
-                      </p>
-                      {showUniqueCount && (
-                        <p className="text-xs text-text-muted mt-0.5">
-                          {uniqueCount} {uniqueCount === 1 ? t('binders.uniqueCard') : t('binders.uniqueCards')}
-                        </p>
-                      )}
-                      {!isWishlist && publicProfilesEnabled && (
-                        <div className="mt-2 pt-2 border-t border-border/50" onClick={(e) => e.stopPropagation()}>
-                          {profileIsPublic ? (
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-[11px] text-text-muted flex items-center gap-1">
-                                {binder.is_public ? <Globe size={12} className="text-green" /> : <Lock size={12} />}
-                                {t('binders.sharePublicly')}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => publicToggleMutation.mutate({ id: binder.id, is_public: !binder.is_public, isDeck })}
-                                disabled={publicToggleMutation.isPending}
-                                aria-label={t('binders.sharePublicly')}
-                                aria-pressed={!!binder.is_public}
-                                className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${
-                                  binder.is_public ? 'bg-brand-red' : 'bg-bg-elevated border border-border'
-                                }`}
-                              >
-                                <span
-                                  className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
-                                    binder.is_public ? 'translate-x-4' : 'translate-x-0'
-                                  }`}
-                                />
-                              </button>
-                            </div>
-                          ) : (
-                            <p className="text-[10px] text-text-muted leading-snug">
-                              {t('binders.enablePublicProfileHint')}
-                            </p>
-                          )}
-                          {binder.is_public && profileIsPublic && publicHandle && (
-                            <button
-                              type="button"
-                              onClick={() => copyPublicBinderLink(binder.id, isDeck)}
-                              className="mt-1 flex items-center gap-1 text-[10px] text-text-muted hover:text-text-primary transition-colors"
-                            >
-                              <Copy size={10} /> {t('binders.copyPublicLink')}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={(e) => { e.stopPropagation(); setEditingId(binder.id) }}
-                        className="text-text-muted hover:text-text-primary bg-bg/80 rounded p-1 transition-colors">
-                        <Edit2 size={12} />
-                      </button>
-                      <button onClick={async (e) => {
-                        e.stopPropagation()
-                        const confirmed = await confirmDialog({
-                          title: t('common.delete'),
-                          message: t('binders.deleteConfirm').replace('{name}', binder.name),
-                          confirmLabel: t('common.delete'),
-                          destructive: true,
-                        })
-                        if (confirmed) deleteMutation.mutate(binder.id)
-                      }} className="text-text-muted hover:text-brand-red bg-bg/80 rounded p-1 transition-colors"
-                        aria-label={`${t('common.delete')}: ${binder.name}`}>
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )
-          })}
+                        {showUniqueCount && <> · {uniqueCount} {uniqueCount === 1 ? t('binders.uniqueCard') : t('binders.uniqueCards')}</>}
+                      </span>
+                    </span>
+                    {binder.is_public && !isWishlist && <Globe size={14} className="flex-shrink-0 text-green" aria-hidden="true" />}
+                    <ChevronRight size={18} strokeWidth={2.25} className="flex-shrink-0 text-text-tertiary" aria-hidden="true" />
+                  </Link>
+                  <Menu
+                    label={`${t('binders.actionsLabel')}: ${binder.name}`}
+                    sections={rowMenuSections(binder, isDeck)}
+                    trigger={(
+                      <IconButton
+                        icon={MoreHorizontal}
+                        variant="plain"
+                        size="sm"
+                        label={`${t('binders.actionsLabel')}: ${binder.name}`}
+                        className="mr-2 text-text-secondary"
+                      />
+                    )}
+                  />
+                </div>
+              )
+            })}
+          </ListSection>
         </div>
       )}
+
+      <PageSheet
+        isOpen={creating}
+        onClose={() => setCreating(false)}
+        title={t('binders.createCardList')}
+      >
+        <div className="p-4">
+          <BinderForm onSubmit={(data) => createMutation.mutate(data)} onCancel={() => setCreating(false)} loading={createMutation.isPending} />
+        </div>
+      </PageSheet>
+
+      <PageSheet
+        isOpen={Boolean(editingBinder)}
+        onClose={() => setEditingBinder(null)}
+        title={t('binders.editSheetTitle')}
+      >
+        {editingBinder && (
+          <div className="p-4">
+            <BinderForm
+              key={editingBinder.id}
+              initial={editingBinder}
+              onSubmit={(data) => updateMutation.mutate({ id: editingBinder.id, data })}
+              onCancel={() => setEditingBinder(null)}
+              loading={updateMutation.isPending}
+            />
+          </div>
+        )}
+      </PageSheet>
     </div>
   )
 }
