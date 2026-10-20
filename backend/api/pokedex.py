@@ -6,7 +6,7 @@ from api.auth import get_current_user
 from database import get_db
 from models import User
 from services.display_language import get_tcgdex_display_language
-from services.pokedex import aggregate_pokedex, species_detail
+from services.pokedex import aggregate_pokedex, pokedex_summary, species_detail
 from services.pokedex_forms import FORM_FAMILY_PATTERN, get_entry
 from services.pokedex_images import cache_path, fetch_image
 from services.tcgdex_languages import is_supported_tcgdex_language, normalize_tcgdex_language
@@ -42,6 +42,15 @@ def get_pokedex(
         mode=mode,
         form_family=form_family,
     )
+
+
+@router.get("/summary")
+def get_pokedex_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Caught / total species without building the full list (Home and Profile tiles)."""
+    return pokedex_summary(db, current_user.id)
 
 
 @router.get("/images/{kind}/{entry_id}.png", include_in_schema=False)

@@ -145,6 +145,32 @@ def _catalogue_for_mode(mode: str, available: dict[str, set[str]]) -> list[dict]
     return sorted(catalogue, key=lambda row: (int(row["dex_id"]), row.get("form", "base")))
 
 
+def _owned_by_entry(db: Session, user_id: int, mode: str) -> dict[str, int]:
+    """Owned card count per grouped species or exact form entry across the user's collection."""
+    owned_rows = (
+        db.query(
+            CollectionItem.quantity, Card.name, Card.dex_ids,
+            Card.pokedex_entry_ids, Card.supertype, Card.tcg_card_id,
+        )
+        .join(Card, Card.id == CollectionItem.card_id)
+        .filter(
+            CollectionItem.user_id == user_id,
+            Card.dex_ids.isnot(None), Card.is_custom.is_(False),
+            visible_card_filter(db, user_id, "all"),
+        )
+        .yield_per(1000)
+    )
+    owned: dict[str, int] = {}
+    for quantity, name, dex_ids, stored_entry_ids, supertype, tcg_card_id in owned_rows:
+        keys = [str(value) for value in normalize_dex_ids(dex_ids)] if mode == "grouped" else card_pokedex_entry_ids(
+            name=name, dex_ids=dex_ids, stored_entry_ids=stored_entry_ids,
+            supertype=supertype, tcg_card_id=tcg_card_id,
+        )
+        for key in keys:
+            owned[key] = owned.get(key, 0) + max(int(quantity or 0), 0)
+    return owned
+
+
 def aggregate_pokedex(
     db: Session,
     user_id: int,
@@ -167,27 +193,7 @@ def aggregate_pokedex(
         mode=mode,
     )
 
-    owned_rows = (
-        db.query(
-            CollectionItem.quantity, Card.name, Card.dex_ids,
-            Card.pokedex_entry_ids, Card.supertype, Card.tcg_card_id,
-        )
-        .join(Card, Card.id == CollectionItem.card_id)
-        .filter(
-            CollectionItem.user_id == user_id,
-            Card.dex_ids.isnot(None), Card.is_custom.is_(False),
-            visible_card_filter(db, user_id, "all"),
-        )
-        .yield_per(1000)
-    )
-    owned: dict[str, int] = {}
-    for quantity, name, dex_ids, stored_entry_ids, supertype, tcg_card_id in owned_rows:
-        keys = [str(value) for value in normalize_dex_ids(dex_ids)] if mode == "grouped" else card_pokedex_entry_ids(
-            name=name, dex_ids=dex_ids, stored_entry_ids=stored_entry_ids,
-            supertype=supertype, tcg_card_id=tcg_card_id,
-        )
-        for key in keys:
-            owned[key] = owned.get(key, 0) + max(int(quantity or 0), 0)
+    owned = _owned_by_entry(db, user_id, mode)
 
     catalogue = _catalogue_for_mode(mode, available)
     scoped = [
@@ -235,6 +241,17 @@ def aggregate_pokedex(
     if _include_available_entry_ids:
         result["_available_entry_ids"] = set(available)
     return result
+
+
+def pokedex_summary(db: Session, user_id: int) -> dict:
+    """Grouped-species totals only: the numbers of aggregate_pokedex's default summary.
+
+    Counts caught species from the collection alone, with no availability scan and no entry rows.
+    """
+    owned = _owned_by_entry(db, user_id, "grouped")
+    species = [str(row["dex_id"]) for row in load_pokedex()]
+    caught = sum(1 for key in species if owned.get(key, 0) > 0)
+    return {"total": len(species), "owned": caught, "missing": len(species) - caught}
 
 
 def species_detail(

@@ -13,7 +13,7 @@ from models import Card, CollectionItem, Setting, User
 
 from api.cards import search_cards
 from services.pokemon_api import extract_cardmarket_products, extract_dex_ids, infer_dex_ids_from_name, parse_card_for_db
-from services.pokedex import aggregate_pokedex, load_pokedex, normalize_dex_ids, species_detail
+from services.pokedex import aggregate_pokedex, load_pokedex, normalize_dex_ids, pokedex_summary, species_detail
 from services.pokedex_forms import (
     classify_pokedex_entries,
     form_catalogue_by_key,
@@ -269,6 +269,36 @@ class PokedexAggregationTests(unittest.TestCase):
         self.db.commit()
         removed = aggregate_pokedex(self.db, self.user.id, language="en", generation=1)
         self.assertFalse(self._entry(removed, 94)["owned"])
+
+    def test_summary_matches_the_full_list_summary(self):
+        self.db.add_all([
+            Card(id="a-1_en", tcg_card_id="a-1", name="Gengar", lang="en", is_custom=False, dex_ids=[94]),
+            Card(id="a-2_en", tcg_card_id="a-2", name="Friends", lang="en", is_custom=False, dex_ids=[25, 133]),
+            Card(id="a-3_en", tcg_card_id="a-3", name="Unowned", lang="en", is_custom=False, dex_ids=[150]),
+        ])
+        self.db.commit()
+        self.db.add_all([
+            CollectionItem(card_id="a-1_en", user_id=self.user.id, quantity=3, lang="en"),
+            CollectionItem(card_id="a-2_en", user_id=self.user.id, quantity=1, lang="en"),
+            CollectionItem(card_id="a-3_en", user_id=self.user.id, quantity=0, lang="en"),
+        ])
+        self.db.commit()
+
+        summary = pokedex_summary(self.db, self.user.id)
+        full = aggregate_pokedex(self.db, self.user.id, language="en")["summary"]
+        self.assertEqual(summary, {"total": full["total"], "owned": full["owned"], "missing": full["missing"]})
+        self.assertEqual(summary["total"], 1025)
+        self.assertEqual(summary["owned"], 3)
+
+    def test_summary_is_per_user_and_empty_for_a_new_collection(self):
+        other = User(username="brock", hashed_password="x", role="user", is_active=True)
+        self.db.add(other)
+        self.db.add(Card(id="b-1_en", tcg_card_id="b-1", name="Gengar", lang="en", is_custom=False, dex_ids=[94]))
+        self.db.commit()
+        self.db.add(CollectionItem(card_id="b-1_en", user_id=self.user.id, quantity=1, lang="en"))
+        self.db.commit()
+        self.assertEqual(pokedex_summary(self.db, other.id), {"total": 1025, "owned": 0, "missing": 1025})
+        self.assertEqual(pokedex_summary(self.db, self.user.id)["owned"], 1)
 
     def test_multispecies_card_counts_for_each_species(self):
         card = Card(
