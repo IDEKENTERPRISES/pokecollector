@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
-import { X, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Hash, PenLine, SlidersHorizontal, Camera, CheckSquare, Plus, ScanLine, Tags, Layers, ListOrdered } from 'lucide-react'
+import { X, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Hash, PenLine, SlidersHorizontal, CheckSquare, Plus, ScanLine, Tags, Layers, ListOrdered } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { searchCards, getSets, getCustomCards, bulkAddToCollection, getScanJobs, getPokedex } from '../api/client'
 import { CardItem, CustomCardModal, CardModal } from '../components/CardItem'
@@ -35,7 +35,6 @@ import LargeTitle from '../components/ios/LargeTitle'
 import SearchField from '../components/ios/SearchField'
 import PageSheet from '../components/ios/PageSheet'
 import Menu from '../components/ios/Menu'
-import IconButton from '../components/ios/IconButton'
 import PokeBall from '../components/ios/PokeBall'
 import TypeChip from '../components/ios/TypeChip'
 import EnergyIcon from '../components/ios/EnergyIcon'
@@ -604,7 +603,6 @@ export default function CardSearch() {
   const navBar = useMemo(() => ({
     trailing: (
       <>
-        <IconButton icon={Camera} label={t('scanner.title')} onClick={openScanner} />
         <Menu
           label={t('ios.more')}
           sections={[
@@ -625,7 +623,7 @@ export default function CardSearch() {
     ),
   // The handlers close over state that is already in this list or is stable per render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [hasQuery, hasUrlSearchState, openScanner, scanAttention, selectMode, t])
+  }), [hasQuery, hasUrlSearchState, scanAttention, selectMode, t])
   useNavBar(navBar)
 
   const submitSearch = (value) => updateSearchParams({ q: value })

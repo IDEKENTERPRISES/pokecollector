@@ -32,7 +32,7 @@ export const ROUTES = Object.freeze([
   { path: '/pokedex', section: 'search', kind: 'pushed', parent: '/search', titleKey: 'nav.pokedex', offline: false },
   { path: '/pokedex/:dexId', section: 'search', kind: 'pushed', parent: '/pokedex', titleKey: 'nav.pokedex', offline: false },
   { path: '/scans', section: 'scan', kind: 'pushed', backToPrevious: true, titleKey: 'scanner.queueTitle', offline: false },
-  { path: '/scans/:jobId', section: 'scan', kind: 'pushed', parent: '/scans', titleKey: 'scanner.queueTitle', offline: false, ownBack: true },
+  { path: '/scans/:jobId', section: 'scan', kind: 'pushed', parent: '/scans', titleKey: 'scanner.queueTitle', offline: false },
   { path: '/profile', section: 'profile', kind: 'root', titleKey: 'nav.profile', offline: true },
   { path: '/analytics', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.analytics', offline: false },
   { path: '/products', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.products', offline: false },

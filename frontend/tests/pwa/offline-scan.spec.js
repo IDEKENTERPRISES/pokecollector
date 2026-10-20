@@ -32,7 +32,9 @@ async function mockApi(context, state) {
 
 async function openScanner(page) {
   await page.goto('/search')
-  await page.getByTitle('Scan card').click()
+  // The tab bar's Scan circle (the sidebar's "Scan cards" button from 1024 px). Without a camera the
+  // review sheet opens on its own with the photo pickers.
+  await page.locator('[data-testid="scan-button"]:visible, [data-testid="sidebar-nav"] button:has-text("Scan cards")').first().click()
   await expect(page.getByText('0/50 Photos')).toBeVisible()
 }
 
