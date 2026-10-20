@@ -23,6 +23,9 @@ RETRY_ROUNDS = 3
 RETRY_BASE_DELAY_SECONDS = 2.0
 RETRY_MAX_DELAY_SECONDS = 30.0
 RETRY_AFTER_CAP_SECONDS = 60.0
+# The retry phase never outlasts this, nor keeps hammering after this many failures in a row.
+RETRY_PHASE_BUDGET_SECONDS = 300.0
+RETRY_CIRCUIT_BREAKER_FAILURES = 5
 
 
 class TransientSyncError(Exception):
@@ -71,37 +74,78 @@ class RetryQueue:
         self.entries.append(_Entry(kind, key, attempt, retry_after_seconds(exc) if exc else 0.0))
         self.queued += 1
 
-    def run(self, *, rounds: int = RETRY_ROUNDS, sleep: Callable[[float], None] | None = None) -> dict[str, int]:
+    def run(
+        self,
+        *,
+        rounds: int = RETRY_ROUNDS,
+        sleep: Callable[[float], None] | None = None,
+        clock: Callable[[], float] | None = None,
+        budget_seconds: float = RETRY_PHASE_BUDGET_SECONDS,
+        max_consecutive_failures: int = RETRY_CIRCUIT_BREAKER_FAILURES,
+    ) -> dict[str, int]:
+        """Retry the queue, bounded in wall time as well as in rounds.
+
+        The phase stops early, leaving the rest as still failing, when `budget_seconds` have
+        passed or `max_consecutive_failures` attempts in a row failed transiently (TCGdex is
+        still down). Metadata entries have already given their claim back, so a stopped entry is
+        simply tried again by the next sync.
+        """
         sleep = sleep or time.sleep
+        clock = clock or time.monotonic
+        started = clock()
+        consecutive = 0
+        stop_reason = ""
         pending = self.entries
         self.entries = []
         for round_number in range(1, rounds + 1):
-            if not pending:
+            if not pending or stop_reason:
                 break
-            delay = min(RETRY_BASE_DELAY_SECONDS * 2 ** (round_number - 1), RETRY_MAX_DELAY_SECONDS)
-            sleep(max(delay, max(entry.wait for entry in pending)))
+            delay = max(
+                min(RETRY_BASE_DELAY_SECONDS * 2 ** (round_number - 1), RETRY_MAX_DELAY_SECONDS),
+                max(entry.wait for entry in pending),
+            )
+            if clock() - started + delay >= budget_seconds:
+                stop_reason = "time budget"
+                break
+            sleep(delay)
             self.rounds_run = round_number
             sync_progress.update("retrying", 0, len(pending))
             still: list[_Entry] = []
             recovered = 0
-            for index, entry in enumerate(pending, start=1):
+            attempted = 0
+            for index, entry in enumerate(pending):
+                if clock() - started >= budget_seconds:
+                    stop_reason = "time budget"
+                elif consecutive >= max_consecutive_failures:
+                    stop_reason = "TCGdex still failing"
+                if stop_reason:
+                    still.extend(pending[index:])
+                    break
+                attempted += 1
                 try:
                     entry.attempt()
                     recovered += 1
+                    consecutive = 0
                 except Exception as exc:
                     if is_transient_error(exc):
+                        consecutive += 1
                         entry.wait = retry_after_seconds(exc)
                         still.append(entry)
                     else:
+                        consecutive = 0
                         self.permanent += 1
                         logger.warning("Retry of %s %s failed permanently: %s", entry.kind, entry.key, exc)
-                sync_progress.advance(index)
+                sync_progress.advance(index + 1)
             self.recovered += recovered
             logger.info(
                 "Sync retry round %s/%s: retried=%s recovered=%s still_failing=%s",
-                round_number, rounds, len(pending), recovered, len(still),
+                round_number, rounds, attempted, recovered, len(still),
             )
             pending = still
+        if stop_reason:
+            logger.warning(
+                "Sync retries stopped early (%s): %s lookups left for the next sync", stop_reason, len(pending),
+            )
         self.entries = pending
         return self.stats()
 

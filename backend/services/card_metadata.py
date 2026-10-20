@@ -245,7 +245,11 @@ def enrich_cards_metadata(
                 # locked out for the cooldown.
                 result["transient"].append((card_id, exc))
                 try:
-                    db.query(Card).filter(Card.id == card_id).update(
+                    # Only if the claim is still ours: never overwrite a concurrent worker's.
+                    db.query(Card).filter(
+                        Card.id == card_id,
+                        Card.last_metadata_enrichment_attempt_at == attempted_at,
+                    ).update(
                         {Card.last_metadata_enrichment_attempt_at: observed_attempt_at},
                         synchronize_session=False,
                     )

@@ -110,6 +110,65 @@ class RetryQueueTests(unittest.TestCase):
 
         self.assertEqual(sleeps, [20.0])
 
+    def test_circuit_breaker_stops_after_consecutive_transient_failures(self):
+        queue = RetryQueue()
+        attempts = []
+
+        def down():
+            attempts.append(1)
+            raise httpx.ReadTimeout("down")
+
+        for n in range(20):
+            queue.add("card", str(n), down)
+        sleeps = []
+        stats = queue.run(sleep=sleeps.append)
+
+        self.assertEqual(len(attempts), 5)  # not 20 x 3 rounds
+        self.assertEqual(stats["still_failing"], 20)
+        self.assertEqual(stats["recovered"], 0)
+        self.assertEqual(len(sleeps), 1)  # no further rounds after the stop
+
+    def test_a_success_resets_the_failure_streak(self):
+        queue = RetryQueue()
+        outcomes = iter([True, True, True, True, False, True, True, True, True, False])
+
+        def attempt():
+            if next(outcomes):
+                raise httpx.ReadTimeout("down")
+
+        for n in range(10):
+            queue.add("card", str(n), attempt)
+        stats = queue.run(rounds=1, sleep=lambda _s: None)
+
+        self.assertEqual(stats["recovered"], 2)  # four failures, a success, four more, a success
+
+    def test_time_budget_stops_between_attempts(self):
+        now = [0.0]
+        queue = RetryQueue()
+        attempts = []
+
+        def slow():
+            attempts.append(1)
+            now[0] += 100.0  # each attempt takes 100 s on the fake clock
+            raise httpx.ReadTimeout("slow")
+
+        for n in range(10):
+            queue.add("card", str(n), slow)
+        stats = queue.run(sleep=lambda _s: None, clock=lambda: now[0], budget_seconds=250, max_consecutive_failures=99)
+
+        self.assertEqual(len(attempts), 3)  # 0, 100, 200 s; the next check sees 300 s
+        self.assertEqual(stats["still_failing"], 10)
+
+    def test_time_budget_counts_the_backoff_sleep(self):
+        now = [0.0]
+        queue = RetryQueue()
+        queue.add("card", "x", lambda: None)
+        sleeps = []
+        stats = queue.run(sleep=sleeps.append, clock=lambda: now[0], budget_seconds=1)
+
+        self.assertEqual(sleeps, [])  # the 2 s pause alone would break the 1 s budget
+        self.assertEqual(stats["still_failing"], 1)
+
     def test_empty_queue_does_not_sleep(self):
         sleeps = []
         stats = RetryQueue().run(sleep=sleeps.append)
@@ -145,6 +204,24 @@ class MetadataTransientTests(unittest.TestCase):
             again = enrich_cards_metadata(self.db, [self.card], limit=1)
         self.assertEqual(again["attempted"], 1)
         get_card.assert_called_once()
+
+    def test_give_back_never_overwrites_a_concurrent_claim(self):
+        concurrent = datetime.datetime(2030, 1, 1)
+
+        def fail_after_another_worker_claims(*_args, **_kwargs):
+            # Another worker re-claims the card while our request is in flight.
+            other = sessionmaker(bind=self.db.get_bind())()
+            other.query(Card).filter(Card.id == "B2-190_en").update({Card.last_metadata_enrichment_attempt_at: concurrent})
+            other.commit()
+            other.close()
+            raise _status_error(503)
+
+        with patch("services.card_metadata.pokemon_api.get_card", side_effect=fail_after_another_worker_claims):
+            result = enrich_cards_metadata(self.db, [self.card], limit=1)
+
+        self.db.refresh(self.card)
+        self.assertEqual(len(result["transient"]), 1)
+        self.assertEqual(self.card.last_metadata_enrichment_attempt_at, concurrent)
 
     def test_permanent_failure_keeps_the_cooldown(self):
         with patch("services.card_metadata.pokemon_api.get_card", side_effect=_status_error(400)):

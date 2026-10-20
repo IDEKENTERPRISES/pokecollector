@@ -35,8 +35,12 @@ export function progressCounts(progress, t) {
 export function retryNote(sync, t) {
   const retry = sync?.retry
   if (!retry?.retried) return ''
-  if (retry.still_failing > 0) return t('settings.syncStillFailing').replace('{count}', retry.still_failing)
-  if (retry.recovered > 0) return t('settings.syncRetriedOk').replace('{count}', retry.recovered)
+  if (retry.still_failing > 0) {
+    return t(retry.still_failing === 1 ? 'settings.syncStillFailingOne' : 'settings.syncStillFailing').replace('{count}', retry.still_failing)
+  }
+  if (retry.recovered > 0) {
+    return t(retry.recovered === 1 ? 'settings.syncRetriedOkOne' : 'settings.syncRetriedOk').replace('{count}', retry.recovered)
+  }
   return ''
 }
 

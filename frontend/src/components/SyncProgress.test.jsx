@@ -9,6 +9,8 @@ const strings = {
   'settings.syncStageRetrying': 'Retrying failed lookups',
   'settings.syncStillFailing': '{count} lookups still failed; they will be retried on the next sync.',
   'settings.syncRetriedOk': '{count} failed lookups were retried and went through.',
+  'settings.syncStillFailingOne': '1 lookup still failed. It will be retried on the next sync.',
+  'settings.syncRetriedOkOne': '1 failed lookup was retried and went through.',
   'settings.syncing': 'Syncing...',
 }
 const t = key => strings[key] ?? key
@@ -35,6 +37,8 @@ describe('sync progress helpers', () => {
   it('words the retry result: still failing wins, then recovered, else nothing', () => {
     expect(retryNote({ retry: { retried: 5, recovered: 3, still_failing: 2 } }, t)).toContain('2 lookups still failed')
     expect(retryNote({ retry: { retried: 5, recovered: 5, still_failing: 0 } }, t)).toContain('5 failed lookups')
+    expect(retryNote({ retry: { retried: 1, recovered: 0, still_failing: 1 } }, t)).toBe('1 lookup still failed. It will be retried on the next sync.')
+    expect(retryNote({ retry: { retried: 1, recovered: 1, still_failing: 0 } }, t)).toBe('1 failed lookup was retried and went through.')
     expect(retryNote({ retry: { retried: 0 } }, t)).toBe('')
     expect(retryNote({ retry: null }, t)).toBe('')
     expect(retryNote(null, t)).toBe('')
