@@ -1808,6 +1808,7 @@ const en = {
     queueSubtitle: 'Background scans waiting to finish or be reviewed',
     processed: 'processed',
     needReview: 'need review',
+    needsReview: 'needs review',
     failed: 'failed',
     processing: 'Processing',
     ready: 'ready',
