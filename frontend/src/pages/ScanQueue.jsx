@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Clock3, Loader2, ScanLine, Trash2 } from 'lucide-react'
+import { Clock3, Loader2, ScanLine, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import {
   deleteScanJob,
@@ -15,8 +15,9 @@ import {
 import { ScanAddModal } from '../components/CardScanner'
 import { CardZoomModal, ScanItemPanel, useScanItemPhoto } from '../components/ScanReview'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
-import Modal from '../components/ui/Modal'
+import { useScanner } from '../contexts/ScannerContext'
 import { useSettings } from '../contexts/SettingsContext'
+import { useNavBar } from '../navigation/useNavBar'
 import {
   SCAN_JOBS_QUERY_KEY,
   hasActiveScanJobs,
@@ -187,10 +188,7 @@ function JobDetail({ jobId, onObscuredChange }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <button type="button" onClick={() => navigate('/scans')}
-          className="btn-ghost px-3 py-1.5 text-sm">
-          <ArrowLeft size={16} /> {t('scanner.backToScans')}
-        </button>
+        <span />
         <button type="button" onClick={discardJob} disabled={deleteMutation.isPending}
           className="btn-ghost h-9 w-9 border-brand-red/30 p-0 text-brand-red hover:bg-brand-red/10"
           aria-label={t('scanner.discardJob')} title={t('scanner.discardJob')}>
@@ -316,7 +314,7 @@ export default function ScanQueue() {
   const { t } = useSettings()
   const navigate = useNavigate()
   const { jobId } = useParams()
-  const [isNestedOpen, setIsNestedOpen] = useState(false)
+  const [, setIsNestedOpen] = useState(false)
 
   const { data, isLoading } = useQuery({
     queryKey: SCAN_JOBS_QUERY_KEY,
@@ -324,12 +322,15 @@ export default function ScanQueue() {
     refetchInterval: query => hasActiveScanJobs(query.state.data?.jobs || []) ? 3000 : false,
   })
 
-  const closeScans = () => navigate('/search')
+  const { openScanner } = useScanner()
+  const navBarOptions = useMemo(() => ({ title: t('scanner.queueTitle'), largeTitle: !jobId }), [t, jobId])
+  useNavBar(navBarOptions)
+
   const jobs = data?.jobs || []
   const retryNow = useRetryClock(jobs.some(job => Number(job.retrying || 0) > 0))
   return (
-    <Modal isOpen onClose={closeScans} title={t('scanner.queueTitle')} size="xl" isObscured={isNestedOpen}>
-      <div className="space-y-4 p-4 sm:p-5">
+    <div>
+      <div className="space-y-4 px-4 pb-6 pt-2">
         {jobId ? (
           <JobDetail jobId={Number(jobId)} onObscuredChange={setIsNestedOpen} />
         ) : (
@@ -342,7 +343,7 @@ export default function ScanQueue() {
               <div className="card space-y-3 py-12 text-center">
                 <ScanLine size={28} className="mx-auto text-text-muted opacity-50" />
                 <p className="text-sm text-text-muted">{t('scanner.noScans')}</p>
-                <button type="button" onClick={closeScans} className="btn-primary mx-auto justify-center">
+                <button type="button" onClick={openScanner} className="btn-primary mx-auto justify-center">
                   {t('scanner.goScan')}
                 </button>
               </div>
@@ -354,6 +355,6 @@ export default function ScanQueue() {
           </>
         )}
       </div>
-    </Modal>
+    </div>
   )
 }
