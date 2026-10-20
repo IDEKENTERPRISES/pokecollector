@@ -307,6 +307,11 @@ export function SettingsProvider({ children }) {
     return maskValue(`${currencySymbol}${converted.toFixed(2)}`, valuesHidden)
   }, [exchangeRate, currencySymbol, valuesHidden])
 
+  const formatCompactPrice = useCallback((eurAmount) => {
+    if (eurAmount == null || isNaN(Number(eurAmount))) return '-'
+    return maskValue(compactAmount(Number(eurAmount) * exchangeRate, currencySymbol), valuesHidden)
+  }, [exchangeRate, currencySymbol, valuesHidden])
+
   const formatUsdPrice = useCallback((usdAmount) => {
     if (usdAmount == null || isNaN(Number(usdAmount))) return '-'
     // No USD rate for the display currency: show the original USD amount.
@@ -330,6 +335,7 @@ export function SettingsProvider({ children }) {
       exchangeRate,
       exchangeRateReady: moneyExchangeRateReady,
       formatPrice,
+      formatCompactPrice,
       formatUsdPrice,
     }}>
       {children}
@@ -338,6 +344,21 @@ export function SettingsProvider({ children }) {
 }
 
 export { useHideValues }
+
+/**
+ * Compact money for tiles and summaries: 1,000 and over becomes £1k, £1.1k … £12.5k, then £1.2M
+ * (one decimal, dropped when it is .0, the sign kept). Below 1,000 the full amount is shown.
+ * `amount` is already in the display currency.
+ */
+export function compactAmount(amount, symbol) {
+  const sign = amount < 0 ? '-' : ''
+  const abs = Math.abs(amount)
+  if (abs < 1000) return `${sign}${symbol}${abs.toFixed(2)}`
+  const trim = value => String(value).replace(/.0$/, '')
+  const thousands = Math.round(abs / 100) / 10
+  if (thousands < 1000) return `${sign}${symbol}${trim(thousands.toFixed(1))}k`
+  return `${sign}${symbol}${trim((Math.round(abs / 100000) / 10).toFixed(1))}M`
+}
 
 export function useSettings() {
   const ctx = useContext(SettingsContext)
