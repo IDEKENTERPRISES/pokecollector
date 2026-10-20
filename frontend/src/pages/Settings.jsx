@@ -16,6 +16,7 @@ import api from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../hooks/useTheme'
 import { useSettings } from '../contexts/SettingsContext'
+import { useSetsView } from '../hooks/useSetsView'
 import { useConfirmDialog } from '../contexts/ConfirmDialogContext'
 import Modal from '../components/ui/Modal'
 import PasswordPromptDialog from '../components/ui/PasswordPromptDialog'
@@ -473,7 +474,8 @@ export default function Settings() {
   const isAdmin = user?.role === 'admin'
   const activeSection = visibleSettingsSections({ isAdmin }).some(item => item.key === section) ? section : null
   const showGeneral = GENERAL_SECTIONS.includes(activeSection)
-  const setsInSeries = (settings.sets_view || 'series') !== 'sets'
+  const { view: setsView, setView: setSetsView } = useSetsView()
+  const setsInSeries = setsView !== 'sets'
 
   const [backupOptions, setBackupOptions] = useState(['full'])
   const [debugModeEnabled, setDebugModeEnabled] = useState(false)
@@ -746,7 +748,7 @@ export default function Settings() {
 
   const handleSetsViewChange = async (inSeries) => {
     try {
-      await updateSettings({ sets_view: inSeries ? 'series' : 'sets' })
+      await setSetsView(inSeries ? 'series' : 'sets')
       toast.success(t('settings.saved'))
     } catch {
       toast.error(t('settings.saveFailed'))
