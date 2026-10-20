@@ -168,6 +168,24 @@ test.describe('shell on a phone', () => {
     await page.waitForURL('**/login')
   })
 
+  test('the nav bar sticks to the top while a long pushed page scrolls', async ({ page }) => {
+    await installApi(page)
+    await page.goto('/settings')
+    await expect(page.getByTestId('settings-section-account')).toBeVisible()
+    await page.evaluate(() => {
+      const filler = document.createElement('div')
+      filler.style.height = '3000px'
+      document.querySelector('main').appendChild(filler)
+      window.scrollTo(0, 800)
+    })
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(400)
+    const top = await page.getByTestId('nav-bar').evaluate(el => el.getBoundingClientRect().top)
+    expect(Math.round(top)).toBe(0)
+    const back = await page.getByTestId('nav-back').boundingBox()
+    expect(back.y).toBeGreaterThanOrEqual(0)
+    expect(back.y + back.height).toBeLessThanOrEqual(100)
+  })
+
   test('the shell has no second <header> and one <main>', async ({ page }) => {
     await installApi(page)
     await page.goto('/collection')

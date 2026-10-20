@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
+import { createContext, useContext, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 
 // The nav bar's per-page options (design doc §6.5). The store is an external one so a page that
 // calls useNavBar on every render updates the bar without re-rendering itself.
@@ -59,8 +59,8 @@ export function useNavBar(options = {}) {
   if (owner.current === null) owner.current = Symbol('navbar')
   const registered = useMemo(() => ({ ...options, owner: owner.current }), [options])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     store?.setOptions(registered)
   })
-  useEffect(() => () => store?.resetOptions(owner.current), [store])
+  useLayoutEffect(() => () => store?.resetOptions(owner.current), [store])
 }

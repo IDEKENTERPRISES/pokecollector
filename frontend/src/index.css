@@ -163,7 +163,7 @@ input:-webkit-autofill:focus {
        vertical opaque-background fix above targets shows up on the right
        edge too. Removing the ability to scroll removes the bounce region
        entirely, rather than just painting over it. */
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   body {
