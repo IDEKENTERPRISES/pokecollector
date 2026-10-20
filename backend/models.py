@@ -690,6 +690,7 @@ class SyncLog(Base):
     status = Column(String, default="running")  # running/success/error
     error_message = Column(Text)
     sync_type = Column(String, nullable=True, default="full")  # "full" or "price"
+    retry_summary = Column(Text, nullable=True)  # JSON {retried, recovered, still_failing, permanent}
 
 
 class PortfolioSnapshot(Base):

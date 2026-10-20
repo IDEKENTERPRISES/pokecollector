@@ -12,7 +12,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from models import Card, Set, CollectionItem, WishlistItem, BinderCard, PriceHistory, SyncLog, PortfolioSnapshot, CustomCardMatch, User, UserSetting
 from services import pokemon_api, push, telegram
 from services.card_fallbacks import apply_cross_language_fallbacks, build_missing_language_cards_for_set
-from services.card_metadata import enrich_missing_card_metadata
+from services.card_metadata import enrich_cards_metadata, enrich_missing_card_metadata
 from services.card_numbers import candidate_card_ids, number_matches_candidate
 from services.card_upsert import upsert_card
 from services.card_visibility import card_pair_filter, get_configured_sync_languages, get_pinned_set_language_pairs, sync_set_filter
@@ -20,7 +20,9 @@ from services.digital_sets import digital_sets_enabled, refresh_digital_catalogu
 from services.card_values import effective_market_price, normalize_price_field
 from services.portfolio_valuation import calculate_portfolio_valuation, portfolio_snapshot_fields
 from services.price_utils import PRICE_FIELDS, has_valid_price
+from services.sync_retry import RetryQueue, TransientSyncError, is_transient_error
 from services.tcgdex_languages import with_lang_suffix
+from services import sync_progress
 
 logger = logging.getLogger(__name__)
 
@@ -279,6 +281,74 @@ def _price_sync_plan(
     }
 
 
+def _fetch_and_store_price_card(db: Session, card_id: str, label: str):
+    """Fetch one card's TCGdex data and store it. Returns the saved Card, or None without data.
+
+    Raises on any lookup or save failure so the caller can tell transient ones from permanent.
+    """
+    attempted_at = datetime.datetime.utcnow()
+    tcg_id, card_lang = pokemon_api.strip_lang_suffix(card_id)
+    existing_card = db.query(Card).filter(Card.id == card_id).first()
+    logger.debug(
+        "%s card start: card_id=%s tcg_id=%s lang=%s existing_prices=%s existing_price_source_lang=%s",
+        label,
+        card_id,
+        tcg_id,
+        card_lang,
+        _price_debug_snapshot(existing_card),
+        getattr(existing_card, "price_source_lang", None),
+    )
+    card_data = pokemon_api.get_card(tcg_id, lang=card_lang)
+    if not card_data:
+        logger.debug("%s card no TCGdex data: card_id=%s tcg_id=%s lang=%s", label, card_id, tcg_id, card_lang)
+        if existing_card:
+            existing_card.last_price_sync_attempt_at = attempted_at
+        return None
+
+    parsed = pokemon_api.parse_card_for_db(card_data, lang=card_lang)
+    parsed = apply_cross_language_fallbacks(db, parsed)
+    parsed = _mark_price_sync_attempt(parsed, attempted_at)
+    # Ensure set exists (check by tcg_set_id since set IDs are now composite)
+    if parsed.get("set_id"):
+        set_exists = db.query(Set).filter(
+            (Set.tcg_set_id == parsed["set_id"]) | (Set.id == parsed["set_id"])
+        ).first()
+        if not set_exists:
+            logger.debug(
+                "%s card set missing locally, clearing set_id: card_id=%s parsed_set_id=%s",
+                label,
+                card_id,
+                parsed["set_id"],
+            )
+            parsed["set_id"] = None
+    card = upsert_card(db, parsed)
+    logger.debug(
+        "%s card saved: requested_card_id=%s saved_card_id=%s saved_prices=%s saved_price_source_lang=%s",
+        label,
+        card_id,
+        card.id,
+        _price_debug_snapshot(card),
+        getattr(card, "price_source_lang", None),
+    )
+    return card
+
+
+def _retry_card_metadata(db: Session, card_id: str, updated_card_ids: list) -> None:
+    """Redo one metadata lookup that failed transiently. Raises if it fails that way again."""
+    card = db.query(Card).filter(Card.id == card_id).first()
+    if card is None:
+        return
+    result = enrich_cards_metadata(db, [card], limit=1, force=True, ignore_cooldown=True)
+    if result["transient"]:
+        raise TransientSyncError(f"metadata lookup for {card_id} still failing")
+    updated_card_ids.extend(result["ids"])
+
+
+def _retry_summary_json(stats: dict) -> str | None:
+    import json
+    return json.dumps(stats) if stats.get("retried") else None
+
+
 def _mark_price_sync_attempt(card_data: dict, attempted_at: datetime.datetime) -> dict:
     """Stamp parsed card data with price-sync attempt/success metadata."""
     card_data["last_price_sync_attempt_at"] = attempted_at
@@ -389,6 +459,8 @@ def _sync_set_card_catalogue(
     *,
     card_list_cache: dict[tuple[str, str], list[dict]],
     complete_set_refresh_limit: int = COMPLETE_SET_CARD_REFRESH_LIMIT,
+    retry_queue: RetryQueue | None = None,
+    raise_transient: bool = False,
 ) -> dict[str, int]:
     """Refresh incomplete/fallback set card lists plus a bounded complete-set batch."""
     result = {
@@ -398,7 +470,8 @@ def _sync_set_card_catalogue(
     }
     complete_refresh_remaining = max(0, complete_set_refresh_limit)
 
-    for set_obj in sets_to_sync:
+    for set_index, set_obj in enumerate(sets_to_sync, start=1):
+        sync_progress.advance(set_index - 1)
         tcg_id = set_obj.tcg_set_id or set_obj.id
         set_lang = set_obj.lang or "en"
         set_log_id = set_obj.id
@@ -495,6 +568,17 @@ def _sync_set_card_catalogue(
                 set_log_id,
                 exc,
             )
+            if raise_transient and is_transient_error(exc):
+                raise
+            if retry_queue is not None and is_transient_error(exc):
+                retry_queue.add(
+                    "set-cards",
+                    set_log_id,
+                    lambda set_obj=set_obj: _sync_set_card_catalogue(
+                        db, [set_obj], card_list_cache={}, complete_set_refresh_limit=1, raise_transient=True,
+                    ),
+                    exc,
+                )
             try:
                 fallback_cards = build_missing_language_cards_for_set(
                     db,
@@ -811,11 +895,15 @@ def _perform_full_sync_locked(db: Session) -> dict:
     log = SyncLog(started_at=datetime.datetime.utcnow(), status="running", sync_type="full")
     db.add(log)
     db.commit()
+    sync_progress.start("full")
 
     cards_updated = 0
     sets_updated = 0
     updated_card_ids = []
     price_history_cards = []
+    # Lookups that failed for a transient reason; retried once the rest is done.
+    retry_queue = RetryQueue()
+    retry_stats: dict = {}
 
     try:
         # 1. Sync all sets first
@@ -831,6 +919,7 @@ def _perform_full_sync_locked(db: Session) -> dict:
             )
         pinned_set_pairs = get_pinned_set_language_pairs(db)
         logger.info("Syncing sets for languages: %s", ", ".join(sync_languages))
+        sync_progress.update("sets")
         sets_data = pokemon_api.get_all_sets(languages=sync_languages, include_digital=include_digital)
         set_card_list_cache = _build_set_card_list_cache(sets_data)
         parsed_sets, duplicate_sets = _parse_unique_sync_sets(sets_data)
@@ -866,19 +955,26 @@ def _perform_full_sync_locked(db: Session) -> dict:
         ).all()
         if sets_needing_detail:
             logger.info(f"Fetching detail for {len(sets_needing_detail)} sets missing release_date...")
-            for s in sets_needing_detail:
+            def apply_set_detail(s):
+                # Use tcg_set_id for the TCGdex API call (not the composite DB key)
+                tcg_id = s.tcg_set_id or s.id
+                set_lang = s.lang or "en"
+                detail = pokemon_api.get_set_detail(tcg_id, lang=set_lang)
+                if detail:
+                    parsed = pokemon_api.parse_set_for_db(detail)
+                    for key, value in parsed.items():
+                        if key not in ("id", "tcg_set_id") and value is not None:
+                            setattr(s, key, value)
+
+            sync_progress.update("sets", 0, len(sets_needing_detail))
+            for index, s in enumerate(sets_needing_detail, start=1):
+                sync_progress.advance(index - 1)
                 try:
-                    # Use tcg_set_id for the TCGdex API call (not the composite DB key)
-                    tcg_id = s.tcg_set_id or s.id
-                    set_lang = s.lang or "en"
-                    detail = pokemon_api.get_set_detail(tcg_id, lang=set_lang)
-                    if detail:
-                        parsed = pokemon_api.parse_set_for_db(detail)
-                        for key, value in parsed.items():
-                            if key not in ("id", "tcg_set_id") and value is not None:
-                                setattr(s, key, value)
+                    apply_set_detail(s)
                 except Exception as e:
                     logger.warning(f"Failed to fetch detail for set {s.id}: {e}")
+                    if is_transient_error(e):
+                        retry_queue.add("set-detail", s.id, lambda s=s: apply_set_detail(s), e)
             db.commit()
             logger.info("Set detail enrichment complete")
 
@@ -892,10 +988,12 @@ def _perform_full_sync_locked(db: Session) -> dict:
             len(sets_to_sync),
             len(pinned_set_pairs),
         )
+        sync_progress.update("cards", 0, len(sets_to_sync))
         catalogue_result = _sync_set_card_catalogue(
             db,
             sets_to_sync,
             card_list_cache=set_card_list_cache,
+            retry_queue=retry_queue,
         )
         logger.info(
             "Full card catalogue sync complete: refreshed %s set card lists "
@@ -909,7 +1007,19 @@ def _perform_full_sync_locked(db: Session) -> dict:
         # batch with full card detail so global search filters can work on
         # unowned catalogue cards without making every full sync unbounded.
         metadata_limit = _metadata_enrichment_limit(db)
-        metadata_result = enrich_missing_card_metadata(db, limit=metadata_limit)
+        sync_progress.update("metadata", 0, metadata_limit)
+        metadata_result = enrich_missing_card_metadata(
+            db,
+            limit=metadata_limit,
+            on_progress=lambda done, total: sync_progress.update("metadata", done, total),
+        )
+        for transient_card_id, transient_exc in metadata_result.get("transient", []):
+            retry_queue.add(
+                "metadata",
+                transient_card_id,
+                lambda cid=transient_card_id: _retry_card_metadata(db, cid, updated_card_ids),
+                transient_exc,
+            )
         if metadata_result["attempted"]:
             logger.info(
                 "Full sync metadata enrichment: attempted=%s updated=%s missing=%s failed=%s deferred=%s limit=%s",
@@ -929,6 +1039,15 @@ def _perform_full_sync_locked(db: Session) -> dict:
         # skipping cards when the per-run cap applies.
         price_plan = _price_sync_plan(db, force=True, include_pinned_sets=True)
         selected_ids = price_plan["ids"]
+
+        def apply_price_retry(card_id):
+            nonlocal cards_updated
+            card = _fetch_and_store_price_card(db, card_id, "Full sync price")
+            if card is not None:
+                price_history_cards.append(card)
+                updated_card_ids.append(card_id)
+                cards_updated += 1
+        sync_progress.update("prices", 0, len(selected_ids))
         skipped_count = price_plan["deferred"]
         logger.info(
             "Full sync: updating prices for %s of %s collection/wishlist/binder/pinned-set cards "
@@ -947,67 +1066,22 @@ def _perform_full_sync_locked(db: Session) -> dict:
         if skipped_count:
             logger.debug("Full sync deferred price ids after cap: %s", price_plan["deferred_ids"])
 
-        for card_id in selected_ids:
+        for index, card_id in enumerate(selected_ids, start=1):
+            sync_progress.advance(index - 1)
             try:
-                attempted_at = datetime.datetime.utcnow()
-                tcg_id, card_lang = pokemon_api.strip_lang_suffix(card_id)
-                existing_card = db.query(Card).filter(Card.id == card_id).first()
-                logger.debug(
-                    "Full sync price card start: card_id=%s tcg_id=%s lang=%s existing_prices=%s existing_price_source_lang=%s",
-                    card_id,
-                    tcg_id,
-                    card_lang,
-                    _price_debug_snapshot(existing_card),
-                    getattr(existing_card, "price_source_lang", None),
-                )
-                card_data = pokemon_api.get_card(tcg_id, lang=card_lang)
-                if not card_data:
-                    logger.debug("Full sync price card no TCGdex data: card_id=%s tcg_id=%s lang=%s", card_id, tcg_id, card_lang)
-                    if existing_card:
-                        existing_card.last_price_sync_attempt_at = attempted_at
-                    continue
-
-                parsed = pokemon_api.parse_card_for_db(card_data, lang=card_lang)
-                logger.debug(
-                    "Full sync price card fetched: card_id=%s parsed_id=%s parsed_prices=%s",
-                    card_id,
-                    parsed.get("id"),
-                    _price_debug_snapshot(parsed),
-                )
-                parsed = apply_cross_language_fallbacks(db, parsed)
-                parsed = _mark_price_sync_attempt(parsed, attempted_at)
-                logger.debug(
-                    "Full sync price card after fallback: card_id=%s parsed_id=%s parsed_prices=%s price_source_lang=%s",
-                    card_id,
-                    parsed.get("id"),
-                    _price_debug_snapshot(parsed),
-                    parsed.get("price_source_lang"),
-                )
-                # Ensure set exists (check by tcg_set_id since set IDs are now composite)
-                if parsed.get("set_id"):
-                    set_exists = db.query(Set).filter(
-                        (Set.tcg_set_id == parsed["set_id"]) | (Set.id == parsed["set_id"])
-                    ).first()
-                    if not set_exists:
-                        logger.debug(
-                            "Full sync price card set missing locally, clearing set_id: card_id=%s parsed_set_id=%s",
-                            card_id,
-                            parsed["set_id"],
-                        )
-                        parsed["set_id"] = None
-                card = upsert_card(db, parsed)
-                price_history_cards.append(card)
-                logger.debug(
-                    "Full sync price card saved: requested_card_id=%s saved_card_id=%s saved_prices=%s saved_price_source_lang=%s",
-                    card_id,
-                    card.id,
-                    _price_debug_snapshot(card),
-                    getattr(card, "price_source_lang", None),
-                )
-                updated_card_ids.append(card_id)
-                cards_updated += 1
+                card = _fetch_and_store_price_card(db, card_id, "Full sync price")
+                if card is not None:
+                    price_history_cards.append(card)
+                    updated_card_ids.append(card_id)
+                    cards_updated += 1
             except Exception as e:
                 logger.warning(f"Failed to sync card {card_id}: {e}")
+                if is_transient_error(e):
+                    db.rollback()
+                    retry_queue.add("price", card_id, lambda cid=card_id: apply_price_retry(cid), e)
+
+        sync_progress.update("retrying")
+        retry_stats = retry_queue.run()
 
         record_price_history_batch(db, price_history_cards)
         db.commit()
@@ -1028,11 +1102,22 @@ def _perform_full_sync_locked(db: Session) -> dict:
         log.finished_at = datetime.datetime.utcnow()
         log.cards_updated = cards_updated
         log.sets_updated = sets_updated
+        log.retry_summary = _retry_summary_json(retry_stats)
         log.status = "success"
         db.commit()
 
         logger.info(f"Full sync complete: {cards_updated} cards, {sets_updated} sets updated")
-        return {"cards_updated": cards_updated, "sets_updated": sets_updated, "status": "success"}
+        if retry_stats.get("retried"):
+            logger.info(
+                "Full sync retries: retried=%s recovered=%s still_failing=%s (retried on the next sync)",
+                retry_stats["retried"], retry_stats["recovered"], retry_stats["still_failing"],
+            )
+        return {
+            "cards_updated": cards_updated,
+            "sets_updated": sets_updated,
+            "status": "success",
+            "retry": retry_stats,
+        }
 
     except Exception as e:
         logger.error(f"Full sync failed: {e}")
@@ -1042,6 +1127,8 @@ def _perform_full_sync_locked(db: Session) -> dict:
         log.error_message = str(e)
         db.commit()
         raise
+    finally:
+        sync_progress.finish()
 
 
 def perform_price_sync(db: Session, *, force: bool = False) -> dict:
@@ -1054,14 +1141,26 @@ def perform_price_sync(db: Session, *, force: bool = False) -> dict:
     log = SyncLog(started_at=datetime.datetime.utcnow(), status="running", sync_type="price")
     db.add(log)
     db.commit()
+    sync_progress.start("price")
 
     cards_updated = 0
     updated_card_ids = []
     price_history_cards = []
+    retry_queue = RetryQueue()
+    retry_stats: dict = {}
 
     try:
         price_plan = _price_sync_plan(db, force=force)
         selected_ids = price_plan["ids"]
+
+        def apply_price_retry(card_id):
+            nonlocal cards_updated
+            card = _fetch_and_store_price_card(db, card_id, "Price sync price")
+            if card is not None:
+                price_history_cards.append(card)
+                updated_card_ids.append(card_id)
+                cards_updated += 1
+        sync_progress.update("prices", 0, len(selected_ids))
         skipped_count = price_plan["deferred"]
         logger.info(
             "%s price sync: updating prices for %s of %s collection/wishlist/binder cards "
@@ -1081,67 +1180,22 @@ def perform_price_sync(db: Session, *, force: bool = False) -> dict:
         if skipped_count:
             logger.debug("Price sync deferred ids after cap: %s", price_plan["deferred_ids"])
 
-        for card_id in selected_ids:
+        for index, card_id in enumerate(selected_ids, start=1):
+            sync_progress.advance(index - 1)
             try:
-                attempted_at = datetime.datetime.utcnow()
-                tcg_id, card_lang = pokemon_api.strip_lang_suffix(card_id)
-                existing_card = db.query(Card).filter(Card.id == card_id).first()
-                logger.debug(
-                    "Price sync card start: card_id=%s tcg_id=%s lang=%s existing_prices=%s existing_price_source_lang=%s",
-                    card_id,
-                    tcg_id,
-                    card_lang,
-                    _price_debug_snapshot(existing_card),
-                    getattr(existing_card, "price_source_lang", None),
-                )
-                card_data = pokemon_api.get_card(tcg_id, lang=card_lang)
-                if not card_data:
-                    logger.debug("Price sync card no TCGdex data: card_id=%s tcg_id=%s lang=%s", card_id, tcg_id, card_lang)
-                    if existing_card:
-                        existing_card.last_price_sync_attempt_at = attempted_at
-                    continue
-
-                parsed = pokemon_api.parse_card_for_db(card_data, lang=card_lang)
-                logger.debug(
-                    "Price sync card fetched: card_id=%s parsed_id=%s parsed_prices=%s",
-                    card_id,
-                    parsed.get("id"),
-                    _price_debug_snapshot(parsed),
-                )
-                parsed = apply_cross_language_fallbacks(db, parsed)
-                parsed = _mark_price_sync_attempt(parsed, attempted_at)
-                logger.debug(
-                    "Price sync card after fallback: card_id=%s parsed_id=%s parsed_prices=%s price_source_lang=%s",
-                    card_id,
-                    parsed.get("id"),
-                    _price_debug_snapshot(parsed),
-                    parsed.get("price_source_lang"),
-                )
-                # Ensure set exists (check by tcg_set_id since set IDs are now composite)
-                if parsed.get("set_id"):
-                    set_exists = db.query(Set).filter(
-                        (Set.tcg_set_id == parsed["set_id"]) | (Set.id == parsed["set_id"])
-                    ).first()
-                    if not set_exists:
-                        logger.debug(
-                            "Price sync card set missing locally, clearing set_id: card_id=%s parsed_set_id=%s",
-                            card_id,
-                            parsed["set_id"],
-                        )
-                        parsed["set_id"] = None
-                card = upsert_card(db, parsed)
-                price_history_cards.append(card)
-                logger.debug(
-                    "Price sync card saved: requested_card_id=%s saved_card_id=%s saved_prices=%s saved_price_source_lang=%s",
-                    card_id,
-                    card.id,
-                    _price_debug_snapshot(card),
-                    getattr(card, "price_source_lang", None),
-                )
-                updated_card_ids.append(card_id)
-                cards_updated += 1
+                card = _fetch_and_store_price_card(db, card_id, "Price sync")
+                if card is not None:
+                    price_history_cards.append(card)
+                    updated_card_ids.append(card_id)
+                    cards_updated += 1
             except Exception as e:
                 logger.warning(f"Failed to sync card {card_id}: {e}")
+                if is_transient_error(e):
+                    db.rollback()
+                    retry_queue.add("price", card_id, lambda cid=card_id: apply_price_retry(cid), e)
+
+        sync_progress.update("retrying")
+        retry_stats = retry_queue.run()
 
         record_price_history_batch(db, price_history_cards)
         db.commit()
@@ -1156,11 +1210,12 @@ def perform_price_sync(db: Session, *, force: bool = False) -> dict:
         log.finished_at = datetime.datetime.utcnow()
         log.cards_updated = cards_updated
         log.sets_updated = 0
+        log.retry_summary = _retry_summary_json(retry_stats)
         log.status = "success"
         db.commit()
 
         logger.info(f"Price sync complete: {cards_updated} cards updated")
-        return {"cards_updated": cards_updated, "sets_updated": 0, "status": "success"}
+        return {"cards_updated": cards_updated, "sets_updated": 0, "status": "success", "retry": retry_stats}
 
     except Exception as e:
         logger.error(f"Price sync failed: {e}")
@@ -1170,6 +1225,8 @@ def perform_price_sync(db: Session, *, force: bool = False) -> dict:
         log.error_message = str(e)
         db.commit()
         raise
+    finally:
+        sync_progress.finish()
 
 
 def perform_sync(db: Session) -> dict:
