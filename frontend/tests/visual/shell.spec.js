@@ -62,10 +62,11 @@ const sample = pattern => SAMPLE[pattern] ?? pattern
 test.describe('shell on a phone', () => {
   test.skip(({ viewport }) => viewport.width >= 1024, 'the phone shell is not shown at desktop width')
 
-  test('every route shows the tab bar, the right tab, title and back target', async ({ page }) => {
-    await installApi(page)
-    for (const route of ROUTES) {
-      const url = sample(route.path)
+  // One test per route: a fresh page each time (one long test made WebKit in CI run out of steam).
+  for (const route of ROUTES) {
+    const url = sample(route.path)
+    test(`${route.path} shows the tab bar, the right tab, title and back target`, async ({ page }) => {
+      await installApi(page)
       await page.goto(url)
       await expect(page.getByTestId('tab-bar'), url).toBeVisible()
       await expect(page.getByTestId('nav-bar'), url).toBeVisible()
@@ -86,8 +87,8 @@ test.describe('shell on a phone', () => {
         // The scan inbox goes back to the previous screen: Home after a cold start.
         await expect(back, url).toHaveText(labelKey ? lookup(labelKey) : en.nav.home)
       }
-    }
-  })
+    })
+  }
 
   test('redirects: /dashboard, /decks and unknown paths', async ({ page }) => {
     await installApi(page)
@@ -100,17 +101,20 @@ test.describe('shell on a phone', () => {
     await expect(page.getByTestId('tab-bar')).toBeVisible()
   })
 
-  test('a deep-linked pushed page has a back button that lands on its parent', async ({ page }) => {
-    await installApi(page)
-    const pushed = ROUTES.filter(route => route.kind === 'pushed' && !isOwnBack(sample(route.path)) && parentForPath(sample(route.path)))
+  // A deep-linked pushed page has a back button that lands on its parent (one test per route).
+  const pushed = ROUTES.filter(route => route.kind === 'pushed' && !isOwnBack(sample(route.path)) && parentForPath(sample(route.path)))
+  test('there are pushed pages with a back button to check', () => {
     expect(pushed.length).toBeGreaterThan(8)
-    for (const route of pushed) {
-      const url = sample(route.path)
+  })
+  for (const route of pushed) {
+    const url = sample(route.path)
+    test(`${route.path}: back lands on the parent`, async ({ page }) => {
+      await installApi(page)
       await page.goto(url)
       await page.getByTestId('nav-back').click()
       await expect(page, url).toHaveURL(new RegExp(`${parentForPath(url)}$`))
-    }
-  })
+    })
+  }
 
   test('tabs: switching remembers the stack, re-tapping goes to the root, then to the top', async ({ page }) => {
     await installApi(page)
