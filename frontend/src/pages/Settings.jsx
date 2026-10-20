@@ -28,6 +28,7 @@ import toast from 'react-hot-toast'
 import { TCGDEX_LANGUAGES, normalizeTcgdexLanguageCsv, tcgdexLanguageLabel } from '../utils/tcgdexLanguages'
 import { APP_LANGUAGES } from '../utils/appLanguages'
 import { invalidateCollectionPhotoState, invalidateTcgdexFilterLanguages } from '../utils/queryInvalidation'
+import InvitesSection from '../components/settings/InvitesSection'
 import ListRow from '../components/ios/ListRow'
 import ListSection from '../components/ios/ListSection'
 import PokeBall from '../components/ios/PokeBall'
@@ -1787,7 +1788,10 @@ export default function Settings() {
       )}
 
       {activeSection === 'users' && user?.role === 'admin' && multiUser && (
-        <UsersTab t={t} queryClient={queryClient} />
+        <>
+          <UsersTab t={t} queryClient={queryClient} />
+          <InvitesSection />
+        </>
       )}
 
       <AvatarPicker
