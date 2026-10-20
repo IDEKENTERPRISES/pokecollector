@@ -262,9 +262,9 @@ test('linked review is accessible, advances through a batch, and keeps resolved 
   await expect.poll(() => candidateImage.evaluate(node => node.style.transform)).toBe('')
   await page.keyboard.press('Escape')
   await expect(dialog).toHaveCount(0)
-  // The queue itself is a modal and keeps the page locked after the nested
-  // comparison closes; the comparison must preserve that existing lock.
-  await expect.poll(() => page.evaluate(() => document.body.style.overflow)).toBe('hidden')
+  // The queue is a pushed page now, so nothing keeps the page locked once the nested
+  // comparison closes; the comparison must release its scroll lock.
+  await expect.poll(() => page.evaluate(() => document.body.style.overflow)).toBe('')
 
   await page.getByRole('button', { name: 'Compare with your photo' }).first().click()
   await dialog.getByRole('button', { name: 'Accept match' }).click()
