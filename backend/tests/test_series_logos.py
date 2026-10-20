@@ -138,6 +138,49 @@ class SeriesLogoTests(unittest.TestCase):
         self.assertEqual(resp.media_type, "image/svg+xml")
         get.assert_not_called()
 
+    def _german_series_without_logos(self):
+        self.db.query(Setting).filter(Setting.key == "tcgdex_sync_languages").one().value = "en,de"
+        self._set("sm1_en", "Sun & Moon", series="Sun & Moon", series_id="sm", release_date="2017-02-03",
+                  series_logo="https://x/en/sm/logo.webp", images_logo="https://x/en/sm1.webp")
+        row = self._set("sm1_de", "Sonne & Mond", series="Sonne & Mond", series_id="sm", release_date="2017-02-03")
+        row.lang = "de"
+        self.db.commit()
+
+    def test_series_without_local_logo_borrows_the_english_series_logo(self):
+        # TCGdex has no German logo for older series; the sets' logo route already borrows
+        # the English one, so the series tile must too instead of showing the wordmark.
+        self._german_series_without_logos()
+
+        resp, get = self._fetch("sm1_de")
+
+        self.assertEqual(resp.media_type, "image/webp")
+        get.assert_called_once_with("https://x/en/sm/logo.webp")
+
+    def test_cross_language_borrowing_follows_the_setting(self):
+        self._german_series_without_logos()
+        self.db.add(Setting(key="cross_language_image_fallback", value="false"))
+        self.db.commit()
+
+        resp, get = self._fetch("sm1_de")
+
+        self.assertEqual(resp.media_type, "image/svg+xml")
+        get.assert_not_called()
+
+    def test_series_wordmark_is_never_cached(self):
+        # The service worker keeps any 200 image it sees, so a stand-in must not be cacheable.
+        self._set("sv01_en", "Scarlet & Violet", series="Scarlet & Violet", series_id="sv")
+        resp, _ = self._fetch("sv01_en")
+        self.assertEqual(resp.headers["cache-control"], "no-store")
+
+        self.db.query(Set).update({Set.series_logo: "https://x/logo.webp"})
+        self.db.commit()
+        with patch.object(images._client, "get", side_effect=RuntimeError("down")):
+            resp = images.get_set_image("sv01_en", "series", db=self.db)
+        self.assertEqual(resp.headers["cache-control"], "no-store")
+
+        logo = images.get_set_image("sv01_en", "logo", db=self.db)
+        self.assertEqual(logo.headers["cache-control"], "public, max-age=86400")
+
     def test_upstream_failure_serves_wordmark(self):
         self._set("sv01_en", "Scarlet & Violet", series="Scarlet & Violet", series_id="sv", series_logo="https://x/logo.webp")
 

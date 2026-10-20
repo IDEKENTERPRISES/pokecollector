@@ -45,11 +45,26 @@ export function seriesLogoSet(name, sets) {
   return newest.find(set => String(set.name ?? '').trim().toLowerCase() === lower) ?? newest[0] ?? null
 }
 
+// Bump when the series route's answers change, so images the service worker kept under the old
+// URL (it stores every 200 image, wordmark stand-ins included) are not served again.
+const SERIES_IMAGE_VERSION = 2
+
 export function seriesLogoUrl(name, sets) {
   const anchor = sets.find(set => set.series_id) ?? null
-  if (anchor) return setImageUrl(anchor.id, 'series')
+  if (anchor) return `${setImageUrl(anchor.id, 'series')}?v=${SERIES_IMAGE_VERSION}`
   const fallback = seriesLogoSet(name, sets)
   return fallback ? setImageUrl(fallback.id, 'logo') : null
+}
+
+/**
+ * Logo URLs to try in order when an image fails to load: the series route, then the namesake or
+ * newest set's own logo. The caller shows the series name when none loads.
+ */
+export function seriesLogoCandidates(name, sets) {
+  const primary = seriesLogoUrl(name, sets)
+  const fallbackSet = seriesLogoSet(name, sets)
+  const fallback = fallbackSet ? setImageUrl(fallbackSet.id, 'logo') : null
+  return [primary, fallback].filter((url, index, all) => url && all.indexOf(url) === index)
 }
 
 /**
@@ -79,6 +94,7 @@ export function groupSetsBySeries(sets = []) {
         total,
         complete: total > 0 && owned >= total,
         logo: seriesLogoUrl(group.name, inSeries),
+        logoCandidates: seriesLogoCandidates(group.name, inSeries),
         logoSetId: logoSet?.id ?? null,
         newest: inSeries[0]?.release_date || '',
         sets: inSeries,

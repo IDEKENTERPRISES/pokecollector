@@ -316,7 +316,7 @@ responses.
 
 Both are added by idempotent `ALTER TABLE sets ADD COLUMN IF NOT EXISTS` migrations. Existing installs fill them on the next full sync. During sync, `get_all_sets` already fetches `/series/{id}` for every series; it now keeps each series' `id` and `logo` on its sets (`_series_id`, `_series_logo`) and `parse_set_for_db` stores them (falling back to the embedded `serie` object). Every set-saving path skips `None` values, so a refresh without series data never clears them.
 
-`GET /api/images/set/{set_id}/series` serves the set's series logo through the shared `ImageCache` (key `series:{lang}:{series_id}`) under the same visibility check as `logo` and `symbol`. Without a stored series logo it falls back to the namesake set's logo (same series and language, name equal to the series name), then the newest set's logo in that series, then the bundled wordmark.
+`GET /api/images/set/{set_id}/series` serves the set's series logo through the shared `ImageCache` (key `series:{lang}:{series_id}`) under the same visibility check as `logo` and `symbol`. Without a stored series logo it falls back to the namesake set's logo (same series and language, name equal to the series name), then the newest set's logo in that series. If the series has no logo in that language (TCGdex omits it for most older non-English series) and `cross_language_image_fallback` is on, it borrows the other language's series logo or the namesake/newest set's sibling logo, as the set `logo` route does. The last resort is the bundled wordmark, sent with `Cache-Control: no-store` because the service worker keeps every 200 image it sees.
 
 ### Other Core Models
 
