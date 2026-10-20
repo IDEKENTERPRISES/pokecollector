@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react'
-import { Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Navigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, ArrowLeftRight } from 'lucide-react'
+import { ArrowLeftRight } from 'lucide-react'
 import { compareUsers } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import { useAuth } from '../contexts/AuthContext'
 import { resolveCardImageUrl } from '../utils/imageUrl'
 import { CardIdentity } from '../components/card-system'
 import { CardModal } from '../components/CardItem'
+import { useNavBar } from '../navigation/useNavBar'
 
 function TrainerAvatar({ avatarId, username }) {
   if (!avatarId) {
@@ -79,9 +80,11 @@ function TrainerPanel({ trainer, formatPrice, t, onCardClick }) {
   )
 }
 
+const NAV_BAR = {}
+
 export default function Compare() {
   const { userId } = useParams()
-  const navigate = useNavigate()
+  useNavBar(NAV_BAR)
   const { t, formatPrice, pricePrimaryField } = useSettings()
   const { multiUser } = useAuth()
   const [selectedCard, setSelectedCard] = useState(null)
@@ -104,10 +107,6 @@ export default function Compare() {
 
   return (
     <div className="page-container">
-      <button type="button" className="btn-ghost text-sm py-1.5" onClick={() => navigate('/leaderboard')}>
-        <ArrowLeft size={14} /> {t('nav.leaderboard')}
-      </button>
-
       <div className="card">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold text-text-primary">

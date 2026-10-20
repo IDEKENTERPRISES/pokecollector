@@ -1,15 +1,16 @@
 import { useMemo, useState } from 'react'
 import { Navigate, useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowUpDown, Trophy, Award, Globe } from 'lucide-react'
+import { ArrowUpDown, Trophy, Globe } from 'lucide-react'
 import { getLeaderboard } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import { useAuth } from '../contexts/AuthContext'
-import TabNav from '../components/TabNav'
+import { useNavBar } from '../navigation/useNavBar'
 import { resolveCardImageUrl } from '../utils/imageUrl'
 import { CardIdentity } from '../components/card-system'
 import { CardModal } from '../components/CardItem'
 
+const NAV_BAR = {}
 const SORT_OPTIONS = ['total_value', 'total_cards', 'unique_cards', 'sets_completed', 'pnl']
 
 function rankLabel(rank) {
@@ -39,10 +40,7 @@ export default function Leaderboard() {
   const { multiUser, user: currentUser } = useAuth()
   const [sortBy, setSortBy] = useState('total_value')
   const [selectedCard, setSelectedCard] = useState(null)
-  const SOCIAL_TABS = [
-    { to: '/leaderboard', label: t('nav.leaderboard'), icon: Trophy },
-    { to: '/achievements', label: t('nav.achievements'), icon: Award },
-  ]
+  useNavBar(NAV_BAR)
 
   const { data = [], isLoading, error } = useQuery({
     queryKey: ['leaderboard', pricePrimaryField],
@@ -64,7 +62,6 @@ export default function Leaderboard() {
 
   return (
     <div className="page-container">
-      <TabNav tabs={SOCIAL_TABS} />
       <div className="card relative overflow-hidden">
         <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_top_right,rgba(255,213,79,0.16),transparent_40%)]" />
         <div className="relative flex items-start justify-between gap-3">

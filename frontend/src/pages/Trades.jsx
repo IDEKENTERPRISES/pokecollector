@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowRightLeft, Check, History, PenLine, Plus, Search, Trash2, Wallet } from 'lucide-react'
+import { ArrowRightLeft, Check, PenLine, Plus, Search, Trash2, Wallet } from 'lucide-react'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
 import {
@@ -27,6 +27,7 @@ import { invalidateCardState, invalidateTcgdexFilterLanguages } from '../utils/q
 import { buildTradeUpdatePayload, findNewTradeDraftItem, isCashTradeItem, snapshotTradeCard, tradeToDraft } from '../utils/tradeDraft'
 import PrintingDetailBadges from '../components/PrintingDetailBadges'
 import PrintingDetailSelector from '../components/PrintingDetailSelector'
+import { useNavBar } from '../navigation/useNavBar'
 
 const CONDITIONS = ['Mint', 'NM', 'LP', 'MP', 'HP']
 
@@ -262,7 +263,10 @@ function SelectedPanel({ title, total, children, formatPrice }) {
   )
 }
 
+const NAV_BAR = {}
+
 export default function Trades() {
+  useNavBar(NAV_BAR)
   const { t, formatPrice, pricePrimaryField, exchangeRate } = useSettings()
   const queryClient = useQueryClient()
   const priceField = priceFieldFromPrimary(pricePrimaryField)
@@ -532,25 +536,30 @@ export default function Trades() {
 
   return (
     <div className="space-y-4 pb-2">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-text-primary">{t('trades.title')}</h1>
-          <p className="text-sm text-text-secondary mt-1">{t('trades.subtitle')}</p>
-        </div>
-        <div className="inline-flex rounded-lg border border-border bg-bg-card p-1">
+      <div className="space-y-2">
+        <h1 className="sr-only">{t('trades.title')}</h1>
+        <p className="text-footnote text-text-secondary">{t('trades.subtitle')}</p>
+        {/* Segmented look with real buttons: the existing specs find the History tab by its button role. */}
+        <div className="relative flex h-9 w-full rounded-full bg-fill-tertiary p-0.5">
+          <span
+            aria-hidden="true"
+            className="absolute bottom-0.5 left-0.5 top-0.5 w-[calc((100%-4px)/2)] rounded-full bg-accent shadow-[0_2px_6px_rgba(0,0,0,0.4)] motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-ios"
+            style={{ transform: tab === 'history' ? 'translateX(100%)' : 'translateX(0)' }}
+          />
           {[
-            ['live', ArrowRightLeft, t('trades.liveTrade')],
-            ['history', History, t('trades.history')],
-          ].map(([id, Icon, label]) => (
+            ['live', t('trades.liveTrade')],
+            ['history', t('trades.history')],
+          ].map(([id, label]) => (
             <button
               key={id}
+              type="button"
+              aria-pressed={tab === id}
               onClick={() => setTab(id)}
               className={clsx(
-                'flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-semibold transition-colors',
-                tab === id ? 'bg-brand-red text-white' : 'text-text-muted hover:text-text-primary'
+                'relative z-10 flex-1 truncate rounded-full px-2 text-footnote font-semibold ios-press focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-tint',
+                tab === id ? 'text-on-accent' : 'text-text-primary',
               )}
             >
-              <Icon size={15} />
               {label}
             </button>
           ))}
