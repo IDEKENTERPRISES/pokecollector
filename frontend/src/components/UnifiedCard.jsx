@@ -9,6 +9,7 @@ import FallbackBadges from './FallbackBadges'
 import CardStateIndicators from './CardStateIndicators'
 import ImageZoomOverlay from './ImageZoomOverlay'
 import { CARD_SYSTEM_TOKENS } from './card-system/tokens'
+import { useBodyScrollLock, useSwipeDismiss } from './ios/sheetGesture'
 
 export const FALLBACK_KIND_ORDER = ['data', 'price', 'image']
 
@@ -226,6 +227,27 @@ export function CompactCardArtwork({
   )
 }
 
+const PHONE_QUERY = '(max-width: 767px)'
+
+// On an iPhone the card detail is a page sheet (design doc Q14): the same content, a grabber and
+// a swipe down to close. From 768 px up it stays the shared floating dialog.
+function usePhoneLayout() {
+  const [phone, setPhone] = useState(() => (
+    typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia(PHONE_QUERY).matches
+  ))
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined
+    const query = window.matchMedia(PHONE_QUERY)
+    const update = event => setPhone(event.matches)
+    setPhone(query.matches)
+    query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [])
+  return phone
+}
+
 export function UnifiedCardDialog({
   card,
   image,
@@ -250,6 +272,13 @@ export function UnifiedCardDialog({
   const [imageZoomOpen, setImageZoomOpen] = useState(false)
   const [imageZoomSource, setImageZoomSource] = useState('')
   const imageZoomOpenRef = useRef(imageZoomOpen)
+  const phone = usePhoneLayout()
+  const { panelRef, bind: sheetBind } = useSwipeDismiss({ enabled: phone && Boolean(card), onDismiss: onClose })
+  useBodyScrollLock(phone && Boolean(card))
+  const setDialogNode = (node) => {
+    dialogRef.current = node
+    panelRef.current = node
+  }
 
   const handleImageStatusChange = useCallback(({ loaded, failed, source }) => {
     const nextSource = image && loaded && !failed ? source : ''
@@ -322,34 +351,28 @@ export function UnifiedCardDialog({
   if (!card) return null
 
   const setNumber = getCardSetNumber(card)
-  const dialog = (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-xs sm:p-6"
+  const ariaProps = {
+    role: 'dialog',
+    'aria-modal': imageZoomOpen ? undefined : 'true',
+    'aria-hidden': imageZoomOpen ? 'true' : undefined,
+    inert: imageZoomOpen ? '' : undefined,
+    'aria-label': card.name,
+  }
+  const closeButton = (
+    <button
+      ref={resolvedCloseButtonRef}
+      type="button"
       onClick={onClose}
+      className={clsx(
+        'absolute right-3 z-50 grid h-9 w-9 place-items-center rounded-full border border-white/15 bg-black/75 text-white shadow-lg transition-colors hover:bg-black focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-red',
+        phone ? 'top-2' : 'top-3',
+      )}
+      aria-label={t('common.close')}
     >
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal={imageZoomOpen ? undefined : 'true'}
-        aria-hidden={imageZoomOpen ? 'true' : undefined}
-        inert={imageZoomOpen ? '' : undefined}
-        aria-label={card.name}
-        className={clsx(
-          'relative max-h-[calc(100dvh-1.5rem)] w-full max-w-6xl overflow-y-auto rounded-2xl border border-white/10 bg-bg-surface shadow-2xl sm:max-h-[calc(100dvh-3rem)]',
-          className,
-        )}
-        onClick={event => event.stopPropagation()}
-      >
-        <button
-          ref={resolvedCloseButtonRef}
-          type="button"
-          onClick={onClose}
-          className="absolute right-3 top-3 z-50 grid h-9 w-9 place-items-center rounded-full border border-white/15 bg-black/75 text-white shadow-lg transition-colors hover:bg-black focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-red"
-          aria-label={t('common.close')}
-        >
-          <X size={18} aria-hidden />
-        </button>
-
+      <X size={18} aria-hidden />
+    </button>
+  )
+  const content = (
         <div className="grid gap-4 p-4 sm:grid-cols-[minmax(220px,300px)_minmax(0,1fr)] sm:gap-6 sm:p-6">
           <aside className="min-w-0 sm:border-r sm:border-white/8 sm:pr-6">
             <div className="flex items-start gap-4 sm:block">
@@ -445,6 +468,44 @@ export function UnifiedCardDialog({
             </div>
           </section>
         </div>
+  )
+  const dialog = phone ? (
+    <>
+      <div className="ios-fade-in fixed inset-0 z-50 bg-black/50" onClick={onClose} aria-hidden="true" />
+      <div
+        ref={setDialogNode}
+        {...ariaProps}
+        className={clsx(
+          'ios-sheet-in glass fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-92dvh w-full max-w-[640px] flex-col overflow-hidden rounded-t-[16px]',
+          className,
+        )}
+      >
+        <div {...sheetBind} className="flex-shrink-0 cursor-grab select-none pt-2">
+          <div className="mx-auto h-[5px] w-9 rounded-full bg-fill" aria-hidden="true" />
+          <div className="h-3" aria-hidden="true" />
+        </div>
+        {closeButton}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" style={{ paddingBottom: 'var(--safe-bottom)' }}>
+          {content}
+        </div>
+      </div>
+    </>
+  ) : (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-xs sm:p-6"
+      onClick={onClose}
+    >
+      <div
+        ref={setDialogNode}
+        {...ariaProps}
+        className={clsx(
+          'relative max-h-[calc(100dvh-1.5rem)] w-full max-w-6xl overflow-y-auto rounded-2xl border border-white/10 bg-bg-surface shadow-2xl sm:max-h-[calc(100dvh-3rem)]',
+          className,
+        )}
+        onClick={event => event.stopPropagation()}
+      >
+        {closeButton}
+        {content}
       </div>
     </div>
   )

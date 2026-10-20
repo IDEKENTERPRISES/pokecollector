@@ -1,7 +1,7 @@
 import { useState, useMemo, useId, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Trash2, Check, X, Filter, SortAsc, Download, Upload, Loader2, ChevronUp, ChevronDown, Search, PenLine, Grid2X2, List, Library, BookOpen, Heart, Copy, ArrowLeft, Package, Tags } from 'lucide-react'
+import { Trash2, Check, X, Download, Upload, Loader2, ChevronDown, Search, PenLine, Grid2X2, List, Copy, ArrowLeft, Package, Tags, Plus, MoreHorizontal, ScanLine, ArrowUpDown, SlidersHorizontal } from 'lucide-react'
 import { getCollection, updateCollectionItem, updateCardCustomImage, removeFromCollection, importCollectionCsv, exportCSV, exportPDF, getSets, addToCollection, getBinders, addCollectionItemToBinder, getWishlist, getApiErrorMessage, uploadCollectionItemPhoto, deleteCollectionItemPhoto } from '../api/client'
 import { CustomCardModal } from '../components/CardItem'
 import { useSettings } from '../contexts/SettingsContext'
@@ -10,7 +10,17 @@ import CardImage from '../components/CardImage'
 import { CardDialog, CardLegend, CardPriceDetails, withCollectionItemState } from '../components/card-system'
 import { CollectionCardDisplay, CollectionCardIdentity, CollectionCardRow, OwnPhotoOverlayBadge, useCollectionPhotoUrl } from '../components/CollectionCardImage'
 import MoneyInput from '../components/MoneyInput'
-import TabNav from '../components/TabNav'
+import CollectionHeader from '../components/collection/CollectionHeader'
+import Badge from '../components/ios/Badge'
+import IconButton from '../components/ios/IconButton'
+import Menu from '../components/ios/Menu'
+import PageSheet from '../components/ios/PageSheet'
+import SearchField from '../components/ios/SearchField'
+import TypeChip from '../components/ios/TypeChip'
+import { typeKeyFor, typeVar } from '../components/ios/pokemon'
+import { useNavBar } from '../navigation/useNavBar'
+import { useScanner } from '../contexts/ScannerContext'
+import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
 import { cardImageUrl, hasCatalogueImage, resolveCardImageUrl } from '../utils/imageUrl'
@@ -23,6 +33,7 @@ import { invalidateCardState, invalidateCollectionPhotoState, invalidateTcgdexFi
 import { useVisibleTcgdexLanguages } from '../hooks/useVisibleTcgdexLanguages'
 import { formatMoneyInputValue, parseMoneyInputValue } from '../utils/moneyInput'
 import { useDynamicFilterUrlState } from '../hooks/useDynamicFilterUrlState'
+import { readFilterUrlState } from '../utils/filterUrlState'
 import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import PrintingDetailBadges from '../components/PrintingDetailBadges'
 import AcquiredDateField from '../components/AcquiredDateField'
@@ -64,6 +75,8 @@ const COLLECTION_FILTER_DEFINITIONS = {
   filterMaxPrice: { param: 'max_price', default: '' },
   filterDuplicates: { param: 'duplicates', default: false, type: 'boolean' },
   ruleText: { param: 'rule_text', default: '' },
+  sortBy: { param: 'sort', default: 'added_at' },
+  sortOrder: { param: 'order', default: 'desc' },
 }
 
 export const RULE_TEXT_DEBOUNCE_MS = 300
@@ -1054,15 +1067,45 @@ function CollectionEditModal({ item, onClose }) {
   )
 }
 
+const SORT_OPTIONS = [
+  ['added_at', 'collection.sortDateAdded'],
+  ['acquired_at', 'collection.sortAcquired'],
+  ['name', 'common.name'],
+  ['quantity', 'collection.sortQuantity'],
+  ['purchase_price', 'collection.sortPurchasePrice'],
+  ['market_price', 'collection.sortMarketPrice'],
+  ['price_trend', 'collection.sortTrend'],
+  ['set', 'collection.sortSet'],
+  ['card_id', 'collection.sortCardId'],
+]
+const SORT_KEYS = SORT_OPTIONS.map(([key]) => key)
+
+// `sort` and `order` come from the URL (Home's Top cards links to
+// /collection?sort=market_price&order=desc); anything unknown falls back to the defaults.
+export function normalizeCollectionFilters(state) {
+  return {
+    ...state,
+    sortBy: SORT_KEYS.includes(state.sortBy) ? state.sortBy : 'added_at',
+    sortOrder: state.sortOrder === 'asc' ? 'asc' : 'desc',
+  }
+}
+
+// A soft glow in the card's energy-type colour, from a wrapper around the tile (design doc 7.12).
+const typeGlowStyle = (card) => {
+  const type = (card?.types || []).find(typeKeyFor)
+  if (!type) return undefined
+  return { boxShadow: `0 6px 16px -8px color-mix(in srgb, ${typeVar(type)} 70%, transparent)` }
+}
+
 export default function Collection() {
   const { t, settings, formatPrice, pricePrimaryField, currency, exchangeRate, language } = useSettings()
+  const navigate = useNavigate()
+  const { openScanner } = useScanner()
   const visibleLanguages = useVisibleTcgdexLanguages()
   const [viewMode, setViewMode] = useState('grid')
   const [editingCollectionItem, setEditingCollectionItem] = useState(null) // for CollectionEditModal
   const [showCustomModal, setShowCustomModal] = useState(false)
   const [editCard, setEditCard] = useState(null)
-  const [sortBy, setSortBy] = useState('added_at')
-  const [sortOrder, setSortOrder] = useState('desc')
   const [searchText, setSearchText] = useState('')
   const [showFilters, setShowFilters] = useState(false)
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
@@ -1073,10 +1116,10 @@ export default function Collection() {
   const {
     filters,
     updateFilter,
-    clearFilters,
+    replaceFilters,
     searchParams,
     setSearchParams,
-  } = useDynamicFilterUrlState(COLLECTION_FILTER_DEFINITIONS)
+  } = useDynamicFilterUrlState(COLLECTION_FILTER_DEFINITIONS, { normalizeState: normalizeCollectionFilters })
   const {
     filterRarity,
     filterCondition,
@@ -1092,6 +1135,8 @@ export default function Collection() {
     filterMaxPrice,
     filterDuplicates,
     ruleText,
+    sortBy,
+    sortOrder,
   } = filters
 
   const debouncedRuleText = useDebouncedValue(ruleText, RULE_TEXT_DEBOUNCE_MS)
@@ -1123,12 +1168,6 @@ export default function Collection() {
     () => new Set(items.map(item => item.lang).filter(Boolean)).size > 1,
     [items],
   )
-
-  const COLLECTION_TABS = [
-    { to: '/collection', label: t('nav.collection'), icon: Library },
-    { to: '/binders', label: t('nav.binders'), icon: BookOpen },
-    { to: '/wishlist', label: t('nav.wishlist'), icon: Heart, badge: wishlistItems.length },
-  ]
 
   const { data: allSets = [] } = useQuery({
     queryKey: ['sets', settings.language || 'en'],
@@ -1247,6 +1286,10 @@ export default function Collection() {
 
   const hasActiveFilters = filterRarity || filterCondition || filterVariant || filterPrintingDetail || filterSet || filterType || filterCategories.length > 0 || filterSubtypes.length > 0 || filterLegality || filterLang || filterMinPrice || filterMaxPrice || filterDuplicates || ruleText.trim()
   const hasAdvancedFilters = filterCategories.length > 0 || filterSubtypes.length > 0 || filterLegality || filterLang || filterMinPrice || filterMaxPrice || filterDuplicates || ruleText.trim()
+  const activeFilterCount = [
+    filterRarity, filterCondition, filterVariant, filterPrintingDetail, filterSet, filterType,
+    filterLegality, filterLang, filterMinPrice, filterMaxPrice, filterDuplicates, ruleText.trim(),
+  ].filter(Boolean).length + (filterCategories.length > 0 ? 1 : 0) + (filterSubtypes.length > 0 ? 1 : 0)
 
   const filtered = useMemo(() => {
     let result = items.filter(item => {
@@ -1326,145 +1369,188 @@ export default function Collection() {
 
   const totalValue = filtered.reduce((sum, item) => sum + (getEffectivePrice(item.card, item.variant) * item.quantity), 0)
   const totalCards = filtered.reduce((sum, item) => sum + item.quantity, 0)
-  const exportParams = { price_field: pricePrimaryField, currency, exchange_rate: exchangeRate }
+  const setCount = new Set(filtered.map(item => item.card?.set_ref?.id || item.card?.set_id).filter(Boolean)).size
 
   const setDynamicFilter = (key, value) => updateFilter(key, value)
 
+  // Clear resets the filters but keeps the chosen sort.
   const clearDynamicFilters = () => {
-    clearFilters()
+    replaceFilters(current => ({
+      ...readFilterUrlState(new URLSearchParams(), COLLECTION_FILTER_DEFINITIONS),
+      sortBy: current.sortBy,
+      sortOrder: current.sortOrder,
+    }))
     setShowAdvancedFilters(false)
   }
 
-  const toggleFilters = () => {
-    if (!showFilters) setShowAdvancedFilters(Boolean(hasAdvancedFilters))
-    setShowFilters(current => !current)
+  const openFilters = () => {
+    setShowAdvancedFilters(Boolean(hasAdvancedFilters))
+    setShowFilters(true)
   }
+
+  // Nav bar menus (design doc 5.2): "+" adds cards, "⋯" exports and manages tags.
+  const navOptions = useMemo(() => {
+    const exportParams = { price_field: pricePrimaryField, currency, exchange_rate: exchangeRate }
+    return {
+      title: t('nav.collection'),
+      trailing: (
+        <>
+          <Menu
+            label={t('collection.addMenu')}
+            trigger={<IconButton icon={Plus} label={t('collection.addMenu')} />}
+            sections={[[
+              { id: 'scan', label: t('nav.scanCards'), icon: ScanLine, onSelect: openScanner },
+              { id: 'search', label: t('collection.searchCatalogue'), icon: Search, onSelect: () => navigate('/search') },
+              { id: 'custom', label: t('collection.addCustomCard'), icon: PenLine, onSelect: () => setShowCustomModal(true) },
+              { id: 'import', label: t('collection.importCsv'), icon: Upload, onSelect: () => setShowCsvImportModal(true) },
+            ]]}
+          />
+          <Menu
+            label={t('collection.moreMenu')}
+            trigger={<IconButton icon={MoreHorizontal} label={t('collection.moreMenu')} />}
+            sections={[[
+              { id: 'csv', label: t('collection.exportCsv'), icon: Download, onSelect: () => exportCSV(exportParams) },
+              { id: 'pdf', label: t('collection.exportPdf'), icon: Download, onSelect: () => exportPDF(exportParams) },
+              { id: 'tags', label: t('printingDetails.manage'), icon: Tags, onSelect: () => setShowPrintingDetailManager(true) },
+            ]]}
+          />
+        </>
+      ),
+    }
+  }, [t, openScanner, navigate, pricePrimaryField, currency, exchangeRate])
+  useNavBar(navOptions)
+
+  const header = (
+    <CollectionHeader
+      active="cards"
+      subtitle={`${totalCards.toLocaleString()} ${t('collection.cards')} · ${setCount} ${t('collection.setsCount')} · ${formatPrice(totalValue)}`}
+    />
+  )
 
   if (isLoading) {
     return (
-      <div className="space-y-4">
-        <TabNav tabs={COLLECTION_TABS} />
-        <div className="skeleton h-8 w-48 rounded" />
+      <div className="relative isolate space-y-4 pb-2">
+        {header}
         {[...Array(5)].map((_, i) => <div key={i} className="skeleton h-16 rounded-xl" />)}
       </div>
     )
   }
 
+  const sortSections = [
+    SORT_OPTIONS.map(([key, labelKey]) => ({
+      id: key,
+      label: t(labelKey),
+      checked: sortBy === key,
+      onSelect: () => setDynamicFilter('sortBy', key),
+    })),
+    [
+      { id: 'asc', label: t('collection.sortOrderAscending'), checked: sortOrder === 'asc', onSelect: () => setDynamicFilter('sortOrder', 'asc') },
+      { id: 'desc', label: t('collection.sortOrderDescending'), checked: sortOrder === 'desc', onSelect: () => setDynamicFilter('sortOrder', 'desc') },
+    ],
+  ]
+
   return (
     <>
-      <div className="space-y-4 pb-2">
-        <TabNav tabs={COLLECTION_TABS} />
-
-      {/* ─── Header ───────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
-        <div className="min-w-0">
-          <h1 className="text-xl font-bold text-text-primary">{t('collection.title')}</h1>
-          <p className="text-sm text-text-secondary mt-1">
-            {totalCards.toLocaleString()} {t('collection.cards')} · {formatPrice(totalValue)} {t('collection.totalValue')}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-
-          {/* VIEW TOGGLE */}
-          <div className="flex items-center gap-0.5 bg-bg-elevated rounded-lg p-1">
-            <button
-              onClick={() => setViewMode('grid')}
-              title={t('collection.binderView')}
-              className={`p-1.5 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-brand-red text-white' : 'text-text-muted hover:text-text-primary'}`}
-            >
-              <Grid2X2 size={15} />
-            </button>
-            <button
-              onClick={() => setViewMode('list')}
-              title={t('collection.listView')}
-              className={`p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-brand-red text-white' : 'text-text-muted hover:text-text-primary'}`}
-            >
-              <List size={15} />
-            </button>
-          </div>
-
-          <button onClick={() => setShowCustomModal(true)}
-            className="btn-ghost text-sm py-1.5 border-yellow/30 text-yellow hover:bg-yellow/10">
-            <PenLine size={14} /> {t('collection.addCustomCard')}
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowPrintingDetailManager(true)}
-            className="btn-ghost px-2 py-1.5 text-sm"
-            title={t('printingDetails.manage')}
-            aria-label={t('printingDetails.manage')}
-          >
-            <Tags size={14} />
-          </button>
-          <input
-            ref={csvImportInputRef}
-            type="file"
-            accept=".csv,text/csv"
-            className="hidden"
-            onChange={handleCsvImport}
-          />
-          <button
-            onClick={() => setShowCsvImportModal(true)}
-            disabled={csvImportMutation.isPending}
-            title={t('collection.importCsvHint')}
-            aria-label={t('collection.importCsv')}
-            className="btn-ghost text-sm py-1.5 px-2"
-          >
-            <Upload size={14} />CSV
-          </button>
-          <button onClick={() => exportCSV(exportParams)} className="btn-ghost text-sm py-1.5 px-2" title="CSV" aria-label="CSV"><Download size={14} />CSV</button>
-          <button onClick={() => exportPDF(exportParams)} className="btn-ghost text-sm py-1.5"><Download size={14} />PDF</button>
-        </div>
-      </div>
+      <div className="relative isolate space-y-3 pb-2">
+        {header}
 
       <PrintingDetailTagManager
         isOpen={showPrintingDetailManager}
         onClose={() => setShowPrintingDetailManager(false)}
       />
+      <input
+        ref={csvImportInputRef}
+        type="file"
+        accept=".csv,text/csv"
+        className="hidden"
+        onChange={handleCsvImport}
+      />
 
-      {/* ─── Filter & Sort Bar ────────────────────────────────────── */}
-      <div className="card space-y-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2">
-            <SortAsc size={14} className="text-text-muted" />
-            <select className="select w-40 py-1.5 text-sm" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-              <option value="added_at">{t('collection.sortDateAdded')}</option>
-              <option value="acquired_at">{t('collection.sortAcquired')}</option>
-              <option value="name">{t('common.name')}</option>
-              <option value="quantity">{t('collection.sortQuantity')}</option>
-              <option value="purchase_price">{t('collection.sortPurchasePrice')}</option>
-              <option value="market_price">{t('collection.sortMarketPrice')}</option>
-              <option value="price_trend">{t('collection.sortTrend')}</option>
-              <option value="set">{t('collection.sortSet')}</option>
-              <option value="card_id">{t('collection.sortCardId')}</option>
-            </select>
-            <button
-              onClick={() => setSortOrder(o => o === 'asc' ? 'desc' : 'asc')}
-              className="btn-ghost py-1.5 px-2"
-              aria-label={sortOrder === 'asc' ? t('common.sortDescending') : t('common.sortAscending')}
-            >
-              {sortOrder === 'asc' ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </button>
-          </div>
+      {/* ─── Search, type chips and toolbar ───────────────────────── */}
+      <SearchField
+        value={searchText}
+        onChange={setSearchText}
+        placeholder={t('collection.searchCards')}
+      />
 
-          <div className="relative flex-1 min-w-[160px] max-w-xs">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-            <input type="text" placeholder={t('collection.searchCards')} value={searchText}
-              onChange={(e) => setSearchText(e.target.value)} className="input pl-8 text-sm py-1.5" />
-          </div>
-
-          <button onClick={toggleFilters} aria-label={t('common.filter')}
-            className={`btn-ghost text-sm py-1.5 ${showFilters || hasActiveFilters ? 'border-brand-red/30 text-brand-red' : ''}`}>
-            <Filter size={14} /> {t('common.filter')}
-            {hasActiveFilters && <span className="ml-1 bg-brand-red text-white text-xs rounded-full w-4 h-4 flex items-center justify-center leading-none">!</span>}
-          </button>
-
+      {types.length > 0 && (
+        <div
+          role="group"
+          aria-label={t('collection.typeFilterLabel')}
+          className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-0.5 sm:-mx-8 sm:px-8"
+          style={{ scrollbarWidth: 'none' }}
+        >
+          <TypeChip
+            type="all"
+            selected={!filterType}
+            onPress={() => setDynamicFilter('filterType', '')}
+          />
+          {types.map(type => (
+            <TypeChip
+              key={type}
+              type={type}
+              label={type}
+              selected={filterType === type}
+              onPress={() => setDynamicFilter('filterType', filterType === type ? '' : type)}
+            />
+          ))}
         </div>
+      )}
 
-        {showFilters && (
-          <div className="pt-3 border-t border-border space-y-3">
-            <h3 className="text-sm font-semibold text-text-primary">{t('common.normalFilters')}</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div className="flex items-center gap-2">
+        <Menu
+          label={t('collection.sortMenu')}
+          align="start"
+          trigger={(
+            <button type="button" className="ios-press inline-flex h-9 items-center gap-1.5 rounded-full bg-fill-tertiary px-3 text-footnote font-semibold text-text-primary">
+              <ArrowUpDown size={15} aria-hidden="true" /> {t('collection.sortMenu')}
+            </button>
+          )}
+          sections={sortSections}
+        />
+        <button
+          type="button"
+          onClick={openFilters}
+          aria-label={t('common.filter')}
+          className="ios-press inline-flex h-9 items-center gap-1.5 rounded-full bg-fill-tertiary px-3 text-footnote font-semibold text-text-primary"
+        >
+          <SlidersHorizontal size={15} aria-hidden="true" /> {t('collection.filtersButton')}
+          <Badge count={activeFilterCount} tone="accent" />
+        </button>
+        <div className="ml-auto flex items-center gap-0.5 rounded-full bg-fill-tertiary p-0.5" role="group" aria-label={t('collection.viewMode')}>
+          <button
+            type="button"
+            onClick={() => setViewMode('grid')}
+            title={t('collection.binderView')}
+            aria-label={t('collection.binderView')}
+            aria-pressed={viewMode === 'grid'}
+            className={clsx('ios-press grid h-8 w-8 place-items-center rounded-full', viewMode === 'grid' ? 'bg-accent text-on-accent' : 'text-text-secondary')}
+          >
+            <Grid2X2 size={15} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('list')}
+            title={t('collection.listView')}
+            aria-label={t('collection.listView')}
+            aria-pressed={viewMode === 'list'}
+            className={clsx('ios-press grid h-8 w-8 place-items-center rounded-full', viewMode === 'list' ? 'bg-accent text-on-accent' : 'text-text-secondary')}
+          >
+            <List size={15} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+
+      <PageSheet
+        isOpen={showFilters}
+        onClose={() => setShowFilters(false)}
+        title={t('collection.filtersTitle')}
+        leading={{ label: t('common.clear'), onPress: clearDynamicFilters, disabled: !hasActiveFilters }}
+        trailing={{ label: t('ios.done'), onPress: () => setShowFilters(false) }}
+      >
+        <div className="space-y-3 p-4">
+          <h3 className="text-sm font-semibold text-text-primary">{t('common.normalFilters')}</h3>
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label htmlFor="collection-filter-rarity" className="text-xs text-text-muted mb-1 block">{t('common.rarity')}</label>
               <select id="collection-filter-rarity" className="select py-1.5 text-sm" value={filterRarity} onChange={(e) => setDynamicFilter('filterRarity', e.target.value)}>
@@ -1507,104 +1593,98 @@ export default function Collection() {
                 {types.map(tp => <option key={tp} value={tp}>{tp}</option>)}
               </select>
             </div>
-            </div>
-
-            <button
-              type="button"
-              className="btn-ghost w-full justify-between"
-              aria-expanded={showAdvancedFilters}
-              aria-controls="collection-advanced-filters"
-              onClick={() => setShowAdvancedFilters(value => !value)}
-            >
-              <span>{t('common.advancedFilters')}</span>
-              <ChevronDown size={16} className={`transition-transform ${showAdvancedFilters ? 'rotate-180' : ''}`} />
-            </button>
-
-            {showAdvancedFilters && (
-            <div id="collection-advanced-filters" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-3 rounded-xl border border-border p-3">
-            <div>
-              <label htmlFor="collection-filter-rule-text" className="text-xs text-text-muted mb-1 block">{t('collection.ruleText')}</label>
-              <input id="collection-filter-rule-text" type="text" value={ruleText} onChange={(e) => setDynamicFilter('ruleText', e.target.value)} className="input py-1.5 text-sm" />
-            </div>
-            <fieldset className="col-span-2 sm:col-span-3 lg:col-span-2">
-              <legend className="text-xs text-text-muted mb-1 block">{t('collection.filterCardCategory')}</legend>
-              <div className="min-h-[34px] rounded-lg border border-border bg-bg px-2 py-1.5 flex flex-wrap gap-x-3 gap-y-1.5">
-                {cardCategories.map(category => (
-                  <label key={category} className="inline-flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer whitespace-nowrap">
-                    <input
-                      type="checkbox"
-                      checked={filterCategories.includes(category)}
-                      onChange={() => setDynamicFilter('filterCategories', toggleFilterValue(filterCategories, category))}
-                      className="w-3.5 h-3.5 accent-brand-red"
-                    />
-                    <span>{category}</span>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-            <fieldset className="col-span-2 sm:col-span-3 lg:col-span-3">
-              <legend className="text-xs text-text-muted mb-1 block">{t('collection.filterSubtype')}</legend>
-              <div className="min-h-[34px] rounded-lg border border-border bg-bg px-2 py-1.5 flex flex-wrap gap-x-3 gap-y-1.5">
-                {cardSubtypes.map(subtype => (
-                  <label key={subtype} className="inline-flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer whitespace-nowrap">
-                    <input
-                      type="checkbox"
-                      checked={filterSubtypes.includes(subtype)}
-                      onChange={() => setDynamicFilter('filterSubtypes', toggleFilterValue(filterSubtypes, subtype))}
-                      className="w-3.5 h-3.5 accent-brand-red"
-                    />
-                    <span>{subtype}</span>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-            <div>
-              <label htmlFor="collection-filter-legality" className="text-xs text-text-muted mb-1 block">{t('collection.filterLegality')}</label>
-              <select id="collection-filter-legality" className="select py-1.5 text-sm" value={filterLegality} onChange={(e) => setDynamicFilter('filterLegality', e.target.value)}>
-                <option value="">{t('collection.allLegalities')}</option>
-                <option value="standard">{t('collection.standardLegal')}</option>
-              </select>
-            </div>
-            <div>
-              <label htmlFor="collection-filter-language" className="text-xs text-text-muted mb-1 block">{t('lang.filter')}</label>
-              <TcgdexLanguageSelect
-                id="collection-filter-language"
-                value={filterLang || 'all'}
-                includeAll
-                allLabel={t('lang.all')}
-                compact
-                languages={visibleLanguages}
-                onChange={(value) => setDynamicFilter('filterLang', value === 'all' ? '' : value)}
-                className="select py-1.5 text-sm"
-              />
-            </div>
-            <div>
-              <label htmlFor="collection-filter-min-price" className="text-xs text-text-muted mb-1 block">{t('collection.filterMinPrice')}</label>
-              <input id="collection-filter-min-price" type="number" min="0" step="0.01" placeholder="0" value={filterMinPrice}
-                onChange={(e) => setDynamicFilter('filterMinPrice', e.target.value)} className="input py-1.5 text-sm" />
-            </div>
-            <div>
-              <label htmlFor="collection-filter-max-price" className="text-xs text-text-muted mb-1 block">{t('collection.filterMaxPrice')}</label>
-              <input id="collection-filter-max-price" type="number" min="0" step="0.01" placeholder="∞" value={filterMaxPrice}
-                onChange={(e) => setDynamicFilter('filterMaxPrice', e.target.value)} className="input py-1.5 text-sm" />
-            </div>
-            <div className="flex items-center gap-2 col-span-2 sm:col-span-1">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={filterDuplicates} onChange={(e) => setDynamicFilter('filterDuplicates', e.target.checked)}
-                  className="w-4 h-4 accent-brand-red" />
-                <span className="text-xs text-text-secondary">{t('collection.filterDuplicates')}</span>
-              </label>
-            </div>
-            </div>
-            )}
-            <div className="flex justify-start border-t border-border pt-3">
-              <button type="button" className="btn-ghost" onClick={clearDynamicFilters}>
-                <X size={14} /> {t('common.clear')}
-              </button>
-            </div>
           </div>
-        )}
-      </div>
+
+          <button
+            type="button"
+            className="btn-ghost w-full justify-between"
+            aria-expanded={showAdvancedFilters}
+            aria-controls="collection-advanced-filters"
+            onClick={() => setShowAdvancedFilters(value => !value)}
+          >
+            <span>{t('common.advancedFilters')}</span>
+            <ChevronDown size={16} className={`transition-transform ${showAdvancedFilters ? 'rotate-180' : ''}`} />
+          </button>
+
+          {showAdvancedFilters && (
+            <div id="collection-advanced-filters" className="grid grid-cols-2 gap-3 rounded-xl border border-border p-3">
+              <div className="col-span-2">
+                <label htmlFor="collection-filter-rule-text" className="text-xs text-text-muted mb-1 block">{t('collection.ruleText')}</label>
+                <input id="collection-filter-rule-text" type="text" value={ruleText} onChange={(e) => setDynamicFilter('ruleText', e.target.value)} className="input py-1.5 text-sm" />
+              </div>
+              <fieldset className="col-span-2">
+                <legend className="text-xs text-text-muted mb-1 block">{t('collection.filterCardCategory')}</legend>
+                <div className="min-h-[34px] rounded-lg border border-border bg-bg px-2 py-1.5 flex flex-wrap gap-x-3 gap-y-1.5">
+                  {cardCategories.map(category => (
+                    <label key={category} className="inline-flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={filterCategories.includes(category)}
+                        onChange={() => setDynamicFilter('filterCategories', toggleFilterValue(filterCategories, category))}
+                        className="w-3.5 h-3.5 accent-brand-red"
+                      />
+                      <span>{category}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <fieldset className="col-span-2">
+                <legend className="text-xs text-text-muted mb-1 block">{t('collection.filterSubtype')}</legend>
+                <div className="min-h-[34px] rounded-lg border border-border bg-bg px-2 py-1.5 flex flex-wrap gap-x-3 gap-y-1.5">
+                  {cardSubtypes.map(subtype => (
+                    <label key={subtype} className="inline-flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={filterSubtypes.includes(subtype)}
+                        onChange={() => setDynamicFilter('filterSubtypes', toggleFilterValue(filterSubtypes, subtype))}
+                        className="w-3.5 h-3.5 accent-brand-red"
+                      />
+                      <span>{subtype}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <div>
+                <label htmlFor="collection-filter-legality" className="text-xs text-text-muted mb-1 block">{t('collection.filterLegality')}</label>
+                <select id="collection-filter-legality" className="select py-1.5 text-sm" value={filterLegality} onChange={(e) => setDynamicFilter('filterLegality', e.target.value)}>
+                  <option value="">{t('collection.allLegalities')}</option>
+                  <option value="standard">{t('collection.standardLegal')}</option>
+                </select>
+              </div>
+              <div>
+                <label htmlFor="collection-filter-language" className="text-xs text-text-muted mb-1 block">{t('lang.filter')}</label>
+                <TcgdexLanguageSelect
+                  id="collection-filter-language"
+                  value={filterLang || 'all'}
+                  includeAll
+                  allLabel={t('lang.all')}
+                  compact
+                  languages={visibleLanguages}
+                  onChange={(value) => setDynamicFilter('filterLang', value === 'all' ? '' : value)}
+                  className="select py-1.5 text-sm"
+                />
+              </div>
+              <div>
+                <label htmlFor="collection-filter-min-price" className="text-xs text-text-muted mb-1 block">{t('collection.filterMinPrice')}</label>
+                <input id="collection-filter-min-price" type="number" min="0" step="0.01" placeholder="0" value={filterMinPrice}
+                  onChange={(e) => setDynamicFilter('filterMinPrice', e.target.value)} className="input py-1.5 text-sm" />
+              </div>
+              <div>
+                <label htmlFor="collection-filter-max-price" className="text-xs text-text-muted mb-1 block">{t('collection.filterMaxPrice')}</label>
+                <input id="collection-filter-max-price" type="number" min="0" step="0.01" placeholder="∞" value={filterMaxPrice}
+                  onChange={(e) => setDynamicFilter('filterMaxPrice', e.target.value)} className="input py-1.5 text-sm" />
+              </div>
+              <div className="col-span-2 flex items-center gap-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={filterDuplicates} onChange={(e) => setDynamicFilter('filterDuplicates', e.target.checked)}
+                    className="w-4 h-4 accent-brand-red" />
+                  <span className="text-xs text-text-secondary">{t('collection.filterDuplicates')}</span>
+                </label>
+              </div>
+            </div>
+          )}
+        </div>
+      </PageSheet>
 
       {error && (
         <div role="alert" className="rounded-xl border border-brand-red/40 bg-brand-red/10 px-4 py-3 text-sm text-brand-red">
@@ -1642,21 +1722,22 @@ export default function Collection() {
                     ].filter(Boolean).some(id => wishlistedCardIds.has(String(id))),
                   }
                   return (
-                    <CollectionCardDisplay
-                      key={item.id}
-                      item={item}
-                      price={marketPrice > 0 ? formatPrice(marketPrice) : null}
-                      languageLabel={hasMixedCollectionLanguages && item.lang ? tcgdexLanguageLabel(item.lang) : null}
-                      variantEffectSource={item.variant}
-                      stateIndicatorProps={{ card: cardState, alwaysShowQuantity: true }}
-                      onClick={() => setEditingCollectionItem(item)}
-                      overlay={(
-                        <>
-                          <ProductSourceBadge item={item} t={t} compact className="absolute bottom-2 left-2 z-20 h-6 w-6" />
-                          <PrintingDetailBadges details={item.printing_details} limit={1} className="absolute left-2 top-2 z-20 max-w-[calc(100%-1rem)]" />
-                        </>
-                      )}
-                    />
+                    <div key={item.id} className="rounded-[15px]" style={typeGlowStyle(card)} data-testid="collection-tile">
+                      <CollectionCardDisplay
+                        item={item}
+                        price={marketPrice > 0 ? formatPrice(marketPrice) : null}
+                        languageLabel={hasMixedCollectionLanguages && item.lang ? tcgdexLanguageLabel(item.lang) : null}
+                        variantEffectSource={item.variant}
+                        stateIndicatorProps={{ card: cardState, alwaysShowQuantity: true }}
+                        onClick={() => setEditingCollectionItem(item)}
+                        overlay={(
+                          <>
+                            <ProductSourceBadge item={item} t={t} compact className="absolute bottom-2 left-2 z-20 h-6 w-6" />
+                            <PrintingDetailBadges details={item.printing_details} limit={1} className="absolute left-2 top-2 z-20 max-w-[calc(100%-1rem)]" />
+                          </>
+                        )}
+                      />
+                    </div>
                   )
                 })}
               </div>
@@ -1682,20 +1763,21 @@ export default function Collection() {
             </div>
           ) : (
             <div className="card p-0 overflow-hidden">
-              {/* Desktop Table */}
+              {/* Desktop Table: numeric cells never wrap, and the Acquired column only shows
+                  where there is room (it is also in the card detail) */}
               <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-bg/50">
-                      <th className="text-left px-4 py-3 text-text-muted font-medium">{t('collection.card')}</th>
-                      <th className="text-left px-4 py-3 text-text-muted font-medium">✨ {t('variants.label')}</th>
-                      <th className="text-center px-4 py-3 text-text-muted font-medium">{t('collection.qty')}</th>
-                      <th className="text-center px-4 py-3 text-text-muted font-medium">{t('common.condition')}</th>
-                      <th className="text-right px-4 py-3 text-text-muted font-medium">{t('collection.buyPrice')}</th>
-                      <th className="text-right px-4 py-3 text-text-muted font-medium">{t('collection.marketPrice')}</th>
-                      <th className="text-right px-4 py-3 text-text-muted font-medium">P&amp;L</th>
-                      <th className="text-right px-4 py-3 text-text-muted font-medium">{t('collection.acquired')}</th>
-                      <th className="px-4 py-3" />
+                      <th className="text-left px-3 py-3 text-text-muted font-medium whitespace-nowrap">{t('collection.card')}</th>
+                      <th className="text-left px-3 py-3 text-text-muted font-medium whitespace-nowrap">✨ {t('variants.label')}</th>
+                      <th className="text-center px-3 py-3 text-text-muted font-medium whitespace-nowrap">{t('collection.qty')}</th>
+                      <th className="text-center px-3 py-3 text-text-muted font-medium whitespace-nowrap">{t('common.condition')}</th>
+                      <th className="text-right px-3 py-3 text-text-muted font-medium whitespace-nowrap">{t('collection.buyPrice')}</th>
+                      <th className="text-right px-3 py-3 text-text-muted font-medium whitespace-nowrap">{t('collection.marketPrice')}</th>
+                      <th className="text-right px-3 py-3 text-text-muted font-medium whitespace-nowrap">P&amp;L</th>
+                      <th className="hidden 2xl:table-cell text-right px-3 py-3 text-text-muted font-medium whitespace-nowrap">{t('collection.acquired')}</th>
+                      <th className="px-2 py-3" />
                     </tr>
                   </thead>
                   <tbody>
@@ -1712,7 +1794,7 @@ export default function Collection() {
                           className="border-b border-border/50 hover:bg-bg-elevated/50 transition-colors cursor-pointer"
                           onClick={() => setEditingCollectionItem(item)}
                         >
-                          <td className="px-4 py-3">
+                          <td className="px-3 py-3">
                             <CollectionCardIdentity
                               item={item}
                               name={card?.name}
@@ -1727,36 +1809,36 @@ export default function Collection() {
                               )}
                             />
                           </td>
-                          <td className="px-4 py-3 text-left">
+                          <td className="px-3 py-3 text-left">
                             {item.variant ? (
                               <span className={clsx('badge text-xs max-w-[150px] justify-center whitespace-normal break-words text-center leading-tight', VARIANT_COLORS[item.variant] || 'badge-gray')}>{item.variant}</span>
                             ) : (
                               <span className="text-text-muted text-xs">—</span>
                             )}
                           </td>
-                          <td className="px-4 py-3 text-center">
+                          <td className="px-3 py-3 text-center">
                             <span className="font-medium text-text-primary">{item.quantity}</span>
                           </td>
-                          <td className="px-4 py-3 text-center">
+                          <td className="px-3 py-3 text-center whitespace-nowrap">
                             <span className={clsx('badge text-xs', CONDITION_COLORS[item.condition] || 'badge-blue')}>{item.condition}</span>
                           </td>
-                          <td className="px-4 py-3 text-right text-text-secondary">
+                          <td className="px-3 py-3 text-right text-text-secondary whitespace-nowrap tabular-nums">
                             {item.purchase_price ? formatPrice(item.purchase_price) : '-'}
                           </td>
-                          <td className="px-4 py-3 text-right text-text-primary font-medium">
+                          <td className="px-3 py-3 text-right text-text-primary font-medium whitespace-nowrap tabular-nums">
                             {marketPrice > 0 ? formatPrice(marketPrice) : '-'}
                           </td>
-                          <td className="px-4 py-3 text-right text-xs font-medium">
+                          <td className="px-3 py-3 text-right text-xs font-medium whitespace-nowrap tabular-nums">
                             {pnl !== null ? (
                               <span className={pnl >= 0 ? 'text-green' : 'text-brand-red'}>
                                 {pnl >= 0 ? '+' : ''}{formatPrice(pnl)}
                               </span>
                             ) : '-'}
                           </td>
-                          <td className="px-4 py-3 text-right text-xs text-text-secondary whitespace-nowrap">
+                          <td className="hidden 2xl:table-cell px-3 py-3 text-right text-xs text-text-secondary whitespace-nowrap">
                             {acquiredLabel(item) || '-'}
                           </td>
-                          <td className="px-4 py-3 text-right">
+                          <td className="px-2 py-3 text-right">
                             <button
                               type="button"
                               className="rounded-lg p-2 text-text-muted transition-colors hover:bg-bg-card hover:text-text-primary"
@@ -1775,10 +1857,10 @@ export default function Collection() {
                   </tbody>
                   <tfoot>
                     <tr className="border-t border-border bg-bg/50">
-                      <td colSpan={5} className="px-4 py-3 text-text-muted text-sm">{filtered.length} {t('collection.filtered')}</td>
-                      <td className="px-4 py-3 text-right font-bold text-green" aria-label={t('collection.totalValue')}>{formatPrice(totalValue)}</td>
+                      <td colSpan={5} className="px-3 py-3 text-text-muted text-sm whitespace-nowrap">{filtered.length} {t('collection.filtered')}</td>
+                      <td className="px-3 py-3 text-right font-bold text-green whitespace-nowrap tabular-nums" aria-label={t('collection.totalValue')}>{formatPrice(totalValue)}</td>
                       <td />
-                      <td />
+                      <td className="hidden 2xl:table-cell" />
                       <td />
                     </tr>
                   </tfoot>

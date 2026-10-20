@@ -147,10 +147,10 @@ describe('navConfig table (design doc §4.2)', () => {
   })
 
   it('marks the pages that render their own back link', () => {
-    for (const path of ['/binders/7', '/decks/1', '/sets/base1', '/pokedex/25', '/collection/user/3', '/achievements/3']) {
+    for (const path of ['/sets/base1', '/pokedex/25', '/collection/user/3', '/achievements/3']) {
       expect(isOwnBack(path)).toBe(true)
     }
-    for (const path of ['/sets', '/analytics', '/settings', '/profile', '/scans/9']) expect(isOwnBack(path)).toBe(false)
+    for (const path of ['/binders/7', '/decks/1', '/decks/compare', '/sets', '/analytics', '/settings', '/profile', '/scans/9']) expect(isOwnBack(path)).toBe(false)
   })
 
   it('classifies redirects, outside-shell pages and unknown paths', () => {
