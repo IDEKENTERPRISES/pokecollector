@@ -6,7 +6,7 @@ import {
   getCustomMatches,
   getDashboard,
   getInvestmentTracker,
-  getPokedex,
+  getPokedexSummary,
   getProfile,
 } from '../api/client'
 import GymBadges from '../components/ios/GymBadges'
@@ -40,7 +40,6 @@ export default function Profile() {
   const { items } = useOutbox()
   const [installOpen, setInstallOpen] = useState(false)
   const isAdmin = user?.role === 'admin'
-  const language = settings.language === 'de' ? 'de' : 'en'
   const publicProfilesEnabled = settings.public_profiles_enabled === 'true'
   const queue = readPwaFlags().queue
 
@@ -56,8 +55,8 @@ export default function Profile() {
     queryFn: () => getInvestmentTracker({ period: '1m', price_field: pricePrimaryField }).then(r => r.data),
   })
   const { data: pokedexSummary } = useQuery({
-    queryKey: ['pokedex-summary', language],
-    queryFn: () => getPokedex({ lang: language, status: 'all' }).then(data => data?.summary ?? null),
+    queryKey: ['pokedex-summary'],
+    queryFn: getPokedexSummary,
     staleTime: 24 * 60 * 60 * 1000,
     gcTime: 24 * 60 * 60 * 1000,
     enabled: !offline,
@@ -127,7 +126,7 @@ export default function Profile() {
           icon={Package}
           label={t('nav.products')}
           value={productsToReview > 0 ? productsToReview : tileIcon(Package)}
-          detail={productsToReview > 0 ? `${t('home.productsNeedReview')}` : undefined}
+          detail={productsToReview > 0 ? t(productsToReview === 1 ? 'profile.productNeedsReview' : 'profile.productsNeedReview') : undefined}
           to="/products"
         />
         <StatTile type="grass" icon={ArrowLeftRight} label={t('nav.trades')} value={tileIcon(ArrowLeftRight)} to="/trades" />

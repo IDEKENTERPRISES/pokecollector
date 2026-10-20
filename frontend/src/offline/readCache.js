@@ -29,6 +29,7 @@ export const READ_CACHE_ALLOW = new Set([
   'scanner-configuration',
   'printing-detail-tags',
   'investment-tracker',
+  'pokedex-summary',
 ])
 
 function currentAppVersion() {

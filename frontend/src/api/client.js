@@ -268,6 +268,7 @@ export const removeFromWishlist = (id) => api.delete(`/wishlist/${id}`)
 
 // National Pokédex
 export const getPokedex = (params = {}) => api.get('/pokedex', { params }).then(r => r.data)
+export const getPokedexSummary = () => api.get('/pokedex/summary').then(r => (Number.isFinite(r.data?.total) ? r.data : null))
 export const getPokedexSpecies = (dexId, params = {}) => api.get(`/pokedex/${dexId}`, { params }).then(r => r.data)
 
 // Binders
