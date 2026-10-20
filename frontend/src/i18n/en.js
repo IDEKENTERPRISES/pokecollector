@@ -20,6 +20,29 @@ const en = {
     cards: 'Cards',
     value: 'Value',
     more: 'More',
+    home: 'Home',
+    search: 'Search',
+    profile: 'Profile',
+    scan: 'Scan',
+    scanAttention: 'Scan, {count} need review',
+    scanProcessing: 'Scan, processing',
+    tabBar: 'Main navigation',
+    sidebar: 'Sidebar',
+    scanCards: 'Scan cards',
+    browse: 'Browse',
+  },
+
+  profile: {
+    title: 'Profile',
+    trainer: 'Trainer',
+    thisMonth: '{amount} this month',
+    publicPage: 'Public page',
+    badges: 'Badges',
+    syncOffline: 'Sync & offline',
+    migration: 'Custom card migration',
+    installTitle: 'Install on iPhone',
+    installClose: 'Close',
+    version: 'PokéCollector v{version}',
   },
 
   pokedex: {
@@ -1070,6 +1093,16 @@ const en = {
 
   // Settings
   settings: {
+    sections: {
+      account: 'Account',
+      appearance: 'Appearance',
+      scanner: 'Scanner',
+      notifications: 'Notifications',
+      data: 'Data & sync',
+      users: 'Users & sign-in',
+      community: 'Community',
+      about: 'About',
+    },
     title: 'Settings',
     subtitle: 'Configuration and utilities',
     appConfig: 'Configure app',
