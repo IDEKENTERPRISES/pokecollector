@@ -34,8 +34,8 @@ function useDebounced(value, delay) {
   return debounced
 }
 
-/** Floating status button, mounted once in Layout. Hidden when nothing waits and the server is reachable. */
-export default function SyncIndicator({ belowNav = false }) {
+/** Status button in the nav bar's trailing slot, mounted once by NavBar. Hidden when nothing waits and the server is reachable. */
+export default function SyncIndicator() {
   const { t } = useSettings()
   const snapshot = useOutbox()
   const offline = useOffline()
@@ -56,7 +56,7 @@ export default function SyncIndicator({ belowNav = false }) {
           aria-label={state.label}
           aria-haspopup="dialog"
           onClick={() => setOpen(true)}
-          className={`fixed right-3 ${belowNav ? 'top-[calc(max(1.25rem,env(safe-area-inset-top))_+_2.75rem)]' : 'top-[max(0.5rem,env(safe-area-inset-top))]'} z-[45] inline-flex h-10 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-medium shadow-lg`}
+          className="glass ios-press inline-flex h-11 min-w-11 flex-shrink-0 items-center justify-center gap-1.5 rounded-full px-3 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tint"
         >
           <state.Icon
             size={16}

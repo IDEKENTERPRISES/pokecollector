@@ -174,7 +174,11 @@ test.describe('logout guard', () => {
     await expect(page.getByText('Hello,')).toBeVisible()
   }
 
-  const logoutOnHome = page => page.getByRole('button', { name: 'Logout', exact: true })
+  // Log out lives on the Profile tab (the sidebar link at desktop width, the tab bar on a phone).
+  const logoutFromProfile = async page => {
+    if (!new URL(page.url()).pathname.startsWith('/profile')) await page.getByRole('link', { name: 'Profile', exact: true }).click()
+    await page.getByRole('button', { name: 'Logout', exact: true }).click()
+  }
   const dialogButtons = page => ({
     sync: page.getByRole('button', { name: 'Sync first' }),
     keep: page.getByRole('button', { name: 'Log out and keep items' }),
@@ -189,19 +193,19 @@ test.describe('logout guard', () => {
     return buttons
   }
 
-  test('with items: four choices on Home; cancel keeps the session, keep leaves the item', async ({ page, context }) => {
+  test('with items: four choices on Profile; cancel keeps the session, keep leaves the item', async ({ page, context }) => {
     await signInAsMisty(page, context)
     await seedItem(page, misty.id)
 
-    await logoutOnHome(page).click()
+    await logoutFromProfile(page)
     const buttons = await expectFourWayDialog(page)
 
     await buttons.cancel.click()
     await expect(buttons.keep).toHaveCount(0)
     expect(await page.evaluate(() => localStorage.getItem('token'))).toBe('test-token')
-    await expect(page).toHaveURL('/')
+    await expect(page).toHaveURL(/\/profile/)
 
-    await logoutOnHome(page).click()
+    await logoutFromProfile(page)
     await expectFourWayDialog(page)
     await dialogButtons(page).keep.click()
     await waitForLoginPage(page)
@@ -215,7 +219,7 @@ test.describe('logout guard', () => {
     await page.goto('/collection')
     await seedItem(page, misty.id)
 
-    await page.getByRole('button', { name: 'Logout', exact: true }).click()
+    await logoutFromProfile(page)
     await expectFourWayDialog(page)
     expect(await countItems(page)).toBe(1)
     await dialogButtons(page).discard.click()
@@ -228,17 +232,17 @@ test.describe('logout guard', () => {
     await page.goto('/collection')
     await seedItem(page, misty.id)
 
-    await page.getByRole('button', { name: 'Logout', exact: true }).click()
+    await logoutFromProfile(page)
     const buttons = await expectFourWayDialog(page)
     await buttons.cancel.click()
     await expect(buttons.keep).toHaveCount(0)
-    await expect(page).toHaveURL(/\/collection/)
+    await expect(page).toHaveURL(/\/profile/)
     expect(await countItems(page)).toBe(1)
   })
 
   test('without items logout works as before', async ({ page, context }) => {
     await signInAsMisty(page, context)
-    await logoutOnHome(page).click()
+    await logoutFromProfile(page)
     await waitForLoginPage(page)
     await expect(page.getByRole('button', { name: 'Log out and keep items' })).toHaveCount(0)
     await expectStorageCleared(page, 'token')

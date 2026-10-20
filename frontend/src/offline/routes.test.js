@@ -3,13 +3,15 @@ import { isOfflineRoute, OFFLINE_ROUTES } from './routes.js'
 
 describe('isOfflineRoute', () => {
   it('accepts every listed static route', () => {
-    for (const path of ['/', '/dashboard', '/collection', '/wishlist', '/sets', '/binders', '/search', '/offline']) {
+    for (const path of ['/', '/dashboard', '/collection', '/wishlist', '/sets', '/binders', '/search', '/offline', '/profile']) {
       expect(isOfflineRoute(path)).toBe(true)
     }
   })
 
   it('accepts parameterised routes with one segment', () => {
     expect(isOfflineRoute('/sets/base1')).toBe(true)
+    expect(isOfflineRoute('/sets/series/sv')).toBe(true)
+    expect(isOfflineRoute('/sets/series/sv/extra')).toBe(false)
     expect(isOfflineRoute('/binders/42')).toBe(true)
     expect(isOfflineRoute('/sets/base1/extra')).toBe(false)
     expect(isOfflineRoute('/binders//')).toBe(false)
@@ -22,12 +24,12 @@ describe('isOfflineRoute', () => {
   })
 
   it('rejects everything else', () => {
-    for (const path of ['/analytics', '/settings', '/scans', '/collection/user/3', '/pokedex', '/collections', '', undefined]) {
+    for (const path of ['/analytics', '/settings', '/settings/appearance', '/scans', '/collection/user/3', '/pokedex', '/collections', '', undefined]) {
       expect(isOfflineRoute(path)).toBe(false)
     }
   })
 
   it('lists the routes of the design document', () => {
-    expect(OFFLINE_ROUTES).toHaveLength(10)
+    expect(OFFLINE_ROUTES).toHaveLength(12)
   })
 })

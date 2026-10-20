@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Crown, RefreshCw, Download, Upload, Plus, Pencil, Trash2, User, UserCheck, UserX, Zap, Copy } from 'lucide-react'
 import {
@@ -26,8 +26,36 @@ import toast from 'react-hot-toast'
 import { TCGDEX_LANGUAGES, normalizeTcgdexLanguageCsv, tcgdexLanguageLabel } from '../utils/tcgdexLanguages'
 import { APP_LANGUAGES } from '../utils/appLanguages'
 import { invalidateCollectionPhotoState, invalidateTcgdexFilterLanguages } from '../utils/queryInvalidation'
+import ListRow from '../components/ios/ListRow'
+import ListSection from '../components/ios/ListSection'
+import { NAV_ICONS } from '../navigation/navIcons'
+import { settingsSection, visibleSettingsSections } from '../navigation/navConfig'
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
+
+// The sections whose controls still live in the former "General" block (docs/IOS_UI_DESIGN.md §5.6).
+const GENERAL_SECTIONS = ['account', 'appearance', 'scanner', 'about', 'users']
+
+/** /settings: the root list of sections with coloured icons. Hidden sections are left out, never disabled. */
+function SettingsRoot({ t, isAdmin }) {
+  return (
+    <div className="space-y-4 py-4">
+      <h1 className="px-1 text-2xl font-black tracking-tight text-text-primary">{t('settings.title')}</h1>
+      <ListSection className="!mx-0">
+        {visibleSettingsSections({ isAdmin }).map(item => (
+          <ListRow
+            key={item.key}
+            to={`/settings/${item.key}`}
+            icon={NAV_ICONS[item.icon]}
+            iconColor={item.colour}
+            title={t(item.titleKey)}
+            testId={`settings-section-${item.key}`}
+          />
+        ))}
+      </ListSection>
+    </div>
+  )
+}
 
 function SectionHeader({ title }) {
   return (
@@ -399,7 +427,10 @@ export default function Settings() {
   const confirmDialog = useConfirmDialog()
   const publicProfilesEnabled = settings.public_profiles_enabled === 'true'
   const { theme, setTheme, themes } = useTheme()
-  const [activeTab, setActiveTab] = useState('general')
+  const { section } = useParams()
+  const isAdmin = user?.role === 'admin'
+  const activeSection = visibleSettingsSections({ isAdmin }).some(item => item.key === section) ? section : null
+  const showGeneral = GENERAL_SECTIONS.includes(activeSection)
 
   const [backupOptions, setBackupOptions] = useState(['full'])
   const [debugModeEnabled, setDebugModeEnabled] = useState(false)
@@ -886,36 +917,20 @@ export default function Settings() {
     ? `${t('settings.lastSyncFailed')} ${lastFullSyncText}${syncStatus.last_full_sync.error_message ? `: ${syncStatus.last_full_sync.error_message}` : ''}`
     : lastFullSyncText
 
+  // No section: the root list. An unknown or hidden section (and the old "general") goes back to it.
+  if (!section) return <SettingsRoot t={t} isAdmin={isAdmin} />
+  if (!activeSection) return <Navigate to="/settings" replace />
+
   return (
     <div className="space-y-6 py-6">
       <div className="px-1">
-        <h1 className="text-2xl font-black text-text-primary tracking-tight">{t('settings.title')}</h1>
-        <p className="text-sm text-text-muted mt-1">{t('settings.appConfig')}</p>
-      </div>
-      <div className="flex border-b border-border overflow-x-auto scrollbar-none -mx-4 px-4" style={{WebkitOverflowScrolling:"touch"}}>
-        {[
-          { key: 'general', label: t('settings.tabs.general') },
-          ...(user?.role === 'admin' ? [{ key: 'sync', label: t('settings.tabs.dataSync') }] : []),
-          { key: 'notifications', label: t('settings.tabs.notifications') },
-          { key: 'community', label: t('settings.tabs.community') },
-          ...(user?.role === 'admin' && multiUser ? [{ key: 'users', label: t('settings.tabs.users') }] : []),
-        ].map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
-            className={`px-3 py-2 text-xs sm:text-sm font-semibold whitespace-nowrap transition-colors border-b-2 flex-shrink-0 ${
-              activeTab === tab.key ? 'border-brand-red text-brand-red' : 'border-transparent text-text-muted hover:text-text-primary'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+        <h1 className="text-2xl font-black text-text-primary tracking-tight">{t(settingsSection(activeSection).titleKey)}</h1>
       </div>
 
-      {activeTab === 'general' && (
+      {showGeneral && (
         <>
           {/* ── 1. TRAINER ── */}
-          <section className="space-y-1">
+          {activeSection === 'account' && <section className="space-y-1">
             <SectionHeader title={t('settings.sectionTrainer')} />
             <SettingsCard>
               <SettingsRow
@@ -974,10 +989,10 @@ export default function Settings() {
               </SettingsRow>
 
             </SettingsCard>
-          </section>
+          </section>}
 
           {/* ── PUBLIC PROFILE ── */}
-          {(user?.role === 'admin' || publicProfilesEnabled) && <section className="space-y-1">
+          {activeSection === 'account' && (user?.role === 'admin' || publicProfilesEnabled) && <section className="space-y-1">
             <SectionHeader title={t('settings.sectionPublicProfile')} />
             <SettingsCard>
               {user?.role === 'admin' && (
@@ -1063,7 +1078,7 @@ export default function Settings() {
           </section>}
 
           {/* ── 2. THEME ── */}
-          <section className="space-y-1">
+          {activeSection === 'appearance' && <section className="space-y-1">
             <SectionHeader title={t('settings.sectionTheme')} />
             <SettingsCard>
               <div className="px-4 py-3.5">
@@ -1091,9 +1106,9 @@ export default function Settings() {
                 </div>
               </div>
             </SettingsCard>
-          </section>
+          </section>}
 
-          {user?.role === 'admin' && (
+          {activeSection === 'users' && user?.role === 'admin' && (
             <section className="space-y-1">
               <SectionHeader title={t('settings.sectionMultiUser')} />
               <SettingsCard>
@@ -1164,7 +1179,7 @@ export default function Settings() {
           )}
 
           {/* ── 3. DARSTELLUNG ── */}
-          <section className="space-y-1">
+          {activeSection === 'appearance' && <section className="space-y-1">
             <SectionHeader title={t('settings.sectionAppearance')} />
             <SettingsCard>
               <SettingsRow label={t('settings.language')} description={t('settings.languageDesc')}>
@@ -1221,10 +1236,10 @@ export default function Settings() {
                 </button>
               </SettingsRow>
             </SettingsCard>
-          </section>
+          </section>}
 
           {/* ── 6. KI / KARTEN-SCANNER ── */}
-          <section className="space-y-1">
+          {activeSection === 'scanner' && <section className="space-y-1">
             <SectionHeader title={t('settings.sectionAI')} />
             <ScannerSettingsCard t={t} />
             <SettingsCard>
@@ -1267,13 +1282,13 @@ export default function Settings() {
                 </div>
               </SettingsRow>
             </SettingsCard>
-          </section>
+          </section>}
 
           {/* ── 7. EBAY API ── */}
           
 
           {/* ── 8. ÜBER DIE APP ── */}
-          <section className="space-y-1">
+          {activeSection === 'about' && <section className="space-y-1">
             <SectionHeader title={t('settings.sectionAbout')} />
             <SettingsCard>
               <SettingsRow label={t('settings.app')} description="Pokemon TCG Collection">
@@ -1326,11 +1341,11 @@ export default function Settings() {
                 {t('settings.madeWith')} <a href="https://romerg.de/" target="_blank" rel="noreferrer" className="text-brand-red hover:opacity-80 transition-opacity font-semibold">Gilles Romer</a>
               </p>
             </div>
-          </section>
+          </section>}
         </>
       )}
 
-      {activeTab === 'sync' && (
+      {activeSection === 'data' && (
         <>
           {/* ── 3. SYNCHRONISATION ── */}
           <section className="space-y-1">
@@ -1576,7 +1591,7 @@ export default function Settings() {
         </>
       )}
 
-      {activeTab === 'notifications' && (
+      {activeSection === 'notifications' && (
         <>
           {/* ── 4. BENACHRICHTIGUNGEN ── */}
           <section className="space-y-1">
@@ -1698,7 +1713,7 @@ export default function Settings() {
         </>
       )}
 
-      {activeTab === 'community' && (
+      {activeSection === 'community' && (
         <>
           <section className="space-y-1">
             <SectionHeader title={t('settings.contributors')} />
@@ -1730,7 +1745,7 @@ export default function Settings() {
         </>
       )}
 
-      {activeTab === 'users' && user?.role === 'admin' && multiUser && (
+      {activeSection === 'users' && user?.role === 'admin' && multiUser && (
         <UsersTab t={t} queryClient={queryClient} />
       )}
 

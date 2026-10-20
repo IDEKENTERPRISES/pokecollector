@@ -7,7 +7,7 @@ import { searchCards, getSets, getCustomCards, bulkAddToCollection, getScanJobs 
 import { CardItem, CustomCardModal, CardModal } from '../components/CardItem'
 import { useSettings } from '../contexts/SettingsContext'
 import Sheet from '../components/ui/Sheet'
-import CardScanner from '../components/UnifiedCardScanner'
+import { useScanner } from '../contexts/ScannerContext'
 import { getDefaultVariantOrNull } from '../utils/cardVariants'
 import { cardNumberMatches } from '../utils/cardNumbers'
 import { normalizeSearchText, textIncludes } from '../utils/textSearch'
@@ -170,7 +170,7 @@ export default function CardSearch() {
   const [showFilters, setShowFilters] = useState(false)
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
   const [showCustomModal, setShowCustomModal] = useState(false)
-  const [showScanner, setShowScanner] = useState(false)
+  const { openScanner } = useScanner()
   const [selectedCard, setSelectedCard] = useState(null)
   const [selectedCardTab, setSelectedCardTab] = useState('add')
   const [selectMode, setSelectMode] = useState(false)
@@ -358,7 +358,7 @@ export default function CardSearch() {
 
   const clearSearch = () => navigate({ pathname: location.pathname, search: '' })
 
-  const hasOpenOverlay = Boolean(selectedCard || showFilters || showCustomModal || showScanner)
+  const hasOpenOverlay = Boolean(selectedCard || showFilters || showCustomModal)
 
   useEffect(() => {
     setSearchInput(filters.name)
@@ -554,7 +554,7 @@ export default function CardSearch() {
         </div>
         <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
           <button
-            onClick={() => setShowScanner(true)}
+            onClick={openScanner}
             className="w-10 h-10 rounded-xl flex items-center justify-center transition-colors"
             style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
             title={t('scanner.title')}
@@ -932,14 +932,6 @@ export default function CardSearch() {
         </div>
       </Sheet>
 
-      <CardScanner
-        isOpen={showScanner}
-        onClose={() => setShowScanner(false)}
-        onCardSelected={(card) => {
-          updateSearchParams({ q: card.name })
-          setShowScanner(false)
-        }}
-      />
     </div>
   )
 }

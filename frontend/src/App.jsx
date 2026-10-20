@@ -14,7 +14,7 @@ import UpdateBanner from './components/pwa/UpdateBanner'
 import { OfflineProvider } from './offline/OfflineProvider'
 
 const HomeScreen = lazy(() => import('./pages/HomeScreen'))
-const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Profile = lazy(() => import('./pages/Profile'))
 const CardSearch = lazy(() => import('./pages/CardSearch'))
 const Collection = lazy(() => import('./pages/Collection'))
 const Pokedex = lazy(() => import('./pages/Pokedex'))
@@ -191,13 +191,15 @@ function ProtectedRoutes() {
     <Routes>
       <Route path="/" element={<Layout />}>
         <Route index element={lazyRoute(<HomeScreen />)} />
-        <Route path="dashboard" element={lazyRoute(<Dashboard />)} />
+        <Route path="dashboard" element={<Navigate to="/" replace />} />
+        <Route path="profile" element={lazyRoute(<Profile />)} />
         <Route path="search" element={lazyRoute(<CardSearch />)} />
         <Route path="collection" element={lazyRoute(<Collection />)} />
         <Route path="pokedex" element={lazyRoute(<Pokedex />)} />
         <Route path="pokedex/:dexId" element={lazyRoute(<PokedexSpecies />)} />
         <Route path="collection/user/:userId" element={lazyRoute(<UserCollection />)} />
         <Route path="sets" element={lazyRoute(<Sets />)} />
+        <Route path="sets/series/:seriesKey" element={lazyRoute(<Sets />)} />
         <Route path="sets/:setId" element={lazyRoute(<SetDetail />)} />
         <Route path="wishlist" element={lazyRoute(<Wishlist />)} />
         <Route path="binders" element={lazyRoute(<Binders />)} />
@@ -215,10 +217,12 @@ function ProtectedRoutes() {
         <Route path="achievements" element={lazyRoute(<Achievements />)} />
         <Route path="achievements/:userId" element={lazyRoute(<Achievements />)} />
         <Route path="settings" element={lazyRoute(<Settings />)} />
+        <Route path="settings/:section" element={lazyRoute(<Settings />)} />
         <Route path="migration" element={lazyRoute(<CardMigration />)} />
         <Route path="scans" element={lazyRoute(<ScanQueue />)} />
         <Route path="scans/:jobId" element={lazyRoute(<ScanQueue />)} />
         <Route path="offline" element={lazyRoute(<OfflineCenter />)} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
   )

@@ -803,6 +803,8 @@ test('Deck picker adds a selected card with its chosen quantity without detail r
   await page.getByRole('button', { name: 'Add (1)' }).click()
   await page.getByLabel('Quantity: Visual card 4').fill('30')
   await page.getByRole('dialog').getByRole('button', { name: 'Add' }).click()
+  // The deck's card list mounts tiles near the viewport; bring the new entry into view first.
+  await page.getByRole('button', { name: 'Open Visual card 4' }).scrollIntoViewIfNeeded()
   await expect(page.getByLabel('Progress: 2/30')).toBeVisible()
   await expect.poll(() => requests).toEqual([30])
   expect(detailGets).toBe(1)

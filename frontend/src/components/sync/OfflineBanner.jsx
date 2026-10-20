@@ -2,8 +2,12 @@ import { CloudOff } from 'lucide-react'
 import { useSettings } from '../../contexts/SettingsContext'
 import { useOffline } from '../../offline/useOffline'
 
-/** Strip at the top of the layout once the server has been unreachable twice or the device says offline. */
-export default function OfflineBanner() {
+/**
+ * The offline line, rendered by StatusLine under the nav bar (design doc §6.6) once the server has
+ * been unreachable twice or the device says offline. `children` (the saved-data text) sit on the
+ * same line. The full sentence stays available as the title and to screen readers.
+ */
+export default function OfflineBanner({ children }) {
   const { t } = useSettings()
   const offline = useOffline()
 
@@ -13,15 +17,13 @@ export default function OfflineBanner() {
     <div
       role="status"
       data-testid="offline-banner"
-      className="flex items-start gap-2 pb-2 pl-4 pr-20 text-xs text-text-primary sm:text-sm"
-      style={{
-        paddingTop: 'max(0.5rem, env(safe-area-inset-top))',
-        backgroundColor: 'color-mix(in srgb, var(--color-yellow) 18%, var(--color-bg))',
-        borderBottom: '1px solid color-mix(in srgb, var(--color-yellow) 45%, transparent)',
-      }}
+      title={t('sync.offlineBanner')}
+      className="flex min-w-0 items-center gap-1.5 text-footnote text-text-primary"
     >
-      <CloudOff size={16} className="mt-0.5 flex-shrink-0 text-yellow" aria-hidden />
-      <p className="min-w-0 flex-1 leading-snug">{t('sync.offlineBanner')}</p>
+      <CloudOff size={14} className="flex-shrink-0 text-yellow" aria-hidden />
+      <span className="sr-only">{t('sync.offlineBanner')}</span>
+      <span aria-hidden="true" className="flex-shrink-0 font-semibold">{t('sync.offlineShort')}</span>
+      {children}
     </div>
   )
 }

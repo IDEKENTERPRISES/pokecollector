@@ -38,8 +38,9 @@ Routes are defined in `frontend/src/App.jsx`.
 | Route | Component File | Notes |
 |------|----------------|-------|
 | `/login` | `pages/Login.jsx` | Multi-user login screen |
-| `/` | `pages/HomeScreen.jsx` | Portal-style home screen |
-| `/dashboard` | `pages/Dashboard.jsx` | Portfolio summary |
+| `/` | `pages/HomeScreen.jsx` | Home tab root |
+| `/dashboard` | redirect | Redirects to `/` (`pages/Dashboard.jsx` stays until P9) |
+| `/profile` | `pages/Profile.jsx` | Profile tab root: trainer card, shortcut tiles, Settings / Sync & offline / migration / install rows, Log out (multi-user), app version. Works offline from cached data |
 | `/search` | `pages/CardSearch.jsx` | Card search, scanner entry, and multi-select bulk add |
 | `/scans` | `pages/ScanQueue.jsx` | Persistent scan inbox |
 | `/scans/:jobId` | `pages/ScanQueue.jsx` | Review one queued scan job |
@@ -49,6 +50,7 @@ Routes are defined in `frontend/src/App.jsx`.
 | `/pokedex` | `pages/Pokedex.jsx` | Grouped or exact-form National Pokédex completion overview |
 | `/pokedex/:dexId` | `pages/PokedexSpecies.jsx` | Species/form detail, related forms, and exact matching card printings |
 | `/sets` | `pages/Sets.jsx` | Set browser |
+| `/sets/series/:seriesKey` | `pages/Sets.jsx` | Series page (renders `Sets` until P6 reads the parameter); offline-capable |
 | `/sets/:setId` | `pages/SetDetail.jsx` | Set checklist |
 | `/wishlist` | `pages/Wishlist.jsx` | Wishlist and alerts |
 | `/binders` | `pages/Binders.jsx` | Unified Binders, Planned Binders, Planned Decks, and Real Decks |
@@ -65,7 +67,9 @@ Routes are defined in `frontend/src/App.jsx`.
 | `/leaderboard/compare/:userId` | `pages/Compare.jsx` | Trainer comparison |
 | `/achievements` | `pages/Achievements.jsx` | Current user achievements |
 | `/achievements/:userId` | `pages/Achievements.jsx` | Another user's achievements |
-| `/settings` | `pages/Settings.jsx` | App settings and admin tools |
+| `/settings` | `pages/Settings.jsx` | Root list of settings sections |
+| `/settings/:section` | `pages/Settings.jsx` | One section: `account`, `appearance`, `scanner`, `notifications`, `data` (admins), `users` (admins), `community`, `about`. Unknown or hidden sections redirect to `/settings` |
+| `*` | redirect | Any other path redirects to `/` |
 | `/migration` | `pages/CardMigration.jsx` | Custom card migration queue |
 | `/u` | `pages/PublicDirectory.jsx` | Anonymous public trainer directory |
 | `/u/:handle` | `pages/PublicProfile.jsx` | Anonymous public trainer profile |
@@ -158,11 +162,17 @@ Defined in `frontend/src/hooks/useTheme.js`.
 
 ## Navigation
 
-### Home / Portal Navigation
+### App shell (iPhone UI, phase P2)
 
-- `pages/HomeScreen.jsx` is the main portal view
-- The app now uses a compact navigation pattern with 6 primary portal items on the home screen
-- Secondary sections are organized with grouped tabs on individual pages
+The shell follows `docs/IOS_UI_DESIGN.md`. `components/Layout.jsx` renders one `NavBar`, the desktop `SidebarNav`, one `<main>` and, portaled to `<body>`, the `TabBar`. The document stays the scroller (no overflow wrapper); `main` has `padding-bottom: var(--content-bottom)` on phones.
+
+- **`src/navigation/navConfig.js`** is the single source: `TABS`, `ROUTES` (section, root or pushed, parent, title key, offline flag, "own back"), `REDIRECTS`, `OUTSIDE_SHELL`, `SETTINGS_SECTIONS`, `PROFILE_LINKS` and `matchRoute`, `sectionForPath`, `tabForPath`, `parentForPath`, `titleKeyForPath`. Routes are matched by pattern, never by prefix (`/collection/user/:userId` is Profile). A unit test reads the route paths from `App.jsx`, so a new route must be added to `navConfig` (and to `offline/routes.js` when it works offline).
+- **Tabs:** Home · Collection · (Scan) · Search · Profile. `TabBar` is a glass capsule with a Poké Ball Scan button; the badge is the scan inbox's attention count (`scan-jobs` query). It is hidden outside the shell, at 1024 px and wider (the sidebar replaces it), while the scanner is open and while the keyboard is up (`useKeyboardOpen`).
+- **Tab memory** (`tabMemory.js`, `sessionStorage['pc.tabs.v1']`): a tab remembers its last location; tapping the active tab on a pushed page returns to its root, at the root it scrolls to the top.
+- **Back:** `historyMirror.js` mirrors the in-app history (`pc.nav.history.v1`, 50 entries). `useBack()` goes `navigate(-1)` when the previous entry is in the same section, otherwise to the route's parent with `replace`.
+- **`NavBar`** is a plain `<div>` (not a `<header>`: DeckEditor's tests use the only `header`). Pages customise it with `useNavBar({ title, subtitle, largeTitle, trailing, backLabel, hideBack })` and render `<LargeTitle>` on tab roots. Without a call (interim mode) the bar shows the `navConfig` title and a back button unless the route is marked "own back". `StatusLine` (offline and saved-data text) and `SyncIndicator` live in the bar.
+- **`ScannerContext`** (`useScanner()` → `openScanner`, `closeScanner`, `isOpen`) shows the existing `UnifiedCardScanner` outside the routed `<Outlet>`. The Scan circle, the sidebar button and CardSearch's camera button call `openScanner()`.
+- **Profile** (`/profile`) holds Log out (it calls `AuthContext.logout()`, so the logout guard runs). `AppNav` and the floating Pokéball button are no longer rendered (the files stay until P9); `PublicHomeButton` stays on `/u`.
 
 ### `TabNav`
 
@@ -172,10 +182,10 @@ Defined in `frontend/src/components/TabNav.jsx`.
 - Marks a tab active if the current pathname equals or starts with the tab path
 - Used by pages such as `Dashboard`, `Collection`, `Wishlist`, `Binders`, `Analytics`, `Products`, `Leaderboard`, and `Achievements`
 
-### `Layout` and `AppNav`
+### `Layout`
 
-- `components/Layout.jsx` wraps protected routes
-- `components/AppNav.jsx` shows the current page title and multi-user logout control
+- `components/Layout.jsx` wraps protected routes (see App shell above)
+- `components/AppNav.jsx` is no longer rendered; P9 deletes it
 
 ## Key Screens
 
@@ -202,7 +212,8 @@ Defined in `frontend/src/components/TabNav.jsx`.
 
 - Mixes per-user preferences and admin-only controls
 - Admin users can enable multi-user mode from Settings
-- When multi-user mode is enabled, admin users see a **Users** tab
+- `/settings` is a root list of sections (Account, Appearance, Scanner, Notifications, Data & sync, Users & sign-in, Community, About) and `/settings/:section` opens one; the old tab strip is gone and the controls are unchanged inside their sections (P7 restyles them)
+- When multi-user mode is enabled, admin users see the **Users & sign-in** section
 - The **Users** tab supports creating users, editing usernames/roles/passwords, activating/deactivating users, deleting other users, and forcing first-login password changes
 - Includes:
   - profile name editing

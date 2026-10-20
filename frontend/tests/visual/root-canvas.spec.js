@@ -18,8 +18,8 @@ test('root canvas stays opaque without blocking vertical scrolling', async ({ pa
   expect(initial).toEqual({
     rootBackground: 'rgb(0, 0, 0)',
     bodyBackground: 'rgb(0, 0, 0)',
-    rootOverflowX: 'hidden',
-    bodyOverflowX: 'hidden',
+    rootOverflowX: 'clip',
+    bodyOverflowX: 'clip',
   })
 
   const scrolling = await page.evaluate(() => {
