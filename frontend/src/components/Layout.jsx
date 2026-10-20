@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { Outlet, useLocation, useNavigationType } from 'react-router-dom'
 import clsx from 'clsx'
 import OfflineUnavailable from './OfflineUnavailable'
-import InstallHint from './pwa/InstallHint'
 import NavBar from './ios/NavBar'
 import SidebarNav from './ios/SidebarNav'
 import TabBar from './ios/TabBar'
@@ -61,7 +60,6 @@ export default function Layout() {
                 )}
               >
                 {showUnavailable ? <OfflineUnavailable /> : <Outlet />}
-                {isHome && <InstallHint />}
               </main>
             </div>
           </div>

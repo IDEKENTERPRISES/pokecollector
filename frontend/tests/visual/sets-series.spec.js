@@ -12,7 +12,7 @@ const SETS = [
   { id: 'base1_en', name: 'Base Set', series: 'Base', series_id: 'base', release_date: '1999-01-09', total: 4, owned_count: 1, lang: 'en', abbreviation: 'BS', is_new: false },
 ]
 
-async function installApi(page, { settings = {} } = {}) {
+async function installApi(page, { settings = {}, images = () => ({ status: 404, json: {} }) } = {}) {
   await page.addInitScript(user => {
     localStorage.setItem('token', 'sets-series-token')
     localStorage.setItem('user', JSON.stringify(user))
@@ -32,7 +32,7 @@ async function installApi(page, { settings = {} } = {}) {
     if (path === '/api/cards/recognize/jobs') return route.fulfill({ json: { jobs: [] } })
     if (path === '/api/cards/custom') return route.fulfill({ json: [] })
     if (path === '/api/sync/status') return route.fulfill({ json: { is_running: false, is_price_sync_running: false } })
-    if (path.startsWith('/api/images/') || path.startsWith('/api/pokedex/images/')) return route.fulfill({ status: 404, json: {} })
+    if (path.startsWith('/api/images/') || path.startsWith('/api/pokedex/images/')) return route.fulfill(images(path))
     if (path === '/api/pokedex' || path === '/api/pokedex/') return route.fulfill({ json: { entries: [], summary: { total: 1025, owned: 10, missing: 1015 } } })
     return route.fulfill({ json: [] })
   })
@@ -62,6 +62,21 @@ test.describe('sets by series', () => {
     await expect(tiles).toHaveCount(2)
     await expect(tiles.first()).toContainText('Paldea Evolved')
     await expect(tiles.nth(1)).toContainText('Scarlet & Violet')
+  })
+
+  test('a series logo that fails to load falls back to the set logo, then to the series name', async ({ page }) => {
+    await installApi(page, { images: path => (path.endsWith('/logo') ? { status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"/>' } : { status: 404, json: {} }) })
+    await page.goto('/sets')
+    const grid = page.getByTestId('series-grid')
+    // /series 404s everywhere: the Scarlet & Violet tile switches to its set's /logo
+    await expect(grid.getByRole('link').first().locator('img')).toHaveAttribute('src', /\/api\/images\/set\/sv1_en\/logo$/)
+
+    await installApi(page, { images: () => ({ status: 404, json: {} }) })
+    await page.goto('/sets')
+    // Nothing loads: the tile shows the series name over the artwork, never a blank
+    const tile = page.getByTestId('series-grid').getByRole('link').first()
+    await expect(tile.locator('img')).toHaveCount(0)
+    await expect(tile.locator('span.font-display')).toHaveText('Scarlet & Violet')
   })
 
   test('with sets_view set to sets the page shows the plain set grid', async ({ page }) => {

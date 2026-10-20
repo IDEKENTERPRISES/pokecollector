@@ -16,6 +16,7 @@ import { CardLegend, withCollectionItemState } from '../components/card-system'
 import { CollectionCardDisplay } from '../components/CollectionCardImage'
 import SyncSheet from '../components/sync/SyncSheet'
 import HeaderBloom from '../components/ios/HeaderBloom'
+import InstallHint from '../components/pwa/InstallHint'
 import HideValuesToggle from '../components/ios/HideValuesToggle'
 import LargeTitle from '../components/ios/LargeTitle'
 import StatTile from '../components/ios/StatTile'
@@ -133,7 +134,7 @@ function QuickAction({ to, icon: Icon, label, type }) {
 
 export default function HomeScreen() {
   const navigate = useNavigate()
-  const { formatPrice, t, pricePrimaryField, settings, updateSettings } = useSettings()
+  const { formatPrice, formatCompactPrice, t, pricePrimaryField, settings, updateSettings } = useSettings()
   const { user } = useAuth()
   const offline = useOffline()
   const { enabled: queueEnabled, items: outboxItems } = useOutbox()
@@ -170,7 +171,8 @@ export default function HomeScreen() {
   const { data: pokedexSummary } = useQuery({
     queryKey: ['pokedex-summary', language],
     queryFn: () => getPokedex({ lang: language, status: 'all' }).then(result => result?.summary ?? null),
-    staleTime: 60 * 60 * 1000,
+    staleTime: 24 * 60 * 60 * 1000,
+    gcTime: 24 * 60 * 60 * 1000,
     enabled: !offline,
     retry: false,
   })
@@ -203,7 +205,7 @@ export default function HomeScreen() {
     [tracker, showingPortfolioValue],
   )
   const change = seriesChange(series)
-  const changeText = change == null ? null : `${change > 0 ? '+' : ''}${formatPrice(change)} ${t('home.thisMonth')}`
+  const changeText = change == null ? null : `${change > 0 ? '+' : ''}${formatCompactPrice(change)} ${t('home.thisMonth')}`
 
   const completeSets = useMemo(() => completeSetCount(sets), [sets])
   const yourSets = useMemo(() => closestToCompleteSets(sets), [sets])
@@ -234,9 +236,10 @@ export default function HomeScreen() {
   }
 
   return (
-    <div className="relative isolate -mt-1 flex flex-col gap-6 pb-6">
+    <div className="relative isolate -mt-1 flex flex-col gap-6 px-4 pb-6">
       <HeaderBloom variant="home" />
 
+      <div className="-mx-4">
       <LargeTitle>
         <div className="flex items-center gap-3">
           <span
@@ -261,6 +264,9 @@ export default function HomeScreen() {
           </div>
         </div>
       </LargeTitle>
+      </div>
+
+      <div className="-mx-4 -my-3 empty:hidden"><InstallHint /></div>
 
       {recentCards.length > 0 && (
         <section>
@@ -318,7 +324,7 @@ export default function HomeScreen() {
                 {headlineLabel}
               </button>
             )}
-            value={isLoading ? '—' : formatPrice(headlineValue)}
+            value={isLoading ? '—' : formatCompactPrice(headlineValue)}
             detail={changeText}
             sparkline={series}
             className={pokedexSummary ? '' : 'col-span-2'}

@@ -1425,7 +1425,8 @@ const en = {
     clearImageCacheFailed: 'Failed to clear cache',
     backupButton: 'Backup',
     backupImport: 'Import Backup',
-    backupImportDesc: 'Import .sql file',
+    backupImportDesc: 'Choose a .sql backup file',
+    restoreFooter: 'Restoring replaces all data on this server and asks for your password.',
     importButton: 'Import',
     importing: 'Running…',
     geminiApiKey: 'Gemini API Key',
@@ -2276,6 +2277,11 @@ const en = {
     menu: 'Menu',
     more: 'More',
     loading: 'Loading',
+  },
+  errors: {
+    title: 'Something went wrong',
+    message: 'The app hit an unexpected problem. Reloading usually fixes it.',
+    reload: 'Reload',
   },
 }
 

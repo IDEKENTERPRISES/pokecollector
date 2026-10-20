@@ -60,14 +60,17 @@ def _card_back_response():
     return RedirectResponse(url="/cardback.jpg", status_code=307)
 
 
-def _set_fallback_response():
+def _set_fallback_response(cacheable: bool = True):
     # Serve a bundled Pokémon-style wordmark when TCGdex has no set logo/symbol
     # or the upstream image cannot be fetched. Serving it from the API keeps the
     # fallback independent from frontend static-asset routing.
     return FileResponse(
         _SET_FALLBACK_IMAGE,
         media_type="image/svg+xml",
-        headers={"Cache-Control": "public, max-age=86400", **_IMAGE_SECURITY_HEADERS},
+        headers={
+            "Cache-Control": "public, max-age=86400" if cacheable else "no-store",
+            **_IMAGE_SECURITY_HEADERS,
+        },
     )
 
 
@@ -258,7 +261,8 @@ def _series_logo_source(db: Session, card_set: Set) -> tuple[str, str] | None:
         in_series = (Set.series == card_set.series,)
     else:
         return None
-    members = db.query(Set).filter(*in_series, Set.lang == lang, Set.images_logo.isnot(None))
+    all_members = db.query(Set).filter(*in_series, Set.lang == lang)
+    members = all_members.filter(Set.images_logo.isnot(None))
 
     if card_set.series:
         namesake = members.filter(Set.name == card_set.series).first()
@@ -267,6 +271,24 @@ def _series_logo_source(db: Session, card_set: Set) -> tuple[str, str] | None:
     newest = members.order_by(Set.release_date.desc().nullslast(), Set.id).first()
     if newest:
         return f"set:{newest.id}:logo", newest.images_logo
+
+    # TCGdex has no logo for this series in this language (it is missing for most
+    # non-English older series). Like the set `logo` route, borrow the other
+    # language's: the series logo or set logo of the namesake/newest set's sibling.
+    fallback_lang = _other_lang(lang)
+    if not fallback_lang or not _setting_enabled(db, "cross_language_image_fallback", True):
+        return None
+    ordered = all_members.order_by(Set.release_date.desc().nullslast(), Set.id).all()
+    ordered.sort(key=lambda s: s.name != card_set.series)  # namesake first, stable otherwise
+    for candidate in ordered:
+        tcg_set_id = candidate.tcg_set_id or strip_lang_suffix(candidate.id)[0]
+        sibling = db.query(Set).filter(Set.tcg_set_id == tcg_set_id, Set.lang == fallback_lang).first()
+        if not sibling:
+            continue
+        if sibling.series_id and sibling.series_logo:
+            return f"series:{fallback_lang}:{sibling.series_id}", sibling.series_logo
+        if sibling.images_logo:
+            return f"set:{candidate.id}:logo:fallback:{fallback_lang}", sibling.images_logo
     return None
 
 
@@ -282,15 +304,17 @@ def get_set_image(set_id: str, image_type: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Set not found")
 
     if image_type == "series":
+        # The wordmark stands in for a logo that may exist after the next sync or a
+        # retry, so it is never cached (the service worker keeps any 200 image forever).
         source = _series_logo_source(db, card_set)
         if not source:
-            return _set_fallback_response()
+            return _set_fallback_response(cacheable=False)
         cache_key, url = source
         try:
             data, content_type = _get_or_fetch(db, cache_key, url)
         except HTTPException as exc:
             if exc.status_code == 502:
-                return _set_fallback_response()
+                return _set_fallback_response(cacheable=False)
             raise
         return Response(
             content=data,

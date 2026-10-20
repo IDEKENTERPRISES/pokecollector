@@ -34,7 +34,7 @@ const NAV_BAR = { trailing: <HideValuesToggle /> }
  * numbers that are not cached (the Pokédex count) show a dash.
  */
 export default function Profile() {
-  const { t, settings, pricePrimaryField, formatPrice } = useSettings()
+  const { t, settings, pricePrimaryField, formatCompactPrice } = useSettings()
   const { user, logout, multiUser } = useAuth()
   const offline = useOffline()
   const { items } = useOutbox()
@@ -58,7 +58,8 @@ export default function Profile() {
   const { data: pokedexSummary } = useQuery({
     queryKey: ['pokedex-summary', language],
     queryFn: () => getPokedex({ lang: language, status: 'all' }).then(data => data?.summary ?? null),
-    staleTime: 60 * 60 * 1000,
+    staleTime: 24 * 60 * 60 * 1000,
+    gcTime: 24 * 60 * 60 * 1000,
     enabled: !offline,
     retry: false,
   })
@@ -91,7 +92,7 @@ export default function Profile() {
   const change = tracker.length > 1 && Number.isFinite(first) && Number.isFinite(last) ? last - first : null
   const changeText = change == null
     ? '–'
-    : `${change > 0 ? '+' : ''}${formatPrice(change)}`
+    : `${change > 0 ? '+' : ''}${formatCompactPrice(change)}`
 
   const productsToReview = Number(dashboard?.products_needing_review_count ?? 0)
   const stats = {
