@@ -51,7 +51,8 @@ export default function Layout() {
   // A slide transition waits for the new location to commit before it captures the new page.
   useLayoutEffect(() => { notifyLocationCommitted() }, [location.key])
 
-  // Screen readers: after a navigation move focus to the page (not the first load, and never over a
+  // Screen readers: after a navigation to another page (a path change, not a filter typed into the
+  // URL) move focus to the page (not the first load, and never over a
   // field the page focused itself), so VoiceOver announces the new screen instead of staying on the
   // control that was tapped.
   const mainRef = useRef(null)
@@ -68,7 +69,7 @@ export default function Layout() {
       }
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [location.key])
+  }, [location.pathname])
 
   return (
     <NavBarContext.Provider value={navBarStore}>
