@@ -26,6 +26,8 @@ class Set(Base):
     images_symbol = Column(String)
     images_logo = Column(String)
     abbreviation = Column(String, nullable=True)
+    series_id = Column(String, nullable=True)      # TCGdex series ID: "sv"
+    series_logo = Column(String, nullable=True)    # Official series logo URL (with .webp)
     is_new = Column(Boolean, default=False)
     is_digital = Column(Boolean, default=False)
     lang = Column(String, default="en")      # TCGdex language code, NEVER "both"

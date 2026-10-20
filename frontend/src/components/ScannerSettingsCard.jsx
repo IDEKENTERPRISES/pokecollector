@@ -146,7 +146,7 @@ export default function ScannerSettingsCard({ t }) {
   }
 
   if (isLoading) return <div className="px-4 py-5 text-xs text-text-muted">{t('common.loading')}</div>
-  if (isError || !selected) return <div className="px-4 py-5 text-xs text-brand-red">{t('settings.scannerLoadFailed')}</div>
+  if (isError || !selected) return <div className="px-4 py-5 text-xs text-red">{t('settings.scannerLoadFailed')}</div>
 
   const hasUsableKey = !selected.requires_api_key
     || (!clearApiKey && (Boolean(apiKey) || selected.api_key_configured))
@@ -158,19 +158,19 @@ export default function ScannerSettingsCard({ t }) {
   const busy = saving || testing
 
   return (
-    <div className="rounded-2xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
+    <div className="overflow-hidden rounded-xl bg-card">
       <div className="px-4 py-4 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
           <div>
             <p className="text-sm font-semibold text-text-primary">{t('settings.scannerConfiguration')}</p>
             <p className="text-xs text-text-muted mt-1 max-w-2xl">{t('settings.scannerConfigurationDesc')}</p>
             {selected.setup_help_url && (
-              <a href={selected.setup_help_url} target="_blank" rel="noreferrer" className="inline-block mt-1.5 text-[11px] font-semibold text-brand-yellow hover:underline">
+              <a href={selected.setup_help_url} target="_blank" rel="noreferrer" className="inline-block mt-1.5 text-footnote font-semibold text-yellow hover:underline">
                 {t('settings.scannerSetupHelp')} ↗
               </a>
             )}
           </div>
-          <span className={`self-start rounded-full px-2.5 py-1 text-[11px] font-bold ${status === 'ready' ? 'bg-green/15 text-green' : 'bg-brand-red/15 text-brand-red'}`}>
+          <span className={`self-start rounded-full px-2.5 py-1 text-footnote font-bold ${status === 'ready' ? 'bg-green/15 text-green' : 'bg-red/15 text-red'}`}>
             {status === 'ready'
               ? t('settings.scannerReady')
               : status === 'api_key_required'
@@ -182,9 +182,9 @@ export default function ScannerSettingsCard({ t }) {
         </div>
 
         {data.visual_verification === 'disabled' && (
-          <div role="status" className="rounded-xl border border-brand-yellow/35 bg-brand-yellow/10 px-3 py-2.5">
-            <p className="text-xs font-semibold text-brand-yellow">{t('settings.scannerDegradedTitle')}</p>
-            <p className="mt-1 text-[11px] text-text-secondary">{t('settings.scannerDegradedWarning')}</p>
+          <div role="status" className="rounded-xl border border-yellow/35 bg-yellow/10 px-3 py-2.5">
+            <p className="text-xs font-semibold text-yellow">{t('settings.scannerDegradedTitle')}</p>
+            <p className="mt-1 text-footnote text-text-secondary">{t('settings.scannerDegradedWarning')}</p>
           </div>
         )}
 
@@ -197,14 +197,14 @@ export default function ScannerSettingsCard({ t }) {
           </label>
         )}
 
-        <div className="rounded-xl px-3 py-2.5" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+        <div className="rounded-xl px-3 py-2.5 bg-fill-quaternary">
           <p className="text-xs font-semibold text-text-primary">{selected.label}</p>
-          <p className="text-[11px] text-text-muted mt-1">
+          <p className="text-footnote text-text-muted mt-1">
             {selected.endpoint_type === 'hosted'
               ? t('settings.scannerHostedProviderDesc')
               : t('settings.scannerCustomProviderDesc')}
           </p>
-          <p className="text-[11px] text-text-muted mt-1">
+          <p className="text-footnote text-text-muted mt-1">
             {selected.requires_api_key
               ? t('settings.scannerPersonalKeyRequired')
               : t('settings.scannerPersonalKeyNotRequired')}
@@ -225,17 +225,17 @@ export default function ScannerSettingsCard({ t }) {
                 </option>
               ))}
             </select>
-            <span className="block text-[11px] text-text-muted mt-1">{t('settings.scannerModelManaged')}</span>
+            <span className="block text-footnote text-text-muted mt-1">{t('settings.scannerModelManaged')}</span>
           </label>
         )}
 
         {selected.custom_model_allowed && (
-          <details className="rounded-xl px-3 py-2.5" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+          <details className="rounded-xl px-3 py-2.5 bg-fill-quaternary">
             <summary className="cursor-pointer text-xs font-semibold text-text-primary">
               {t('settings.scannerAdvancedModel')}
             </summary>
             <div className="pt-3 space-y-3">
-              <p className="text-[11px] text-text-muted">{t('settings.scannerAdvancedModelDesc')}</p>
+              <p className="text-footnote text-text-muted">{t('settings.scannerAdvancedModelDesc')}</p>
               <label className="flex items-center gap-2 text-xs text-text-primary">
                 <input
                   type="checkbox"
@@ -264,7 +264,7 @@ export default function ScannerSettingsCard({ t }) {
           </details>
         )}
 
-        <details className="rounded-xl px-3 py-2.5" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+        <details className="rounded-xl px-3 py-2.5 bg-fill-quaternary">
           <summary className="cursor-pointer text-xs font-semibold text-text-primary">
             {t('settings.scannerAdvancedRequests')}
           </summary>
@@ -279,7 +279,7 @@ export default function ScannerSettingsCard({ t }) {
                 <option key={seconds} value={seconds}>{seconds} s</option>
               ))}
             </select>
-            <span className="block text-[11px] text-text-muted mt-1">{t('settings.scannerResponseTimeoutDesc')}</span>
+            <span className="block text-footnote text-text-muted mt-1">{t('settings.scannerResponseTimeoutDesc')}</span>
           </label>
         </details>
 
@@ -288,7 +288,7 @@ export default function ScannerSettingsCard({ t }) {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <label htmlFor="scanner-api-key" className="text-xs font-semibold text-text-primary">{t('settings.scannerApiKey')}</label>
               {selected.key_help_url && (
-                <a href={selected.key_help_url} target="_blank" rel="noreferrer" className="text-[11px] font-semibold text-brand-yellow hover:underline">
+                <a href={selected.key_help_url} target="_blank" rel="noreferrer" className="text-footnote font-semibold text-yellow hover:underline">
                   {t('settings.scannerGetKey')} ↗
                 </a>
               )}
@@ -305,7 +305,7 @@ export default function ScannerSettingsCard({ t }) {
             {selected.api_key_configured && (
               <button
                 type="button"
-                className="mt-1.5 text-[11px] text-brand-red"
+                className="mt-1.5 text-footnote text-red"
                 onClick={() => changeDraft(() => { setApiKey(''); setClearApiKey(true) })}
               >
                 {clearApiKey ? t('settings.scannerKeyWillBeRemoved') : t('settings.scannerRemoveKey')}
@@ -314,10 +314,10 @@ export default function ScannerSettingsCard({ t }) {
           </div>
         )}
 
-        <p className="text-[11px] text-text-muted">{t('settings.scannerSameFlow')}</p>
-        <p className="text-[11px] text-text-muted">{t('settings.scannerTestDesc')}</p>
+        <p className="text-footnote text-text-muted">{t('settings.scannerSameFlow')}</p>
+        <p className="text-footnote text-text-muted">{t('settings.scannerTestDesc')}</p>
         {degradedAvailable && (
-          <label className="flex items-start gap-2 rounded-xl border border-brand-yellow/35 bg-brand-yellow/10 px-3 py-2.5 text-xs text-text-primary">
+          <label className="flex items-start gap-2 rounded-xl border border-yellow/35 bg-yellow/10 px-3 py-2.5 text-xs text-text-primary">
             <input
               type="checkbox"
               checked={acceptDegraded}
@@ -325,13 +325,13 @@ export default function ScannerSettingsCard({ t }) {
               className="mt-0.5"
             />
             <span>
-              <span className="block font-semibold text-brand-yellow">{t('settings.scannerDegradedTitle')}</span>
-              <span className="mt-1 block text-[11px] text-text-secondary">{t('settings.scannerDegradedAcknowledge')}</span>
+              <span className="block font-semibold text-yellow">{t('settings.scannerDegradedTitle')}</span>
+              <span className="mt-1 block text-footnote text-text-secondary">{t('settings.scannerDegradedAcknowledge')}</span>
             </span>
           </label>
         )}
         {testStatus !== 'not_tested' && (
-          <p role="status" className={`text-[11px] font-semibold ${testStatus === 'passed' ? 'text-green' : testStatus === 'degraded_saved' ? 'text-brand-yellow' : 'text-brand-red'}`}>
+          <p role="status" className={`text-footnote font-semibold ${testStatus === 'passed' ? 'text-green' : testStatus === 'degraded_saved' ? 'text-yellow' : 'text-red'}`}>
             {testStatus === 'passed'
               ? t('settings.scannerTestStatusPassed')
               : testStatus === 'degraded_saved'
@@ -346,7 +346,7 @@ export default function ScannerSettingsCard({ t }) {
             type="button"
             onClick={hasUsableKey ? testAndSave : saveKeyRemoval}
             disabled={busy || !model || (!hasUsableKey && !clearApiKey) || (degradedAvailable && !acceptDegraded)}
-            className="btn-primary-sm disabled:opacity-50"
+            className="inline-flex min-h-[36px] items-center justify-center rounded-full bg-accent px-4 text-subheadline font-semibold text-on-accent ios-press disabled:opacity-40"
           >
             {testing
               ? (dirty ? t('settings.scannerTestingAndSaving') : t('settings.scannerTesting'))
@@ -363,33 +363,33 @@ export default function ScannerSettingsCard({ t }) {
         </div>
 
         {data.administrator && (
-          <details className="rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <details className="rounded-xl p-3 bg-fill-quaternary">
             <summary className="cursor-pointer">
               <div>
                 <p className="text-xs font-semibold text-text-primary">{t('settings.scannerAdminSummary')}</p>
-                <p className="text-[11px] text-text-muted mt-0.5">{t('settings.scannerAdminSummaryDesc')}</p>
+                <p className="text-footnote text-text-muted mt-0.5">{t('settings.scannerAdminSummaryDesc')}</p>
               </div>
             </summary>
             <div className="pt-3 space-y-3">
-              <a href={data.administrator.setup_guide_url} target="_blank" rel="noreferrer" className="inline-block text-[11px] font-semibold text-brand-yellow hover:underline">
+              <a href={data.administrator.setup_guide_url} target="_blank" rel="noreferrer" className="inline-block text-footnote font-semibold text-yellow hover:underline">
                 {t('settings.scannerAdminGuide')} ↗
               </a>
               <div className="grid gap-2 sm:grid-cols-2">
                 {data.administrator.providers.map(item => (
-                  <div key={item.id} className="rounded-lg px-3 py-2" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                  <div key={item.id} className="rounded-lg px-3 py-2" >
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-xs font-semibold text-text-primary break-words">{item.label}</p>
                       <span className={`shrink-0 text-[10px] font-bold ${item.enabled ? 'text-green' : 'text-text-muted'}`}>
                         {item.enabled ? t('settings.scannerProviderEnabled') : t('settings.scannerProviderDisabled')}
                       </span>
                     </div>
-                    <p className="text-[11px] text-text-muted mt-1 break-all">
+                    <p className="text-footnote text-text-muted mt-1 break-all">
                       {item.endpoint_type === 'hosted' ? t('settings.scannerHostedEndpoint') : t('settings.scannerCustomEndpoint')} · {item.endpoint}
                     </p>
-                    <p className="text-[11px] text-text-muted mt-1 break-words">
+                    <p className="text-footnote text-text-muted mt-1 break-words">
                       {t('settings.scannerApprovedModels')}: {item.models.join(', ') || t('settings.scannerNone')}
                     </p>
-                    <p className="text-[11px] text-text-muted mt-1">
+                    <p className="text-footnote text-text-muted mt-1">
                       {item.requires_api_key ? t('settings.scannerPerUserKey') : t('settings.scannerNoUserKey')}
                     </p>
                   </div>

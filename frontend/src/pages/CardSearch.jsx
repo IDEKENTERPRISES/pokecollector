@@ -1,13 +1,13 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
-import { Search, X, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, SortAsc, Hash, PenLine, SlidersHorizontal, Camera, CheckSquare, Plus, ScanLine, Tags } from 'lucide-react'
+import { X, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Hash, PenLine, SlidersHorizontal, CheckSquare, Plus, ScanLine, Tags, Layers, ListOrdered } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { searchCards, getSets, getCustomCards, bulkAddToCollection, getScanJobs } from '../api/client'
+import { searchCards, getSets, getCustomCards, bulkAddToCollection, getScanJobs, getPokedex } from '../api/client'
 import { CardItem, CustomCardModal, CardModal } from '../components/CardItem'
 import { useSettings } from '../contexts/SettingsContext'
 import Sheet from '../components/ui/Sheet'
-import CardScanner from '../components/UnifiedCardScanner'
+import { useScanner } from '../contexts/ScannerContext'
 import { getDefaultVariantOrNull } from '../utils/cardVariants'
 import { cardNumberMatches } from '../utils/cardNumbers'
 import { normalizeSearchText, textIncludes } from '../utils/textSearch'
@@ -30,10 +30,25 @@ import {
 import { useDynamicFilterUrlState } from '../hooks/useDynamicFilterUrlState'
 import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import PrintingDetailSelector from '../components/PrintingDetailSelector'
+import HeaderBloom from '../components/ios/HeaderBloom'
+import LargeTitle from '../components/ios/LargeTitle'
+import SearchField from '../components/ios/SearchField'
+import PageSheet from '../components/ios/PageSheet'
+import Menu from '../components/ios/Menu'
+import PokeBall from '../components/ios/PokeBall'
+import TypeChip from '../components/ios/TypeChip'
+import EnergyIcon from '../components/ios/EnergyIcon'
+import { tileTextFor, typeKeyFor } from '../components/ios/pokemon'
+import { useNavBar } from '../navigation/useNavBar'
+import { useOffline } from '../offline/useOffline'
+import { groupSetsBySeries } from '../utils/setSeries'
+import { getPokedexFormFamily } from '../utils/pokedexUrlState'
 
 export const CARD_CODE_NUMBER_RE = /^([A-Za-z][A-Za-z0-9]*)\s+(\d+)$/
 
 const TYPES = ['Fire', 'Water', 'Grass', 'Lightning', 'Psychic', 'Fighting', 'Darkness', 'Metal', 'Dragon', 'Colorless', 'Fairy', 'Stellar']
+// The eleven energy types shown in Browse by type (Stellar stays a filter-only value).
+const BROWSE_TYPES = TYPES.filter(type => type !== 'Stellar')
 const CATEGORIES = ['Pokemon', 'Trainer', 'Energy']
 const SUBTYPES = ['Basic', 'Stage1', 'Stage2', 'Supporter', 'Item', 'Stadium', 'Tool', 'Technical Machine', 'Special']
 const RARITIES = ['Common', 'Uncommon', 'Rare', 'Rare Holo', 'Rare Ultra', 'Rare Secret', 'Illustration Rare', 'Special Illustration Rare', 'Hyper Rare', 'Double Rare', 'ACE SPEC Rare', 'Promo', 'Amazing Rare']
@@ -50,6 +65,23 @@ const CARD_SEARCH_FILTER_DEFINITIONS = {
   hp_max: { param: 'hp_max', default: '' },
 }
 const CARD_SEARCH_TEXT_DEBOUNCE_MS = 300
+
+function BrowseTile({ to, title, icon: Icon, gradient, shadow, lines, testId }) {
+  return (
+    <Link
+      to={to}
+      data-testid={testId}
+      className="relative flex min-h-[116px] flex-col justify-between overflow-hidden rounded-[22px] p-4 text-white ios-press"
+      style={{ background: gradient, boxShadow: `0 8px 22px color-mix(in srgb, ${shadow} 55%, transparent)` }}
+    >
+      <Icon size={72} strokeWidth={1.5} aria-hidden="true" className="pointer-events-none absolute -bottom-3 -right-3 opacity-20" />
+      <span className="flex items-center gap-1.5 text-headline font-display"><Icon size={18} aria-hidden="true" />{title}</span>
+      <span className="space-y-0.5 text-footnote tabular-nums">
+        {lines.filter(Boolean).map(line => <span key={line} className="block opacity-95">{line}</span>)}
+      </span>
+    </Link>
+  )
+}
 
 function FilterForm({ filters, setFilter, allSeries, setsForSeries, showAdvanced, setShowAdvanced, t }) {
   return (
@@ -170,7 +202,7 @@ export default function CardSearch() {
   const [showFilters, setShowFilters] = useState(false)
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
   const [showCustomModal, setShowCustomModal] = useState(false)
-  const [showScanner, setShowScanner] = useState(false)
+  const { openScanner } = useScanner()
   const [selectedCard, setSelectedCard] = useState(null)
   const [selectedCardTab, setSelectedCardTab] = useState('add')
   const [selectMode, setSelectMode] = useState(false)
@@ -358,7 +390,7 @@ export default function CardSearch() {
 
   const clearSearch = () => navigate({ pathname: location.pathname, search: '' })
 
-  const hasOpenOverlay = Boolean(selectedCard || showFilters || showCustomModal || showScanner)
+  const hasOpenOverlay = Boolean(selectedCard || showFilters || showCustomModal)
 
   useEffect(() => {
     setSearchInput(filters.name)
@@ -543,177 +575,247 @@ export default function CardSearch() {
     onError: () => toast.error(t('cardSearch.bulkAddFailed')),
   })
 
-  return (
-    <div className="space-y-4 pb-2">
+  const isOffline = useOffline()
+  const pokedexLanguage = settings.language === 'de' ? 'de' : 'en'
+  const defaultFormFamily = getPokedexFormFamily(new URLSearchParams())
+  // Same key and request as the Pokédex page, so the count comes from the same cache entry.
+  const { data: pokedexData } = useQuery({
+    queryKey: ['pokedex', null, 'grouped', defaultFormFamily, 'all', '', pokedexLanguage],
+    queryFn: () => getPokedex({ status: 'all', lang: pokedexLanguage, mode: 'grouped', form_family: defaultFormFamily }),
+    staleTime: 60_000,
+    enabled: !hasQuery,
+  })
+  const pokedexSummary = pokedexData?.summary
+  const seriesGroups = useMemo(() => groupSetsBySeries(allSets), [allSets])
+  const newSetCount = useMemo(() => allSets.filter(set => set.is_new).length, [allSets])
 
-      {/* ─── Header ───────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
-        <div className="min-w-0">
-          <h1 className="text-xl font-bold text-text-primary">{t('cardSearch.title')}</h1>
-          <p className="text-sm text-text-secondary mt-1">{t('cardSearch.subtitle')}</p>
-        </div>
-        <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
-          <button
-            onClick={() => setShowScanner(true)}
-            className="w-10 h-10 rounded-xl flex items-center justify-center transition-colors"
-            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
-            title={t('scanner.title')}
-          >
-            <Camera size={18} className="text-text-muted" />
-          </button>
-          <button
-            onClick={() => navigate('/scans')}
-            className="relative flex h-10 items-center gap-2 rounded-xl px-3 text-sm text-text-muted transition-colors hover:text-text-primary"
-            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
-            title={t('scanner.queueTitle')}
-            aria-label={t('scanner.queueTitle')}
-          >
-            <span className="relative">
-              <ScanLine size={18} />
-              {scanAttention > 0 && (
-                <span className="absolute -right-2 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-yellow px-1 text-[9px] font-bold leading-none text-black">
-                  {scanAttention > 99 ? '99+' : scanAttention}
-                </span>
-              )}
-              {scanAttention === 0 && scansActive && (
-                <span className="absolute -right-1.5 -top-1.5 h-2.5 w-2.5 animate-pulse rounded-full bg-brand-red" />
-              )}
-            </span>
-            <span className="hidden sm:inline">{t('scanner.queueTitle')}</span>
-          </button>
-          <button
-            onClick={() => setShowCustomModal(true)}
-            className="btn-ghost text-sm border-yellow/30 text-yellow hover:bg-yellow/10"
-          >
-            <PenLine size={14} />
-            {t('cardSearch.createCustomCard')}
-          </button>
-          {hasQuery && (
-            <button
-              onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
-              className={`btn-ghost text-sm ${selectMode ? 'border-brand-red/50 text-brand-red bg-brand-red/10' : ''}`}
-            >
-              <CheckSquare size={14} />
-              {selectMode ? t('cardSearch.exitSelect') : t('cardSearch.select')}
-            </button>
-          )}
-        </div>
-      </div>
+  const typesInResults = useMemo(() => {
+    const seen = []
+    for (const card of data?.data || []) {
+      for (const type of card.types || []) {
+        if (BROWSE_TYPES.includes(type) && !seen.includes(type)) seen.push(type)
+      }
+    }
+    if (dynamicFilters.type && BROWSE_TYPES.includes(dynamicFilters.type) && !seen.includes(dynamicFilters.type)) seen.push(dynamicFilters.type)
+    return seen
+  }, [data, dynamicFilters.type])
 
-      {/* ─── Language Filter ──────────────────────────────────────── */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-text-muted">{t('lang.filter')}:</span>
-        <TcgdexLanguageSelect
-          value={langFilter}
-          includeAll
-          allLabel={t('lang.all')}
-          compact
-          languages={visibleLanguages}
-          onChange={(value) => updateSearchParams({ lang: value === defaultLangFilter ? '' : value })}
-          className="select w-full sm:w-52 text-xs py-1.5"
+  const navBar = useMemo(() => ({
+    trailing: (
+      <>
+        <Menu
+          label={t('ios.more')}
+          sections={[
+            [
+              ...(hasQuery ? [{
+                id: 'select',
+                label: selectMode ? t('cardSearch.exitSelect') : t('cardSearch.select'),
+                icon: CheckSquare,
+                onSelect: () => (selectMode ? exitSelectMode() : setSelectMode(true)),
+              }] : []),
+              { id: 'custom', label: t('cardSearch.createCustomCard'), icon: PenLine, onSelect: () => setShowCustomModal(true) },
+              { id: 'queue', label: scanAttention > 0 ? `${t('scanner.queueTitle')} (${scanAttention})` : t('scanner.queueTitle'), icon: ScanLine, onSelect: () => navigate('/scans') },
+            ],
+            ...(hasUrlSearchState ? [[{ id: 'clear', label: t('common.clear'), icon: X, onSelect: clearSearch }]] : []),
+          ]}
         />
-        <div className="flex items-center gap-2 sm:ml-auto">
-          <SortAsc size={14} className="text-text-muted flex-shrink-0" />
-          <select
-            id="card-search-sort-by"
-            aria-label={t('cardSearch.sortBy')}
-            className="select text-sm py-1.5 w-36"
-            value={filters.sort_by}
-            onChange={(event) => updateSearchParams({
-              sort_by: event.target.value,
-              sort_order: event.target.value ? filters.sort_order : '',
-            })}
-          >
-            <option value="">—</option>
-            <option value="name">{t('cardSearch.sortName')}</option>
-            <option value="number">{t('cardSearch.sortNumber')}</option>
-            <option value="rarity">{t('cardSearch.sortRarity')}</option>
-          </select>
-          {filters.sort_by && (
-            <button
-              type="button"
-              onClick={() => updateSearchParams({ sort_order: filters.sort_order === 'asc' ? 'desc' : 'asc' })}
-              className="btn-ghost py-1.5 px-2 text-sm"
-              aria-label={filters.sort_order === 'asc' ? t('common.sortDescending') : t('common.sortAscending')}
-            >
-              {filters.sort_order === 'asc' ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </button>
-          )}
-        </div>
+      </>
+    ),
+  // The handlers close over state that is already in this list or is stable per render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [hasQuery, hasUrlSearchState, scanAttention, selectMode, t])
+  useNavBar(navBar)
+
+  const submitSearch = (value) => updateSearchParams({ q: value })
+  const cancelSearch = () => {
+    setSearchInput('')
+    updateSearchParams({ q: '' }, { replace: true })
+  }
+  const sortOptions = [
+    { value: '', label: '—' },
+    { value: 'name', label: t('cardSearch.sortName') },
+    { value: 'number', label: t('cardSearch.sortNumber') },
+    { value: 'rarity', label: t('cardSearch.sortRarity') },
+  ]
+
+  return (
+    <div className="relative isolate space-y-4 pb-2">
+      <HeaderBloom variant="search" />
+      <LargeTitle title={t('nav.search')} />
+
+      <div
+        className="sticky z-20 -mx-4 bg-bg/90 px-4 py-2 backdrop-blur"
+        style={{ top: 'calc(var(--safe-top, 0px) + var(--navbar-height, 44px))' }}
+      >
+        <SearchField
+          value={searchInput}
+          onChange={setSearchInput}
+          onSubmit={submitSearch}
+          onCancel={cancelSearch}
+          disabled={isOffline}
+          placeholder={isOffline ? t('cardSearch.needsConnection') : t('cardSearch.searchFieldPlaceholder')}
+        />
+        {isCodeNumberSearch && !isOffline && (
+          <p className="mt-1 flex items-center gap-1 px-1 text-caption-1 text-yellow">
+            <Hash size={12} aria-hidden="true" />{t('cardSearch.setCodeSearch')}
+          </p>
+        )}
       </div>
 
-      {/* ─── Search Bar + Filter Button ───────────────────────────── */}
-      <div className="card">
-        <form onSubmit={handleSearch} className="flex gap-2">
-          {/* Search input */}
-          <div className="flex-1 min-w-0 relative">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-            <input
-              type="text"
-              placeholder={t('cardSearch.searchPlaceholder')}
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              className="input pl-9 pr-4"
+      {/* ─── Browse (no query) ───────────────────────────────────── */}
+      {!hasQuery && (
+        <div className="space-y-5" data-testid="search-browse">
+          <div className="grid grid-cols-2 gap-3">
+            <BrowseTile
+              to="/sets"
+              testId="browse-sets"
+              title={t('nav.sets')}
+              icon={Layers}
+              gradient="linear-gradient(150deg, var(--type-water-top), var(--type-water-bottom))"
+              shadow="var(--type-water)"
+              lines={[
+                newSetCount > 0 ? t('cardSearch.newSets').replace('{count}', newSetCount) : null,
+                allSets.length > 0
+                  ? t('cardSearch.seriesAndSets').replace('{series}', seriesGroups.length).replace('{sets}', allSets.length)
+                  : null,
+              ]}
             />
-            {isCodeNumberSearch && (
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 hidden sm:flex items-center gap-1 text-xs text-yellow pointer-events-none">
-                <Hash size={12} />
-                <span>{t('cardSearch.setCodeSearch')}</span>
-              </div>
-            )}
+            <BrowseTile
+              to="/pokedex"
+              testId="browse-pokedex"
+              title={t('nav.pokedex')}
+              icon={ListOrdered}
+              gradient="linear-gradient(150deg, #E3350D, #8A1D12)"
+              shadow="#E3350D"
+              lines={[
+                pokedexSummary?.total
+                  ? t('cardSearch.caughtOf').replace('{owned}', pokedexSummary.owned.toLocaleString()).replace('{total}', pokedexSummary.total.toLocaleString())
+                  : null,
+              ]}
+            />
           </div>
 
-          <button type="submit" className="btn-primary px-4 sm:px-6 flex-shrink-0">
-            {t('common.search')}
+          <button
+            type="button"
+            onClick={openScanner}
+            data-testid="browse-scan"
+            className="flex w-full items-center gap-4 rounded-[22px] bg-card p-4 text-left ios-press"
+          >
+            <PokeBall size={44} gloss />
+            <span className="min-w-0 flex-1">
+              <span className="block text-headline font-display">{t('cardSearch.scanInstead')}</span>
+              <span className="block text-footnote text-text-secondary">{t('cardSearch.scanInsteadHint')}</span>
+            </span>
+            <ChevronRight size={18} className="text-text-muted" aria-hidden="true" />
           </button>
 
-          {/* Filter button — shows active count */}
+          <section aria-labelledby="browse-by-type">
+            <h2 id="browse-by-type" className="mb-2 px-1 text-title-3 font-display">{t('cardSearch.browseByType')}</h2>
+            <div className="grid grid-cols-3 gap-2">
+              {BROWSE_TYPES.map(type => {
+                const key = typeKeyFor(type)
+                return (
+                  <Link
+                    key={type}
+                    to={{ pathname: '/search', search: `?type=${encodeURIComponent(type)}` }}
+                    data-testid={`browse-type-${key}`}
+                    className="relative flex h-20 flex-col justify-between overflow-hidden rounded-[18px] p-3 ios-press"
+                    style={{
+                      background: `linear-gradient(150deg, var(--type-${key}-top), var(--type-${key}-bottom))`,
+                      color: tileTextFor(key),
+                    }}
+                  >
+                    <EnergyIcon type={key} size={24} />
+                    <span className="text-footnote font-semibold font-display">{type}</span>
+                  </Link>
+                )
+              })}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* ─── Results toolbar (query) ─────────────────────────────── */}
+      {hasQuery && (
+        <div className="flex items-center gap-2" data-testid="search-toolbar">
+          <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {typesInResults.length > 0 && (
+              <TypeChip
+                type="all"
+                selected={!dynamicFilters.type}
+                onPress={() => setDynamicFilter('type', '')}
+              />
+            )}
+            {typesInResults.map(type => (
+              <TypeChip
+                key={type}
+                type={type}
+                selected={dynamicFilters.type === type}
+                onPress={() => setDynamicFilter('type', dynamicFilters.type === type ? '' : type)}
+              />
+            ))}
+          </div>
           <button
             type="button"
             onClick={openFilters}
             aria-label={t('cardSearch.filters')}
-            className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl border transition-colors text-sm font-medium
-              ${hasActiveFilters
-                ? 'bg-brand-red/10 border-brand-red/50 text-brand-red'
-                : 'border-border text-text-muted hover:text-text-primary hover:border-border'
-              }`}
+            className={`flex h-9 flex-shrink-0 items-center gap-1.5 rounded-full bg-fill-tertiary px-3 text-footnote font-semibold ios-press ${hasActiveFilters ? 'text-tint' : ''}`}
           >
-            <SlidersHorizontal size={16} />
-            <span className="hidden sm:inline">
-              {hasActiveFilters ? `${activeFilterCount} Filter` : t('cardSearch.filters')}
-            </span>
-            {hasActiveFilters && (
-              <span className="sm:hidden bg-brand-red text-white text-xs rounded-full w-4 h-4 flex items-center justify-center leading-none">
-                {activeFilterCount}
-              </span>
-            )}
+            <SlidersHorizontal size={14} aria-hidden="true" />
+            {hasActiveFilters ? `${t('cardSearch.filters')} (${activeFilterCount})` : t('cardSearch.filters')}
           </button>
-
-          {hasUrlSearchState && (
-            <button type="button" onClick={clearSearch} className="btn-ghost flex-shrink-0">
-              <X size={16} />
-              <span className="hidden sm:inline">{t('common.clear')}</span>
-            </button>
-          )}
-        </form>
-      </div>
-
-      {/* ─── Filter Sheet ─────────────────────────────────────────── */}
-      <Sheet isOpen={showFilters} onClose={() => setShowFilters(false)} title={t('cardSearch.filters')}>
-        <div className="p-4 space-y-4">
-          <FilterForm {...filterFormProps} />
-
-          <div className="flex justify-start border-t border-border pt-3">
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="btn-ghost justify-center"
-            >
-              <X size={14} /> {t('common.clear')}
-            </button>
-          </div>
         </div>
-      </Sheet>
+      )}
+
+      {/* ─── Filters ─────────────────────────────────────────────── */}
+      <PageSheet
+        isOpen={showFilters}
+        onClose={() => setShowFilters(false)}
+        title={t('cardSearch.filters')}
+        leading={{ label: t('common.clear'), onPress: clearFilters }}
+        trailing={{ label: t('ios.done'), onPress: () => setShowFilters(false) }}
+      >
+        <div className="space-y-4 px-4 pb-6">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-text-muted">{t('lang.filter')}:</span>
+            <TcgdexLanguageSelect
+              value={langFilter}
+              includeAll
+              allLabel={t('lang.all')}
+              compact
+              languages={visibleLanguages}
+              onChange={(value) => updateSearchParams({ lang: value === defaultLangFilter ? '' : value })}
+              className="select w-full text-xs py-1.5 sm:w-52"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label htmlFor="card-search-sort-by" className="text-xs text-text-muted">{t('cardSearch.sortBy')}</label>
+            <select
+              id="card-search-sort-by"
+              aria-label={t('cardSearch.sortBy')}
+              className="select w-36 py-1.5 text-sm"
+              value={filters.sort_by}
+              onChange={(event) => updateSearchParams({
+                sort_by: event.target.value,
+                sort_order: event.target.value ? filters.sort_order : '',
+              })}
+            >
+              {sortOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+            {filters.sort_by && (
+              <button
+                type="button"
+                onClick={() => updateSearchParams({ sort_order: filters.sort_order === 'asc' ? 'desc' : 'asc' })}
+                className="btn-ghost px-2 py-1.5 text-sm"
+                aria-label={filters.sort_order === 'asc' ? t('common.sortDescending') : t('common.sortAscending')}
+              >
+                {filters.sort_order === 'asc' ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+            )}
+          </div>
+          <FilterForm {...filterFormProps} />
+        </div>
+      </PageSheet>
 
       {(matchedCustomCards.length > 0 || (data?.data || []).length > 0) && (
         <CardLegend
@@ -721,18 +823,9 @@ export default function CardSearch() {
         />
       )}
 
-      {/* ─── Empty / loading / error states ──────────────────────── */}
-      {!hasQuery && (
-        <div className="text-center py-20">
-          <div className="w-24 h-24 pokeball-bg mx-auto mb-4 opacity-20" />
-          <p className="text-text-muted">{t('cardSearch.trySearch')}</p>
-          <p className="text-xs text-text-muted mt-1">{t('cardSearch.trySearchHint')}</p>
-        </div>
-      )}
-
       {isLoading && hasQuery && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          {[...Array(10)].map((_, i) => (
+        <div className="grid grid-cols-2 gap-3">
+          {[...Array(6)].map((_, i) => (
             <div key={i} className="card p-0">
               <div className="skeleton aspect-[2.5/3.5] rounded-xl mb-3" />
               <div className="p-3 space-y-2">
@@ -755,7 +848,7 @@ export default function CardSearch() {
           <p className="text-xs text-yellow font-medium mb-2 flex items-center gap-1">
             <PenLine size={12} /> {t('cardSearch.customCard')}
           </p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 gap-3">
             {matchedCustomCards.map((card) => (
               <CardItem key={card.id} card={card} />
             ))}
@@ -813,7 +906,7 @@ export default function CardSearch() {
             </div>
           )}
           {selectMode && (
-            <div className="fixed bottom-20 left-3 right-3 z-40 flex items-center gap-2 rounded-2xl border border-white/15 bg-bg-surface/95 p-3 shadow-2xl backdrop-blur sm:hidden">
+            <div className="fixed bottom-24 left-3 right-3 z-40 flex items-center gap-2 rounded-2xl border border-white/15 bg-bg-surface/95 p-3 shadow-2xl backdrop-blur sm:hidden">
               <span className="min-w-0 flex-1 text-sm font-semibold text-brand-red">
                 {selectedItems.size} {t('cardSearch.selected')}
               </span>
@@ -853,11 +946,11 @@ export default function CardSearch() {
             </p>
             {totalPages > 1 && (
               <div className="flex items-center gap-2">
-                <button onClick={() => updateSearchParams({ page: Math.max(1, page - 1) }, { resetPage: false })} disabled={page <= 1} className="btn-ghost py-1.5 px-2 disabled:opacity-50">
+                <button onClick={() => updateSearchParams({ page: Math.max(1, page - 1) }, { resetPage: false })} disabled={page <= 1} className="btn-ghost py-1.5 px-2 disabled:opacity-50" aria-label={t('pokedex.previous')}>
                   <ChevronLeft size={16} />
                 </button>
                 <span className="text-sm text-text-secondary">{page} / {totalPages}</span>
-                <button onClick={() => updateSearchParams({ page: Math.min(totalPages, page + 1) }, { resetPage: false })} disabled={page >= totalPages} className="btn-ghost py-1.5 px-2 disabled:opacity-50">
+                <button onClick={() => updateSearchParams({ page: Math.min(totalPages, page + 1) }, { resetPage: false })} disabled={page >= totalPages} className="btn-ghost py-1.5 px-2 disabled:opacity-50" aria-label={t('pokedex.next')}>
                   <ChevronRight size={16} />
                 </button>
               </div>
@@ -865,14 +958,19 @@ export default function CardSearch() {
           </div>
 
           {data.data?.length === 0 ? (
-            <div className="text-center py-12 space-y-4">
+            <div className="space-y-4 py-12 text-center" data-testid="search-no-results">
               <p className="text-text-muted">{t('cardSearch.noCardsFound')}</p>
-              <button onClick={() => setShowCustomModal(true)} className="btn-ghost border-yellow/30 text-yellow hover:bg-yellow/10 mx-auto">
-                <PenLine size={14} /> {t('cardSearch.cardNotFound')}
-              </button>
+              <div className="flex flex-col items-center gap-2">
+                <button onClick={openScanner} className="btn-ghost mx-auto">
+                  <PokeBall size={16} /> {t('cardSearch.scanInstead')}
+                </button>
+                <button onClick={() => setShowCustomModal(true)} className="btn-ghost border-yellow/30 text-yellow hover:bg-yellow/10 mx-auto">
+                  <PenLine size={14} /> {t('cardSearch.cardNotFound')}
+                </button>
+              </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 gap-3">
               {data.data?.map((card) => {
                 const imgSrc = card.images?.small || card.images_small || (card.image ? `${card.image}/low.webp` : null)
                 const isSelected = selectedItems.has(card.id)
@@ -932,14 +1030,6 @@ export default function CardSearch() {
         </div>
       </Sheet>
 
-      <CardScanner
-        isOpen={showScanner}
-        onClose={() => setShowScanner(false)}
-        onCardSelected={(card) => {
-          updateSearchParams({ q: card.name })
-          setShowScanner(false)
-        }}
-      />
     </div>
   )
 }

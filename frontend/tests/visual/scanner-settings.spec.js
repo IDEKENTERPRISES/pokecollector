@@ -173,7 +173,7 @@ async function installApi(page, user = USER, initialConfiguration = scannerConfi
 
 async function stageScannerBatch(page) {
   await page.goto('/search')
-  await page.getByRole('button', { name: 'Scan card' }).click()
+  await page.locator('[data-testid="scan-button"]:visible, [data-testid="sidebar-nav"] button:has-text("Scan cards"):visible').first().click()
   await page.locator('input[type="file"][multiple]').setInputFiles([
     { name: 'first.jpg', mimeType: 'image/jpeg', buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
     { name: 'second.jpg', mimeType: 'image/jpeg', buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) },
@@ -185,6 +185,7 @@ async function scannerActionsAreUnobstructed(page, scanner) {
   const start = scanner.getByRole('button', { name: 'Start scanning' })
   return page.evaluate(([startButton, homeButton]) => {
     if (!homeButton) return true
+    // The floating chrome that could cover the action is the tab bar (hidden while the scanner is open).
     const action = startButton.getBoundingClientRect()
     const home = homeButton.getBoundingClientRect()
     const left = Math.max(action.left, home.left)
@@ -196,7 +197,7 @@ async function scannerActionsAreUnobstructed(page, scanner) {
       (left + right) / 2,
       (top + bottom) / 2,
     ))
-  }, [await start.elementHandle(), await page.locator('.pokeball-home-button').elementHandle()])
+  }, [await start.elementHandle(), await page.$('[data-testid="tab-bar"]')])
 }
 
 test('batch controls follow the verified multi-image capability without overflowing', async ({ page }) => {
@@ -226,7 +227,7 @@ for (const visualVerification of ['disabled', 'unverified']) {
 
 test('guides provider selection and saves one guarded configuration', async ({ page }) => {
   const api = await installApi(page)
-  await page.goto('/settings')
+  await page.goto('/settings/scanner')
 
   await expect(page.getByText('Card scanner', { exact: true })).toBeVisible()
   await expect(page.getByText('Ready', { exact: true })).toBeVisible()
@@ -270,15 +271,15 @@ test('guides provider selection and saves one guarded configuration', async ({ p
 
 test('Gemini fallback is opt-in and persists through user settings', async ({ page }) => {
   const api = await installApi(page)
-  await page.goto('/settings')
+  await page.goto('/settings/scanner')
 
-  const fallback = page.getByRole('button', {
+  const fallback = page.getByRole('switch', {
     name: 'Fall back to Gemini when unsure',
   })
-  await expect(fallback).toHaveAttribute('aria-pressed', 'false')
+  await expect(fallback).toHaveAttribute('aria-checked', 'false')
   await fallback.click()
 
-  await expect(fallback).toHaveAttribute('aria-pressed', 'true')
+  await expect(fallback).toHaveAttribute('aria-checked', 'true')
   await expect.poll(api.settingsWrites).toContainEqual({
     scanner_gemini_fallback: 'true',
   })
@@ -286,7 +287,7 @@ test('Gemini fallback is opt-in and persists through user settings', async ({ pa
 
 test('restores each provider timeout and saves an explicit advanced choice', async ({ page }) => {
   const api = await installApi(page)
-  await page.goto('/settings')
+  await page.goto('/settings/scanner')
 
   await page.getByText('Advanced request settings', { exact: true }).click()
   const timeout = page.getByLabel('AI response timeout')
@@ -327,7 +328,7 @@ test('uses the same test-and-save flow for Gemini', async ({ page }) => {
         : item),
     } })
   })
-  await page.goto('/settings')
+  await page.goto('/settings/scanner')
 
   await expect(page.getByText('API key required', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Enter an API key to continue' })).toBeDisabled()
@@ -353,7 +354,7 @@ test('lets a user intentionally remove a configured key without a connection tes
   page.on('request', request => {
     if (new URL(request.url()).pathname === '/api/settings/scanner/test') testRequests += 1
   })
-  await page.goto('/settings')
+  await page.goto('/settings/scanner')
 
   await page.getByRole('button', { name: 'Remove configured key' }).click()
   await page.getByRole('button', { name: 'Save changes' }).click()
@@ -377,7 +378,7 @@ test('keeps configuration unchanged after a provider test failure', async ({ pag
     status: 503,
     json: { detail: 'Provider temporarily unavailable.' },
   }))
-  await page.goto('/settings')
+  await page.goto('/settings/scanner')
 
   await page.getByLabel('Scanner provider').selectOption('openai')
   await page.getByRole('button', { name: 'Test and save' }).click()
@@ -388,7 +389,7 @@ test('keeps configuration unchanged after a provider test failure', async ({ pag
 
 test('lets only an administrator test and save a custom model', async ({ page }) => {
   const api = await installApi(page)
-  await page.goto('/settings')
+  await page.goto('/settings/scanner')
 
   await page.getByText('Advanced model', { exact: true }).click()
   await page.getByLabel('Use a custom model').check()
@@ -415,7 +416,7 @@ test('does not offer an untested custom model save bypass', async ({ page }) => 
     status: 502,
     json: { detail: 'Multi-image test failed.' },
   }))
-  await page.goto('/settings')
+  await page.goto('/settings/scanner')
 
   await page.getByText('Advanced model', { exact: true }).click()
   await page.getByLabel('Use a custom model').check()
@@ -447,7 +448,7 @@ test('requires an explicit administrator acknowledgment before saving limited mo
       visual_verification: false,
     } })
   })
-  await page.goto('/settings')
+  await page.goto('/settings/scanner')
 
   await page.getByLabel('Scanner provider').selectOption('openai')
   await page.getByRole('button', { name: 'Test and save' }).click()
@@ -482,7 +483,7 @@ test('shows a persistent warning for an active limited scanner model', async ({ 
         : item),
     } })
   })
-  await page.goto('/settings')
+  await page.goto('/settings/scanner')
 
   await expect(page.getByText('Limited scanner mode', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('AI comparison with reference images is disabled', { exact: false }).first()).toBeVisible()
@@ -502,7 +503,7 @@ test('a successful unchanged retest upgrades and saves limited mode', async ({ p
       : item),
   }
   const api = await installApi(page, USER, limitedConfiguration)
-  await page.goto('/settings')
+  await page.goto('/settings/scanner')
 
   await expect(page.getByText('Limited scanner mode', { exact: true }).first()).toBeVisible()
   await page.getByRole('button', { name: 'Test connection' }).click()
@@ -529,7 +530,7 @@ test('a disabled stored provider forces the visible fallback to be tested and sa
     administrator: undefined,
   }
   const api = await installApi(page, trainer, fallbackConfiguration)
-  await page.goto('/settings')
+  await page.goto('/settings/scanner')
 
   await expect(page.getByText('Gemini', { exact: true }).first()).toBeVisible()
   await expect(page.getByLabel('Scanner provider')).toHaveCount(0)
@@ -558,7 +559,7 @@ test('shows the limited-mode warning inside the card scanner', async ({ page }) 
   })
   await page.goto('/search')
 
-  await page.getByRole('button', { name: 'Scan card' }).click()
+  await page.locator('[data-testid="scan-button"]:visible, [data-testid="sidebar-nav"] button:has-text("Scan cards"):visible').first().click()
   await expect(page.getByText('Limited scanner mode', { exact: true })).toBeVisible()
   await expect(page.getByText('AI comparison with reference images is disabled', { exact: false })).toBeVisible()
 })
@@ -569,7 +570,7 @@ test('does not expose providers the administrator left disabled', async ({ page 
     ...scannerConfiguration,
     providers: [scannerConfiguration.providers[0]],
   } }))
-  await page.goto('/settings')
+  await page.goto('/settings/scanner')
 
   await expect(page.getByText('Card scanner', { exact: true })).toBeVisible()
   await expect(page.getByLabel('Scanner provider')).toHaveCount(0)
@@ -579,7 +580,7 @@ test('does not expose providers the administrator left disabled', async ({ page 
 test('keeps administrator-only server details away from normal users', async ({ page }) => {
   const trainer = { ...USER, username: 'trainer', role: 'trainer' }
   await installApi(page, trainer)
-  await page.goto('/settings')
+  await page.goto('/settings/scanner')
 
   await expect(page.getByText('Card scanner', { exact: true })).toBeVisible()
   await expect(page.getByText('Server setup details', { exact: true })).toHaveCount(0)

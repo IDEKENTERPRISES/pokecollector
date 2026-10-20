@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Crown, RefreshCw, Download, Upload, Plus, Pencil, Trash2, User, UserCheck, UserX, Zap, Copy } from 'lucide-react'
+import clsx from 'clsx'
 import {
-  getSyncStatus, triggerSync, triggerAllPriceSync, rescheduleFullSync, reschedulePriceSync,
+  getSyncStatus, triggerSync, triggerPriceSync, triggerAllPriceSync, rescheduleFullSync, reschedulePriceSync,
   downloadBackup, restoreBackup, exportCSV,
   getSetting, setSetting, getTelegramStatus, saveSettings, setAuthMode,
   getUsers, createUser, updateUser, deleteUser, changePassword, changeAvatar, changeUsername,
@@ -15,6 +16,7 @@ import api from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../hooks/useTheme'
 import { useSettings } from '../contexts/SettingsContext'
+import { useSetsView } from '../hooks/useSetsView'
 import { useConfirmDialog } from '../contexts/ConfirmDialogContext'
 import Modal from '../components/ui/Modal'
 import PasswordPromptDialog from '../components/ui/PasswordPromptDialog'
@@ -26,67 +28,83 @@ import toast from 'react-hot-toast'
 import { TCGDEX_LANGUAGES, normalizeTcgdexLanguageCsv, tcgdexLanguageLabel } from '../utils/tcgdexLanguages'
 import { APP_LANGUAGES } from '../utils/appLanguages'
 import { invalidateCollectionPhotoState, invalidateTcgdexFilterLanguages } from '../utils/queryInvalidation'
+import ListRow from '../components/ios/ListRow'
+import ListSection from '../components/ios/ListSection'
+import PokeBall from '../components/ios/PokeBall'
+import Switch from '../components/ios/Switch'
+import { NAV_ICONS } from '../navigation/navIcons'
+import { settingsSection, visibleSettingsSections } from '../navigation/navConfig'
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function SectionHeader({ title }) {
+// The sections whose controls still live in the former "General" block (docs/IOS_UI_DESIGN.md §5.6).
+const GENERAL_SECTIONS = ['account', 'appearance', 'scanner', 'about', 'users']
+
+/** /settings: the root list of sections with coloured icons. Hidden sections are left out, never disabled. */
+function SettingsRoot({ t, isAdmin }) {
   return (
-    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted px-1 mb-3">
-      {title}
-    </p>
+    <div className="space-y-4 py-4">
+      <h1 className="px-1 text-2xl font-black tracking-tight text-text-primary">{t('settings.title')}</h1>
+      <ListSection className="!mx-0">
+        {visibleSettingsSections({ isAdmin }).map(item => (
+          <ListRow
+            key={item.key}
+            to={`/settings/${item.key}`}
+            icon={NAV_ICONS[item.icon]}
+            iconColor={item.colour}
+            title={t(item.titleKey)}
+            testId={`settings-section-${item.key}`}
+          />
+        ))}
+      </ListSection>
+    </div>
   )
+}
+
+function SectionHeader({ title }) {
+  return <h2 className="px-4 pb-1.5 text-footnote text-text-secondary">{title}</h2>
 }
 
 function SettingsCard({ children }) {
+  return <div className="overflow-hidden rounded-xl bg-card">{children}</div>
+}
+
+/** An iOS row: label, Footnote description and the control on the right (`stacked`: below). */
+function SettingsRow({ label, description, children, stacked = false }) {
   return (
     <div
-      className="rounded-2xl overflow-hidden"
-      style={{
-        background: 'rgba(255,255,255,0.04)',
-        border: '1px solid rgba(255,255,255,0.07)',
-      }}
+      className={clsx(
+        'border-t-[0.5px] border-border px-4 py-[11px] first:border-t-0',
+        stacked ? 'space-y-2.5' : 'flex min-h-[44px] items-center justify-between gap-3',
+      )}
     >
-      {children}
+      <div className="min-w-0 flex-1">
+        <p className="text-body text-text-primary">{label}</p>
+        {description && (
+          <p className="mt-0.5 text-footnote text-text-secondary" style={{ overflowWrap: 'anywhere' }}>{description}</p>
+        )}
+      </div>
+      {children != null && (stacked ? <div className="w-full">{children}</div> : <div className="max-w-[55%] flex-shrink-0">{children}</div>)}
     </div>
   )
 }
 
-function SettingsRow({ label, description, children, last }) {
-  return (
-    <div
-      className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-4 px-4 py-3.5"
-      style={!last ? { borderBottom: '1px solid rgba(255,255,255,0.05)' } : {}}
-    >
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-text-primary">{label}</p>
-        {description && (
-          <p className="text-xs text-text-muted mt-0.5" style={{overflowWrap:"anywhere"}}>{description}</p>
-        )}
-      </div>
-      <div className="flex-shrink-0 w-full sm:w-auto">{children}</div>
-    </div>
+/** Pill button for a row's action. tone: 'tinted' | 'gray' | 'danger' | 'warning'. */
+const ROW_BUTTON_TONES = {
+  tinted: 'bg-accent/20 text-tint',
+  gray: 'bg-fill-tertiary text-text-primary',
+  danger: 'bg-red/15 text-red',
+  warning: 'bg-yellow/15 text-yellow',
+}
+function rowButton(tone = 'gray') {
+  return clsx(
+    'inline-flex min-h-[32px] items-center gap-1.5 rounded-full px-3.5 text-subheadline font-semibold ios-press disabled:opacity-40',
+    ROW_BUTTON_TONES[tone],
   )
 }
 
 function Toggle({ value, onChange, label, disabled = false }) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!value)}
-      disabled={disabled}
-      className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
-        value ? 'bg-brand-red' : 'bg-bg-elevated border border-border'
-      } ${disabled ? 'cursor-not-allowed opacity-50' : ''}`}
-      aria-pressed={value}
-      aria-label={label}
-    >
-      <span
-        className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
-          value ? 'translate-x-5' : 'translate-x-0'
-        }`}
-      />
-    </button>
-  )
+  return <Switch checked={value} onChange={onChange} label={label} disabled={disabled} />
 }
 
 function SelectControl({ value, options, onChange }) {
@@ -94,7 +112,7 @@ function SelectControl({ value, options, onChange }) {
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="select w-full max-w-full sm:w-auto text-xs font-semibold"
+      className="select max-w-full text-body"
     >
       {options.map((opt) => (
         <option key={opt.value} value={opt.value}>
@@ -102,6 +120,59 @@ function SelectControl({ value, options, onChange }) {
         </option>
       ))}
     </select>
+  )
+}
+
+/** The accent theme as a row of Poké Balls (design doc §7.3, §7.12). */
+function ThemePicker({ theme, setTheme, themes, label }) {
+  return (
+    <div role="group" aria-label={label} className="grid grid-cols-3 gap-2 sm:grid-cols-5" data-testid="theme-picker">
+      {themes.map((th) => {
+        const active = theme === th.id
+        return (
+          <button
+            key={th.id}
+            type="button"
+            onClick={() => setTheme(th.id)}
+            aria-pressed={active}
+            className={clsx(
+              'flex flex-col items-center gap-1.5 rounded-xl py-2.5 ios-press',
+              active ? 'bg-fill-tertiary ring-2' : 'bg-fill-quaternary',
+            )}
+            style={active ? { '--tw-ring-color': th.color } : undefined}
+          >
+            <PokeBall size={40} top={th.color} gloss />
+            <span className="text-caption-1 text-text-secondary">{th.label}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Change password and sign out other devices (Q13): every signed-in user in multi-user mode. */
+function PasswordCard({ t }) {
+  const [currentPw, setCurrentPw] = useState('')
+  const [newPw, setNewPw] = useState('')
+  return (
+    <section className="space-y-1">
+      <SectionHeader title={t('settings.users.changePassword')} />
+      <SettingsCard>
+        <div className="space-y-3 px-4 py-3">
+          <input type="password" name="current-password" id="change-current-password" autoComplete="current-password" aria-label={t('settings.users.currentPassword')} placeholder={t('settings.users.currentPassword')} value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} className="input w-full" />
+          <input type="password" name="new-password" id="change-new-password" autoComplete="new-password" aria-label={t('settings.users.newPassword')} placeholder={t('settings.users.newPassword')} value={newPw} onChange={(e) => setNewPw(e.target.value)} className="input w-full" />
+          <button onClick={() => changePwMut.mutate({ current_password: currentPw, new_password: newPw })} disabled={!currentPw || !newPw || changePwMut.isPending} className="flex min-h-[44px] w-full items-center justify-center rounded-full bg-accent px-5 text-callout font-semibold text-on-accent ios-press disabled:opacity-40">
+            {t('settings.users.changePassword')}
+          </button>
+        </div>
+        <div className="border-t-[0.5px] border-border px-4 py-3">
+          <p className="mb-2 text-footnote text-text-secondary">{t('settings.users.signOutOthersHint')}</p>
+          <button onClick={() => logoutOthersMut.mutate()} disabled={logoutOthersMut.isPending} className={rowButton('gray')}>
+            {t('settings.users.signOutOthers')}
+          </button>
+        </div>
+      </SettingsCard>
+    </section>
   )
 }
 
@@ -399,7 +470,12 @@ export default function Settings() {
   const confirmDialog = useConfirmDialog()
   const publicProfilesEnabled = settings.public_profiles_enabled === 'true'
   const { theme, setTheme, themes } = useTheme()
-  const [activeTab, setActiveTab] = useState('general')
+  const { section } = useParams()
+  const isAdmin = user?.role === 'admin'
+  const activeSection = visibleSettingsSections({ isAdmin }).some(item => item.key === section) ? section : null
+  const showGeneral = GENERAL_SECTIONS.includes(activeSection)
+  const { view: setsView, setView: setSetsView } = useSetsView()
+  const setsInSeries = setsView !== 'sets'
 
   const [backupOptions, setBackupOptions] = useState(['full'])
   const [debugModeEnabled, setDebugModeEnabled] = useState(false)
@@ -554,6 +630,16 @@ export default function Settings() {
   })
 
   // Forced price sync mutation (all tracked collection/wishlist/binder cards)
+  // Admin price sync, the action Home's admin button ran (Q5): refreshes the tracked cards' prices.
+  const priceSyncMutation = useMutation({
+    mutationFn: triggerPriceSync,
+    onSuccess: () => {
+      toast.success(t('settings.syncStarted'))
+      setTimeout(() => queryClient.invalidateQueries(), 5000)
+    },
+    onError: () => toast.error(t('settings.syncFailed')),
+  })
+
   const allPriceSyncMutation = useMutation({
     mutationFn: triggerAllPriceSync,
     onSuccess: () => {
@@ -626,7 +712,7 @@ export default function Settings() {
     }
   }
 
-  const isRunning = syncStatus?.is_running || syncStatus?.is_price_sync_running || syncMutation.isPending || allPriceSyncMutation.isPending
+  const isRunning = syncStatus?.is_running || syncStatus?.is_price_sync_running || syncMutation.isPending || priceSyncMutation.isPending || allPriceSyncMutation.isPending
 
   // Save helper
   const saveSetting = async (key, value) => {
@@ -658,6 +744,15 @@ export default function Settings() {
 
   const handleAlertThresholdBlur = async () => {
     await saveSetting('price_alert_threshold', alertThreshold)
+  }
+
+  const handleSetsViewChange = async (inSeries) => {
+    try {
+      await setSetsView(inSeries ? 'series' : 'sets')
+      toast.success(t('settings.saved'))
+    } catch {
+      toast.error(t('settings.saveFailed'))
+    }
   }
 
   const handleLanguageChange = async (lang) => {
@@ -886,36 +981,18 @@ export default function Settings() {
     ? `${t('settings.lastSyncFailed')} ${lastFullSyncText}${syncStatus.last_full_sync.error_message ? `: ${syncStatus.last_full_sync.error_message}` : ''}`
     : lastFullSyncText
 
-  return (
-    <div className="space-y-6 py-6">
-      <div className="px-1">
-        <h1 className="text-2xl font-black text-text-primary tracking-tight">{t('settings.title')}</h1>
-        <p className="text-sm text-text-muted mt-1">{t('settings.appConfig')}</p>
-      </div>
-      <div className="flex border-b border-border overflow-x-auto scrollbar-none -mx-4 px-4" style={{WebkitOverflowScrolling:"touch"}}>
-        {[
-          { key: 'general', label: t('settings.tabs.general') },
-          ...(user?.role === 'admin' ? [{ key: 'sync', label: t('settings.tabs.dataSync') }] : []),
-          { key: 'notifications', label: t('settings.tabs.notifications') },
-          { key: 'community', label: t('settings.tabs.community') },
-          ...(user?.role === 'admin' && multiUser ? [{ key: 'users', label: t('settings.tabs.users') }] : []),
-        ].map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
-            className={`px-3 py-2 text-xs sm:text-sm font-semibold whitespace-nowrap transition-colors border-b-2 flex-shrink-0 ${
-              activeTab === tab.key ? 'border-brand-red text-brand-red' : 'border-transparent text-text-muted hover:text-text-primary'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+  // No section: the root list. An unknown or hidden section (and the old "general") goes back to it.
+  if (!section) return <SettingsRoot t={t} isAdmin={isAdmin} />
+  if (!activeSection) return <Navigate to="/settings" replace />
 
-      {activeTab === 'general' && (
+  return (
+    <div className="space-y-6 py-4">
+      <h1 className="sr-only">{t(settingsSection(activeSection).titleKey)}</h1>
+
+      {showGeneral && (
         <>
           {/* ── 1. TRAINER ── */}
-          <section className="space-y-1">
+          {activeSection === 'account' && <section className="space-y-1">
             <SectionHeader title={t('settings.sectionTrainer')} />
             <SettingsCard>
               <SettingsRow
@@ -925,9 +1002,9 @@ export default function Settings() {
                 <button
                   type="button"
                   onClick={() => setShowAvatarPicker(true)}
-                  className="flex items-center gap-3 rounded-2xl border border-border bg-bg-primary px-3 py-2 transition-colors hover:border-brand-red/50"
+                  className="flex items-center gap-3 rounded-full bg-fill-tertiary py-1.5 pl-1.5 pr-4 ios-press"
                 >
-                  <div className="flex h-16 w-16 items-center justify-center rounded-full border border-border bg-bg-card">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-card">
                     {user?.avatar_id ? (
                       <img
                         src={`https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/${user.avatar_id}.gif`}
@@ -938,34 +1015,34 @@ export default function Settings() {
                       <User size={24} className="text-text-muted" />
                     )}
                   </div>
-                  <span className="text-xs font-semibold text-text-primary">
+                  <span className="text-subheadline font-semibold text-tint">
                     {avatarMutation.isPending ? t('common.loading') : t('common.edit')}
                   </span>
                 </button>
               </SettingsRow>
-              <SettingsRow label={t('settings.username')} description={t('settings.usernameDesc')} last>
+              <SettingsRow label={t('settings.username')} description={t('settings.usernameDesc')}>
                 {editingUsername ? (
                   <form className="flex items-center gap-2" onSubmit={(e) => { e.preventDefault(); usernameInput.trim() && usernameMutation.mutate(usernameInput.trim()) }}>
                     <input
                       type="text"
                       value={usernameInput}
                       onChange={(e) => setUsernameInput(e.target.value)}
-                      className="w-32 rounded-lg border border-border bg-bg-primary px-2 py-1.5 text-xs text-text-primary outline-hidden focus:border-brand-red"
+                      className="input w-32"
                       style={{ WebkitTextFillColor: "var(--color-text-primary)", WebkitBoxShadow: "0 0 0px 1000px var(--color-bg) inset" }}
                       autoFocus
                       maxLength={32}
                     />
-                    <button type="submit" disabled={usernameMutation.isPending} className="rounded-lg bg-brand-red px-2 py-1.5 text-xs font-semibold text-white">
+                    <button type="submit" disabled={usernameMutation.isPending} className={rowButton('tinted')}>
                       {usernameMutation.isPending ? '...' : '✓'}
                     </button>
-                    <button type="button" onClick={() => setEditingUsername(false)} className="rounded-lg border border-border px-2 py-1.5 text-xs text-text-muted">
+                    <button type="button" onClick={() => setEditingUsername(false)} className={rowButton('gray')}>
                       ✕
                     </button>
                   </form>
                 ) : (
                   <button
                     onClick={() => { setUsernameInput(user?.username || ''); setEditingUsername(true) }}
-                    className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-text-primary transition-colors hover:border-brand-red/50"
+                    className={rowButton('gray')}
                   >
                     <Pencil size={12} />
                     {user?.username || 'Trainer'}
@@ -974,10 +1051,12 @@ export default function Settings() {
               </SettingsRow>
 
             </SettingsCard>
-          </section>
+          </section>}
+
+          {activeSection === 'account' && multiUser && <PasswordCard t={t} />}
 
           {/* ── PUBLIC PROFILE ── */}
-          {(user?.role === 'admin' || publicProfilesEnabled) && <section className="space-y-1">
+          {activeSection === 'account' && (user?.role === 'admin' || publicProfilesEnabled) && <section className="space-y-1">
             <SectionHeader title={t('settings.sectionPublicProfile')} />
             <SettingsCard>
               {user?.role === 'admin' && (
@@ -986,7 +1065,7 @@ export default function Settings() {
                   description={publicProfilesEnabled
                     ? t('settings.publicProfilesGlobalEnabledDesc')
                     : t('settings.publicProfilesGlobalDisabledDesc')}
-                  last={!publicProfilesEnabled}
+                 
                 >
                   <Toggle
                     value={publicProfilesEnabled}
@@ -997,17 +1076,17 @@ export default function Settings() {
                 </SettingsRow>
               )}
               {publicProfilesEnabled && <SettingsRow label={t('settings.publicTrainerName')} description={t('settings.publicTrainerNameDesc')}>
-                <div className="flex w-full flex-col items-end gap-1 sm:w-64">
-                  <span className="w-full truncate rounded-lg border border-border bg-bg-primary px-3 py-2 text-xs font-semibold text-text-primary">
+                <div className="flex w-full flex-col items-end gap-1">
+                  <span className="w-full truncate text-right text-body text-text-secondary">
                     {profileData?.trainer_name || user?.username || t('settings.username')}
                   </span>
                   {publicProfileUrl && (
-                    <span className="w-full truncate text-right font-mono text-[10px] text-text-muted">
+                    <span className="w-full truncate text-right font-mono text-caption-2 text-text-secondary">
                       {publicProfileUrl}
                     </span>
                   )}
                   {publicHandleError && (
-                    <span className="w-full text-right text-[11px] font-semibold text-brand-red">
+                    <span className="w-full text-right text-footnote font-semibold text-red">
                       {publicHandleError}
                     </span>
                   )}
@@ -1031,7 +1110,7 @@ export default function Settings() {
                   onChange={(value) => { setWishlistVisibility(value); setProfileDirty(true) }}
                 />
               </SettingsRow>}
-              {publicProfilesEnabled && <SettingsRow label={t('settings.publicShowValues')} description={t('settings.publicShowValuesDesc')} last={!(profilePublic && publicHandle)}>
+              {publicProfilesEnabled && <SettingsRow label={t('settings.publicShowValues')} description={t('settings.publicShowValuesDesc')}>
                 <Toggle
                   value={publicShowValues}
                   onChange={(val) => { setPublicShowValues(val); setProfileDirty(true) }}
@@ -1039,23 +1118,22 @@ export default function Settings() {
                 />
               </SettingsRow>}
               {publicProfilesEnabled && profilePublic && publicHandle && (
-                <SettingsRow label={t('settings.publicProfileLink')} description={publicProfileUrl} last>
+                <SettingsRow label={t('settings.publicProfileLink')} description={publicProfileUrl}>
                   <button
                     type="button"
                     onClick={copyPublicProfileUrl}
-                    className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-opacity flex-shrink-0"
-                    style={{ background: 'rgba(255,255,255,0.07)', color: '#90a4ae', border: '1px solid rgba(255,255,255,0.1)' }}
+                    className={rowButton('gray')}
                   >
                     <Copy size={13} /> {t('common.copy')}
                   </button>
                 </SettingsRow>
               )}
             </SettingsCard>
-            {publicProfilesEnabled && <div className="flex justify-end px-1">
+            {publicProfilesEnabled && <div className="flex justify-end px-1 pt-2">
               <button
                 onClick={savePublicProfile}
                 disabled={publicProfileSaveDisabled}
-                className="btn-primary-sm"
+                className="flex min-h-[44px] items-center justify-center rounded-full bg-accent px-6 text-callout font-semibold text-on-accent ios-press disabled:opacity-40"
               >
                 {profileMutation.isPending ? t('common.saving') : t('common.save')}
               </button>
@@ -1063,44 +1141,22 @@ export default function Settings() {
           </section>}
 
           {/* ── 2. THEME ── */}
-          <section className="space-y-1">
+          {activeSection === 'appearance' && <section className="space-y-1">
             <SectionHeader title={t('settings.sectionTheme')} />
             <SettingsCard>
-              <div className="px-4 py-3.5">
-                <p className="text-sm font-semibold text-text-primary mb-3">{t('settings.theme')}</p>
-                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-                  {themes.map((th) => (
-                    <button
-                      key={th.id}
-                      onClick={() => setTheme(th.id)}
-                      className={`flex flex-col items-center gap-1.5 rounded-xl p-3 transition-all ${
-                        theme === th.id
-                          ? 'ring-2 ring-offset-1 ring-offset-transparent'
-                          : 'hover:bg-bg-elevated'
-                      }`}
-                      style={{
-                        background: theme === th.id ? `${th.color}15` : 'rgba(255,255,255,0.03)',
-                        border: `1px solid ${theme === th.id ? `${th.color}50` : 'rgba(255,255,255,0.05)'}`,
-                        ...(theme === th.id ? { ringColor: th.color } : {}),
-                      }}
-                    >
-                      <span className="text-xl">{th.emoji}</span>
-                      <span className="text-[10px] font-semibold text-text-secondary">{th.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <SettingsRow label={t('settings.theme')} stacked>
+                <ThemePicker theme={theme} setTheme={setTheme} themes={themes} label={t('settings.theme')} />
+              </SettingsRow>
             </SettingsCard>
-          </section>
+          </section>}
 
-          {user?.role === 'admin' && (
+          {activeSection === 'users' && user?.role === 'admin' && (
             <section className="space-y-1">
               <SectionHeader title={t('settings.sectionMultiUser')} />
               <SettingsCard>
                 <SettingsRow
                   label={t('settings.multiUserMode')}
                   description={modeLocked ? t('settings.multiUserModeLocked') : t('settings.multiUserModeDesc')}
-                  last
                 >
                   <Toggle
                     value={multiUser}
@@ -1164,9 +1220,16 @@ export default function Settings() {
           )}
 
           {/* ── 3. DARSTELLUNG ── */}
-          <section className="space-y-1">
+          {activeSection === 'appearance' && <section className="space-y-1">
             <SectionHeader title={t('settings.sectionAppearance')} />
             <SettingsCard>
+              <SettingsRow label={t('settings.showSetsInSeries')} description={t('settings.showSetsInSeriesDesc')}>
+                <Toggle
+                  value={setsInSeries}
+                  label={t('settings.showSetsInSeries')}
+                  onChange={handleSetsViewChange}
+                />
+              </SettingsRow>
               <SettingsRow label={t('settings.language')} description={t('settings.languageDesc')}>
                 <SelectControl
                   value={currentAppLang}
@@ -1208,23 +1271,22 @@ export default function Settings() {
               <SettingsRow
                 label={t('settings.deleteCardPhotos')}
                 description={t('settings.deleteCardPhotosDesc')}
-                last
               >
                 <button
                   type="button"
                   onClick={handleDeleteCardPhotos}
                   disabled={cardPhotosDeleting}
-                  className="btn-ghost flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-brand-red disabled:opacity-50"
+                  className={rowButton('danger')}
                 >
                   <Trash2 size={13} />
                   {cardPhotosDeleting ? t('common.deleting') : t('common.delete')}
                 </button>
               </SettingsRow>
             </SettingsCard>
-          </section>
+          </section>}
 
           {/* ── 6. KI / KARTEN-SCANNER ── */}
-          <section className="space-y-1">
+          {activeSection === 'scanner' && <section className="space-y-1">
             <SectionHeader title={t('settings.sectionAI')} />
             <ScannerSettingsCard t={t} />
             <SettingsCard>
@@ -1244,7 +1306,6 @@ export default function Settings() {
                 description={scanDiagnosticsAvailable
                   ? t('settings.scanDiagnosticsDesc')
                   : t('settings.scanDiagnosticsUnavailable')}
-                last
               >
                 <div className="flex items-center gap-2">
                   <Toggle
@@ -1257,7 +1318,7 @@ export default function Settings() {
                     type="button"
                     onClick={handleDeleteScanDiagnostics}
                     disabled={!scanDiagnosticsDeletionAvailable || scanDiagnosticsDeleting}
-                    className="btn-ghost flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-brand-red disabled:opacity-50"
+                    className={rowButton('danger')}
                   >
                     <Trash2 size={13} />
                     {scanDiagnosticsDeleting
@@ -1267,18 +1328,17 @@ export default function Settings() {
                 </div>
               </SettingsRow>
             </SettingsCard>
-          </section>
+          </section>}
 
           {/* ── 7. EBAY API ── */}
           
 
           {/* ── 8. ÜBER DIE APP ── */}
-          <section className="space-y-1">
+          {activeSection === 'about' && <section className="space-y-1">
             <SectionHeader title={t('settings.sectionAbout')} />
             <SettingsCard>
               <SettingsRow label={t('settings.app')} description="Pokemon TCG Collection">
-                <span className="text-xs font-bold text-text-muted px-2 py-1 rounded-lg"
-                  style={{ background: 'rgba(255,255,255,0.05)' }}>
+                <span className="text-body text-text-secondary tabular-nums">
                   v{__APP_VERSION__}
                 </span>
               </SettingsRow>
@@ -1287,7 +1347,7 @@ export default function Settings() {
                   href="https://tcgdex.dev"
                   target="_blank"
                   rel="noreferrer"
-                  className="text-xs font-semibold text-brand-red hover:opacity-80 transition-opacity"
+                  className="text-body text-tint"
                 >
                   TCGdex ↗
                 </a>
@@ -1297,7 +1357,7 @@ export default function Settings() {
                   href="https://github.com/Git-Romer/pokecollector"
                   target="_blank"
                   rel="noreferrer"
-                  className="text-xs font-semibold text-brand-red hover:opacity-80 transition-opacity"
+                  className="text-body text-tint"
                 >
                   GitHub ↗
                 </a>
@@ -1307,15 +1367,15 @@ export default function Settings() {
                   href="https://romerg.de/"
                   target="_blank"
                   rel="noreferrer"
-                  className="text-xs font-semibold text-brand-red hover:opacity-80 transition-opacity"
+                  className="text-body text-tint"
                 >
                   romerg.de ↗
                 </a>
               </SettingsRow>
-              <SettingsRow label={t('settings.contact')} description={t('settings.contactDesc')} last>
+              <SettingsRow label={t('settings.contact')} description={t('settings.contactDesc')}>
                 <a
                   href="mailto:info@romerg.de"
-                  className="text-xs font-semibold text-brand-red hover:opacity-80 transition-opacity"
+                  className="text-body text-tint"
                 >
                   info@romerg.de
                 </a>
@@ -1326,11 +1386,11 @@ export default function Settings() {
                 {t('settings.madeWith')} <a href="https://romerg.de/" target="_blank" rel="noreferrer" className="text-brand-red hover:opacity-80 transition-opacity font-semibold">Gilles Romer</a>
               </p>
             </div>
-          </section>
+          </section>}
         </>
       )}
 
-      {activeTab === 'sync' && (
+      {activeSection === 'data' && (
         <>
           {/* ── 3. SYNCHRONISATION ── */}
           <section className="space-y-1">
@@ -1342,15 +1402,14 @@ export default function Settings() {
                 <button
                   onClick={() => syncMutation.mutate()}
                   disabled={isRunning}
-                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-opacity disabled:opacity-50"
-                  style={{ background: 'rgba(227,0,11,0.15)', color: '#e3000b', border: '1px solid rgba(227,0,11,0.3)' }}
+                  className={rowButton('tinted')}
                 >
                   <RefreshCw size={13} className={isRunning ? 'animate-spin' : ''} />
                   {isRunning ? t('settings.running') : t('settings.syncButton')}
                 </button>
               </SettingsRow>
               {user?.role === 'admin' && (
-                <SettingsRow label={t('settings.tcgdexSyncLanguages')} description={t('settings.tcgdexSyncLanguagesDesc')}>
+                <SettingsRow label={t('settings.tcgdexSyncLanguages')} description={t('settings.tcgdexSyncLanguagesDesc')} stacked>
                   <TcgdexLanguageControl
                     value={currentTcgdexSyncLanguages}
                     onChange={handleTcgdexSyncLanguagesChange}
@@ -1388,8 +1447,7 @@ export default function Settings() {
                 <SettingsRow label={t('migration.title')} description={`${customMatches.length} ${t('migration.pendingMatches')}`}>
                   <button
                     onClick={() => navigate('/migration')}
-                    className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-opacity"
-                    style={{ background: 'rgba(245,200,66,0.15)', color: '#f5c842', border: '1px solid rgba(245,200,66,0.35)' }}
+                    className={rowButton('warning')}
                   >
                     <Zap size={13} />
                     {t('migration.title')}
@@ -1397,7 +1455,7 @@ export default function Settings() {
                 </SettingsRow>
               )}
               {user?.role === 'admin' && (
-                <SettingsRow label={t('settings.interval')} description={t('settings.syncSetsCardsDesc')} last>
+                <SettingsRow label={t('settings.interval')} description={t('settings.syncSetsCardsDesc')}>
                   <SelectControl
                     value={fullSyncIntervalDays}
                     options={[
@@ -1417,19 +1475,30 @@ export default function Settings() {
 
             {/* Card 2: Price Sync */}
             <SettingsCard>
+              {user?.role === 'admin' && (
+                <SettingsRow label={t('settings.updatePrices')} description={t('settings.updatePricesDesc')}>
+                  <button
+                    onClick={() => priceSyncMutation.mutate()}
+                    disabled={isRunning}
+                    className={rowButton('tinted')}
+                  >
+                    <RefreshCw size={13} className={isRunning ? 'animate-spin' : ''} />
+                    {isRunning ? t('settings.running') : t('settings.syncButton')}
+                  </button>
+                </SettingsRow>
+              )}
               <SettingsRow label={t('settings.syncPricesOnly')} description={t('settings.syncPricesOnlyDesc')}>
                 <button
                   onClick={() => allPriceSyncMutation.mutate()}
                   disabled={isRunning}
-                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-opacity disabled:opacity-50"
-                  style={{ background: 'rgba(227,0,11,0.15)', color: '#e3000b', border: '1px solid rgba(227,0,11,0.3)' }}
+                  className={rowButton('tinted')}
                 >
                   <RefreshCw size={13} className={isRunning ? 'animate-spin' : ''} />
                   {isRunning ? t('settings.running') : t('settings.syncButton')}
                 </button>
               </SettingsRow>
               {user?.role === 'admin' && (
-                <SettingsRow label={t('settings.priceInterval')} description={t('settings.autoSmallSyncDesc')} last>
+                <SettingsRow label={t('settings.priceInterval')} description={t('settings.autoSmallSyncDesc')}>
                   <SelectControl
                     value={priceSyncIntervalMinutes}
                     options={[
@@ -1456,8 +1525,7 @@ export default function Settings() {
                   <div className="flex items-center gap-2 justify-end">
                     <button
                       onClick={handleDownloadDebugLog}
-                      className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-opacity"
-                      style={{ background: 'rgba(255,255,255,0.07)', color: '#90a4ae', border: '1px solid rgba(255,255,255,0.1)' }}
+                      className={rowButton('gray')}
                     >
                       <Download size={13} /> {t('settings.debugLogDownload')}
                     </button>
@@ -1482,8 +1550,7 @@ export default function Settings() {
                       toast.error(t('settings.clearImageCacheFailed'))
                     }
                   }}
-                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-opacity"
-                  style={{ background: 'rgba(239,68,68,0.12)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.25)' }}
+                  className={rowButton('danger')}
                 >
                   🗑️ {t('settings.clearImageCache')}
                 </button>
@@ -1491,15 +1558,14 @@ export default function Settings() {
               <SettingsRow label={t('settings.csvExport')} description={t('settings.csvExportDesc')}>
                 <button
                   onClick={() => exportCSV(exportParams)}
-                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-opacity"
-                  style={{ background: 'rgba(255,255,255,0.07)', color: '#90a4ae', border: '1px solid rgba(255,255,255,0.1)' }}
+                  className={rowButton('gray')}
                 >
                   <Download size={13} /> {t('settings.exportButton')}
                 </button>
               </SettingsRow>
-              <SettingsRow label={t('settings.backupDownload')} description={t('settings.backupDownloadDesc')}>
-                <div className="flex flex-col gap-2 items-end">
-                  <div className="flex flex-wrap gap-1.5 justify-end">
+              <SettingsRow label={t('settings.backupDownload')} description={t('settings.backupDownloadDesc')} stacked>
+                <div className="flex flex-col gap-3 items-start">
+                  <div className="flex flex-wrap gap-1.5">
                     {[
                       { key: 'full', label: t('settings.backupFull') },
                       { key: 'collection', label: t('settings.backupCollection') },
@@ -1522,11 +1588,11 @@ export default function Settings() {
                               })
                             }
                           }}
-                          className="text-[11px] font-semibold px-2.5 py-1 rounded-full transition-all"
-                          style={active
-                            ? { background: 'rgba(239,21,21,0.2)', color: '#EF1515', border: '1px solid rgba(239,21,21,0.4)' }
-                            : { background: 'rgba(255,255,255,0.05)', color: '#606078', border: '1px solid rgba(255,255,255,0.08)' }
-                          }
+                          aria-pressed={active}
+                          className={clsx(
+                            'min-h-[32px] rounded-full px-3 text-footnote font-semibold ios-press',
+                            active ? 'bg-accent text-on-accent' : 'bg-fill-tertiary text-text-secondary',
+                          )}
                         >
                           {opt.label}
                         </button>
@@ -1536,19 +1602,17 @@ export default function Settings() {
                   <button
                     onClick={() => downloadBackup(backupOptions.join(',') || 'full')}
                     disabled={backupOptions.length === 0}
-                    className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-opacity disabled:opacity-50"
-                    style={{ background: 'rgba(255,255,255,0.07)', color: '#90a4ae', border: '1px solid rgba(255,255,255,0.1)' }}
+                    className={rowButton('gray')}
                   >
                     <Download size={13} /> {t('settings.backupButton')}
                   </button>
                 </div>
               </SettingsRow>
-              <SettingsRow label={t('settings.backupImport')} description={t('settings.backupImportDesc')} last>
+              <SettingsRow label={t('settings.backupImport')} description={t('settings.backupImportDesc')}>
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   disabled={restoring}
-                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-opacity disabled:opacity-50"
-                  style={{ background: 'rgba(255,255,255,0.07)', color: '#90a4ae', border: '1px solid rgba(255,255,255,0.1)' }}
+                  className={rowButton('gray')}
                 >
                   <Upload size={13} /> {restoring ? t('settings.importing') : t('settings.importButton')}
                 </button>
@@ -1576,7 +1640,7 @@ export default function Settings() {
         </>
       )}
 
-      {activeTab === 'notifications' && (
+      {activeSection === 'notifications' && (
         <>
           {/* ── 4. BENACHRICHTIGUNGEN ── */}
           <section className="space-y-1">
@@ -1588,21 +1652,19 @@ export default function Settings() {
               >
                 {telegramStatus?.configured ? (
                   <span
-                    className="text-xs font-bold px-2.5 py-1 rounded-full"
-                    style={{ background: 'rgba(102,187,106,0.15)', color: '#66bb6a', border: '1px solid rgba(102,187,106,0.3)' }}
+                    className="rounded-full bg-green/15 px-2.5 py-1 text-footnote font-semibold text-green"
                   >
                     {t('settings.telegramConfigured')}
                   </span>
                 ) : (
                   <span
-                    className="text-xs font-bold px-2.5 py-1 rounded-full"
-                    style={{ background: 'rgba(227,0,11,0.1)', color: '#e3000b', border: '1px solid rgba(227,0,11,0.25)' }}
+                    className="rounded-full bg-red/15 px-2.5 py-1 text-footnote font-semibold text-red"
                   >
                     {t('settings.telegramNotConfigured')}
                   </span>
                 )}
               </SettingsRow>
-              <SettingsRow label={t('settings.telegramBotToken')} description={t('settings.telegramBotTokenDesc')}>
+              <SettingsRow label={t('settings.telegramBotToken')} description={t('settings.telegramBotTokenDesc')} stacked>
                 <div className="flex items-center gap-2">
                   <input
                     type="password"
@@ -1610,7 +1672,7 @@ export default function Settings() {
                     onChange={e => { setTelegramBotToken(e.target.value); setTelegramBotTokenDirty(true) }}
                     placeholder="1234567890:AAF..."
                     className="input text-xs font-mono"
-                    style={{ minWidth: 0, width: 180 }}
+                    style={{ minWidth: 0, flex: 1 }}
                   />
                   {telegramBotToken && !telegramBotTokenDirty && (
                     <span className="text-xs text-green flex-shrink-0">✅</span>
@@ -1624,14 +1686,14 @@ export default function Settings() {
                         queryClient.invalidateQueries({ queryKey: ['telegram-status'] })
                         toast.success(t('settings.apiKeySaved'))
                       }}
-                      className="btn-primary-sm flex-shrink-0"
+                      className={clsx(rowButton('tinted'), 'flex-shrink-0')}
                     >
                       {t('common.save')}
                     </button>
                   )}
                 </div>
               </SettingsRow>
-              <SettingsRow label={t('settings.telegramChatId')} description={t('settings.telegramChatIdDesc')}>
+              <SettingsRow label={t('settings.telegramChatId')} description={t('settings.telegramChatIdDesc')} stacked>
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
@@ -1639,7 +1701,7 @@ export default function Settings() {
                     onChange={e => { setTelegramChatId(e.target.value); setTelegramChatIdDirty(true) }}
                     placeholder="-100123456789"
                     className="input text-xs font-mono"
-                    style={{ minWidth: 0, width: 140 }}
+                    style={{ minWidth: 0, flex: 1 }}
                   />
                   {telegramChatId && !telegramChatIdDirty && (
                     <span className="text-xs text-green flex-shrink-0">✅</span>
@@ -1653,7 +1715,7 @@ export default function Settings() {
                         queryClient.invalidateQueries({ queryKey: ['telegram-status'] })
                         toast.success(t('settings.apiKeySaved'))
                       }}
-                      className="btn-primary-sm flex-shrink-0"
+                      className={clsx(rowButton('tinted'), 'flex-shrink-0')}
                     >
                       {t('common.save')}
                     </button>
@@ -1670,7 +1732,6 @@ export default function Settings() {
                 <SettingsRow
                   label={t('settings.threshold')}
                   description={t('settings.thresholdDesc')}
-                  last
                 >
                   <div className="flex items-center gap-1.5">
                     <input
@@ -1680,25 +1741,20 @@ export default function Settings() {
                       onBlur={handleAlertThresholdBlur}
                       min="1"
                       max="100"
-                      className="text-xs font-semibold text-text-primary rounded-lg px-3 py-1.5 outline-hidden focus-visible:ring-2 focus-visible:ring-brand-red/60 w-16 text-right"
-                      style={{
-                        background: 'rgba(255,255,255,0.07)',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                      }}
+                      className="input w-20 text-right"
                     />
                     <span className="text-xs text-text-muted">%</span>
                   </div>
                 </SettingsRow>
               )}
-              {!priceAlertsEnabled && <div style={{ height: 0 }} />}
-            </SettingsCard>
+                          </SettingsCard>
           </section>
 
           <NotificationsCard />
         </>
       )}
 
-      {activeTab === 'community' && (
+      {activeSection === 'community' && (
         <>
           <section className="space-y-1">
             <SectionHeader title={t('settings.contributors')} />
@@ -1730,7 +1786,7 @@ export default function Settings() {
         </>
       )}
 
-      {activeTab === 'users' && user?.role === 'admin' && multiUser && (
+      {activeSection === 'users' && user?.role === 'admin' && multiUser && (
         <UsersTab t={t} queryClient={queryClient} />
       )}
 
@@ -1752,8 +1808,6 @@ function UsersTab({ t, queryClient }) {
   const [formPassword, setFormPassword] = useState('')
   const [formRole, setFormRole] = useState('trainer')
   const [formForceChange, setFormForceChange] = useState(false)
-  const [currentPw, setCurrentPw] = useState('')
-  const [newPw, setNewPw] = useState('')
   const { user: currentUser } = useAuth()
 
   const { data: users = [] } = useQuery({ queryKey: ['users'], queryFn: getUsers })
@@ -1816,9 +1870,9 @@ function UsersTab({ t, queryClient }) {
   return (
     <>
       <section className="space-y-1">
-        <div className="flex items-center justify-between px-1 mb-3">
-          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted">{t('settings.users.title')}</p>
-          <button onClick={openCreate} className="flex items-center gap-1 text-xs font-semibold text-brand-red hover:text-brand-red/80">
+        <div className="flex items-center justify-between px-4 pb-1.5">
+          <h2 className="text-footnote text-text-secondary">{t('settings.users.title')}</h2>
+          <button onClick={openCreate} className="flex min-h-[32px] items-center gap-1 text-subheadline font-semibold text-tint">
             <Plus size={14} /> {t('settings.users.addUser')}
           </button>
         </div>
@@ -1831,12 +1885,12 @@ function UsersTab({ t, queryClient }) {
                   <button
                     onClick={() => updateMut.mutate({ id: u.id, data: { is_active: !u.is_active } })}
                     disabled={lastActiveAdmin}
-                    className={`text-text-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:text-text-muted`}
+                    className="grid h-11 w-9 place-items-center text-text-secondary disabled:cursor-not-allowed disabled:opacity-35"
                     title={lastActiveAdmin ? t('settings.users.lastAdminRequired') : (u.is_active ? t('settings.users.deactivate') : t('settings.users.activate'))}
                   >
                     {u.is_active ? <UserCheck size={15} /> : <UserX size={15} />}
                   </button>
-                  <button onClick={() => openEdit(u)} className="text-text-muted hover:text-text-primary"><Pencil size={15} /></button>
+                  <button onClick={() => openEdit(u)} aria-label={t('common.edit')} className="grid h-11 w-9 place-items-center text-text-secondary"><Pencil size={15} /></button>
                   {u.id !== currentUser?.id && (
                     <button onClick={async () => {
                       const confirmed = await confirmDialog({
@@ -1846,31 +1900,12 @@ function UsersTab({ t, queryClient }) {
                         destructive: true,
                       })
                       if (confirmed) deleteMut.mutate(u.id)
-                    }} className="text-text-muted hover:text-brand-red"><Trash2 size={15} /></button>
+                    }} aria-label={t('common.delete')} className="grid h-11 w-9 place-items-center text-red"><Trash2 size={15} /></button>
                   )}
                 </div>
               </SettingsRow>
             )
           })}
-        </SettingsCard>
-      </section>
-
-      <section className="space-y-1">
-        <SectionHeader title={t('settings.users.changePassword')} />
-        <SettingsCard>
-          <div className="px-4 py-3 space-y-3">
-            <input type="password" name="current-password" id="change-current-password" autoComplete="current-password" aria-label={t('settings.users.currentPassword')} placeholder={t('settings.users.currentPassword')} value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} className="input w-full" />
-            <input type="password" name="new-password" id="change-new-password" autoComplete="new-password" aria-label={t('settings.users.newPassword')} placeholder={t('settings.users.newPassword')} value={newPw} onChange={(e) => setNewPw(e.target.value)} className="input w-full" />
-            <button onClick={() => changePwMut.mutate({ current_password: currentPw, new_password: newPw })} disabled={!currentPw || !newPw || changePwMut.isPending} className="btn-primary text-sm">
-              {t('settings.users.changePassword')}
-            </button>
-            <div className="border-t border-border pt-3">
-              <p className="mb-2 text-xs text-text-muted">{t('settings.users.signOutOthersHint')}</p>
-              <button onClick={() => logoutOthersMut.mutate()} disabled={logoutOthersMut.isPending} className="btn-ghost text-sm">
-                {t('settings.users.signOutOthers')}
-              </button>
-            </div>
-          </div>
         </SettingsCard>
       </section>
 

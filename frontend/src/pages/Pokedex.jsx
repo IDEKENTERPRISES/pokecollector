@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Check, Search } from 'lucide-react'
 import clsx from 'clsx'
 import { getPokedex } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import PokeBallLoader from '../components/PokeBallLoader'
+import PokeBall from '../components/ios/PokeBall'
+import HpBar from '../components/ios/HpBar'
+import HeaderBloom from '../components/ios/HeaderBloom'
+import SearchField from '../components/ios/SearchField'
 import PokedexGenerationFilter, { POKEDEX_GENERATIONS } from '../components/PokedexGenerationFilter'
 import { getSavedListScrollPosition, isSavedPositionForLocation, useListScrollRestoration } from '../hooks/useListScrollRestoration'
 import {
@@ -56,16 +59,14 @@ function PokemonTile({ entry, onClick, language, t }) {
       data-scroll-anchor={`pokemon-${entry.entry_id}`}
       onClick={onClick}
       className={clsx(
-        'group relative rounded-2xl border p-3 text-left transition-all hover:-translate-y-0.5 hover:shadow-lg focus:outline-hidden focus:ring-2 focus:ring-brand-red',
-        entry.owned
-          ? 'border-green/30 bg-gradient-to-b from-green/10 to-bg-card'
-          : 'border-border bg-bg-card hover:border-text-muted'
+        'group relative rounded-[18px] p-3 text-left ios-press focus:outline-hidden focus-visible:ring-2 focus-visible:ring-tint',
+        entry.owned ? 'bg-card ring-1 ring-green/40' : 'bg-card'
       )}
       aria-label={`${entry.display_number} ${name}, ${entry.owned ? t('pokedex.owned') : t('pokedex.missing')}`}
     >
       {entry.owned && (
-        <span className="absolute right-2 top-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-green text-black shadow">
-          <Check size={15} strokeWidth={3} />
+        <span className="absolute right-2 top-2" data-testid="caught-mark">
+          <PokeBall size={22} gloss />
         </span>
       )}
       <div className={clsx('flex justify-center transition-opacity', !entry.owned && 'opacity-65 group-hover:opacity-90')}>
@@ -81,7 +82,7 @@ function PokemonTile({ entry, onClick, language, t }) {
       <div className="mt-2 space-y-0.5 text-[10px]">
         <p className={entry.owned ? 'font-semibold text-green' : 'font-semibold text-text-secondary'}>
           {entry.owned
-            ? `✓ ${entry.owned_cards} ${t('pokedex.cardsOwned')}`
+            ? `${entry.owned_cards} ${t('pokedex.cardsOwned')}`
             : t('pokedex.missing')}
         </p>
         <p className="text-text-muted">
@@ -163,8 +164,9 @@ export default function Pokedex() {
   const selectFormFamily = (value) => setSearchParams(setPokedexFormFamily(searchParams, value))
 
   return (
-    <div data-scroll-list="pokedex" className="mx-auto w-full max-w-7xl space-y-5 px-4 pb-28 pt-2 sm:px-6 lg:px-8">
-      <section className="rounded-3xl border border-border bg-gradient-to-br from-bg-card to-bg-surface p-5 sm:p-6">
+    <div data-scroll-list="pokedex" className="relative isolate mx-auto w-full max-w-7xl space-y-5 pb-4 pt-2">
+      <HeaderBloom variant="search" />
+      <section className="rounded-3xl bg-card p-5 sm:p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.2em] text-brand-red">PokéCollector</p>
@@ -178,24 +180,18 @@ export default function Pokedex() {
               <span className="text-2xl font-black text-text-primary">{summary.owned}/{summary.total}</span>
               <span className="text-xs font-semibold text-text-muted">{progress}% {t('pokedex.collected')}</span>
             </div>
-            <div className="mt-2 h-2 overflow-hidden rounded-full bg-bg-elevated">
-              <div className="h-full rounded-full bg-green transition-all" style={{ width: `${progress}%` }} />
-            </div>
+            <HpBar className="mt-2" value={summary.owned} max={summary.total} label={t('pokedex.title')} />
           </div>
         </div>
       </section>
 
-      <section className="space-y-3 rounded-2xl border border-border bg-bg-surface p-3 sm:p-4">
-        <label className="relative block">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" size={18} />
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={t('pokedex.searchPlaceholder')}
-            className="input w-full pl-10"
-            aria-label={t('pokedex.searchPlaceholder')}
-          />
-        </label>
+      <section className="space-y-3 rounded-2xl bg-card p-3 sm:p-4">
+        <SearchField
+          value={search}
+          onChange={setSearch}
+          placeholder={t('pokedex.searchPlaceholder')}
+          onCancel={() => setSearch('')}
+        />
 
         <PokedexGenerationFilter
           generation={generation}

@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, Search, SlidersHorizontal, X } from 'lucide-react'
+import { Search, SlidersHorizontal, X } from 'lucide-react'
 import { getUserCollection } from '../api/client'
 import TcgdexLanguageSelect from '../components/TcgdexLanguageSelect'
 import { useSettings } from '../contexts/SettingsContext'
@@ -13,6 +13,7 @@ import { textIncludes } from '../utils/textSearch'
 import { CardDisplay, CardLegend, withCollectionItemState } from '../components/card-system'
 import { useDynamicFilterUrlState } from '../hooks/useDynamicFilterUrlState'
 import PrintingDetailBadges from '../components/PrintingDetailBadges'
+import { useNavBar } from '../navigation/useNavBar'
 
 const USER_COLLECTION_FILTER_DEFINITIONS = {
   filterRarity: { param: 'rarity', default: '' },
@@ -20,9 +21,11 @@ const USER_COLLECTION_FILTER_DEFINITIONS = {
   filterLang: { param: 'lang', default: '' },
 }
 
+const NAV_BAR = {}
+
 export default function UserCollection() {
   const { userId } = useParams()
-  const navigate = useNavigate()
+  useNavBar(NAV_BAR)
   const { t, formatPrice, pricePrimaryField } = useSettings()
   const [selectedCard, setSelectedCard] = useState(null)
   const [searchText, setSearchText] = useState('')
@@ -109,9 +112,6 @@ export default function UserCollection() {
     <div className="page-container">
       <div className="card">
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate(-1)} className="text-text-muted hover:text-text-primary">
-            <ArrowLeft size={20} />
-          </button>
           <div className="flex-1">
             <h1 className="text-xl font-bold text-text-primary">{t('collection.userCollection')}</h1>
             <p className="text-sm text-text-secondary">

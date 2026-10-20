@@ -135,6 +135,7 @@ test.describe('read cache', () => {
 
   test('logout removes the saved record', async ({ page, context }) => {
     await viewCollectionOnline(page, context, ada)
+    await page.getByRole('link', { name: 'Profile', exact: true }).click()
     await page.getByRole('button', { name: 'Logout', exact: true }).click()
     await page.waitForURL('**/login')
     await expect(async () => expect(await readRecord(page, ada.id)).toBeNull()).toPass({ timeout: 10000 })

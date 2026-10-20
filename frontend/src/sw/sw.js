@@ -14,7 +14,7 @@ const IMAGE_PREFIXES = ['/api/images/card/', '/api/images/set/', '/api/pokedex/i
 
 const OFFLINE_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8">'
   + '<meta name="viewport" content="width=device-width,initial-scale=1"><title>PokéCollector</title></head>'
-  + '<body style="margin:0;padding:2rem;background:#08080f;color:#fff;font-family:system-ui,sans-serif">'
+  + '<body style="margin:0;padding:2rem;background:#000000;color:#fff;font-family:system-ui,sans-serif">'
   + '<p>You are offline and this page is not saved on this device yet. Reconnect and reload.</p>'
   + '<p>Du bist offline und diese Seite ist noch nicht auf diesem Gerät gespeichert. Verbinde dich und lade neu.</p>'
   + '</body></html>'

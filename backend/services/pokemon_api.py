@@ -256,7 +256,7 @@ def get_all_sets(languages: Optional[List[str]] = None, *, include_digital: bool
                     continue
 
                 # Build set→series mapping for this language
-                set_to_series: Dict[str, Dict[str, str]] = {}
+                set_to_series: Dict[str, Dict[str, Optional[str]]] = {}
                 try:
                     series_response = client.get(f"{url}/series", timeout=30.0)
                     all_series = series_response.json() if series_response.status_code == 200 else []
@@ -267,8 +267,13 @@ def get_all_sets(languages: Optional[List[str]] = None, *, include_digital: bool
                                 serie_data = sr.json()
                                 serie_name = serie_data.get("name") or serie.get("name") or serie["id"]
                                 serie_id = serie_data.get("id") or serie.get("id")
+                                serie_logo = serie_data.get("logo") or serie.get("logo")
                                 for s in serie_data.get("sets", []):
-                                    set_to_series[s["id"]] = {"id": serie_id, "name": serie_name}
+                                    set_to_series[s["id"]] = {
+                                        "id": serie_id,
+                                        "name": serie_name,
+                                        "logo": serie_logo,
+                                    }
                         except Exception:
                             pass
                 except Exception:
@@ -291,6 +296,7 @@ def get_all_sets(languages: Optional[List[str]] = None, *, include_digital: bool
                     entry["_db_key"] = f"{sid}_{lang}"
                     entry["_series_id"] = series_entry.get("id")
                     entry["_series_name"] = series_entry.get("name")
+                    entry["_series_logo"] = series_entry.get("logo")
                     if not include_digital and is_digital_set_data(entry):
                         continue
                     all_sets.append(entry)
@@ -657,6 +663,9 @@ def parse_set_for_db(set_data: Dict) -> Dict:
         or (serie.get("name") if isinstance(serie, dict) else None)
     )
 
+    series_id = set_data.get("_series_id") or (serie.get("id") if isinstance(serie, dict) else None)
+    series_logo_url = set_data.get("_series_logo") or (serie.get("logo") if isinstance(serie, dict) else None)
+
     card_count = set_data.get("cardCount") or {}
 
     # Abbreviation: from full set detail only
@@ -681,5 +690,7 @@ def parse_set_for_db(set_data: Dict) -> Dict:
         "images_symbol": f"{set_data.get('symbol')}.webp" if set_data.get("symbol") else None,
         "images_logo": f"{set_data.get('logo')}.webp" if set_data.get("logo") else None,
         "abbreviation": abbreviation,
+        "series_id": series_id,
+        "series_logo": f"{series_logo_url}.webp" if series_logo_url else None,
         "is_digital": is_digital_set_data(set_data),
     }

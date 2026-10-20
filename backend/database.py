@@ -63,6 +63,9 @@ def _run_migrations(conn):
         "CREATE EXTENSION IF NOT EXISTS unaccent",
         # Add abbreviation column to sets table (safe — PostgreSQL IF NOT EXISTS)
         "ALTER TABLE sets ADD COLUMN IF NOT EXISTS abbreviation VARCHAR",
+        # Series id and official logo for the iPhone UI's sets-by-series view
+        "ALTER TABLE sets ADD COLUMN IF NOT EXISTS series_id VARCHAR",
+        "ALTER TABLE sets ADD COLUMN IF NOT EXISTS series_logo VARCHAR",
         # Add variant column to collection table
         "ALTER TABLE collection ADD COLUMN IF NOT EXISTS variant VARCHAR",
         # Add binder_type column to binders table

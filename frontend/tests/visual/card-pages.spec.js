@@ -311,6 +311,15 @@ async function expandDeckPicker(page) {
 
 async function expectVisibleArtwork(page) {
   const artwork = page.locator('.unified-card-compact-artwork:visible')
+  // Rows beyond the lazy-load margin only load once scrolled near, so walk down the page and back
+  // (a taller header must not turn this into a layout-height test).
+  await page.evaluate(async () => {
+    for (let y = 0; y < document.body.scrollHeight; y += 400) {
+      window.scrollTo(0, y)
+      await new Promise(resolve => setTimeout(resolve, 60))
+    }
+    window.scrollTo(0, 0)
+  })
   await expect(artwork.first()).toBeVisible()
   await expect.poll(async () => artwork.locator('img').evaluateAll(images => (
     images.length > 0 && images.every(image => image.complete && image.naturalWidth > 0)
@@ -473,7 +482,7 @@ test('real Collection list keeps shared artwork, identity, and fallback treatmen
   await expect(page.locator(
     '.unified-card-frame[style*="--pc-card-border-image"]:visible',
   ).first()).toBeVisible()
-  await expect(page.locator('main')).toHaveScreenshot('collection-list.png')
+  await expect(page.locator('main')).toHaveScreenshot('collection-list.png', { stylePath: 'tests/visual/hide-shell.css' })
 })
 
 test('Collection price tabs reuse the complete shared card price details', async ({ page }) => {
@@ -536,9 +545,11 @@ test('Wishlist price tabs reuse the complete shared card price details', async (
 
 test('real Analytics duplicate list stays visually aligned with Collection', async ({ page }) => {
   await page.goto('/analytics')
-  await expect(page.getByRole('heading', { name: 'Analytics' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Analytics' })).toBeAttached()
+  // Analytics opens on Investment (Q15); the duplicate list is behind the Duplicates segment.
+  await page.getByRole('radio', { name: 'Duplicates' }).click()
   await expectVisibleArtwork(page)
-  await expect(page.locator('main')).toHaveScreenshot('analytics-duplicates.png')
+  await expect(page.locator('main')).toHaveScreenshot('analytics-duplicates.png', { stylePath: 'tests/visual/hide-shell.css' })
 })
 
 test('trade history opens a prefilled edit draft and submits immutable values', async ({ page }) => {
@@ -613,7 +624,7 @@ test('Card Lists overview includes deck metadata without technical inventory con
   await expect(page.getByText('Planned Deck', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('Casual · 40 cards').first()).toBeVisible()
   await expect(page.getByText('24 cards')).toBeVisible()
-  const deckCard = page.locator('.card').filter({ hasText: 'Visual Practice Deck' }).first()
+  const deckCard = page.getByTestId('card-list-row').filter({ hasText: 'Visual Practice Deck' }).first()
   const titleBox = await deckCard.getByRole('heading', { name: 'Visual Practice Deck' }).boundingBox()
   const typeBox = await deckCard.getByText('Planned Deck', { exact: true }).boundingBox()
   expect(typeBox.y).toBeGreaterThan(titleBox.y)
@@ -794,6 +805,8 @@ test('Deck picker adds a selected card with its chosen quantity without detail r
   await page.getByRole('button', { name: 'Add (1)' }).click()
   await page.getByLabel('Quantity: Visual card 4').fill('30')
   await page.getByRole('dialog').getByRole('button', { name: 'Add' }).click()
+  // The deck's card list mounts tiles near the viewport; bring the new entry into view first.
+  await page.getByRole('button', { name: 'Open Visual card 4' }).scrollIntoViewIfNeeded()
   await expect(page.getByLabel('Progress: 2/30')).toBeVisible()
   await expect.poll(() => requests).toEqual([30])
   expect(detailGets).toBe(1)

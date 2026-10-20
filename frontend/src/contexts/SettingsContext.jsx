@@ -3,6 +3,7 @@ import en from '../i18n/en'
 import { priceFieldFromPrimary } from '../utils/prices'
 import { normalizeTcgdexLanguageCsv } from '../utils/tcgdexLanguages'
 import { useAuth } from './AuthContext'
+import { maskValue, useHideValues } from '../components/ios/hideValues'
 import { loadSettingsWithCache, readCachedRate, readCachedSettings, withRateCache } from '../offline/settingsCache'
 
 const TRANSLATION_LOADERS = {
@@ -296,19 +297,23 @@ export function SettingsProvider({ children }) {
   const pricePrimary = getPricePrimary()
   const pricePrimaryField = priceFieldFromPrimary(pricePrimary)
 
+  // Hide values (Q16): both formatters return display strings only, so masking here cannot
+  // reach a calculation or an input (checked: no caller parses their result).
+  const { hidden: valuesHidden } = useHideValues()
+
   const formatPrice = useCallback((eurAmount) => {
     if (eurAmount == null || isNaN(Number(eurAmount))) return '-'
     const converted = Number(eurAmount) * exchangeRate
-    return `${currencySymbol}${converted.toFixed(2)}`
-  }, [exchangeRate, currencySymbol])
+    return maskValue(`${currencySymbol}${converted.toFixed(2)}`, valuesHidden)
+  }, [exchangeRate, currencySymbol, valuesHidden])
 
   const formatUsdPrice = useCallback((usdAmount) => {
     if (usdAmount == null || isNaN(Number(usdAmount))) return '-'
     // No USD rate for the display currency: show the original USD amount.
-    if (usdToEurRate == null) return `$${Number(usdAmount).toFixed(2)}`
+    if (usdToEurRate == null) return maskValue(`$${Number(usdAmount).toFixed(2)}`, valuesHidden)
     const converted = Number(usdAmount) * usdToEurRate
-    return `${currencySymbol}${converted.toFixed(2)}`
-  }, [currency, currencySymbol, usdToEurRate])
+    return maskValue(`${currencySymbol}${converted.toFixed(2)}`, valuesHidden)
+  }, [currency, currencySymbol, usdToEurRate, valuesHidden])
 
   return (
     <SettingsContext.Provider value={{
@@ -331,6 +336,8 @@ export function SettingsProvider({ children }) {
     </SettingsContext.Provider>
   )
 }
+
+export { useHideValues }
 
 export function useSettings() {
   const ctx = useContext(SettingsContext)

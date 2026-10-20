@@ -1,8 +1,7 @@
 import { useMemo, useState } from 'react'
-import { flushSync } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, ChevronLeft, ChevronRight, SortAsc } from 'lucide-react'
+import { ChevronLeft, ChevronRight, SortAsc } from 'lucide-react'
 import { getPokedexSpecies, searchCards } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import PokeBallLoader from '../components/PokeBallLoader'
@@ -12,6 +11,11 @@ import { tcgdexLanguageLabel } from '../utils/tcgdexLanguages'
 import { getEffectiveCardPrice } from '../utils/prices'
 import { getNextDetailNavigationState, useDetailBackNavigation, useScrollToTopOnPush } from '../hooks/useListScrollRestoration'
 import { CardLegend } from '../components/card-system'
+import TypeChip from '../components/ios/TypeChip'
+import HeaderBloom from '../components/ios/HeaderBloom'
+import PokeBall from '../components/ios/PokeBall'
+import { colourFor, typeKeyFor } from '../components/ios/pokemon'
+import { useNavBar } from '../navigation/useNavBar'
 
 function SpeciesArtwork({ species, name }) {
   const handleError = (event) => {
@@ -64,7 +68,7 @@ export default function PokedexSpecies() {
   const { dexId } = useParams()
   const entryId = String(dexId || '')
   const location = useLocation()
-  const goBack = useDetailBackNavigation('pokedex', '/pokedex')
+  useDetailBackNavigation('pokedex', '/pokedex')
   useScrollToTopOnPush()
   const [searchParams] = useSearchParams()
   const isFormMode = searchParams.get('mode') === 'forms' || entryId.includes(':')
@@ -72,11 +76,6 @@ export default function PokedexSpecies() {
   const language = settings.language === 'de' ? 'de' : 'en'
   const [cardLanguage, setCardLanguage] = useState('all')
   const [cardSort, setCardSort] = useState('price_asc')
-  const [isReturningToPokedex, setIsReturningToPokedex] = useState(false)
-  const returnToPokedex = () => {
-    flushSync(() => setIsReturningToPokedex(true))
-    goBack()
-  }
   const visibleLanguages = useVisibleTcgdexLanguages()
   const cardLanguageCodes = useMemo(() => [...new Set(
     visibleLanguages
@@ -103,6 +102,12 @@ export default function PokedexSpecies() {
 
   const selectedPriceLabel = t(`prices.${pricePrimary}`)
 
+  const speciesName = speciesQuery.data
+    ? (language === 'de' ? speciesQuery.data.name_de : speciesQuery.data.name_en)
+    : undefined
+  const navBar = useMemo(() => ({ title: speciesName, backLabel: t('pokedex.title') }), [speciesName, t])
+  useNavBar(navBar)
+
   const cards = useMemo(() => {
     const rows = cardsQuery.data?.data || []
     return [...rows].sort((a, b) => {
@@ -120,10 +125,6 @@ export default function PokedexSpecies() {
     })
   }, [cardsQuery.data, cardSort, pricePrimaryField])
 
-  if (isReturningToPokedex) {
-    return <div className="fixed inset-0 z-40 bg-bg" aria-hidden="true" />
-  }
-
   if (speciesQuery.isLoading) return <div className="flex justify-center py-20"><PokeBallLoader size={52} /></div>
   if (speciesQuery.isError || !speciesQuery.data) return <p className="p-6 text-brand-red">{t('common.error')}</p>
 
@@ -135,12 +136,10 @@ export default function PokedexSpecies() {
   const detailNavigationState = getNextDetailNavigationState(location.state, 'pokedex')
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 px-4 pb-28 pt-2 sm:px-6 lg:px-8">
-      <button type="button" onClick={returnToPokedex} className="btn-ghost inline-flex items-center gap-2">
-        <ArrowLeft size={16} /> {t('common.back')}
-      </button>
+    <div className="relative isolate mx-auto w-full max-w-7xl space-y-6 pb-4 pt-2">
+      <HeaderBloom colour={colourFor(species.entry_id ?? entryId)} />
 
-      <section className="overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-bg-card to-bg-surface p-5 sm:p-7">
+      <section className="overflow-hidden rounded-3xl bg-card p-5 sm:p-7">
         <div className="grid gap-6 md:grid-cols-[auto_1fr] md:items-center">
           <div className="flex justify-center rounded-3xl bg-bg-elevated/60 p-4">
             <SpeciesArtwork species={species} name={name} />
@@ -151,11 +150,13 @@ export default function PokedexSpecies() {
             {secondaryName && secondaryName !== name && <p className="text-lg text-text-secondary">{secondaryName}</p>}
             <p className="mt-2 text-sm text-text-muted">Gen {species.generation} · {species.region}</p>
             <div className="mt-3 flex flex-wrap gap-2">
-              {(species.types || []).map((type) => <span key={type} className="rounded-full border border-border bg-bg-card px-3 py-1 text-xs font-semibold capitalize text-text-secondary">{type}</span>)}
+              {(species.types || []).map((type) => (typeKeyFor(type)
+                ? <TypeChip key={type} type={type} />
+                : <span key={type} className="rounded-full border border-border bg-bg-card px-3 py-1 text-xs font-semibold capitalize text-text-secondary">{type}</span>))}
             </div>
             <div className="mt-5 flex flex-wrap gap-3">
               <span className={`rounded-xl border px-3 py-2 text-sm font-bold ${species.owned ? 'border-green/30 bg-green/10 text-green' : 'border-border bg-bg-card text-text-secondary'}`}>
-                {species.owned ? `✓ ${species.owned_cards} ${t('pokedex.cardsOwned')}` : t('pokedex.missing')}
+                {species.owned ? <span className="inline-flex items-center gap-1.5"><PokeBall size={16} />{species.owned_cards} {t('pokedex.cardsOwned')}</span> : t('pokedex.missing')}
               </span>
               <span className="rounded-xl border border-border bg-bg-card px-3 py-2 text-sm font-semibold text-text-secondary">
                 {species.available_printings} {t('pokedex.printings')}

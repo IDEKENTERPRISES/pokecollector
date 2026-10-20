@@ -27,10 +27,9 @@ async function mockApi(page, pushRequests) {
 }
 
 async function openNotifications(page) {
-  await page.goto('/settings')
+  await page.goto('/settings/notifications')
   await page.waitForFunction(async () => Boolean(await navigator.serviceWorker.getRegistration()), null, { timeout: 15000 })
   await page.evaluate(() => navigator.serviceWorker.ready)
-  await page.getByRole('button', { name: 'Notifications', exact: true }).click()
 }
 
 test('Settings shows the push card and asks the server for the key when enabling', async ({ page, context }) => {

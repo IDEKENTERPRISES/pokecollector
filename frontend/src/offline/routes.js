@@ -7,11 +7,13 @@ export const OFFLINE_ROUTES = Object.freeze([
   '/collection',
   '/wishlist',
   '/sets',
+  '/sets/series/:seriesKey', // built from the cached sets list
   '/sets/:setId',
   '/binders',
   '/binders/:binderId',
   '/search', // the scanner only; its search results still need the server
   '/offline',
+  '/profile', // trainer card, tiles and rows render from cached data
 ])
 
 function toRegExp(pattern) {

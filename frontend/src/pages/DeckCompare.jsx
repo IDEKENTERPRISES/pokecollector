@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, ArrowLeftRight, CheckCircle2, GitCompare, Layers3, ShieldCheck, Sparkles, Target } from 'lucide-react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { ArrowLeftRight, CheckCircle2, GitCompare, Layers3, ShieldCheck, Sparkles, Target } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
 import { compareDecks, getDecks } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
+import { useNavBar } from '../navigation/useNavBar'
 import { DECK_COMPARISON_COLORS, DECK_COMPOSITION_COLORS, DeckAnalyticsSection, DeckMetricGrid, DeckPairLegend, DeckPairedBar, DeckSideMetricCard } from '../components/decks/DeckAnalyticsVisuals'
 
 const pct = value => `${(Number(value || 0) * 100).toFixed(1)}%`
@@ -49,8 +50,9 @@ const StatusPill = ({ check, t }) => <span className={`inline-flex rounded-full 
 const DeckFlowValue = ({ left, right }) => <span className="inline-flex max-w-full items-center gap-1 text-sm font-black sm:text-base"><span className="inline-flex items-center gap-0.5 text-blue"><small className="text-[8px] font-bold">A</small>{left}</span><span className="text-xs font-normal text-text-muted">→</span><span className="inline-flex items-center gap-0.5 text-violet-400"><small className="text-[8px] font-bold">B</small>{right}</span></span>
 
 export default function DeckCompare() {
-  const navigate = useNavigate()
   const { t } = useSettings()
+  const navOptions = useMemo(() => ({ title: t('decks.compare'), backLabel: t('nav.binders') }), [t])
+  useNavBar(navOptions)
   const [params, setParams] = useSearchParams()
   const [showUnchanged, setShowUnchanged] = useState(false)
   const [keyCard, setKeyCard] = useState('')
@@ -78,8 +80,6 @@ export default function DeckCompare() {
   const pairLegend = () => <DeckPairLegend leftName={deck.left.name} rightName={deck.right.name} leftLabel={t('decks.deckA')} rightLabel={t('decks.deckB')} />
 
   return <div className="space-y-5 pb-8">
-    <button className="btn-ghost" onClick={() => navigate(leftId ? `/decks/${leftId}` : '/binders')}><ArrowLeft size={16} /> {leftId ? t('common.back') : t('decks.backToCardLists')}</button>
-
     <header className="relative overflow-hidden rounded-2xl border border-border bg-bg-card p-5 shadow-card" data-testid="deck-comparison-hero">
       <div className="pointer-events-none absolute -right-12 -top-20 h-56 w-56 rounded-full bg-brand-red/10 blur-3xl" />
       <div className="relative flex items-start gap-4"><span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-brand-red/10 text-brand-red"><GitCompare size={24} aria-hidden /></span><div><h1 className="text-2xl font-black text-text-primary">{t('decks.compare')}</h1><p className="mt-1 max-w-2xl text-sm text-text-secondary">{t('decks.compareIntro')}</p></div></div>

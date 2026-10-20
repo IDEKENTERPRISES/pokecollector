@@ -1,36 +1,73 @@
-import { Outlet, useLocation } from 'react-router-dom'
-import AppNav from './AppNav'
+import { useEffect, useRef, useState } from 'react'
+import { Outlet, useLocation, useNavigationType } from 'react-router-dom'
+import clsx from 'clsx'
 import OfflineUnavailable from './OfflineUnavailable'
 import InstallHint from './pwa/InstallHint'
-import OfflineBanner from './sync/OfflineBanner'
-import StaleDataLabel from './sync/StaleDataLabel'
-import SyncIndicator from './sync/SyncIndicator'
+import NavBar from './ios/NavBar'
+import SidebarNav from './ios/SidebarNav'
+import TabBar from './ios/TabBar'
+import { ScannerProvider } from '../contexts/ScannerContext'
 import { useReleaseManualHistoryScrollRestoration } from '../hooks/useListScrollRestoration'
+import { recordNavigation } from '../navigation/historyMirror'
+import { NavBarContext, createNavBarStore } from '../navigation/NavBarContext'
+import { locationId, restorePendingScroll, visitLocation } from '../navigation/tabMemory'
 import { isOfflineRoute } from '../offline/routes'
 import { useOffline } from '../offline/useOffline'
 
+/**
+ * The app shell (design doc §6.1): one NavBar, the desktop SidebarNav, one <main> and, portaled to
+ * <body>, the TabBar. The document stays the scroller (no overflow wrapper), so a status-bar tap
+ * scrolls to the top.
+ */
 export default function Layout() {
   const location = useLocation()
+  const navigationType = useNavigationType()
   const isHome = location.pathname === '/'
   const offline = useOffline()
   const showUnavailable = offline && !isOfflineRoute(location.pathname)
+  const [navBarStore] = useState(createNavBarStore)
   useReleaseManualHistoryScrollRestoration()
 
+  // The history mirror (§6.4) must know the current entry when the nav bar renders its back label,
+  // so it is recorded during render, once per location key.
+  const recordedKey = useRef(null)
+  if (recordedKey.current !== location.key) {
+    recordedKey.current = location.key
+    recordNavigation({
+      type: navigationType,
+      key: location.key,
+      path: `${location.pathname}${location.search}`,
+    })
+  }
+
+  useEffect(() => {
+    visitLocation(location)
+  }, [location.pathname, location.search]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => restorePendingScroll(locationId(location)), [location.key]) // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
-    <div className="min-h-dvh flex flex-col bg-bg overflow-x-hidden">
-      <OfflineBanner />
-      {!isHome && <AppNav />}
-      {/* While the banner is up the indicator sits on it (the banner reserves room at its right). */}
-      <SyncIndicator belowNav={!isHome && !offline} />
-      <main className={`flex-1 ${!isHome ? 'w-full px-6 pb-8 sm:px-8 lg:px-10 xl:px-12' : ''}`}>
-        {showUnavailable ? <OfflineUnavailable /> : (
-          <>
-            <StaleDataLabel />
-            <Outlet />
-          </>
-        )}
-        {isHome && <InstallHint />}
-      </main>
-    </div>
+    <NavBarContext.Provider value={navBarStore}>
+      <ScannerProvider>
+        <div className="relative min-h-dvh bg-bg lg:flex">
+          <SidebarNav />
+          <div className="relative min-w-0 flex-1">
+            <div className="mx-auto flex min-h-dvh w-full max-w-[1200px] flex-col">
+              <NavBar />
+              <main
+                className={clsx(
+                  'flex-1 pb-[var(--content-bottom)] lg:pb-8',
+                  !isHome && 'w-full px-4 sm:px-8 lg:px-8',
+                )}
+              >
+                {showUnavailable ? <OfflineUnavailable /> : <Outlet />}
+                {isHome && <InstallHint />}
+              </main>
+            </div>
+          </div>
+        </div>
+        <TabBar />
+      </ScannerProvider>
+    </NavBarContext.Provider>
   )
 }
