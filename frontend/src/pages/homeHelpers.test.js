@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  closestToCompleteSets, completeSetCount, minutesSince, seriesChange, shortAge, todoCards, trackerSeries,
+  pluralKey, closestToCompleteSets, completeSetCount, minutesSince, seriesChange, shortAge, todoCards, trackerSeries,
 } from './homeHelpers'
 
 const sets = [
@@ -20,6 +20,14 @@ describe('set helpers', () => {
   it('orders unfinished started sets by completion, larger set first on ties', () => {
     expect(closestToCompleteSets(sets).map(s => s.id)).toEqual(['c', 'b', 'f'])
     expect(closestToCompleteSets(sets, 1).map(s => s.id)).toEqual(['c'])
+  })
+})
+
+describe('pluralKey', () => {
+  it('uses the singular key only for exactly one', () => {
+    expect(pluralKey('home.todoSync', 1)).toBe('home.todoSyncOne')
+    expect(pluralKey('home.todoSync', 2)).toBe('home.todoSync')
+    expect(pluralKey('home.todoSync', 0)).toBe('home.todoSync')
   })
 })
 

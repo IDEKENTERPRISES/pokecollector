@@ -5,6 +5,11 @@ const num = (value) => {
   return Number.isFinite(n) ? n : 0
 }
 
+/** The string key for a count: `<base>One` for exactly one, `<base>` otherwise. */
+export function pluralKey(base, count) {
+  return Number(count) === 1 ? `${base}One` : base
+}
+
 /** Sets whose every card is owned. */
 export function completeSetCount(sets) {
   return (sets ?? []).filter(set => num(set?.total) > 0 && num(set?.owned_count) >= num(set.total)).length
