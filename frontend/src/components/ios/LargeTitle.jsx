@@ -12,10 +12,15 @@ export default function LargeTitle({ title, subtitle, children }) {
   const ref = useCallback(node => store?.setLargeElement(node), [store])
 
   return (
-    <div ref={ref} data-testid="large-title" className="px-4 pb-2 pt-1">
-      {title && <h1 className="text-large-title font-display">{title}</h1>}
-      {subtitle && <p className="text-subheadline text-text-secondary">{subtitle}</p>}
-      {children}
+    <div data-testid="large-title" className="px-4 pb-2 pt-1">
+      {/* Only the title row is observed: once it is under the bar the compact title takes over,
+          even while a segmented control or chips below it are still on screen. */}
+      <div ref={title || subtitle ? ref : undefined} data-testid="large-title-row">
+        {title && <h1 className="text-large-title font-display">{title}</h1>}
+        {subtitle && <p className="text-subheadline text-text-secondary">{subtitle}</p>}
+      </div>
+      {!(title || subtitle) && <div ref={ref} data-testid="large-title-row">{children}</div>}
+      {(title || subtitle) && children}
     </div>
   )
 }
