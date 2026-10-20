@@ -39,15 +39,15 @@ export default function InstallHint({ force = false }) {
   }
 
   return (
-    <aside data-testid="install-hint" className="mx-auto my-3 flex max-w-md items-start gap-3 rounded-xl border border-border bg-card p-4 text-sm">
-      <Share size={18} className="mt-0.5 flex-shrink-0 text-blue" aria-hidden />
+    <aside data-testid="install-hint" className="mx-4 my-3 flex items-start gap-3 rounded-xl bg-card p-4 text-subheadline">
+      <Share size={20} className="mt-0.5 flex-shrink-0 text-tint" aria-hidden />
       <div className="min-w-0 flex-1 space-y-1">
-        <p className="font-medium text-text-primary">{t('pwa.installTitle')}</p>
+        <p className="text-headline text-text-primary">{t('pwa.installTitle')}</p>
         <p className="text-text-secondary">{t('pwa.installSteps')}</p>
-        {items.length > 0 && <p className="text-xs text-yellow">{t('sync.syncBeforeInstall')}</p>}
+        {items.length > 0 && <p className="text-footnote text-yellow">{t('sync.syncBeforeInstall')}</p>}
       </div>
       {!force && (
-        <button type="button" className="btn-ghost-sm shrink-0" onClick={dismiss}>{t('pwa.installDismiss')}</button>
+        <button type="button" className="ios-press min-h-[44px] shrink-0 rounded-full px-3 text-callout text-tint" onClick={dismiss}>{t('pwa.installDismiss')}</button>
       )}
     </aside>
   )

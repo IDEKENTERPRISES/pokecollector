@@ -1,147 +1,151 @@
-import { useState, useMemo, useId, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMemo, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import {
-  RefreshCw, TrendingUp, TrendingDown, Layers, Star, Wallet, LogOut,
-  Search, Library, Grid2X2, BarChart3, Settings, Trophy, ArrowRightLeft, ListOrdered, Info, Layers3,
+  Layers, Grid2X2, Wallet, Heart, Layers3, BarChart3, ScanLine, UploadCloud, Link2, ShoppingBag, Sparkles, Loader2,
 } from 'lucide-react'
-import {
-  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
-} from 'recharts'
-import { getDashboard, triggerPriceSync, getSyncStatus, getInvestmentTracker, getScanJobs } from '../api/client'
+import toast from 'react-hot-toast'
+import { getDashboard, getInvestmentTracker, getScanJobs, getSets, getPokedex, getCustomMatches } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import { useAuth } from '../contexts/AuthContext'
-import toast from 'react-hot-toast'
+import { useOffline } from '../offline/useOffline'
+import { useOutbox } from '../offline/useOutbox'
 import { collectionItemTargetUrl } from '../utils/navigation'
+import { resolveSetImageUrl } from '../utils/imageUrl'
 import { CardLegend, withCollectionItemState } from '../components/card-system'
 import { CollectionCardDisplay } from '../components/CollectionCardImage'
+import SyncSheet from '../components/sync/SyncSheet'
+import HeaderBloom from '../components/ios/HeaderBloom'
+import HideValuesToggle from '../components/ios/HideValuesToggle'
+import LargeTitle from '../components/ios/LargeTitle'
+import StatTile from '../components/ios/StatTile'
+import SetTile from '../components/ios/SetTile'
+import PokeBall from '../components/ios/PokeBall'
+import { TYPE_COLOURS } from '../components/ios/pokemon'
+import { useNavBar } from '../navigation/useNavBar'
 import {
   SCAN_JOBS_QUERY_KEY,
   hasActiveScanJobs,
   scanAttentionCount,
 } from '../utils/scanJobs'
-import { mapPortfolioChartData, portfolioApiPeriod, PORTFOLIO_PERIODS } from '../utils/portfolioChart'
+import {
+  closestToCompleteSets, completeSetCount, minutesSince, seriesChange, shortAge, todoCards, trackerSeries,
+} from './homeHelpers'
 
-// Compact number formatter for mobile (1.2k, 3.4M, etc.)
+const NAV_BAR = { trailing: <HideValuesToggle /> }
+
+// Compact number formatter (1.2k, 3.4M, etc.)
 function compactNum(n) {
-  if (typeof n === 'string') return n // already formatted (e.g. price)
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M'
-  if (n >= 10_000) return (n / 1_000).toFixed(1).replace(/\.0$/, '') + 'k'
   if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, '') + 'k'
-  return n.toLocaleString()
+  return Number(n).toLocaleString()
 }
 
-// ── Custom chart tooltip ──────────────────────────────────────────────────────
-function ChartTooltip({ active, payload, label, formatPrice }) {
-  if (!active || !payload?.length) return null
-  const tooltipLabel = payload[0]?.payload?.tooltipLabel || label
+const fill = (template, values) => Object.entries(values).reduce(
+  (text, [key, value]) => text.replace(`{${key}}`, value),
+  template,
+)
+
+function SectionHeader({ title, to, action }) {
   return (
-    <div className="rounded-xl px-3 py-2 text-xs shadow-xl"
-      style={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.12)' }}>
-      <p className="text-text-muted mb-1">{tooltipLabel}</p>
-      <p className="font-black" style={{ color: '#f5c842' }}>
-        {formatPrice(Number(payload[0].value))}
-      </p>
-      {payload[0]?.payload?.legacy && (
-        <p className="mt-1 text-[10px] text-text-muted">{payload[0].payload.legacyLabel}</p>
+    <div className="mb-2 flex items-baseline justify-between px-0.5">
+      <h2 className="text-title-3 font-display text-text-primary">{title}</h2>
+      {to && (
+        <Link to={to} className="ios-press text-callout text-tint focus-visible:outline-2 focus-visible:outline-tint">
+          {action}
+        </Link>
       )}
     </div>
   )
 }
 
-// ── Card thumbnail ────────────────────────────────────────────────────────────
-function CardThumb({ card, onClick }) {
+// A horizontally scrolling row that bleeds to the screen edges inside the 16 px page padding.
+function Carousel({ children, label }) {
   return (
-    <div className="w-[110px] flex-shrink-0">
-      <CollectionCardDisplay
-        variant="artwork"
-        item={{ id: card.collection_item_id, has_scan_photo: card.has_scan_photo }}
-        card={card}
-        alt={card.name}
-        variantEffectSource={card.variant}
-        interactive
-        onClick={onClick}
-        stateIndicatorProps={{ card: withCollectionItemState(card, card), alwaysShowQuantity: true }}
-      />
+    <div role="list" aria-label={label} className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-1 snap-x">
+      {children}
     </div>
   )
 }
 
-function ProductValueInfo({ label, detailsLabel, explanation }) {
-  const [hovered, setHovered] = useState(false)
-  const [focused, setFocused] = useState(false)
-  const [dismissed, setDismissed] = useState(false)
-  const descriptionId = useId()
-  const visible = !dismissed && (hovered || focused)
-  useEffect(() => {
-    if (!visible) return undefined
-    const dismissOnEscape = (event) => {
-      if (event.key === 'Escape') setDismissed(true)
-    }
-    window.addEventListener('keydown', dismissOnEscape)
-    return () => window.removeEventListener('keydown', dismissOnEscape)
-  }, [visible])
-
+function CardThumb({ card, onClick, rank, price }) {
   return (
-    <span
-      className="relative inline-flex items-center justify-center gap-1.5"
-      onMouseEnter={() => {
-        setHovered(true)
-        setDismissed(false)
-      }}
-      onMouseLeave={() => {
-        setHovered(false)
-      }}
-      onFocus={() => {
-        setFocused(true)
-        setDismissed(false)
-      }}
-      onBlur={() => {
-        setFocused(false)
-      }}
-    >
-      <span className="text-[11px] text-text-muted uppercase tracking-[0.2em]">{label}</span>
-      <button
-        type="button"
-        aria-label={`${label}: ${detailsLabel}`}
-        aria-describedby={descriptionId}
-        className="inline-flex h-6 w-6 items-center justify-center rounded-full text-text-muted transition-colors hover:text-yellow focus-visible:text-yellow focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-yellow/60"
-      >
-        <Info size={12} aria-hidden="true" />
-      </button>
-      <span id={descriptionId} className="sr-only">{explanation}</span>
-      {visible && (
-        <span
-          aria-hidden="true"
-          className="absolute left-1/2 top-full z-30 w-[min(16rem,calc(100vw-2rem))] -translate-x-1/2 pt-2"
-        >
-          <span className="block rounded-lg border border-border bg-bg-surface px-3 py-2 text-left text-[10px] font-normal normal-case leading-relaxed tracking-normal text-text-secondary shadow-xl">
-            {explanation}
+    <div role="listitem" className="w-[118px] flex-shrink-0 snap-start">
+      <div className="holo relative rounded-lg">
+        <CollectionCardDisplay
+          variant="artwork"
+          item={{ id: card.collection_item_id, has_scan_photo: card.has_scan_photo }}
+          card={card}
+          alt={card.name}
+          variantEffectSource={card.variant}
+          interactive
+          onClick={onClick}
+          stateIndicatorProps={{ card: withCollectionItemState(card, card), alwaysShowQuantity: true }}
+        />
+        {rank != null && (
+          <span className="absolute bottom-1 left-1 z-20 rounded bg-black/85 px-1 text-caption-2 font-bold leading-4 text-yellow">
+            #{rank}
           </span>
-        </span>
+        )}
+      </div>
+      {price != null && (
+        <p className="mt-1 truncate text-caption-1 font-semibold tabular-nums text-yellow">{price}</p>
       )}
-    </span>
+    </div>
   )
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
+function TodoCard({ type, icon: Icon, title, detail, action, to, onClick }) {
+  const { text, top, bottom } = TYPE_COLOURS[type]
+  const style = { color: text, background: `linear-gradient(150deg, ${top}, ${bottom})` }
+  const body = (
+    <>
+      <span className="grid h-10 w-10 flex-shrink-0 place-items-center rounded-full bg-black/20" aria-hidden="true">
+        <Icon size={20} className={Icon === Loader2 ? 'motion-safe:animate-spin' : ''} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-headline">{title}</span>
+        <span className="block text-footnote opacity-90">{detail}</span>
+      </span>
+      <span className="flex-shrink-0 rounded-full bg-black/25 px-3.5 py-1.5 text-subheadline font-semibold">{action}</span>
+    </>
+  )
+  const classes = 'ios-press no-callout flex min-h-[64px] w-full items-center gap-3 rounded-[18px] p-3 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tint'
+  if (to) return <Link to={to} className={classes} style={style}>{body}</Link>
+  return <button type="button" onClick={onClick} className={classes} style={style}>{body}</button>
+}
+
+function QuickAction({ to, icon: Icon, label, type }) {
+  const { solid, text } = TYPE_COLOURS[type]
+  return (
+    <Link to={to} className="ios-press no-callout flex min-w-0 flex-col items-center gap-1.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tint">
+      <span
+        className="grid h-14 w-14 place-items-center rounded-full"
+        style={{ background: solid, color: text === '#FFFFFF' ? '#fff' : text, boxShadow: `0 6px 14px color-mix(in srgb, ${solid} 50%, transparent)` }}
+        aria-hidden="true"
+      >
+        <Icon size={24} />
+      </span>
+      <span className="max-w-full truncate text-footnote text-text-primary">{label}</span>
+    </Link>
+  )
+}
+
 export default function HomeScreen() {
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
   const { formatPrice, t, pricePrimaryField, settings, updateSettings } = useSettings()
-  const { user, logout, multiUser } = useAuth()
-  const [chartPeriod, setChartPeriod] = useState('1W')
+  const { user } = useAuth()
+  const offline = useOffline()
+  const { enabled: queueEnabled, items: outboxItems } = useOutbox()
+  const [syncOpen, setSyncOpen] = useState(false)
+  const language = settings.language === 'de' ? 'de' : 'en'
+
+  useNavBar(NAV_BAR)
 
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard', pricePrimaryField],
     queryFn: () => getDashboard({ price_field: pricePrimaryField }).then(r => r.data),
     refetchInterval: 60000,
-  })
-
-  const { data: syncStatus } = useQuery({
-    queryKey: ['sync-status'],
-    queryFn: () => getSyncStatus().then(r => r.data),
-    refetchInterval: 15000,
   })
 
   const { data: scanData } = useQuery({
@@ -153,476 +157,242 @@ export default function HomeScreen() {
   const scanAttention = scanAttentionCount(scanJobs)
   const scansActive = hasActiveScanJobs(scanJobs)
 
-  // Portfolio history for chart — uses analytics/investment-tracker
-  const { data: investmentData = [] } = useQuery({
-    queryKey: ['investment-tracker', chartPeriod, pricePrimaryField],
-    queryFn: () => getInvestmentTracker({ period: portfolioApiPeriod(chartPeriod), price_field: pricePrimaryField }).then(r => r.data),
+  // Same keys as the Sets page and Profile, so the read cache and the other pages share them.
+  const { data: trackerData } = useQuery({
+    queryKey: ['investment-tracker', '1M', pricePrimaryField],
+    queryFn: () => getInvestmentTracker({ period: '1m', price_field: pricePrimaryField }).then(r => r.data),
     refetchInterval: 120000,
   })
-
-  const trainerName = user?.username || 'Trainer'
-
-  const syncMutation = useMutation({
-    mutationFn: triggerPriceSync,
-    onSuccess: () => {
-      toast.success(t('settings.syncStarted'))
-      setTimeout(() => queryClient.invalidateQueries(), 3000)
-    },
-    onError: () => toast.error(t('settings.syncFailed')),
+  const { data: setsData } = useQuery({
+    queryKey: ['sets', 'all'],
+    queryFn: () => getSets({ lang: 'all' }).then(r => r.data),
+  })
+  const { data: pokedexSummary } = useQuery({
+    queryKey: ['pokedex-summary', language],
+    queryFn: () => getPokedex({ lang: language, status: 'all' }).then(result => result?.summary ?? null),
+    staleTime: 60 * 60 * 1000,
+    enabled: !offline,
+    retry: false,
+  })
+  const { data: customMatchesData } = useQuery({
+    queryKey: ['custom-matches'],
+    queryFn: () => getCustomMatches().then(r => r.data),
+    enabled: !offline,
+    retry: false,
   })
 
-  const isRunning = syncStatus?.is_running || syncStatus?.is_price_sync_running || syncMutation.isPending
+  const sets = Array.isArray(setsData) ? setsData : []
+  const customMatches = Array.isArray(customMatchesData) ? customMatchesData : []
+  const tracker = Array.isArray(trackerData) ? trackerData : []
+  const trainerName = user?.username || 'Trainer'
 
-  const totalValue = Number(data?.total_value ?? 0)
-  const totalCost = Number(data?.total_cost ?? 0)
-  const performanceCostBasis = Number(data?.performance_cost_basis ?? totalCost)
-  const pnl = Number(data?.pnl ?? 0)
-  const pnlPct = performanceCostBasis > 0 ? (pnl / performanceCostBasis) * 100 : 0
-  const pnlPositive = pnl >= 0
-  const realizedPnl = Number(data?.realized_pnl ?? 0)
-  const realizedValue = Number(data?.realized_value ?? 0)
-  // Net invested = cards cost + unsold products cost — i.e. money currently deployed
-  const netInvested = totalCost
-  const portfolioDisplayMode = settings?.portfolio_display_mode === 'capital_invested'
-    ? 'capital_invested'
-    : 'portfolio_value'
+  const portfolioDisplayMode = settings?.portfolio_display_mode === 'capital_invested' ? 'capital_invested' : 'portfolio_value'
   const showingPortfolioValue = portfolioDisplayMode === 'portfolio_value'
-  const headlineValue = showingPortfolioValue ? totalValue : netInvested
+  const headlineValue = showingPortfolioValue ? Number(data?.total_value ?? 0) : Number(data?.total_cost ?? 0)
   const headlineLabel = showingPortfolioValue ? t('home.portfolioValue') : t('home.capitalInvested')
-  const productValueFallbackCount = Number(data?.product_value_fallback_count ?? 0)
-  const productsNeedingReviewCount = Number(data?.products_needing_review_count ?? 0)
-  const productValueExplanation = [
-    productsNeedingReviewCount > 0
-      ? `${productsNeedingReviewCount} ${t('home.productsNeedReview')}`
-      : '',
-    productValueFallbackCount > 0
-      ? `${productValueFallbackCount} ${t('home.productValueFallback')}`
-      : '',
-  ].filter(Boolean).join(' ')
 
-  const setPortfolioDisplayMode = (mode) => {
-    if (mode === portfolioDisplayMode) return
-    updateSettings({ portfolio_display_mode: mode }).catch(() => {
+  const toggleDisplayMode = () => {
+    const next = showingPortfolioValue ? 'capital_invested' : 'portfolio_value'
+    updateSettings({ portfolio_display_mode: next }).catch(() => {
       toast.error(t('home.displayModeSaveFailed'))
     })
   }
 
+  const series = useMemo(
+    () => trackerSeries(tracker, showingPortfolioValue ? 'value' : 'cost'),
+    [tracker, showingPortfolioValue],
+  )
+  const change = seriesChange(series)
+  const changeText = change == null ? null : `${change > 0 ? '+' : ''}${formatPrice(change)} ${t('home.thisMonth')}`
+
+  const completeSets = useMemo(() => completeSetCount(sets), [sets])
+  const yourSets = useMemo(() => closestToCompleteSets(sets), [sets])
+
+  const todos = todoCards({
+    scanAttention,
+    scansActive,
+    queueEnabled,
+    outboxCount: outboxItems.length,
+    customMatches: customMatches.length,
+    productsToReview: Number(data?.products_needing_review_count ?? 0),
+    newSets: Number(data?.new_sets_count ?? 0),
+  })
+
+  const age = shortAge(minutesSince(data?.last_sync?.finished_at))
+
   const recentCards = data?.recent_additions?.slice(0, 12) ?? []
   const topCards = data?.top_cards?.slice(0, 8) ?? []
-
   const openCollectionItem = (card) => navigate(collectionItemTargetUrl(card))
 
-  // Map chart data — backend already filters and downsamples
-  const chartData = useMemo(
-    () => mapPortfolioChartData(investmentData, chartPeriod, t('home.legacySnapshot')),
-    [investmentData, chartPeriod, t],
-  )
-
-  // Determine chart color based on trend
-  const chartColor = useMemo(() => {
-    if (chartData.length < 2) return '#f5c842'
-    const first = chartData[0]?.value ?? 0
-    const last = chartData[chartData.length - 1]?.value ?? 0
-    return last >= first ? '#66bb6a' : '#e3000b'
-  }, [chartData])
-
-  // Portal navigation items — defined inside component so t() works
-  const PORTAL_ITEMS = [
-    { to: '/collection', icon: Library,    label: t('nav.collection'),  color: '#4fc3f7' },
-    {
-      to: '/search',
-      icon: Search,
-      label: t('nav.cardSearch'),
-      color: '#ce93d8',
-      badge: scanAttention,
-      active: scansActive,
-    },
-    { to: '/sets',       icon: Grid2X2,    label: t('nav.sets'),        color: '#81c784' },
-    { to: '/pokedex',    icon: ListOrdered, label: t('nav.pokedex'),    color: '#ffb74d' },
-    { to: '/binders',    icon: Layers3,     label: t('nav.binders'),    color: '#7986cb' },
-    { to: '/analytics',  icon: BarChart3,  label: t('nav.analytics'),   color: '#f5c842' },
-    { to: '/trades',     icon: ArrowRightLeft, label: t('nav.trades'),   color: '#ff8a65' },
-    ...(multiUser ? [{ to: '/leaderboard', icon: Trophy, label: t('nav.leaderboard'), color: '#ffd54f' }] : []),
-    { to: '/settings',   icon: Settings,   label: t('nav.settings'),    color: '#b0bec5' },
-  ]
-
-  const STAT_CARDS = [
-    {
-      icon: <Layers size={16} />,
-      value: compactNum(data?.total_cards ?? 0),
-      label: t('home.cardsTotal'),
-      color: '#4fc3f7',
-    },
-    {
-      icon: <Grid2X2 size={16} />,
-      value: compactNum(data?.owned_sets ?? 0),
-      label: t('home.sets'),
-      color: '#ce93d8',
-    },
-    {
-      icon: <Star size={16} />,
-      value: compactNum(data?.unique_cards ?? 0),
-      label: t('home.unique'),
-      color: '#81c784',
-    },
-    {
-      icon: <Wallet size={16} />,
-      value: formatPrice(netInvested),
-      label: t('home.invested'),
-      color: '#f5c842',
-    },
-  ]
+  const todoView = {
+    'scans-review': { type: 'lightning', icon: ScanLine, title: 'todoScansReview', detail: 'todoScansReviewDetail', action: 'todoReview', to: '/scans' },
+    'scans-processing': { type: 'psychic', icon: Loader2, title: 'todoScansProcessing', detail: 'todoScansProcessingDetail', action: 'todoOpen', to: '/scans' },
+    sync: { type: 'water', icon: UploadCloud, title: 'todoSync', detail: 'todoSyncDetail', action: 'todoOpen', onClick: () => setSyncOpen(true) },
+    matches: { type: 'psychic', icon: Link2, title: 'todoMatches', detail: 'todoMatchesDetail', action: 'todoReview', to: '/migration' },
+    products: { type: 'fighting', icon: ShoppingBag, title: 'todoProducts', detail: 'todoProductsDetail', action: 'todoReview', to: '/products' },
+    'new-sets': { type: 'grass', icon: Sparkles, title: 'todoNewSets', detail: 'todoNewSetsDetail', action: 'todoOpen', to: '/sets' },
+  }
 
   return (
-    <div className="min-h-dvh flex flex-col relative overflow-x-hidden">
+    <div className="relative isolate -mt-1 flex flex-col gap-6 pb-6">
+      <HeaderBloom variant="home" />
 
-      {/* Ambient orbs */}
-      <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
-        <div style={{ position:'absolute', top:'3%', left:'8%', width:300, height:300, borderRadius:'50%',
-          background:'radial-gradient(circle, rgba(227,0,11,0.07) 0%, transparent 70%)',
-          animation:'float-orb 9s ease-in-out infinite' }} />
-        <div style={{ position:'absolute', bottom:'12%', right:'4%', width:240, height:240, borderRadius:'50%',
-          background:'radial-gradient(circle, rgba(79,195,247,0.06) 0%, transparent 70%)',
-          animation:'float-orb 12s ease-in-out infinite reverse' }} />
-      </div>
-
-      <div className="relative z-10 flex flex-col gap-6 px-4 pt-6 pb-10">
-
-        {/* ── TOP BAR: Logout + Sync ── */}
-        <div className="flex items-center justify-between">
-          {multiUser ? (
-            <button
-              onClick={() => { logout() }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-text-muted hover:text-brand-red transition-colors"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
-            >
-              <LogOut size={12} />
-              {t('auth.logout')}
-            </button>
-          ) : (
-            <div />
-          )}
-          {user?.role === 'admin' && (
-          <button
-            onClick={() => syncMutation.mutate()}
-            disabled={isRunning}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all"
-            style={{
-              background: isRunning ? 'rgba(255,255,255,0.05)' : 'rgba(227,0,11,0.12)',
-              color: isRunning ? '#888' : '#e3000b',
-              border: isRunning ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(227,0,11,0.25)',
-            }}
+      <LargeTitle>
+        <div className="flex items-center gap-3">
+          <span
+            className="grid h-16 w-16 flex-shrink-0 place-items-center rounded-full p-[3px]"
+            style={{ background: 'linear-gradient(180deg, var(--poke-red) 0 50%, #fff 50% 100%)' }}
           >
-            <RefreshCw size={12} className={isRunning ? 'animate-spin' : ''} />
-            {isRunning ? t('home.syncing') : t('home.sync')}
-          </button>
-          )}
-        </div>
-
-        {/* ── PORTFOLIO VALUE (large, prominent) ── */}
-        <div className="text-center -mt-2">
-          {/* Trainer greeting */}
-          <div className="mb-1 flex items-center justify-center gap-2 truncate max-w-[90vw] mx-auto">
-            {user?.avatar_id ? (
-              <img
-                src={`https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/${user.avatar_id}.gif`}
-                alt={`${trainerName} avatar`}
-                className="h-6 w-6 pixelated"
-              />
-            ) : null}
-            <p className="text-sm font-semibold truncate" style={{ color: 'rgba(255,255,255,0.55)' }}>
-              {t('home.hello')}, <span className="font-black" style={{ color: '#f5c842' }}>{trainerName}</span>! 👋
-            </p>
-          </div>
-          <div
-            className="mx-auto mb-3 grid w-full max-w-[320px] grid-cols-2 rounded-xl p-1"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
-            aria-label={t('home.portfolioDisplayMode')}
-          >
-            {[
-              ['portfolio_value', t('home.portfolioValue')],
-              ['capital_invested', t('home.capitalInvested')],
-            ].map(([mode, label]) => {
-              const selected = portfolioDisplayMode === mode
-              return (
-                <button
-                  key={mode}
-                  type="button"
-                  aria-pressed={selected}
-                  onClick={() => setPortfolioDisplayMode(mode)}
-                  className="min-w-0 rounded-lg px-2 py-2 text-[10px] font-bold leading-tight transition-all sm:text-xs"
-                  style={{
-                    background: selected ? 'rgba(245,200,66,0.14)' : 'transparent',
-                    border: selected ? '1px solid rgba(245,200,66,0.28)' : '1px solid transparent',
-                    color: selected ? '#f5c842' : 'rgba(255,255,255,0.45)',
-                  }}
-                >
-                  {label}
-                </button>
-              )
-            })}
-          </div>
-          <div className="relative mb-2 flex w-full items-center justify-center gap-1.5">
-            {showingPortfolioValue && productValueExplanation ? (
-              <ProductValueInfo
-                label={headlineLabel}
-                detailsLabel={t('home.details')}
-                explanation={productValueExplanation}
-              />
-            ) : (
-              <p className="text-[11px] text-text-muted uppercase tracking-[0.2em]">{headlineLabel}</p>
-            )}
-          </div>
-          {isLoading ? (
-            <div className="skeleton h-14 w-48 mx-auto rounded-xl" />
-          ) : (
-            <p className="text-4xl sm:text-5xl font-black tracking-tight"
-              style={{
-                color: showingPortfolioValue ? '#f5c842' : '#4fc3f7',
-                textShadow: showingPortfolioValue
-                  ? '0 0 40px rgba(245,200,66,0.25)'
-                  : '0 0 40px rgba(79,195,247,0.2)',
-              }}>
-              {formatPrice(headlineValue)}
-            </p>
-          )}
-
-          {/* ── G&V ── */}
-          {!isLoading && (
-            <div className="mt-2 flex flex-col items-center gap-1.5">
-              <div className="flex items-center gap-2">
-                <div
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-black"
-                  style={{
-                    background: pnlPositive ? 'rgba(102,187,106,0.12)' : 'rgba(227,0,11,0.12)',
-                    border: `1px solid ${pnlPositive ? 'rgba(102,187,106,0.3)' : 'rgba(227,0,11,0.3)'}`,
-                    color: pnlPositive ? '#66bb6a' : '#e3000b',
-                  }}
-                >
-                  {pnlPositive
-                    ? <TrendingUp size={15} />
-                    : <TrendingDown size={15} />
-                  }
-                  <span>
-                    {pnlPositive ? '+' : ''}{formatPrice(pnl)}
-                  </span>
-                  {performanceCostBasis > 0 && (
-                    <span className="opacity-75">
-                      ({pnlPositive ? '+' : ''}{pnlPct.toFixed(1)}%)
-                    </span>
-                  )}
-                </div>
-              </div>
-              {(realizedValue > 0 || realizedPnl !== 0) && (
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className="text-[10px] font-semibold px-2.5 py-1 rounded-full"
-                    style={{
-                      background: realizedPnl >= 0 ? 'rgba(102,187,106,0.1)' : 'rgba(227,0,11,0.1)',
-                      border: `1px solid ${realizedPnl >= 0 ? 'rgba(102,187,106,0.25)' : 'rgba(227,0,11,0.25)'}`,
-                      color: realizedPnl >= 0 ? '#66bb6a' : '#e3000b',
-                    }}
-                  >
-                    {t('analytics.realizedPnl')}: {realizedPnl >= 0 ? '+' : '-'}{formatPrice(Math.abs(realizedPnl))}
-                  </span>
-                </div>
+            <span className="grid h-full w-full place-items-center overflow-hidden rounded-full bg-black">
+              {user?.avatar_id ? (
+                <img
+                  src={`/api/pokedex/images/sprites/${user.avatar_id}.png`}
+                  alt={`${trainerName} avatar`}
+                  className="pixelated h-12 w-12"
+                />
+              ) : (
+                <PokeBall size={32} />
               )}
-            </div>
-          )}
-        </div>
-
-        {/* Divider */}
-        <div className="h-px bg-gradient-to-r from-transparent via-brand-red/30 to-transparent" />
-
-        {/* ── STAT CARDS ROW ── */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {STAT_CARDS.map(stat => (
-            <div
-              key={stat.label}
-              className="rounded-2xl p-3 flex flex-col items-center text-center gap-1.5"
-              style={{
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.07)',
-              }}
-            >
-              <span style={{ color: stat.color }}>{stat.icon}</span>
-              <p className="text-sm sm:text-base font-black leading-none truncate max-w-full" style={{ color: stat.color }}>
-                {isLoading ? '—' : stat.value}
-              </p>
-              <p className="text-[10px] text-text-muted leading-tight">{stat.label}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* ── PORTFOLIO CHART ── */}
-        <div className="rounded-2xl p-4"
-          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
-
-          {/* Header row */}
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-bold text-white uppercase tracking-wider">{t('home.portfolioHistory')}</p>
-            <div className="flex gap-1">
-              {PORTFOLIO_PERIODS.map(p => (
-                <button
-                  key={p.key}
-                  onClick={() => setChartPeriod(p.key)}
-                  className="px-2 py-1 rounded-lg text-[10px] font-bold transition-all"
-                  style={{
-                    background: chartPeriod === p.key ? 'rgba(245,200,66,0.15)' : 'rgba(255,255,255,0.04)',
-                    color: chartPeriod === p.key ? '#f5c842' : '#666',
-                    border: chartPeriod === p.key ? '1px solid rgba(245,200,66,0.3)' : '1px solid transparent',
-                  }}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
+            </span>
+          </span>
+          <div className="min-w-0">
+            <p className="text-subheadline text-text-secondary">{t('home.hello')},</p>
+            <p className="truncate text-title-1 font-display text-text-primary">{trainerName}</p>
           </div>
-
-          {/* Chart area */}
-          {chartData.length < 2 ? (
-            <div className="flex flex-col items-center justify-center h-24 gap-2">
-              <BarChart3 size={24} style={{ color: 'rgba(255,255,255,0.15)' }} />
-              <p className="text-[11px] text-text-muted">{t('home.noData')}</p>
-              <p className="text-[10px]" style={{ color: 'rgba(255,255,255,0.25)' }}>
-                {t('home.startSyncHint')}
-              </p>
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={120}>
-              <AreaChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={chartColor} stopOpacity={0.25} />
-                    <stop offset="95%" stopColor={chartColor} stopOpacity={0.01} />
-                  </linearGradient>
-                </defs>
-                <XAxis
-                  dataKey="date"
-                  tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 9 }}
-                  axisLine={false}
-                  tickLine={false}
-                  interval="preserveStartEnd"
-                />
-                <YAxis hide domain={['auto', 'auto']} />
-                <Tooltip
-                  content={<ChartTooltip formatPrice={formatPrice} />}
-                  cursor={{ stroke: 'rgba(255,255,255,0.12)', strokeWidth: 1 }}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="value"
-                  stroke={chartColor}
-                  strokeWidth={2}
-                  fill="url(#chartGrad)"
-                  dot={false}
-                  activeDot={{ r: 4, fill: chartColor, stroke: 'none' }}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          )}
         </div>
+      </LargeTitle>
 
-        {/* ── NAVIGATION PORTAL GRID ── */}
-        <div>
-          <p className="text-xs font-bold text-white uppercase tracking-wider mb-3">{t('home.navigation')}</p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-            {PORTAL_ITEMS.map(({ to, icon: Icon, label, color, badge, active }) => (
-              <button
-                key={to}
-                onClick={() => navigate(to)}
-                className="flex flex-col items-center gap-2 py-4 px-2 rounded-2xl transition-all
-                  active:scale-95 group"
-                style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.07)',
-                }}
-              >
-                <div className="relative w-10 h-10 rounded-xl flex items-center justify-center transition-all
-                  group-hover:scale-110"
-                  style={{
-                    background: `${color}18`,
-                    border: `1px solid ${color}30`,
-                  }}>
-                  <Icon size={18} style={{ color }} />
-                  {badge > 0 && (
-                    <span className="absolute -right-2 -top-2 min-w-5 rounded-full bg-yellow px-1 text-center text-[9px] font-black leading-5 text-black">
-                      {badge > 99 ? '99+' : badge}
-                    </span>
-                  )}
-                  {!badge && active && (
-                    <span className="absolute -right-1 -top-1 h-2.5 w-2.5 animate-pulse rounded-full bg-brand-red" />
-                  )}
-                </div>
-                <span className="text-[10px] font-semibold text-center leading-tight"
-                  style={{ color: 'rgba(255,255,255,0.65)' }}>
-                  {label}
-                </span>
-              </button>
+      {recentCards.length > 0 && (
+        <section>
+          <SectionHeader title={t('home.latestPulls')} to="/collection" action={t('home.viewAll')} />
+          <Carousel label={t('home.latestPulls')}>
+            {recentCards.map(card => (
+              <CardThumb key={card.id} card={card} onClick={() => openCollectionItem(card)} />
             ))}
-          </div>
-        </div>
+          </Carousel>
+        </section>
+      )}
 
-        {(recentCards.length > 0 || topCards.length > 0) && (
-          <CardLegend
-            legendProps={{
-              showWishlist: false,
-            }}
+      {(recentCards.length > 0 || topCards.length > 0) && (
+        <CardLegend legendProps={{ showWishlist: false }} />
+      )}
+
+      <section className="space-y-2">
+        <div className="grid grid-cols-2 gap-3">
+          <StatTile
+            type="fire"
+            icon={Layers}
+            label={t('home.cardsTotal')}
+            value={isLoading ? '—' : compactNum(data?.total_cards ?? 0)}
+            detail={isLoading ? undefined : fill(t('home.uniqueCount'), { count: compactNum(data?.unique_cards ?? 0) })}
+            to="/collection"
           />
+          <StatTile
+            type="water"
+            icon={Grid2X2}
+            label={t('home.sets')}
+            value={isLoading ? '—' : compactNum(data?.owned_sets ?? 0)}
+            detail={sets.length > 0 ? fill(t('home.completeCount'), { count: completeSets }) : undefined}
+            to="/sets"
+          />
+          {pokedexSummary && (
+            <StatTile
+              type="grass"
+              icon={<PokeBall size={15} top="#fff" />}
+              label={t('nav.pokedex')}
+              value={`${pokedexSummary.owned}/${pokedexSummary.total}`}
+              detail={t('home.caught')}
+              to="/pokedex"
+            />
+          )}
+          <StatTile
+            type="lightning"
+            icon={Wallet}
+            label={(
+              <button
+                type="button"
+                onClick={toggleDisplayMode}
+                aria-label={`${headlineLabel}. ${t('home.switchValueMode')}`}
+                className="ios-press relative z-10 -my-1 min-h-[44px] max-w-full truncate rounded-full bg-black/15 px-2.5 text-footnote font-semibold"
+              >
+                {headlineLabel}
+              </button>
+            )}
+            value={isLoading ? '—' : formatPrice(headlineValue)}
+            detail={changeText}
+            sparkline={series}
+            className={pokedexSummary ? '' : 'col-span-2'}
+          >
+            <Link to="/analytics" aria-label={t('nav.analytics')} className="absolute inset-0 z-0 rounded-[22px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tint" />
+          </StatTile>
+        </div>
+        {age && (
+          <p className="px-1 text-footnote text-text-secondary">{fill(t('home.pricesUpdated'), { age })}</p>
         )}
+      </section>
 
-        {/* ── RECENTLY ADDED ── */}
-        {recentCards.length > 0 && (
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-xs font-bold text-white uppercase tracking-wider">{t('home.recentlyAdded')}</p>
-              <button onClick={() => navigate('/collection')}
-                className="text-[11px] font-semibold hover:opacity-80 transition-opacity"
-                style={{ color:'#e3000b' }}>{t('home.viewAll')} →</button>
-            </div>
-            <div className="flex gap-2.5 overflow-x-auto pb-1 no-scrollbar -mx-4 px-4">
-              {recentCards.map(card => (
-                <CardThumb key={card.id} card={card} onClick={() => openCollectionItem(card)} />
-              ))}
-            </div>
-          </div>
-        )}
+      {todos.length > 0 && (
+        <section className="space-y-2.5">
+          {todos.map(({ key, count }) => {
+            const view = todoView[key]
+            return (
+              <TodoCard
+                key={key}
+                type={view.type}
+                icon={view.icon}
+                title={fill(t(`home.${view.title}`), { count })}
+                detail={t(`home.${view.detail}`)}
+                action={t(`home.${view.action}`)}
+                to={view.to}
+                onClick={view.onClick}
+              />
+            )
+          })}
+        </section>
+      )}
+      {syncOpen && <SyncSheet isOpen onClose={() => setSyncOpen(false)} />}
 
-        {/* ── TOP VALUABLE CARDS ── */}
-        {topCards.length > 0 && (
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-xs font-bold text-white uppercase tracking-wider">{t('home.topCards')}</p>
-              <button onClick={() => navigate('/analytics')}
-                className="text-[11px] font-semibold hover:opacity-80 transition-opacity"
-                style={{ color:'#f5c842' }}>{t('home.details')} →</button>
-            </div>
-            <div className="flex gap-2.5 overflow-x-auto pb-1 no-scrollbar -mx-4 px-4">
-              {topCards.map((card, i) => (
-                <div key={card.collection_item_id || card.id} className="flex-shrink-0 w-[110px] cursor-pointer group"
-                  onClick={() => openCollectionItem(card)}>
-                  <div className="relative">
-                    <CollectionCardDisplay
-                      variant="artwork"
-                      item={{ id: card.collection_item_id, has_scan_photo: card.has_scan_photo }}
-                      card={card}
-                      alt={card.name}
-                      variantEffectSource={card.variant}
-                      stateIndicatorProps={{ card: withCollectionItemState(card, card), alwaysShowQuantity: true }}
-                    />
-                    <span className="absolute bottom-1 left-1 z-20 text-[9px] font-black px-1 rounded leading-4"
-                      style={{ background:'rgba(0,0,0,0.85)', color:'#f5c842' }}>#{i+1}</span>
-                  </div>
-                  <p className="text-[10px] font-bold mt-1 truncate" style={{ color:'#f5c842' }}>
-                    {formatPrice(Number(card.total_value ?? 0))}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+      <section aria-label={t('home.quickActions')} className="grid grid-cols-4 gap-2">
+        <QuickAction to="/wishlist" icon={Heart} label={t('nav.wishlist')} type="fairy" />
+        <QuickAction to="/binders" icon={Layers3} label={t('nav.binders')} type="water" />
+        <QuickAction to="/sets" icon={Grid2X2} label={t('nav.sets')} type="grass" />
+        <QuickAction to="/analytics" icon={BarChart3} label={t('nav.analytics')} type="lightning" />
+      </section>
 
-      </div>
+      {yourSets.length > 0 && (
+        <section>
+          <SectionHeader title={t('home.yourSets')} to="/sets" action={t('home.viewAll')} />
+          <Carousel label={t('home.yourSets')}>
+            {yourSets.map(set => (
+              <div key={set.id} role="listitem" className="w-[168px] flex-shrink-0 snap-start">
+                <SetTile
+                  set={{ id: set.id, name: set.name, logo: resolveSetImageUrl(set, 'logo'), abbreviation: set.ptcgo_code || set.abbreviation }}
+                  owned={set.owned_count ?? 0}
+                  total={set.total ?? 0}
+                  to={`/sets/${set.id}`}
+                />
+              </div>
+            ))}
+          </Carousel>
+        </section>
+      )}
+
+      {topCards.length > 0 && (
+        <section>
+          <SectionHeader title={t('home.topCardsShort')} to="/collection?sort=market_price&order=desc" action={t('home.viewAll')} />
+          <Carousel label={t('home.topCardsShort')}>
+            {topCards.map((card, i) => (
+              <CardThumb
+                key={card.collection_item_id || card.id}
+                card={card}
+                rank={i + 1}
+                price={formatPrice(Number(card.total_value ?? 0))}
+                onClick={() => openCollectionItem(card)}
+              />
+            ))}
+          </Carousel>
+        </section>
+      )}
     </div>
   )
 }
