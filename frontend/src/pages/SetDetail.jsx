@@ -1,8 +1,8 @@
-import { useRef, useState } from 'react'
-import { createPortal, flushSync } from 'react-dom'
+import { useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, X, BookMarked, HelpCircle } from 'lucide-react'
+import { Plus, X, BookMarked, HelpCircle, ArrowUpDown, ListFilter, Layers } from 'lucide-react'
 import { getSetChecklist, getBinders, addOwnedSetToBinder, addOwnedSetToAutoBinder } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import toast from 'react-hot-toast'
@@ -12,6 +12,15 @@ import { HOLO_FIELD_MAP } from '../utils/prices'
 import { useDetailBackNavigation, useScrollToTopOnPush } from '../hooks/useListScrollRestoration'
 import { CardDisplay, CardLegend } from '../components/card-system'
 import { CardModal } from '../components/CardItem'
+import HeaderBloom from '../components/ios/HeaderBloom'
+import HpBar from '../components/ios/HpBar'
+import Menu from '../components/ios/Menu'
+import PokeBall from '../components/ios/PokeBall'
+import SearchField from '../components/ios/SearchField'
+import { colourFor } from '../components/ios/pokemon'
+import { useNavBar } from '../navigation/useNavBar'
+import { masterSetStats, splitVariantCards } from '../utils/setDetailStats'
+
 
 const SET_SORT_OPTIONS = [
   'number',
@@ -77,6 +86,32 @@ function sortSetCards(cards, sortBy, pricePrimaryField) {
   return sorted
 }
 
+function ProgressRing({ fraction, size = 84 }) {
+  const stroke = 7
+  const radius = (size - stroke) / 2
+  const circumference = 2 * Math.PI * radius
+  const clamped = Math.min(1, Math.max(0, fraction))
+  return (
+    <div className="relative grid flex-shrink-0 place-items-center" style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90" aria-hidden="true">
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth={stroke} />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="var(--color-accent)"
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={circumference * (1 - clamped)}
+        />
+      </svg>
+      <div className="absolute inset-0 grid place-items-center"><PokeBall size={size * 0.4} gloss /></div>
+    </div>
+  )
+}
+
 export default function SetDetail() {
   const { setId } = useParams()
   const goBack = useDetailBackNavigation('sets', '/sets')
@@ -86,16 +121,12 @@ export default function SetDetail() {
   const [filter, setFilter] = useState('all')
   const [sortBy, setSortBy] = useState('number')
   const [rarityFilter, setRarityFilter] = useState('all')
+  const [query, setQuery] = useState('')
+  const [splitVariants, setSplitVariants] = useState(false)
   const [selectedCard, setSelectedCard] = useState(null)
   const [selectedCardTab, setSelectedCardTab] = useState('add')
   const [binderPickerOpen, setBinderPickerOpen] = useState(false)
   const [badgeLegendOpen, setBadgeLegendOpen] = useState(false)
-  const [isReturningToSets, setIsReturningToSets] = useState(false)
-
-  const returnToSets = () => {
-    flushSync(() => setIsReturningToSets(true))
-    goBack()
-  }
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['set-checklist', setId],
@@ -136,17 +167,62 @@ export default function SetDetail() {
     addOwnedMutation.mutate(args)
   }
 
-  if (isReturningToSets) {
-    return <div className="fixed inset-0 z-40 bg-bg" aria-hidden="true" />
-  }
+  const cards = useMemo(() => data?.cards ?? [], [data])
+  const rarityOptions = useMemo(() => [...new Set(cards.map(card => card.rarity).filter(Boolean))]
+    .sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' })), [cards])
+
+  // The release date comes from the cached sets list (the checklist payload has none).
+  const releaseDate = useMemo(() => {
+    for (const [, list] of queryClient.getQueriesData({ queryKey: ['sets'] })) {
+      const found = Array.isArray(list) ? list.find(item => String(item.id) === String(setId)) : null
+      if (found?.release_date) return found.release_date
+    }
+    return null
+  }, [queryClient, setId, data])
+
+  const navBar = useMemo(() => ({
+    title: data?.set?.name ?? t('nav.sets'),
+    trailing: (
+      <Menu
+        label={t('ios.more')}
+        sections={[
+          [
+            { id: 'split', label: t('setDetail.splitVariants'), icon: Layers, checked: splitVariants, onSelect: () => setSplitVariants(value => !value) },
+            { id: 'legend', label: t('setDetail.badgeLegend'), icon: HelpCircle, onSelect: () => setBadgeLegendOpen(open => !open) },
+            { id: 'binder', label: t('setDetail.addOwnedToBinder'), icon: BookMarked, onSelect: () => setBinderPickerOpen(true) },
+          ],
+        ]}
+      />
+    ),
+  }), [data?.set?.name, splitVariants, t])
+  useNavBar(navBar)
+
+  const setColour = colourFor(data?.set?.id ?? setId)
+
+  const filteredCards = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    const matching = cards.filter(card => {
+      if (filter === 'owned' && !card.owned) return false
+      if (filter === 'missing' && card.owned) return false
+      if (rarityFilter !== 'all' && card.rarity !== rarityFilter) return false
+      if (needle && !(String(card.name || '').toLowerCase().includes(needle) || String(card.number || '').toLowerCase().includes(needle))) return false
+      return true
+    })
+    return sortSetCards(matching, sortBy, pricePrimaryField)
+  }, [cards, filter, pricePrimaryField, query, rarityFilter, sortBy])
+
+  const tiles = useMemo(
+    () => (splitVariants ? filteredCards.flatMap(card => splitVariantCards(card)) : filteredCards.map(card => ({ key: card.id, card, source: card }))),
+    [filteredCards, splitVariants],
+  )
 
   if (isLoading) {
     return (
       <div className="space-y-4">
-        <div className="skeleton h-8 w-32 rounded" />
-        <div className="skeleton h-24 rounded-xl" />
-        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
-          {[...Array(20)].map((_, i) => <div key={i} className="skeleton aspect-[2.5/3.5] rounded-lg" />)}
+        <div className="skeleton h-32 rounded-2xl" />
+        <div className="skeleton h-24 rounded-2xl" />
+        <div className="grid grid-cols-3 gap-2">
+          {[...Array(12)].map((_, i) => <div key={i} className="skeleton aspect-[2.5/3.5] rounded-lg" />)}
         </div>
       </div>
     )
@@ -156,133 +232,136 @@ export default function SetDetail() {
     return (
       <div className="card text-center py-12">
         <p className="text-brand-red">{t('setDetail.loadFailed')} {error.message}</p>
-        <button onClick={returnToSets} className="btn-ghost mt-4 mx-auto">
-          <ArrowLeft size={16} /> {t('setDetail.goBack')}
+        <button onClick={goBack} className="btn-ghost mt-4 mx-auto">
+          {t('setDetail.goBack')}
         </button>
       </div>
     )
   }
 
-  const { set, cards = [], owned_count, total_count, progress } = data || {}
+  const { set, owned_count, total_count, progress } = data || {}
   const numericProgress = Number(progress)
   const safeProgress = Number.isFinite(numericProgress)
     ? Math.min(100, Math.max(0, numericProgress))
     : 0
+  const ownedValue = cards.reduce((sum, card) => (card.owned ? sum + setSortPrice(card, pricePrimaryField) : sum), 0)
+  const master = masterSetStats(cards, card => setSortPrice(card, pricePrimaryField))
+  const releaseLabel = releaseDate
+    ? (() => {
+      const d = new Date(releaseDate)
+      return isNaN(d.getTime()) ? releaseDate : d.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })
+    })()
+    : null
 
-  const rarityOptions = [...new Set(cards.map(card => card.rarity).filter(Boolean))]
-    .sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' }))
-
-  const filteredCards = sortSetCards(cards.filter(card => {
-    if (filter === 'owned' && !card.owned) return false
-    if (filter === 'missing' && card.owned) return false
-    if (rarityFilter !== 'all' && card.rarity !== rarityFilter) return false
-    return true
-  }), sortBy, pricePrimaryField)
+  const filterOptions = [
+    { key: 'all', label: `${t('setDetail.all')} (${cards.length})` },
+    { key: 'owned', label: `${t('setDetail.owned')} (${owned_count})` },
+    { key: 'missing', label: `${t('setDetail.missing')} (${total_count - owned_count})` },
+  ]
 
   return (
-    <div className="space-y-4 pb-2">
-      <button onClick={returnToSets} className="btn-ghost text-sm py-1.5">
-        <ArrowLeft size={14} /> {t('nav.sets')}
-      </button>
+    <div className="relative isolate space-y-4 pb-2">
+      <HeaderBloom colour={setColour} />
 
-      {/* Set Header */}
-      <div className="card">
-        <div className="flex items-start gap-4">
-          {resolveSetImageUrl(set, 'logo') && (
-            <img src={resolveSetImageUrl(set, 'logo')} alt={set.name} className="h-12 sm:h-16 object-contain flex-shrink-0 max-w-[120px]" />
-          )}
-          <div className="flex-1 min-w-0">
-            <h1 className="text-xl font-bold text-text-primary truncate">{set?.name}</h1>
-            <p className="text-sm text-text-secondary">{set?.series} · {total_count} {t('setDetail.cards')}</p>
-
-            <div className="mt-3">
-              <div className="mb-1 flex items-baseline gap-2 text-sm">
-                <span className="text-text-secondary">
-                  {owned_count} / {total_count} {t('setDetail.ownedOf')}
-                </span>
-                <span className="shrink-0 whitespace-nowrap font-bold tabular-nums text-brand-red">
-                  {safeProgress}%
-                </span>
-              </div>
-              <div className="hp-bar-track">
-                <div
-                  className={`hp-bar-fill ${safeProgress >= 66 ? 'healthy' : safeProgress >= 33 ? 'medium' : 'low'}`}
-                  style={{ width: `${safeProgress}%` }}
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-4 mt-3 md:hidden">
-              <div>
-                <p className="text-lg font-bold text-green">{owned_count}</p>
-                <p className="text-xs text-text-muted">{t('setDetail.owned')}</p>
-              </div>
-              <div>
-                <p className="text-lg font-bold text-brand-red">{total_count - owned_count}</p>
-                <p className="text-xs text-text-muted">{t('setDetail.missing')}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="hidden md:flex flex-col items-end gap-3 flex-shrink-0">
-            <div className="flex gap-4">
-              <div>
-                <p className="text-2xl font-bold text-green">{owned_count}</p>
-                <p className="text-xs text-text-muted">{t('setDetail.owned')}</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-brand-red">{total_count - owned_count}</p>
-                <p className="text-xs text-text-muted">{t('setDetail.missing')}</p>
-              </div>
-            </div>
-          </div>
+      {/* Banner in the set's colour */}
+      <div
+        data-testid="set-banner"
+        className="flex items-center gap-4 overflow-hidden rounded-[22px] p-4"
+        style={{ background: `linear-gradient(150deg, var(--type-${setColour}-top), var(--type-${setColour}-bottom))`, boxShadow: `0 8px 24px color-mix(in srgb, var(--type-${setColour}) 40%, transparent)` }}
+      >
+        <div className="grid h-16 w-28 flex-shrink-0 place-items-center">
+          {resolveSetImageUrl(set, 'logo')
+            ? <img src={resolveSetImageUrl(set, 'logo')} alt={set.name} className="max-h-full max-w-full object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]" />
+            : <span className="text-title-3 font-display text-center text-white">{set?.name}</span>}
         </div>
-
-        <button
-          onClick={() => setBinderPickerOpen(true)}
-          className="btn-ghost flex items-center justify-center gap-1.5 text-sm whitespace-nowrap w-full mt-3 md:w-auto md:ml-auto md:mt-3"
-        >
-          <BookMarked size={14} /> {t('setDetail.addOwnedToBinder')}
-        </button>
+        <div className="min-w-0 flex-1 text-white">
+          <h1 className="truncate text-title-2 font-display">{set?.name}</h1>
+          <p className="truncate text-footnote opacity-90">{set?.series}</p>
+          <p className="text-footnote opacity-90">
+            {[releaseLabel, `${total_count} ${t('setDetail.cards')}`].filter(Boolean).join(' · ')}
+          </p>
+        </div>
       </div>
 
-      {/* Filter Tabs */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex w-full min-w-0 gap-2 overflow-x-auto pb-1 sm:w-auto">
-          {[
-            { key: 'all', label: `${t('setDetail.all')} (${cards.length})` },
-            { key: 'owned', label: `${t('setDetail.owned')} (${owned_count})` },
-            { key: 'missing', label: `${t('setDetail.missing')} (${total_count - owned_count})` },
-          ].map(({ key, label }) => (
-            <button key={key} onClick={() => setFilter(key)}
-              className={clsx(
-                'px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap',
-                filter === key
-                  ? 'bg-brand-red/20 text-brand-red border border-brand-red/30'
-                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
-              )}>
-              {label}
+      {/* Swipeable stat cards */}
+      <div
+        data-testid="set-stat-cards"
+        className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        <section aria-label={t('setDetail.completeSet')} className="w-[88%] flex-shrink-0 snap-center rounded-[22px] bg-card p-4">
+          <div className="flex items-center gap-4">
+            <ProgressRing fraction={safeProgress / 100} />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <p className="text-footnote text-text-secondary">{t('setDetail.completeSet')}</p>
+              <p className="text-title-2 font-display tabular-nums">{t('setDetail.xOfY').replace('{owned}', owned_count).replace('{total}', total_count)}</p>
+              <HpBar value={owned_count} max={total_count} label={t('setDetail.completeSet')} />
+              <p className="text-footnote tabular-nums text-text-secondary">{safeProgress}% · {formatPrice(ownedValue)}</p>
+            </div>
+          </div>
+        </section>
+        <section aria-label={t('setDetail.masterSet')} className="w-[88%] flex-shrink-0 snap-center rounded-[22px] bg-card p-4">
+          <div className="space-y-1.5">
+            <p className="text-footnote text-text-secondary">{t('setDetail.masterSet')}</p>
+            <p className="text-title-2 font-display tabular-nums">{t('setDetail.printingsOf').replace('{owned}', master.owned).replace('{total}', master.total)}</p>
+            <HpBar value={master.owned} max={master.total} label={t('setDetail.masterSet')} />
+            <p className="text-footnote tabular-nums text-text-secondary">{t('setDetail.ownedValue')} {formatPrice(master.value)}</p>
+          </div>
+        </section>
+      </div>
+
+      {/* Search, sort and filter */}
+      <div className="flex items-center gap-2">
+        <SearchField
+          className="min-w-0 flex-1"
+          value={query}
+          onChange={setQuery}
+          placeholder={t('setDetail.searchInSet')}
+          onCancel={() => setQuery('')}
+        />
+        <Menu
+          label={t('setDetail.sortBy')}
+          trigger={(
+            <button type="button" aria-label={t('setDetail.sortBy')} className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-full bg-fill-tertiary ios-press">
+              <ArrowUpDown size={16} aria-hidden="true" />
             </button>
-          ))}
-        </div>
+          )}
+          sections={[SET_SORT_OPTIONS.map(option => ({
+            id: option,
+            label: t(`setDetail.sort.${option}`),
+            checked: sortBy === option,
+            onSelect: () => setSortBy(option),
+          }))]}
+        />
+        <Menu
+          label={t('setDetail.filterMenu')}
+          trigger={(
+            <button type="button" aria-label={t('setDetail.filterMenu')} className={clsx('grid h-9 w-9 flex-shrink-0 place-items-center rounded-full bg-fill-tertiary ios-press', (filter !== 'all' || rarityFilter !== 'all') && 'text-tint')}>
+              <ListFilter size={16} aria-hidden="true" />
+            </button>
+          )}
+          sections={[
+            filterOptions.map(({ key, label }) => ({ id: `f-${key}`, label, checked: filter === key, onSelect: () => setFilter(key) })),
+            [{ id: 'r-all', label: t('setDetail.allRarities'), checked: rarityFilter === 'all', onSelect: () => setRarityFilter('all') },
+              ...rarityOptions.map(rarity => ({ id: `r-${rarity}`, label: rarity, checked: rarityFilter === rarity, onSelect: () => setRarityFilter(rarity) }))],
+          ]}
+        />
+      </div>
+
+      <div className="flex items-center justify-between gap-2 text-footnote text-text-secondary">
+        <span>{t('setDetail.showingCards').replace('{count}', tiles.length).replace('{total}', cards.length)}</span>
         <button
           type="button"
-          onClick={() => setBadgeLegendOpen(open => !open)}
-          className={clsx(
-            'btn-ghost flex-shrink-0 self-start px-3 py-2 text-sm sm:self-auto',
-            badgeLegendOpen && 'border-brand-red/30 bg-brand-red/10 text-brand-red'
-          )}
-          aria-expanded={badgeLegendOpen}
-          aria-controls="card-badge-legend"
-          aria-label={t('setDetail.badgeLegend')}
+          role="switch"
+          aria-checked={splitVariants}
+          onClick={() => setSplitVariants(value => !value)}
+          className={clsx('flex h-8 items-center gap-1.5 rounded-full px-3 font-semibold ios-press', splitVariants ? 'bg-tint text-on-accent' : 'bg-fill-tertiary')}
         >
-          <HelpCircle size={15} />
-          <span>{t('setDetail.badgeLegend')}</span>
+          <Layers size={14} aria-hidden="true" /> {t('setDetail.splitVariants')}
         </button>
       </div>
 
       {badgeLegendOpen && (
-        <div id="card-badge-legend" className="card p-3">
+        <div id="card-badge-legend" className="rounded-2xl bg-card p-3">
           <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-text-muted">
             {t('setDetail.badgeLegend')}
           </p>
@@ -290,50 +369,22 @@ export default function SetDetail() {
         </div>
       )}
 
-      {/* Sort and rarity controls */}
-      <div className="card p-3">
-        <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
-          <label className="block">
-            <span className="text-xs text-text-muted mb-1 block">{t('setDetail.sortBy')}</span>
-            <select value={sortBy} onChange={(event) => setSortBy(event.target.value)} className="select">
-              {SET_SORT_OPTIONS.map(option => (
-                <option key={option} value={option}>{t(`setDetail.sort.${option}`)}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="block">
-            <span className="text-xs text-text-muted mb-1 block">{t('setDetail.rarityFilter')}</span>
-            <select value={rarityFilter} onChange={(event) => setRarityFilter(event.target.value)} className="select">
-              <option value="all">{t('setDetail.allRarities')}</option>
-              {rarityOptions.map(rarity => (
-                <option key={rarity} value={rarity}>{rarity}</option>
-              ))}
-            </select>
-          </label>
-
-          <div className="text-xs text-text-muted md:text-right">
-            {t('setDetail.showingCards').replace('{count}', filteredCards.length).replace('{total}', cards.length)}
-          </div>
-        </div>
-      </div>
-
       {/* Card Grid */}
-      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
-        {filteredCards.map((card) => (
+      <div className="grid grid-cols-3 gap-2">
+        {tiles.map(({ key, card, source }) => (
           <CardDisplay
-            key={card.id}
+            key={key}
             card={card}
-            image={resolveCardImageUrl(card)}
-            price={setSortPrice(card, pricePrimaryField) > 0 ? formatPrice(setSortPrice(card, pricePrimaryField)) : null}
+            image={resolveCardImageUrl(source)}
+            price={setSortPrice(source, pricePrimaryField) > 0 ? formatPrice(setSortPrice(source, pricePrimaryField)) : null}
             dimWhenUnowned
             onClick={() => {
               setSelectedCardTab('add')
-              setSelectedCard(card)
+              setSelectedCard(source)
             }}
             onAdd={() => {
               setSelectedCardTab('add')
-              setSelectedCard(card)
+              setSelectedCard(source)
             }}
           />
         ))}

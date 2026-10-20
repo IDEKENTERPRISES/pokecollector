@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
+import clsx from 'clsx'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Search, Bell, BellOff, SortAsc, Filter, ChevronUp, ChevronDown, Eye, EyeOff, RotateCcw } from 'lucide-react'
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Bell, BellOff, Filter, ChevronUp, ChevronDown, Eye, EyeOff } from 'lucide-react'
 import { getSets, markSetsSeen } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import toast from 'react-hot-toast'
@@ -9,6 +10,18 @@ import { resolveSetImageUrl } from '../utils/imageUrl'
 import TcgdexLanguageSelect from '../components/TcgdexLanguageSelect'
 import { useVisibleTcgdexLanguages } from '../hooks/useVisibleTcgdexLanguages'
 import { normalizeTcgdexLanguage, tcgdexLanguageBadgeClass, tcgdexLanguageLabel } from '../utils/tcgdexLanguages'
+import SeriesTile from '../components/ios/SeriesTile'
+import SetTile from '../components/ios/SetTile'
+import HpBar from '../components/ios/HpBar'
+import HeaderBloom from '../components/ios/HeaderBloom'
+import SearchField from '../components/ios/SearchField'
+import SegmentedControl from '../components/ios/SegmentedControl'
+import PageSheet from '../components/ios/PageSheet'
+import Menu from '../components/ios/Menu'
+import { colourFor } from '../components/ios/pokemon'
+import { useNavBar } from '../navigation/useNavBar'
+import { useSetsView } from '../hooks/useSetsView'
+import { groupSetsBySeries } from '../utils/setSeries'
 import { setMatchesSearch } from '../utils/textSearch'
 import { getSavedListScrollPosition, isSavedPositionForLocation, useListScrollRestoration } from '../hooks/useListScrollRestoration'
 import {
@@ -31,6 +44,14 @@ const SET_FILTER_OPTIONS = {
   sortBy: new Set(['release_date', 'name', 'total', 'progress']),
   sortOrder: new Set(['asc', 'desc']),
   progressFilter: new Set(['all', 'started', 'complete']),
+}
+
+const SORT_OPTIONS = ['release_date', 'name', 'total', 'progress']
+const SORT_LABEL_KEYS = {
+  release_date: 'sets.sortReleaseDate',
+  name: 'sets.sortName',
+  total: 'sets.sortCardCount',
+  progress: 'sets.sortProgress',
 }
 
 const parseJsonSetting = (value, fallback) => {
@@ -64,6 +85,10 @@ const normalizeHiddenSetIds = (value) => {
 
 export default function Sets() {
   const navigate = useNavigate()
+  const { seriesKey: rawSeriesKey } = useParams()
+  const seriesKey = rawSeriesKey ? decodeURIComponent(rawSeriesKey) : null
+  const { view, setView } = useSetsView()
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const { t, settings, updateSettings, loaded: settingsLoaded } = useSettings()
@@ -328,325 +353,250 @@ export default function Sets() {
         : [...current, normalizedId].sort()
     ))
   }
-  return (
-    <div data-scroll-list="sets" className="space-y-4 pb-2">
+  const groups = useMemo(() => groupSetsBySeries(filtered), [filtered])
+  const activeGroup = seriesKey ? groups.find(group => group.key === seriesKey) : null
+  const showSeriesView = !seriesKey && view === 'series'
+  const gridSets = activeGroup ? activeGroup.sets : filtered
+  const activeFilterCount = [
+    series !== DEFAULT_SET_FILTERS.series,
+    progressFilter !== DEFAULT_SET_FILTERS.progressFilter,
+    langFilter !== defaultLangFilter,
+    showHiddenSets,
+  ].filter(Boolean).length
 
-      {/* ─── Header ───────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
-        <div className="min-w-0">
-          <h1 className="text-xl font-bold text-text-primary">{t('sets.title')}</h1>
-          <p className="text-sm text-text-secondary mt-1">
-            {sets.length} {t('sets.setsTotal')}
-            {newSets.length > 0 && (
-              <span className="ml-2 badge badge-red">{newSets.length} {t('sets.newSets')}</span>
-            )}
-          </p>
+  const navBar = useMemo(() => ({
+    title: seriesKey ? (activeGroup?.name ?? t('nav.sets')) : t('nav.sets'),
+    trailing: (
+      <Menu
+        label={t('ios.more')}
+        sections={[
+          [
+            { id: 'filters', label: activeFilterCount ? `${t('cardSearch.filters')} (${activeFilterCount})` : t('cardSearch.filters'), icon: Filter, onSelect: () => setFiltersOpen(true) },
+          ],
+          SORT_OPTIONS.map(option => ({
+            id: `sort-${option}`,
+            label: t(SORT_LABEL_KEYS[option]),
+            checked: sortBy === option,
+            onSelect: () => setSortBy(option),
+          })),
+          [
+            { id: 'order', label: sortOrder === 'asc' ? t('common.sortDescending') : t('common.sortAscending'), icon: sortOrder === 'asc' ? ChevronDown : ChevronUp, onSelect: toggleOrder },
+          ],
+        ]}
+      />
+    ),
+  }), [activeFilterCount, activeGroup?.name, seriesKey, sortBy, sortOrder, t])
+  useNavBar(navBar)
+
+  const releaseLabelFor = (set) => {
+    const d = new Date(set.release_date)
+    return isNaN(d.getTime()) ? set.release_date : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+  }
+  const isUpcoming = (set) => {
+    const d = new Date(set.release_date)
+    return !isNaN(d.getTime()) && d.getTime() > Date.now()
+  }
+
+  const renderSetTile = (set) => {
+    const owned = set.owned_count ?? 0
+    const total = set.total ?? 0
+    const isHidden = hiddenSetIdSet.has(String(set.id))
+    return (
+      <div
+        key={set.id}
+        id={`set-${set.id}`}
+        data-scroll-anchor={`set-${set.id}`}
+        data-testid="set-tile"
+        className={clsx('relative', isHidden && 'opacity-60')}
+      >
+        <button type="button" className="block w-full text-left" onClick={() => openSet(set)} aria-label={set.name}>
+          <SetTile
+            set={{ id: set.id, name: set.name, abbreviation: set.abbreviation, logo: resolveSetImageUrl(set, 'logo'), releaseLabel: set.release_date ? releaseLabelFor(set) : '' }}
+            owned={owned}
+            total={total}
+            upcoming={Boolean(set.release_date) && isUpcoming(set)}
+            complete={total > 0 && owned >= total}
+          />
+        </button>
+        <div className="pointer-events-none absolute left-2 top-2 flex items-center gap-1">
+          {set.is_new && <span className="rounded-full bg-red px-2 py-0.5 text-caption-1 font-semibold leading-none text-white">{t('common.new')}</span>}
+          {isHidden && <span className="rounded-full bg-black/70 px-2 py-0.5 text-caption-1 font-semibold leading-none text-text-secondary">{t('sets.hidden')}</span>}
         </div>
-        <div className="flex gap-2">
-          {newSets.length > 0 && (
-            <button onClick={() => markSeenMutation.mutate(newSets.map(set => set.id))} className="btn-ghost text-sm py-1.5">
-              <BellOff size={14} /> {t('sets.markAllSeen')}
-            </button>
-          )}
-        </div>
+        <button
+          type="button"
+          onClick={() => toggleHiddenSet(set.id)}
+          className="absolute right-1 top-1 grid h-9 w-9 place-items-center rounded-full bg-black/55 text-text-secondary ios-press"
+          title={isHidden ? t('sets.unhideSet') : t('sets.hideSet')}
+          aria-label={isHidden ? t('sets.unhideSet') : t('sets.hideSet')}
+        >
+          {isHidden ? <EyeOff size={15} /> : <Eye size={15} />}
+        </button>
       </div>
+    )
+  }
 
-      {/* New Sets Alert */}
-      {newSets.length > 0 && (
-        <div className="card border-brand-red/30 bg-brand-red/5">
-          <div className="flex items-center gap-3">
-            <Bell size={18} className="text-brand-red flex-shrink-0" />
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-text-primary">
-                {newSets.length} {t('sets.newSets')} {t('sets.newSetsDetected')}
-              </p>
-              <p className="text-xs text-text-secondary">{newSets.map(s => s.name).join(', ')}</p>
-            </div>
+  const skeleton = (
+    <div className="grid grid-cols-2 gap-3">
+      {[...Array(6)].map((_, i) => <div key={i} className="skeleton h-48 rounded-[18px]" />)}
+    </div>
+  )
+
+  return (
+    <div data-scroll-list="sets" className="relative isolate space-y-4 pb-2">
+      <HeaderBloom colour={colourFor(seriesKey ?? 'sets')} />
+
+      {activeGroup ? (
+        <header className="flex items-center gap-4 pt-2" data-testid="series-header">
+          <div className="grid h-20 w-28 flex-shrink-0 place-items-center rounded-2xl bg-black/30 p-2">
+            {activeGroup.logo
+              ? <img src={activeGroup.logo} alt={activeGroup.name} className="max-h-full max-w-full object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]" />
+              : <span className="text-title-3 font-display text-center">{activeGroup.name}</span>}
           </div>
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <h1 className="truncate text-title-2 font-display">{activeGroup.name}</h1>
+            <p className="text-footnote text-text-secondary">
+              {[activeGroup.years, t('ios.setsCount').replace('{count}', activeGroup.setCount)].filter(Boolean).join(' · ')}
+            </p>
+            <HpBar value={activeGroup.owned} max={activeGroup.total} label={activeGroup.name} />
+            <p className="text-footnote tabular-nums text-text-secondary">
+              {t('ios.ownedOfTotal').replace('{owned}', activeGroup.owned).replace('{total}', activeGroup.total)} {t('sets.cards')}
+            </p>
+          </div>
+        </header>
+      ) : (
+        <div className="pt-1">
+          <p className="text-subheadline text-text-secondary">
+            {sets.length} {t('sets.setsTotal')}
+            {showSeriesView && groups.length > 0 && ` · ${t('sets.seriesCount').replace('{count}', groups.length)}`}
+          </p>
         </div>
       )}
 
-      {/* ─── Filters & Sort ───────────────────────────────────────── */}
-      <div className="card space-y-3">
-        {/* Language filter */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <label htmlFor="sets-filter-language" className="text-xs text-text-muted">{t('lang.filter')}:</label>
-          <TcgdexLanguageSelect
-            id="sets-filter-language"
-            value={langFilter}
-            includeAll
-            allLabel={t('lang.all')}
-            compact
-            languages={visibleLanguages}
-            onChange={(value) => updatePanelFilter('langFilter', value)}
-            className="select w-full sm:w-52 text-xs py-1.5"
-          />
-        </div>
-
-        <div className="flex flex-wrap gap-3">
-          <div className="relative flex-1 min-w-0" style={{ flexBasis: '160px' }}>
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-            <input type="text" placeholder={t('sets.filterSets')} value={search}
-              onChange={(e) => setSearch(e.target.value)} className="input pl-8 text-sm py-2" />
+      {newSets.length > 0 && !seriesKey && (
+        <div className="flex items-center gap-3 rounded-2xl bg-card p-3">
+          <Bell size={18} className="flex-shrink-0 text-red" />
+          <div className="min-w-0 flex-1">
+            <p className="text-subheadline font-medium">{newSets.length} {t('sets.newSets')} {t('sets.newSetsDetected')}</p>
+            <p className="truncate text-caption-1 text-text-secondary">{newSets.map(s => s.name).join(', ')}</p>
           </div>
-          <select aria-label={t('common.allSeries')} className="select w-full sm:w-48 text-sm py-2" value={series} onChange={(e) => updatePanelFilter('series', e.target.value)}>
-            <option value="">{t('common.allSeries')}</option>
-            {allSeries.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </div>
-
-        <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3">
-          <div className="flex items-center gap-2">
-            <SortAsc size={14} className="text-text-muted flex-shrink-0" />
-            <select className="select text-sm py-1.5 flex-1 sm:w-40 sm:flex-initial" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-              <option value="release_date">{t('sets.sortReleaseDate')}</option>
-              <option value="name">{t('sets.sortName')}</option>
-              <option value="total">{t('sets.sortCardCount')}</option>
-              <option value="progress">{t('sets.sortProgress')}</option>
-            </select>
-            <button onClick={toggleOrder} aria-label={sortOrder === 'asc' ? t('common.sortDescending') : t('common.sortAscending')} className="btn-ghost py-1.5 px-2 text-sm font-medium flex-shrink-0">
-              {sortOrder === 'asc' ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </button>
-          </div>
-
-          <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
-            <Filter size={14} className="text-text-muted mr-1 flex-shrink-0" />
-            {[
-              { value: 'all', label: t('sets.filterAll') },
-              { value: 'started', label: t('sets.filterStarted') },
-              { value: 'complete', label: t('sets.filterComplete') },
-            ].map(opt => (
-              <button key={opt.value} onClick={() => updatePanelFilter('progressFilter', opt.value)}
-                className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
-                  progressFilter === opt.value
-                    ? 'bg-brand-red text-white'
-                    : 'bg-bg-card text-text-secondary hover:text-text-primary border border-border'
-                }`}>
-                {opt.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-2 flex-wrap">
-            {hiddenSetCount > 0 && (
-              <button
-                type="button"
-                onClick={() => updatePanelFilter('showHiddenSets', !showHiddenSets)}
-                className={`btn-ghost py-1.5 px-2 text-xs font-medium ${
-                  showHiddenSets ? 'text-brand-red border-brand-red/30 bg-brand-red/10' : ''
-                }`}
-              >
-                {showHiddenSets ? <EyeOff size={14} /> : <Eye size={14} />}
-                {showHiddenSets ? t('sets.hideHiddenSets') : t('sets.showHiddenSets')}
-                <span className="rounded-full bg-bg-elevated px-1.5 py-0.5 text-[10px] text-text-secondary">{hiddenSetCount}</span>
-              </button>
-            )}
-          </div>
-
-          <span className="text-xs text-text-muted sm:ml-auto">
-            {filtered.length} / {sets.length} {t('sets.setsTotal')}
-          </span>
-        </div>
-        <div className="flex justify-start border-t border-border pt-3">
-          <button type="button" onClick={clearPanelFilters} className="btn-ghost text-sm">
-            <RotateCcw size={14} /> {t('common.clear')}
+          <button type="button" onClick={() => markSeenMutation.mutate(newSets.map(set => set.id))} className="flex-shrink-0 px-1 text-callout text-tint ios-press">
+            <BellOff size={14} className="mr-1 inline" />{t('sets.markAllSeen')}
           </button>
         </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <SearchField
+          className="min-w-0 flex-1"
+          value={search}
+          onChange={setSearch}
+          placeholder={t('sets.filterSets')}
+          onCancel={() => setSearch('')}
+        />
+        <button
+          type="button"
+          onClick={() => setFiltersOpen(true)}
+          className={clsx('flex h-9 flex-shrink-0 items-center gap-1.5 rounded-full bg-fill-tertiary px-3 text-footnote font-semibold ios-press', activeFilterCount > 0 && 'text-tint')}
+        >
+          <Filter size={14} aria-hidden="true" />
+          {t('cardSearch.filters')}{activeFilterCount > 0 && ` (${activeFilterCount})`}
+        </button>
       </div>
 
-      {/* ─── FEATURED SET HERO ────────────────────────────────────── */}
-      {!isLoading && filtered.length > 0 && (() => {
-        const hero = filtered.reduce((best, s) => {
-          const bPct = best.total > 0 ? (best.owned_count || 0) / best.total : 0
-          const sPct = s.total > 0 ? (s.owned_count || 0) / s.total : 0
-          return sPct > bPct ? s : best
-        }, filtered[0])
-        const heroOwned = hero.owned_count ?? 0
-        const heroTotal = hero.total ?? 0
-        const heroPct = heroTotal > 0 ? Math.round((heroOwned / heroTotal) * 100) : 0
-        return (
-          <div
-            className="set-hero cursor-pointer mb-6 group"
-            onClick={() => openSet(hero)}
-          >
-            <div className="set-hero-glow" />
-            <div className="relative z-10 flex items-center justify-between p-6 gap-4">
-              <div className="flex-1 min-w-0">
-                <p className="text-[10px] text-brand-red font-black uppercase tracking-[0.2em] mb-2">{t('sets.topSet')}</p>
-                <p className="text-2xl font-black text-white leading-tight mb-1 break-words">{hero.name}</p>
-                <p className="text-sm text-text-muted mb-4">{hero.series}</p>
-                <div className="flex items-center gap-3 mb-2">
-                  <span className="text-sm text-text-secondary">{heroOwned}/{heroTotal} {t('sets.heroCards')}</span>
-                  <span className={`text-sm font-bold ${heroPct === 100 ? 'text-green' : 'text-text-primary'}`}>{heroPct}%</span>
-                </div>
-                <div className="hp-bar-track w-48 max-w-full">
-                  <div className={`hp-bar-fill ${heroPct >= 66 ? 'healthy' : heroPct >= 33 ? 'medium' : 'low'}`} style={{ width: `${heroPct}%` }} />
-                </div>
-              </div>
-              <div className="flex-shrink-0 w-36 h-28 flex items-center justify-center">
-                {resolveSetImageUrl(hero, 'logo')
-                  ? <img src={resolveSetImageUrl(hero, 'logo')} alt={hero.name} className="set-hero-logo group-hover:scale-105 transition-transform duration-300" />
-                  : <div className="text-text-muted text-xs text-center">{hero.name}</div>
-                }
-              </div>
-            </div>
-          </div>
-        )
-      })()}
-
-      {/* ─── SET GRID — big visual cards ──────────────────────────── */}
-      {isLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {[...Array(8)].map((_, i) => (
-            <div key={i} className="rounded-2xl overflow-hidden border border-border">
-              <div className="skeleton h-32" />
-              <div className="p-4 space-y-2">
-                <div className="skeleton h-4 rounded w-2/3" />
-                <div className="skeleton h-3 rounded w-1/3" />
-                <div className="skeleton h-2 rounded w-full mt-3" />
-              </div>
-            </div>
+      {isLoading || !filtersHydrated ? skeleton : showSeriesView ? (
+        <div className="grid grid-cols-2 gap-3" data-testid="series-grid">
+          {groups.map(group => (
+            <SeriesTile
+              key={group.key}
+              series={{ key: group.key, name: group.name, logo: group.logo, years: group.years, setCount: group.setCount }}
+              owned={group.owned}
+              total={group.total}
+              complete={group.complete}
+              to={`/sets/series/${encodeURIComponent(group.key)}`}
+            />
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {filtered.map((set) => {
-            const owned = set.owned_count ?? 0
-            const total = set.total ?? 0
-            const pct = total > 0 ? Math.round((owned / total) * 100) : 0
-            const hpClass = pct >= 66 ? 'healthy' : pct >= 33 ? 'medium' : 'low'
-            const isHidden = hiddenSetIdSet.has(String(set.id))
-
-            return (
-              <div
-                key={set.id}
-                id={`set-${set.id}`}
-                data-scroll-anchor={`set-${set.id}`}
-                className={`bg-bg-card border rounded-2xl overflow-hidden cursor-pointer hover:border-brand-red/40 transition-all duration-200 hover:shadow-[0_4px_20px_rgba(0,0,0,0.4)] group relative ${
-                  isHidden ? 'border-border/70 opacity-60' : 'border-border'
-                }`}
-                onClick={() => openSet(set)}
-              >
-                {set.is_new && (
-                  <span className="absolute top-2 left-2 z-10 badge badge-red">{t('common.new')}</span>
-                )}
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    toggleHiddenSet(set.id)
-                  }}
-                  className={`absolute top-2 z-20 flex h-8 w-8 items-center justify-center rounded-full border transition-colors ${
-                    set.is_new ? 'left-14' : 'left-2'
-                  } ${
-                    isHidden
-                      ? 'border-brand-red/30 bg-brand-red/15 text-brand-red hover:bg-brand-red/25'
-                      : 'border-border bg-bg-card/90 text-text-muted hover:text-text-primary hover:bg-bg-elevated'
-                  }`}
-                  title={isHidden ? t('sets.unhideSet') : t('sets.hideSet')}
-                  aria-label={isHidden ? t('sets.unhideSet') : t('sets.hideSet')}
-                >
-                  {isHidden ? <EyeOff size={15} /> : <Eye size={15} />}
-                </button>
-                {isHidden && (
-                  <span className="absolute top-2 right-2 z-10 rounded-full border border-border bg-bg-card/90 px-2 py-0.5 text-[10px] font-bold text-text-secondary">
-                    {t('sets.hidden')}
-                  </span>
-                )}
-
-                {/* Set logo area — big, centered with dot pattern */}
-                <div className="h-28 sm:h-32 bg-bg-elevated flex items-center justify-center relative overflow-hidden">
-                  {/* Dot grid background pattern */}
-                  <div
-                    className="absolute inset-0 opacity-5"
-                    style={{
-                      backgroundImage: 'radial-gradient(circle at 25% 25%, white 1px, transparent 0)',
-                      backgroundSize: '24px 24px',
-                    }}
-                  />
-                  {/* Subtle background symbol */}
-                  {resolveSetImageUrl(set, 'symbol') && (
-                    <img
-                      src={resolveSetImageUrl(set, 'symbol')}
-                      alt=""
-                      className="absolute inset-0 w-full h-full object-contain opacity-[0.04] scale-150 pointer-events-none"
-                    />
-                  )}
-
-                  {resolveSetImageUrl(set, 'logo') ? (
-                    <img
-                      src={resolveSetImageUrl(set, 'logo')}
-                      alt={set.name}
-                      className="max-h-[80%] max-w-[75%] object-contain group-hover:scale-105 transition-transform duration-300 relative z-10"
-                      loading="lazy"
-                    />
-                  ) : resolveSetImageUrl(set, 'symbol') ? (
-                    <img
-                      src={resolveSetImageUrl(set, 'symbol')}
-                      alt={set.name}
-                      className="h-12 object-contain opacity-60 group-hover:scale-110 transition-transform duration-300 relative z-10"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <img src="/pokemon-logo.svg" className="w-28 h-12 object-contain opacity-40 relative z-10" alt="" />
-                  )}
-
-                  {pct === 100 && !isHidden && (
-                    <span className="absolute top-2 right-2 z-10 bg-green/20 text-green text-[10px] font-black px-2 py-0.5 rounded-full border border-green/30">
-                      ★ {t('sets.filterComplete')}
-                    </span>
-                  )}
-                </div>
-
-                {/* Set info */}
-                <div className="p-3">
-                  <div className="flex items-start gap-1.5 mb-0.5">
-                    <p className="font-bold text-text-primary text-sm leading-tight truncate flex-1">{set.name}</p>
-                    {/* Language badge - supported TCGdex language, never "both" */}
-                    {set.lang && (
-                      <span className={`flex-shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded leading-none ${tcgdexLanguageBadgeClass(set.lang)}`}>
-                        {tcgdexLanguageLabel(set.lang)}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-text-muted mb-0.5">
-                    {set.abbreviation && (
-                      <span className="font-mono font-bold text-text-secondary mr-1">{set.abbreviation}</span>
-                    )}
-                    {set.series}
-                    {set.total ? ` · ${set.total} ${t('sets.cards')}` : ''}
-                  </p>
-                  {set.release_date && (() => {
-                    const d = new Date(set.release_date)
-                    const label = isNaN(d.getTime()) ? set.release_date :
-                      d.toLocaleDateString('de-DE', { month: 'short', year: 'numeric' })
-                    return <p className="text-[10px] text-text-muted mb-2">{label}</p>
-                  })()}
-                  {!set.release_date && <div className="mb-2.5" />}
-
-                  {/* HP-style progress bar */}
-                  <div className="flex items-center justify-between text-[10px] mb-1.5">
-                    <span className="text-text-muted">{owned}/{total}</span>
-                    <span className={`font-bold ${pct === 100 ? 'text-green' : 'text-text-secondary'}`}>
-                      {pct}%
-                    </span>
-                  </div>
-                  <div className="hp-bar-track">
-                    <div
-                      className={`hp-bar-fill ${owned > 0 ? hpClass : ''}`}
-                      style={{ width: `${Math.min(100, pct)}%` }}
-                    />
-                  </div>
-                </div>
-              </div>
-            )
-          })}
+        <div className="grid grid-cols-2 gap-3" data-testid="sets-grid">
+          {gridSets.map(renderSetTile)}
         </div>
       )}
 
-      {!isLoading && filtered.length === 0 && (
-        <div className="text-center py-12 text-text-muted">{t('sets.noSetsFound')}</div>
+      {!isLoading && filtersHydrated && (showSeriesView ? groups.length === 0 : gridSets.length === 0) && (
+        <div className="py-12 text-center text-text-muted">{t('sets.noSetsFound')}</div>
       )}
+
+      <PageSheet
+        isOpen={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        title={t('cardSearch.filters')}
+        leading={{ label: t('common.clear'), onPress: clearPanelFilters }}
+        trailing={{ label: t('ios.done'), onPress: () => setFiltersOpen(false) }}
+      >
+        <div className="space-y-5 px-4 pb-6">
+          <div className="space-y-1.5">
+            <label htmlFor="sets-filter-language" className="text-footnote text-text-secondary">{t('lang.filter')}</label>
+            <TcgdexLanguageSelect
+              id="sets-filter-language"
+              value={langFilter}
+              includeAll
+              allLabel={t('lang.all')}
+              compact
+              languages={visibleLanguages}
+              onChange={(value) => updatePanelFilter('langFilter', value)}
+              className="select w-full"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="sets-filter-series" className="text-footnote text-text-secondary">{t('common.allSeries')}</label>
+            <select id="sets-filter-series" aria-label={t('common.allSeries')} className="select w-full" value={series} onChange={(e) => updatePanelFilter('series', e.target.value)}>
+              <option value="">{t('common.allSeries')}</option>
+              {allSeries.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-footnote text-text-secondary">{t('sets.progressLabel')}</p>
+            <SegmentedControl
+              ariaLabel={t('sets.progressLabel')}
+              value={progressFilter}
+              onChange={(value) => updatePanelFilter('progressFilter', value)}
+              options={[
+                { value: 'all', label: t('sets.filterAll') },
+                { value: 'started', label: t('sets.filterStarted') },
+                { value: 'complete', label: t('sets.filterComplete') },
+              ]}
+            />
+          </div>
+          {!seriesKey && (
+            <div className="space-y-1.5">
+              <p className="text-footnote text-text-secondary">{t('sets.viewLabel')}</p>
+              <SegmentedControl
+                ariaLabel={t('sets.viewLabel')}
+                value={view}
+                onChange={setView}
+                options={[
+                  { value: 'series', label: t('sets.viewSeries') },
+                  { value: 'sets', label: t('sets.viewSets') },
+                ]}
+              />
+            </div>
+          )}
+          {hiddenSetCount > 0 && (
+            <button
+              type="button"
+              onClick={() => updatePanelFilter('showHiddenSets', !showHiddenSets)}
+              className="flex w-full items-center justify-between rounded-xl bg-card px-4 py-3 text-left ios-press"
+            >
+              <span className="flex items-center gap-2 text-body">
+                {showHiddenSets ? <EyeOff size={16} /> : <Eye size={16} />}
+                {showHiddenSets ? t('sets.hideHiddenSets') : t('sets.showHiddenSets')}
+              </span>
+              <span className="text-footnote text-text-secondary">{hiddenSetCount}</span>
+            </button>
+          )}
+          <p className="text-footnote text-text-secondary">{filtered.length} / {sets.length} {t('sets.setsTotal')}</p>
+        </div>
+      </PageSheet>
     </div>
   )
 }
