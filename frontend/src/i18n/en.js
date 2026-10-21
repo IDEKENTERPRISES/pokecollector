@@ -430,6 +430,7 @@ const en = {
     searchPlaceholder: 'Card name or set code + number (e.g. MEP 022)...',
     searchFieldPlaceholder: 'Cards, sets or numbers (e.g. MEP 022)',
     needsConnection: 'Search needs a connection',
+    correctedNotice: 'Searching for {to}. "{from}" was not found.',
     newSets: '{count} new',
     seriesAndSets: '{series} series · {sets} sets',
     caughtOf: '{owned} of {total} caught',
