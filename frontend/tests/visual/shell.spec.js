@@ -51,6 +51,7 @@ async function installApi(page, { onLogout, queue = false, counts } = {}) {
     if (path === '/api/settings/exchange-rate') return route.fulfill({ json: { rate: 1 } })
     if (path === '/api/dashboard/') return route.fulfill({ json: { total_cards: 12, owned_sets: 3, recent_additions: [], top_cards: [] } })
     if (path === '/api/cards/recognize/jobs') return route.fulfill({ json: { jobs: [] } })
+    if (path === '/api/health') return route.fulfill({ json: { status: 'ok', service: 'pokemon-tcg-collection', version: '1.51.6', api_level: 1, features: [] } })
     if (path === '/api/sync/status') return route.fulfill({ json: { is_running: false, is_price_sync_running: false } })
     if (path.startsWith('/api/images/') || path.startsWith('/api/pokedex/images/')) return route.fulfill({ status: 404, json: {} })
     if (path === '/api/pokedex' || path === '/api/pokedex/') return route.fulfill({ json: { entries: [], summary: { total: 1025, owned: 10, missing: 1015 } } })
@@ -219,11 +220,14 @@ test.describe('shell on a phone', () => {
 
   // Touch events as a finger would send them; a plain Event with `touches` works in every engine.
   async function pullAndRelease(page, options) {
-    await page.evaluate(({ from = 120, to = 360 }) => {
+    // A scroll lock (the launch splash, a sheet) switches pull to refresh off: wait until it is gone.
+    await page.waitForFunction(() => document.body.style.overflow !== 'hidden')
+    await page.evaluate(({ from = 120, to = 360, selector }) => {
+      const host = (selector && document.querySelector(selector)) || document.body
       const send = (type, y) => {
         const event = new Event(type, { bubbles: true, cancelable: true })
         Object.defineProperty(event, 'touches', { value: type === 'touchend' ? [] : [{ clientY: y }] })
-        document.body.dispatchEvent(event)
+        host.dispatchEvent(event)
       }
       send('touchstart', from)
       send('touchmove', from + 40)
@@ -259,7 +263,7 @@ test.describe('shell on a phone', () => {
     expect(counts['/api/dashboard/']).toBe(before)
   })
 
-  test('no pull to refresh away from the top of the page or on a pushed page', async ({ page }) => {
+  test('no pull to refresh away from the top of the page, or inside a scrolled container', async ({ page }) => {
     const counts = {}
     await installApi(page, { counts })
     await page.goto('/')
@@ -276,10 +280,85 @@ test.describe('shell on a phone', () => {
     await page.waitForTimeout(500)
     expect(counts['/api/dashboard/']).toBe(before)
 
+    // At the top of the page, but inside a container that is itself scrolled down: that drag scrolls it back up.
+    await page.evaluate(() => {
+      window.scrollTo(0, 0)
+      const box = document.createElement('div')
+      box.id = 'inner-scroller'
+      box.style.cssText = 'height:120px;overflow:auto'
+      box.innerHTML = '<div style="height:1000px">inner</div>'
+      document.querySelector('main').prepend(box)
+      box.scrollTop = 200
+    })
+    await pullAndRelease(page, { selector: '#inner-scroller' })
+    await page.waitForTimeout(500)
+    expect(counts['/api/dashboard/']).toBe(before)
+  })
+
+  test('pull to refresh also works on pushed pages: Settings and a series list', async ({ page }) => {
+    const counts = {}
+    await installApi(page, { counts })
+
     await page.goto('/settings')
     await expect(page.getByTestId('settings-section-account')).toBeVisible()
+    await expect.poll(() => counts['/api/sync/status'] ?? 0).toBeGreaterThan(0)
+    await page.waitForTimeout(300)
+    let before = counts['/api/sync/status']
     await pullAndRelease(page)
-    await expect(page.getByTestId('pull-indicator')).toHaveAttribute('data-phase', 'idle')
+    await expect.poll(() => counts['/api/sync/status']).toBeGreaterThan(before)
+    await expect(page.getByTestId('pull-indicator')).toHaveAttribute('data-phase', 'idle', { timeout: 10000 })
+
+    await page.goto('/sets')
+    await expect(page.getByTestId('nav-title')).toHaveText('Sets')
+    await expect.poll(() => counts['/api/sets/'] ?? 0).toBeGreaterThan(0)
+    await page.waitForTimeout(300)
+    before = counts['/api/sets/']
+    await pullAndRelease(page)
+    await expect.poll(() => counts['/api/sets/']).toBeGreaterThan(before)
+  })
+
+  test('the device reports offline while the app is open: a pull shows "Offline mode" and stops', async ({ page }) => {
+    // (context.setOffline would also kill the dev server's lazy modules; the real network flip is in
+    // tests/pwa/shell-offline.spec.js against the built app.)
+    await installApi(page)
+    await page.goto('/')
+    await expect(page.getByTestId('nav-title')).toHaveText('Home')
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false })
+      window.dispatchEvent(new Event('offline'))
+    })
+    await pullAndRelease(page)
+    const indicator = page.getByTestId('pull-indicator')
+    await expect(indicator).toHaveAttribute('data-note', 'offline')
+    await expect(indicator).toContainText('Offline mode')
+    await expect(indicator).toHaveAttribute('data-phase', 'idle', { timeout: 8000 })
+  })
+
+  test('airplane mode on iPhone (the device still says online, requests hang): a pull shows "Offline mode" and stops', async ({ page }) => {
+    await installApi(page)
+    await page.goto('/')
+    await expect(page.getByTestId('nav-title')).toHaveText('Home')
+    // Every request now hangs and never answers, as in airplane mode.
+    await page.route('**/api/**', () => {})
+    expect(await page.evaluate(() => navigator.onLine)).toBe(true)
+    await pullAndRelease(page)
+    const indicator = page.getByTestId('pull-indicator')
+    await expect(indicator).toHaveAttribute('data-note', 'offline', { timeout: 8000 })
+    await expect(indicator).toHaveAttribute('data-phase', 'idle', { timeout: 8000 })
+  })
+
+  test('a refresh that hangs gives up at its ceiling with "Couldn\'t refresh"', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('pc.debug.pullCeilingMs', '1500'))
+    await installApi(page)
+    await page.goto('/')
+    await expect(page.getByTestId('nav-title')).toHaveText('Home')
+    // The server answers the health check but every data request hangs.
+    await page.route(url => url.pathname.startsWith('/api/') && url.pathname !== '/api/health', () => {})
+    await pullAndRelease(page)
+    const indicator = page.getByTestId('pull-indicator')
+    await expect(indicator).toHaveAttribute('data-note', 'failed', { timeout: 8000 })
+    await expect(indicator).toContainText("Couldn't refresh")
+    await expect(indicator).toHaveAttribute('data-phase', 'idle', { timeout: 8000 })
   })
 
   test('slide transitions: a push and the Back button animate, tab switches do not, reduced motion turns them off', async ({ page }) => {

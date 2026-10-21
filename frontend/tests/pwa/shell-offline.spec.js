@@ -80,3 +80,54 @@ test('offline: the tab bar stays, the status line shows, Profile keeps its numbe
   await expect(tabBar).toBeVisible()
   await expect(page.getByTestId('offline-banner')).toBeVisible()
 })
+
+// Owner feedback F7: online, then airplane mode, then a pull must not spin for ever.
+async function pullDown(page) {
+  await page.evaluate(() => {
+    const send = (type, y) => {
+      const event = new Event(type, { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'touches', { value: type === 'touchend' ? [] : [{ clientY: y }] })
+      document.body.dispatchEvent(event)
+    }
+    send('touchstart', 120)
+    send('touchmove', 160)
+    send('touchmove', 360)
+    send('touchend', 360)
+  })
+}
+
+async function openProfileSignedIn(page, context, state) {
+  await mockApi(context, state)
+  await page.addInitScript(user => {
+    localStorage.setItem('token', 'test-token')
+    localStorage.setItem('user', JSON.stringify(user))
+  }, ada)
+  await page.goto('/profile')
+  await expect(page.getByText('4242')).toBeVisible()
+}
+
+test('going offline while the app is open: a pull shows "Offline mode" and the spinner stops', async ({ page, context }) => {
+  const state = { offline: false }
+  await openProfileSignedIn(page, context, state)
+  await context.setOffline(true)
+  state.offline = true
+
+  await pullDown(page)
+  const indicator = page.getByTestId('pull-indicator')
+  await expect(indicator).toHaveAttribute('data-note', 'offline', { timeout: 8000 })
+  await expect(indicator).toContainText('Offline mode')
+  await expect(indicator).toHaveAttribute('data-phase', 'idle', { timeout: 8000 })
+  await context.setOffline(false)
+})
+
+test('iPhone airplane mode (still "online", every request hangs): a pull shows "Offline mode" and stops', async ({ page, context }) => {
+  const state = { offline: false }
+  await openProfileSignedIn(page, context, state)
+  await page.route(url => url.pathname.startsWith('/api/'), () => {})
+  expect(await page.evaluate(() => navigator.onLine)).toBe(true)
+
+  await pullDown(page)
+  const indicator = page.getByTestId('pull-indicator')
+  await expect(indicator).toHaveAttribute('data-note', 'offline', { timeout: 10000 })
+  await expect(indicator).toHaveAttribute('data-phase', 'idle', { timeout: 8000 })
+})
