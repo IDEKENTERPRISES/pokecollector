@@ -64,6 +64,27 @@ const de = {
     noCards: 'Noch keine zugeordneten Kartendrucke lokal verfügbar. Metadaten-Backfill ausführen oder weitere Sets synchronisieren.',
   },
 
+  // Startanimation (components/splash)
+  splash: {
+    label: 'Willkommen bei PokéCollector',
+    tapToSkip: 'Zum Überspringen tippen',
+    clickToSkip: 'Zum Überspringen klicken oder Esc drücken',
+    tapToContinue: 'Zum Fortfahren tippen',
+    clickToContinue: 'Zum Fortfahren klicken oder Esc drücken',
+    number: 'Nr. {number}',
+    generation: 'Gen. {generation}',
+    kilograms: '{value} Kilogramm',
+    pounds: '{value} Pfund',
+    announce: 'Ein wildes {name} erscheint! Nr. {number}, Generation {generation}, {region}{weight}. {fact}',
+    setting: 'Startanimation beim Öffnen',
+    settingDesc: 'Beim Start öffnet sich ein Pokéball mit einem zufälligen Pokémon. Gilt für dieses Gerät.',
+    cacheTitle: 'Pokédex der Startanimation',
+    cacheDesc: '{cached} von {total} Pokémon sind auf dem Server gespeichert. Lade den Rest im Hintergrund herunter (etwa 10 Minuten).',
+    cacheRunning: 'Wird geladen: {done} von {total} …',
+    cacheStart: 'Alle laden',
+    cacheDone: 'Alle gespeichert',
+  },
+
   cardmarket: {
     buy: 'Auf Cardmarket kaufen',
     openProduct: 'Genaues Produkt öffnen',

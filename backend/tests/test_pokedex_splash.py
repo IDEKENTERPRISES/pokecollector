@@ -256,6 +256,15 @@ class SplashEntryTests(CacheRootTestCase):
         self.assertEqual(entry["name"], "Bisasam")
         self.assertEqual(entry["fact"], "Short.")
 
+    def test_names_in_capitals_are_respelled_and_shouting_entries_avoided(self):
+        self.seed(25, en=("Whenever PIKACHU meets hard BERRIES, it zaps them.", "When PIKACHU meet, they spark."))
+        for seed in range(10):
+            entry = pokedex_splash.splash_entry(requested_id=25, rng=random.Random(seed))
+            self.assertEqual(entry["fact"], "When Pikachu meet, they spark.")
+        self.seed(25, en=("Whenever PIKACHU meets hard BERRIES, it zaps them.",))
+        entry = pokedex_splash.splash_entry(requested_id=25)
+        self.assertEqual(entry["fact"], "Whenever Pikachu meets hard BERRIES, it zaps them.")
+
     def test_data_facts(self):
         catalogue = {"name_en": "Eevee", "name_de": "Evoli", "region": "Kanto", "types": ["normal"]}
         self.assertEqual(pokedex_splash.data_fact(catalogue, {"height_m": 0.3}, "en"),

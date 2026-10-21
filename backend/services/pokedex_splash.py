@@ -14,6 +14,7 @@ import base64
 import binascii
 import logging
 import random
+import re
 import threading
 import time
 from collections import deque
@@ -179,14 +180,28 @@ def data_fact(entry: dict, extras: dict | None, lang: str) -> str:
     return text + "."
 
 
+_CAPITALS = re.compile(r"\b[A-ZÄÖÜ]{3,}\b")
+
+
+def polish_fact(text: str, entry: dict) -> str:
+    """Older games wrote names in capitals ("Whenever PIKACHU…"): use the normal spelling."""
+    for key in ("name_en", "name_de"):
+        name = entry.get(key) or ""
+        if len(name) >= 3:
+            text = re.sub(rf"\b{re.escape(name.upper())}\b", name, text)
+    return text
+
+
 def pick_fact(entry: dict, extras: dict | None, lang: str, rng: random.Random) -> str:
     if FACT_SOURCE == "flavor" and extras:
         flavor = extras.get("flavor") or {}
         for candidate in dict.fromkeys((lang, "en")):
-            texts = [text for text in flavor.get(candidate) or [] if isinstance(text, str) and text]
+            texts = [polish_fact(text, entry) for text in flavor.get(candidate) or [] if isinstance(text, str) and text]
             if texts:
-                short = [text for text in texts if len(text) <= FACT_MAX_CHARS]
-                return rng.choice(short or texts)
+                # Prefer entries without words in capitals ("hard BERRIES"), then short ones.
+                plain = [text for text in texts if not _CAPITALS.search(text)] or texts
+                short = [text for text in plain if len(text) <= FACT_MAX_CHARS]
+                return rng.choice(short or plain)
     return data_fact(entry, extras, lang)
 
 

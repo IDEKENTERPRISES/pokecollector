@@ -13,6 +13,7 @@ import PublicHomeButton from './components/PublicHomeButton'
 import { ConfirmDialogProvider } from './contexts/ConfirmDialogContext'
 import UpdateBanner from './components/pwa/UpdateBanner'
 import { OfflineProvider } from './offline/OfflineProvider'
+import LaunchSplash from './components/splash/LaunchSplash'
 
 const HomeScreen = lazy(() => import('./pages/HomeScreen'))
 const Profile = lazy(() => import('./pages/Profile'))
@@ -55,6 +56,9 @@ const CardSystemGallery = import.meta.env.DEV
   : null
 const IosGallery = import.meta.env.DEV
   ? lazy(() => import('./components/ios/IosGallery'))
+  : null
+const SplashPreview = import.meta.env.DEV
+  ? lazy(() => import('./components/splash/SplashPreview'))
   : null
 
 function RouteLoader() {
@@ -247,6 +251,7 @@ export default function App() {
             <Routes>
               {import.meta.env.DEV && <Route path="/__card-system" element={lazyRoute(<CardSystemGallery />)} />}
               {import.meta.env.DEV && <Route path="/__ios" element={lazyRoute(<IosGallery />)} />}
+              {import.meta.env.DEV && <Route path="/__splash" element={lazyRoute(<SplashPreview />)} />}
               <Route path="/login" element={lazyRoute(<Login />)} />
               <Route path="/invite/:token" element={lazyRoute(<InviteAccept />)} />
               <Route path="/u" element={<PublicRoutes />}>
@@ -261,6 +266,8 @@ export default function App() {
             </Routes>
           </BrowserRouter>
           <UpdateBanner />
+          {/* Fresh launches only; portaled above everything while the app renders underneath. */}
+          <LaunchSplash />
         </ConfirmDialogProvider>
         </OfflineProvider>
       </SettingsProvider>

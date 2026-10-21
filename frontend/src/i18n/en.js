@@ -177,6 +177,27 @@ const en = {
     noCards: 'No mapped card printings are available locally yet. Run metadata backfill or sync more sets.',
   },
 
+  // The launch splash (components/splash)
+  splash: {
+    label: 'Welcome to PokéCollector',
+    tapToSkip: 'Tap to skip',
+    clickToSkip: 'Click or press Esc to skip',
+    tapToContinue: 'Tap to continue',
+    clickToContinue: 'Click or press Esc to continue',
+    number: 'No. {number}',
+    generation: 'Gen {generation}',
+    kilograms: '{value} kilograms',
+    pounds: '{value} pounds',
+    announce: 'A wild {name} appeared! No. {number}, Generation {generation}, {region}{weight}. {fact}',
+    setting: 'Splash screen on launch',
+    settingDesc: 'A Poké Ball opens with a random Pokémon when the app starts. Saved on this device.',
+    cacheTitle: 'Splash screen Pokédex',
+    cacheDesc: '{cached} of {total} Pokémon are saved on the server. Download the rest in the background (about 10 minutes).',
+    cacheRunning: 'Downloading: {done} of {total}…',
+    cacheStart: 'Download all',
+    cacheDone: 'All saved',
+  },
+
   cardmarket: {
     buy: 'Buy on Cardmarket',
     openProduct: 'Open exact product',
