@@ -220,6 +220,8 @@ test.describe('shell on a phone', () => {
 
   // Touch events as a finger would send them; a plain Event with `touches` works in every engine.
   async function pullAndRelease(page, options) {
+    // A scroll lock (the launch splash, a sheet) switches pull to refresh off: wait until it is gone.
+    await page.waitForFunction(() => document.body.style.overflow !== 'hidden')
     await page.evaluate(({ from = 120, to = 360, selector }) => {
       const host = (selector && document.querySelector(selector)) || document.body
       const send = (type, y) => {
