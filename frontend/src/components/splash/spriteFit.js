@@ -29,8 +29,8 @@ export function fitSprite({ width, height, bounds, target }) {
     width: width * scale,
     height: height * scale,
     // Pull the visible feet down onto the ground and centre the visible pixels.
-    marginBottom: -(height - box.bottom) * scale,
-    left: Math.round(((width - box.right - box.left) / 2) * scale),
+    marginBottom: (box.bottom - height) * scale,
+    left: Math.round(((width - box.right - box.left) / 2) * scale) || 0,
   }
 }
 

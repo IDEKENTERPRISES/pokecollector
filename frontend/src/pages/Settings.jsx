@@ -35,6 +35,8 @@ import PokeBall from '../components/ios/PokeBall'
 import Switch from '../components/ios/Switch'
 import { NAV_ICONS } from '../navigation/navIcons'
 import { settingsSection, visibleSettingsSections } from '../navigation/navConfig'
+import { readSplashEnabled, writeSplashEnabled } from '../components/splash/launch'
+import SplashCacheSection from '../components/splash/SplashCacheSection'
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -487,6 +489,8 @@ export default function Settings() {
   const showGeneral = GENERAL_SECTIONS.includes(activeSection)
   const { view: setsView, setView: setSetsView } = useSetsView()
   const setsInSeries = setsView !== 'sets'
+  // The launch splash: per device, read synchronously at boot (components/splash/launch.js).
+  const [splashEnabled, setSplashEnabled] = useState(() => readSplashEnabled())
 
   const [backupOptions, setBackupOptions] = useState(['full'])
   const [debugModeEnabled, setDebugModeEnabled] = useState(false)
@@ -1241,6 +1245,16 @@ export default function Settings() {
                   onChange={handleSetsViewChange}
                 />
               </SettingsRow>
+              <SettingsRow label={t('splash.setting')} description={t('splash.settingDesc')}>
+                <Toggle
+                  value={splashEnabled}
+                  label={t('splash.setting')}
+                  onChange={(value) => {
+                    writeSplashEnabled(value)
+                    setSplashEnabled(value)
+                  }}
+                />
+              </SettingsRow>
               <SettingsRow label={t('settings.language')} description={t('settings.languageDesc')}>
                 <SelectControl
                   value={currentAppLang}
@@ -1621,6 +1635,8 @@ export default function Settings() {
               </SettingsRow>}
             </SettingsCard>
           </section>
+
+          {user?.role === 'admin' && <SplashCacheSection t={t} />}
 
           {user?.role === 'admin' && (
             <section className="space-y-1">
