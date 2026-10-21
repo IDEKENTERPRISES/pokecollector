@@ -104,7 +104,7 @@ Not shown yet: *Edit* on queued adds (arrives with the collection/wishlist phase
 
 With `OFFLINE_QUEUE_ENABLED` on, the app keeps a copy of the data you have already looked at, so a degraded start (server unreachable) shows it instead of empty pages. Above the page it says *Showing saved data from <time ago>* while the server cannot be reached.
 
-- **Which pages:** Collection, Wishlist, Dashboard, Sets and their checklists, Binders and their cards, the scanner configuration, printing tags and the investment tracker. Only data you actually opened is saved, after a successful load (at most every 5 seconds). Saved pages you do not open again are kept until they are 30 days old.
+- **Which pages:** Collection, Wishlist, Home, Sets and their checklists, Binders and their cards, the scanner configuration, printing tags and the investment tracker. Only data you actually opened is saved, after a successful load (at most every 5 seconds). Saved pages you do not open again are kept until they are 30 days old.
 - **Limits:** a single page of data over 5 MiB is skipped; the total stays under 20 MiB (the oldest data goes first); a copy older than 30 days, or saved by a different app version, is ignored.
 - **Per user:** each account on this device and server address has its own copy, in a separate browser database from the waiting items. Signing in as someone else deletes every other account's copy.
 - **Cleared at logout:** logging out (whatever you choose about waiting items; cancelling keeps you signed in) deletes your copy. **Reset offline app data** on /offline deletes every copy.

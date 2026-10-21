@@ -1,7 +1,7 @@
 """Invite links and the audit log (mounted under /api/auth).
 
-Admins issue single-use, expiring invite links; whoever opens one can create an account with the
-a trainer account (invites never create admins). Only a hash of the token is stored. Every step is written to the audit log.
+Admins issue single-use, expiring invite links; whoever opens one can create a trainer account with it
+(invites never create admins). Only a hash of the token is stored. Every step is written to the audit log.
 """
 
 import hashlib
