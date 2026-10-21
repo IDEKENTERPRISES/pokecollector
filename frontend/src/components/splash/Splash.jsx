@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import PixelArt from './PixelArt'
-import { BALL_BASE, BALL_LID, BURST, GLYPH_HEIGHT, GROUND_FOR_TYPE, SPARKLE, artSize, groundFor, textArt } from './art'
+import { BALL_BASE, BALL_LID, BURST, GLYPH_HEIGHT, GROUNDS, SPARKLE, artSize, groundName, textArt } from './art'
 import {
   AUTO_CONTINUE_MS,
   MAX_SMOOTH_SCALE,
@@ -219,13 +219,14 @@ export default function Splash({
     })
   }
 
-  const groundName = GROUND_FOR_TYPE[String(entry?.types?.[0] ?? '').toLowerCase()] ?? 'grass'
+  const ground = groundName(entry?.types)
   const letters = text ? [[...text.wild[0]].length, [...text.wild[1]].length] : [1, 1]
   const style = {
     ...startStyle(speed),
     ...(open ? openStyle(open, speed, letters) : null),
     '--pc-exit': `${exiting === 'skip' ? TIMELINE.skipFade : Math.round(TIMELINE.fadeOut * speed)}ms`,
     '--pc-type': typeColour(entry?.types),
+    '--pc-lift': String(GROUNDS[ground].lift ?? 0),
   }
   const classes = ['pc-splash', still && 'is-still', open && 'is-open', exiting && 'is-exiting'].filter(Boolean).join(' ')
 
@@ -241,7 +242,7 @@ export default function Splash({
       data-mode={mode}
       data-open={open ? 'true' : 'false'}
       data-revealed={revealed ? 'true' : 'false'}
-      data-ground={groundName}
+      data-ground={ground}
       data-shiny={entry?.shiny ? 'true' : undefined}
       onClick={() => close('skip')}
     >
@@ -290,7 +291,7 @@ export default function Splash({
           </div>
         </div>
         <PixelArt art={BURST} className="pc-splash__burst" />
-        <PixelArt key={groundName} art={groundFor(entry?.types)} className="pc-splash__ground" />
+        <PixelArt key={ground} art={GROUNDS[ground]} className="pc-splash__ground" />
       </div>
       {text && SHOW_WILD_BOX && (
         <div className="pc-splash__box" aria-hidden="true">

@@ -1,13 +1,39 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useSettings } from '../../contexts/SettingsContext'
+import PixelArt from './PixelArt'
 import Splash from './Splash'
+import { BALL_BASE, BALL_LID, GROUNDS } from './art'
 import { isSplashEntry, splashLanguage, starterEntry } from './entryStore'
 
 const SLOW_MOTION = 4
+const SHEET_PX = 4
 
-function previewStarter(language, shiny) {
-  const starter = starterEntry(splashLanguage(language))
+/** ?grounds=1: every type's ground with the ball resting on it, for reviewing the art. */
+function GroundSheet() {
+  const px = value => `${value * SHEET_PX}px`
+  return (
+    <div className="min-h-dvh bg-black px-6 py-8" data-testid="splash-ground-sheet">
+      <ul className="mx-auto grid max-w-[720px] grid-cols-2 gap-x-8 gap-y-5 sm:grid-cols-3">
+        {Object.entries(GROUNDS).map(([type, ground]) => (
+          <li key={type} className="flex flex-col items-center gap-1.5">
+            <div className="relative" style={{ width: px(48), height: px(19) }}>
+              <div className="absolute" style={{ left: px(16), bottom: px(1 + (ground.lift ?? 0)), width: px(16), height: px(16) }}>
+                <PixelArt art={BALL_LID} className="block h-1/2 w-full" />
+                <PixelArt art={BALL_BASE} className="block h-1/2 w-full" />
+              </div>
+              <PixelArt art={ground} className="absolute bottom-0 left-0 block" style={{ width: px(48), height: px(5) }} />
+            </div>
+            <p className="text-footnote capitalize text-text-secondary">{type}</p>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function previewStarter(language, shiny, type) {
+  const starter = { ...starterEntry(splashLanguage(language)), ...(type ? { types: [type] } : null) }
   return shiny ? { ...starter, shiny, sprite_url: '/api/pokedex/images/showdown-shiny/25.gif' } : starter
 }
 
@@ -15,9 +41,16 @@ function previewStarter(language, shiny) {
  * DEV only (/__splash, like /__ios): the splash with a fixed Pokémon, the bundled starter unless
  * ?id= asks the server for another. ?shiny=1 makes it shiny, ?slow=1 runs it 4x slower,
  * ?still=1 shows the Reduce Motion version, ?hold=1 waits for a tap, ?wait=3000 delivers the
- * Pokémon that late (the extra twitches), ?controls=0 hides these switches (snapshots).
+ * Pokémon that late (the extra twitches), ?controls=0 hides these switches (snapshots), and
+ * ?type=ghost swaps the starter's type (its ground and light); ?grounds=1 shows every type's
+ * ground instead.
  */
 export default function SplashPreview() {
+  const [params] = useSearchParams()
+  return params.get('grounds') === '1' ? <GroundSheet /> : <SplashStage />
+}
+
+function SplashStage() {
   const { t, language } = useSettings()
   const [params, setParams] = useSearchParams()
   const id = Number(params.get('id')) || null
@@ -25,7 +58,7 @@ export default function SplashPreview() {
   const wait = Number(params.get('wait')) || 0
   const [run, setRun] = useState(0)
   const [finished, setFinished] = useState(false)
-  const [entry, setEntry] = useState(() => (wait || id ? null : previewStarter(language, flag('shiny'))))
+  const [entry, setEntry] = useState(() => (wait || id ? null : previewStarter(language, flag('shiny'), params.get('type'))))
 
   useEffect(() => {
     let cancelled = false
@@ -35,7 +68,7 @@ export default function SplashPreview() {
     }
     if (!id) {
       if (wait) setEntry(null)
-      deliver(previewStarter(language, flag('shiny')))
+      deliver(previewStarter(language, flag('shiny'), params.get('type')))
     } else {
       setEntry(null)
       const query = new URLSearchParams({ id: String(id), lang: splashLanguage(language) })
@@ -48,7 +81,7 @@ export default function SplashPreview() {
     return () => {
       cancelled = true
     }
-  }, [id, language, wait, run]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [id, language, wait, run, params.get('type')]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const replay = () => {
     setRun(value => value + 1)
@@ -76,7 +109,7 @@ export default function SplashPreview() {
         <p className="px-6 pt-28 text-subheadline text-text-secondary">The splash closed. Replay to see it again.</p>
       ) : (
         <Splash
-          key={`${run}-${id}-${flag('shiny')}`}
+          key={`${run}-${id}-${flag('shiny')}-${params.get('type')}`}
           entry={entry}
           spriteSrc={entry?.sprite_url ?? null}
           mode={flag('still') ? 'still' : 'full'}

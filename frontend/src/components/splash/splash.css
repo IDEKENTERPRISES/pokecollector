@@ -69,7 +69,7 @@
   position: absolute;
   z-index: 3;
   left: 50%;
-  bottom: var(--px);
+  bottom: calc(var(--px) * (1 + var(--pc-lift, 0))); /* raised onto flat floors (art.js lift) */
   width: calc(var(--px) * 16);
   height: calc(var(--px) * 16);
   margin-left: calc(var(--px) * -8);
@@ -132,7 +132,7 @@
   position: absolute;
   z-index: 1;
   left: 50%;
-  bottom: calc(var(--px) * 1.5);
+  bottom: calc(var(--px) * (1.5 + var(--pc-lift, 0)));
   display: block;
   width: calc(var(--px) * 15);
   height: calc(var(--px) * 15);
@@ -168,7 +168,7 @@
   z-index: 2;
   left: 0;
   right: 0;
-  bottom: var(--px);
+  bottom: calc(var(--px) * (1 + var(--pc-lift, 0)));
   display: flex;
   align-items: flex-end;
   justify-content: center;
