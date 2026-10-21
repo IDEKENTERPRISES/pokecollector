@@ -219,3 +219,22 @@ test('generic card dialogs reuse the complete shared price details', async ({ pa
   await expect(dialog.getByText('TCGPlayer')).toBeVisible()
   await expect(dialog.getByText('Price History')).toBeVisible()
 })
+
+test('shows which name was searched when the server corrected a misspelling', async ({ page }) => {
+  await installApi(page)
+  await page.route('**/api/cards/search*', route => route.fulfill({
+    json: {
+      data: [SEARCH_CARD],
+      total_count: 1,
+      page: 1,
+      page_size: 20,
+      corrected: { from: 'Morbeko', to: 'Morpeko' },
+    },
+  }))
+  await page.goto('/search?q=Morbeko')
+
+  const notice = page.getByTestId('search-corrected')
+  await expect(notice).toHaveText('Searching for Morpeko. "Morbeko" was not found.')
+  await expect(notice.locator('strong')).toHaveText('Morpeko')
+  await expect(page.getByRole('button', { name: 'Rule Text Result', exact: true })).toBeVisible()
+})
