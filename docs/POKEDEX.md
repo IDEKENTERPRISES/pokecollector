@@ -94,6 +94,45 @@ or `--max` limits the command to that National Pokédex species range.
 
 The fetcher writes temporary files and atomically renames them, continues after individual failures, and reports missing/failed entries at the end.
 
+## Pokémon of the day (launch splash and Home)
+
+`GET /api/pokedex/splash?date=YYYY-MM-DD&lang=en|de` returns the Pokémon of the day (about 1 KB):
+`date`, `dex_id`, `name`, `generation`, `region`, `types`, `genus`, `height_m`, `weight_kg`,
+`shiny`, `facts` and `sprite_url`/`sprite_style`. It is public (it runs before sign-in and serves
+only public Pokédex data), throttled to 30 requests a minute per client, and never cached.
+`services/pokedex_splash.py` holds the owner's choices as constants:
+
+- **Same for everyone, all day:** the species comes from a fixed shuffled order of all 1025
+  (seeded Fisher-Yates from `DAILY_SEED`, indexed by days since `DAILY_EPOCH`), so nothing repeats
+  for 1025 days. The client sends its local date. One day in `SHINY_ODDS` (64) is shiny, decided
+  from the date too.
+- **Sprites (`SPRITE_SET = "showdown"`):** Pokémon Showdown's animated GIFs from the PokeAPI
+  sprites repository (`showdown`, `showdown-shiny` image kinds), falling back to the official
+  artwork and then the static sprite; 14 species (990–995, 1006, 1008, 1010, 1017, 1022–1025) have
+  no Showdown sprite yet. A 404 is remembered for 30 days as `<kind>/<id>.missing`.
+- **Facts (`services/pokedex_facts.py`):** built from PokéAPI, never the card's stats: a signature
+  move (a move only the species' evolution family learns) or its strongest level-up move, its
+  hidden ability, how it evolves, a species trait (Mythical, Legendary, Baby, single gender,
+  extreme catch rate) and one Pokédex entry that does not quote a size. English and German.
+  No per-species trivia dataset with a usable licence exists (Bulbapedia's is CC BY-NC-SA wiki
+  text), and PokéAPI's fair-use policy asks for exactly this kind of local cache.
+
+Everything fetched lives in the image cache volume and is never committed:
+
+```text
+/app/data/pokedex-images/extras/{dex_id}.json        weight, height, genus, entries, abilities, moves, chain
+/app/data/pokedex-images/facts/{move|ability|evolution-chain|item}/{name}.json
+/app/data/pokedex-images/showdown[-shiny]/{dex_id}.gif
+/app/data/pokedex-images/{artwork|sprites}-shiny/{dex_id}.png
+```
+
+A species is fetched on demand (quick: its strongest moves only, 2.5 s timeouts, at most 20 a
+minute across all clients). After each request the next two days are completed in the background
+at 5 requests a second, including every move, which is what finds signature moves. Admins can fill
+everything from Settings › Data & sync › "Download all" (`POST /api/pokedex/splash/cache`, progress
+at `GET /api/pokedex/splash/cache`): every move, then each species and its sprite, about 5,000
+requests or 17 minutes.
+
 ## Routes
 
 Frontend:
@@ -110,6 +149,10 @@ GET /api/pokedex
 GET /api/pokedex/{entry_id}
 GET /api/pokedex/images/sprites/{entry_id}.png
 GET /api/pokedex/images/artwork/{entry_id}.png
+GET /api/pokedex/images/{showdown|showdown-shiny}/{dex_id}.gif
+GET /api/pokedex/images/{sprites-shiny|artwork-shiny}/{entry_id}.png
+GET /api/pokedex/splash?date=YYYY-MM-DD&lang=en
+GET|POST /api/pokedex/splash/cache        (admin)
 GET /api/cards/search?dex_id={dex_id}
 GET /api/cards/search?pokedex_entry_id={entry_id}
 ```

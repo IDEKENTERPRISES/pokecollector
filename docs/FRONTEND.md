@@ -180,6 +180,16 @@ The shell follows `docs/IOS_UI_DESIGN.md`. `components/Layout.jsx` renders one `
 - **Accessibility:** after a navigation focus moves to `<main>` (so VoiceOver announces the new screen), the document title follows the nav bar title ("Sets · PokéCollector"), the Back button reads "Back to <parent>" (its visible text is just "Back"), and the Scan button reads "Scan, N need review" when scans wait. Large titles hand over to the compact title once the title row (not the controls under it) is under the bar.
 - **Profile** (`/profile`) holds Log out (it calls `AuthContext.logout()`, so the logout guard runs). The old top nav, bottom nav, sidebar, overflow menu and Dashboard page are gone; `PublicHomeButton` stays on `/u`.
 
+### Launch splash and the Pokémon of the day
+
+`components/splash/` (all its choices are constants in `config.js`):
+
+- **When:** once per fresh launch, the first render of a new document (cold start or reload), everywhere; never on in-app navigation, never right after the service worker's update reload or the stale-chunk reload (`suppressNextSplash()` in `pwa/register.js` sets `sessionStorage['pc.splash.suppressOnce']`), never on `/u/*`, `/invite/*` or `/__*`. Settings › Appearance › "Splash screen on launch" (`localStorage['pc.splash.enabled']`, per device, on by default). Automated browsers (`navigator.webdriver`) skip it unless a test sets `pc.splash.e2e`.
+- **What:** `LaunchSplash` (main bundle) decides, makes `#root` inert and lazy-loads `Splash` (its own chunk with `splash.css`) behind a black cover. A 16-bit Poké Ball rolls in over ground matching the Pokémon's type, twitches twice and opens on the third twitch with light in the type's colour; the Pokémon pops out, a "Wild … appeared!" box types itself out in a pixel font drawn for the app (`art.js`), shiny days sparkle, and the card shows the number, name, genus, generation, region, height and weight in both units and one of the day's facts (the next one each launch). It opens the app 2.5 s after the reveal; a tap, a click, Escape, Enter or Space skips it at any moment; Reduce Motion shows the revealed card still for 1.5 s. Focus returns to the app afterwards.
+- **Data:** `GET /api/pokedex/splash?date=` (docs/POKEDEX.md). The device keeps today's and tomorrow's entries (`localStorage['pc.splash.days.v1']`) and their sprites (Cache Storage `pokecollector-splash-v1`, plus the starter's), fetched 3 s after a splash closes, so the first launch of a day is instant and works offline. Without a stored entry the ball keeps twitching while today's loads (up to four extra twitches), then the bundled starter (Pikachu, with facts written for the app) comes out.
+- **Home** shows the same Pokémon and facts in a small card (`TodayCard.jsx`) with a link to its cards.
+- **DEV:** `/__splash` previews it with the starter or `?id=`, plus `shiny`, `slow` (4×), `still`, `hold`, `wait` (late delivery) and `controls=0` switches.
+
 ### `TabNav`
 
 Defined in `frontend/src/components/TabNav.jsx`.
