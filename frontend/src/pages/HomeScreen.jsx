@@ -23,6 +23,7 @@ import StatTile from '../components/ios/StatTile'
 import SetTile from '../components/ios/SetTile'
 import PokeBall from '../components/ios/PokeBall'
 import { TYPE_COLOURS } from '../components/ios/pokemon'
+import TodayCard from '../components/splash/TodayCard'
 import { useNavBar } from '../navigation/useNavBar'
 import {
   SCAN_JOBS_QUERY_KEY,
@@ -357,6 +358,9 @@ export default function HomeScreen() {
         </section>
       )}
       {syncOpen && <SyncSheet isOpen onClose={() => setSyncOpen(false)} />}
+
+      {/* The splash's Pokémon of the day (components/splash). */}
+      <TodayCard />
 
       <section aria-label={t('home.quickActions')} className="grid grid-cols-4 gap-2">
         <QuickAction to="/wishlist" icon={Heart} label={t('nav.wishlist')} type="fairy" />

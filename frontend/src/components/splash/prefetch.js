@@ -1,8 +1,8 @@
-// After each splash: fetch the next launch's Pokémon and its sprite, so the next cold start is
-// instant and works offline. The entry goes to localStorage (entryStore.js); the sprite goes to a
-// small Cache Storage cache holding only the next sprite and the starter's, never all 1025.
+// Fetching the Pokémon of the day ahead, so the first launch of a day is instant and works
+// offline. Entries go to localStorage (entryStore.js); sprites go to a small Cache Storage cache
+// holding only today's, tomorrow's and the starter's, never all 1025.
 import { STARTER } from './config'
-import { isSplashEntry, readSeen, writeNextEntry } from './entryStore'
+import { isSplashEntry, localDate, readDay, writeDay } from './entryStore'
 
 // Not "pc-…": resetServiceWorker() deletes those whenever the service worker is switched off.
 export const SPRITE_CACHE = 'pokecollector-splash-v1'
@@ -34,56 +34,46 @@ async function openCache(cacheStorage) {
   }
 }
 
-/** Puts a sprite in the splash cache unless it is there already. True when it is usable. */
-async function cacheSprite(cache, url, fetchImpl, timeoutMs) {
-  if (cache && await cache.match(url).catch(() => null)) return true
-  const response = await fetchWithTimeout(fetchImpl, url, { credentials: 'same-origin' }, timeoutMs)
-  if (!isImage(response)) return false
-  if (cache) await cache.put(url, response.clone()).catch(() => {})
-  return true
-}
+const defaults = () => ({
+  fetchImpl: globalThis.fetch?.bind(globalThis),
+  cacheStorage: globalThis.caches,
+  storage: globalThis.localStorage,
+  timeoutMs: TIMEOUT_MS,
+})
 
-async function prune(cache, keep) {
-  const wanted = new Set(keep.map(pathOf))
-  for (const request of await cache.keys()) {
-    if (!wanted.has(pathOf(request.url))) await cache.delete(request)
-  }
-}
-
-/** Returns 'stored', 'failed' or 'skipped'. Never throws. */
-export async function prefetchNextEntry({
-  language = 'en',
-  fetchImpl = globalThis.fetch?.bind(globalThis),
-  cacheStorage = globalThis.caches,
-  storage = globalThis.localStorage,
-  timeoutMs = TIMEOUT_MS,
-} = {}) {
-  if (!fetchImpl) return 'skipped'
+/** The server's entry for a date, or null. Never throws. */
+export async function fetchDay(date, { language = 'en', fetchImpl = defaults().fetchImpl, timeoutMs = TIMEOUT_MS } = {}) {
+  if (!fetchImpl) return null
   try {
-    const params = new URLSearchParams({ lang: language })
-    const seen = readSeen(storage)
-    if (seen) params.set('seen', seen)
+    const params = new URLSearchParams({ date, lang: language })
     const response = await fetchWithTimeout(
       fetchImpl, `/api/pokedex/splash?${params}`, { credentials: 'same-origin', cache: 'no-store' }, timeoutMs,
     )
-    if (!response?.ok) return 'failed'
+    if (!response?.ok) return null
     const entry = await response.json()
-    if (!isSplashEntry(entry)) return 'failed'
-    const cache = await openCache(cacheStorage)
-    // Store the entry only once its sprite is ready, so a stored entry always shows complete.
-    if (!(await cacheSprite(cache, entry.sprite_url, fetchImpl, timeoutMs))) return 'failed'
-    // The starter is the fallback whenever nothing is prefetched; keep its sprite too.
-    await cacheSprite(cache, STARTER.sprite_url, fetchImpl, timeoutMs).catch(() => false)
-    if (cache) await prune(cache, [entry.sprite_url, STARTER.sprite_url]).catch(() => {})
-    return writeNextEntry({ ...entry, fetched_at: Date.now() }, storage) ? 'stored' : 'failed'
+    return isSplashEntry(entry) && entry.date === date ? entry : null
   } catch {
-    return 'failed'
+    return null
+  }
+}
+
+/** Puts a sprite in the splash cache unless it is there already. True when it is usable. */
+export async function cacheSprite(url, { fetchImpl = defaults().fetchImpl, cacheStorage = defaults().cacheStorage, timeoutMs = TIMEOUT_MS } = {}) {
+  try {
+    const cache = await openCache(cacheStorage)
+    if (cache && await cache.match(url).catch(() => null)) return true
+    const response = await fetchWithTimeout(fetchImpl, url, { credentials: 'same-origin' }, timeoutMs)
+    if (!isImage(response)) return false
+    if (cache) await cache.put(url, response.clone()).catch(() => {})
+    return true
+  } catch {
+    return false
   }
 }
 
 /** A URL for the entry's sprite: a blob: URL from the splash cache when it has the file (so it
  * works offline), else the server URL. The caller revokes blob: URLs. */
-export async function spriteSource(entry, { cacheStorage = globalThis.caches } = {}) {
+export async function spriteSource(entry, { cacheStorage = defaults().cacheStorage } = {}) {
   const url = entry?.sprite_url
   if (!url) return null
   try {
@@ -93,4 +83,41 @@ export async function spriteSource(entry, { cacheStorage = globalThis.caches } =
     // fall back to the network URL
   }
   return url
+}
+
+/** Today's (or any day's) entry with its sprite cached: from the device, else from the server. */
+export async function ensureDay(date, options = {}) {
+  const { language = 'en', storage = defaults().storage } = options
+  const stored = readDay(date, storage)
+  if (stored && stored.lang === language) return stored
+  const entry = await fetchDay(date, options)
+  if (!entry) return stored
+  if (!(await cacheSprite(entry.sprite_url, options))) return stored
+  writeDay(entry, storage, localDate(0, options.now))
+  return entry
+}
+
+/** After a splash: today's and tomorrow's entries and sprites, then drop every other sprite.
+ * Returns 'stored', 'failed' or 'skipped'. Never throws. */
+export async function prefetchDays(options = {}) {
+  const settings = { ...defaults(), ...options }
+  if (!settings.fetchImpl) return 'skipped'
+  const today = localDate(0, settings.now)
+  const tomorrow = localDate(1, settings.now)
+  const entries = []
+  for (const date of [today, tomorrow]) entries.push(await ensureDay(date, settings))
+  // The starter is the fallback whenever nothing is stored; keep its sprite too.
+  await cacheSprite(STARTER.sprite_url, settings)
+  const cache = await openCache(settings.cacheStorage)
+  if (cache) {
+    const keep = new Set([STARTER.sprite_url, ...entries.filter(Boolean).map(entry => entry.sprite_url)].map(pathOf))
+    try {
+      for (const request of await cache.keys()) {
+        if (!keep.has(pathOf(request.url))) await cache.delete(request)
+      }
+    } catch {
+      // a stale sprite costs a little storage, nothing more
+    }
+  }
+  return entries[1]?.date === tomorrow ? 'stored' : 'failed'
 }

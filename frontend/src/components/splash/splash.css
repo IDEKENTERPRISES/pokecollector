@@ -1,7 +1,9 @@
 /* The launch splash (components/splash/Splash.jsx). Every time comes from config.js through the
    --pc-* custom properties Splash.jsx sets; nothing here hard-codes a delay or a duration.
-   Base styles are the final frame, and the animations fill backwards from their first keyframe,
-   so the Reduce Motion version only has to switch the animations off. */
+   What runs from the start (roll, settle, two twitches) counts from mount; the opening counts
+   from when .is-open is applied, which is the third twitch, or later while today's Pokémon is
+   still loading. Base styles are the final frame and animations fill backwards from their first
+   keyframe, so the Reduce Motion version only has to switch the animations off. */
 
 :root {
   --z-splash: 10000; /* above everything, including the update banner and toasts */
@@ -9,6 +11,8 @@
 
 .pc-splash {
   --px: 6px; /* one art pixel */
+  --font-px: 2px; /* one pixel of the box's font */
+  --pc-light: color-mix(in srgb, var(--pc-type, #ffffff) 70%, #ffffff);
   position: fixed;
   inset: 0;
   z-index: var(--z-splash);
@@ -16,11 +20,11 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: calc(var(--px) * 3);
+  gap: calc(var(--px) * 2.5);
   padding:
-    max(24px, env(safe-area-inset-top))
+    max(20px, env(safe-area-inset-top))
     max(16px, env(safe-area-inset-right))
-    max(72px, calc(env(safe-area-inset-bottom) + 60px))
+    max(68px, calc(env(safe-area-inset-bottom) + 56px))
     max(16px, env(safe-area-inset-left));
   background: #000;
   color: #fff;
@@ -41,16 +45,16 @@
   animation: none;
 }
 
-/* ── The scene: grass, ball, light and Pokémon, measured in art pixels ── */
+/* ── The scene, measured in art pixels ── */
 
 .pc-splash__scene {
   position: relative;
   flex: none;
   width: calc(var(--px) * 48);
-  height: calc(var(--px) * 34);
+  height: calc(var(--px) * 30);
 }
 
-.pc-splash__grass {
+.pc-splash__ground {
   position: absolute;
   z-index: 4;
   left: 0;
@@ -69,21 +73,22 @@
   width: calc(var(--px) * 16);
   height: calc(var(--px) * 16);
   margin-left: calc(var(--px) * -8);
-  animation:
-    pc-splash-roll var(--pc-roll) cubic-bezier(0.25, 0.46, 0.45, 0.94) both,
-    pc-splash-out 200ms ease-in calc(var(--pc-pop-at) + 60ms) both;
+  animation: pc-splash-roll var(--pc-roll) cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
 }
 
+.pc-splash__ball-fade,
 .pc-splash__settle,
 .pc-splash__twitch,
-.pc-splash__spin {
+.pc-splash__spin,
+.pc-splash__wait {
   width: 100%;
   height: 100%;
 }
 
 /* The ball rocks and twitches on the ground, around its lowest point. */
 .pc-splash__settle,
-.pc-splash__twitch {
+.pc-splash__twitch,
+.pc-splash__wait {
   transform-origin: 50% 100%;
 }
 
@@ -99,8 +104,9 @@
   animation: pc-splash-twitch var(--pc-twitch) ease-in-out var(--pc-twitch-2);
 }
 
-.pc-splash__twitch--3 {
-  animation: pc-splash-twitch var(--pc-twitch) ease-in-out var(--pc-twitch-3);
+/* Each extra twitch while today's Pokémon loads (Splash.jsx re-keys this element). */
+.pc-splash__wait.is-twitching {
+  animation: pc-splash-twitch var(--pc-twitch) ease-in-out;
 }
 
 /* Rolling turns in 45-degree frames, like a sprite, slowing down with the ball. */
@@ -119,10 +125,9 @@
 /* Hinged at the back: the top half swings open around the left end of the band. */
 .pc-splash__lid {
   transform-origin: 6.25% 100%;
-  animation: pc-splash-lid var(--pc-lid) cubic-bezier(0.34, 1.56, 0.64, 1) var(--pc-open-at) both;
 }
 
-/* Behind the Pokémon, so it steps out of the light. */
+/* The light, in the Pokémon's type colour, behind the Pokémon so it steps out of it. */
 .pc-splash__burst {
   position: absolute;
   z-index: 1;
@@ -132,19 +137,18 @@
   width: calc(var(--px) * 15);
   height: calc(var(--px) * 15);
   margin-left: calc(var(--px) * -7.5);
+  color: var(--pc-light);
   opacity: 0;
-  filter: drop-shadow(0 0 calc(var(--px) * 2) #fff);
-  animation: pc-splash-burst var(--pc-burst) ease-out var(--pc-open-at) both;
+  filter: drop-shadow(0 0 calc(var(--px) * 2) var(--pc-light));
 }
 
 .pc-splash__flash {
   position: absolute;
   z-index: 5;
   inset: 0;
-  background: #fff;
+  background: color-mix(in srgb, var(--pc-type, #ffffff) 35%, #ffffff);
   opacity: 0;
   pointer-events: none;
-  animation: pc-splash-flash var(--pc-flash) ease-out var(--pc-flash-at) both;
 }
 
 /* A soft glow in the Pokémon's type colour, like the app's header blooms. */
@@ -157,7 +161,6 @@
   height: calc(var(--px) * 30);
   margin-left: calc(var(--px) * -22);
   background: radial-gradient(closest-side, color-mix(in srgb, var(--pc-type) 34%, transparent), transparent);
-  animation: pc-splash-fade var(--pc-pop) ease-out var(--pc-pop-at) both;
 }
 
 .pc-splash__pokemon {
@@ -171,18 +174,111 @@
   justify-content: center;
 }
 
-.pc-splash__sprite {
+.pc-splash__sprite-box {
   position: relative; /* Splash.jsx centres the visible pixels with `left` */
+  flex: none;
+}
+
+.pc-splash__sprite-box:not([data-sized]) {
+  visibility: hidden;
+}
+
+.pc-splash__sprite {
   display: block;
+  width: 100%;
+  height: 100%;
   max-width: none;
+  transform-origin: 50% 100%;
+}
+
+.pc-splash__sprite[data-style='pixel'] {
   image-rendering: crisp-edges;
   image-rendering: pixelated;
-  transform-origin: 50% 100%;
+}
+
+.pc-splash__sparkle {
+  position: absolute;
+  width: calc(var(--px) * 3.5);
+  height: calc(var(--px) * 3.5);
+  opacity: 0;
+}
+
+/* Before the ball opens, nothing of the reveal is there yet. */
+.pc-splash:not(.is-open) :is(.pc-splash__pokemon, .pc-splash__aura, .pc-splash__burst, .pc-splash__box, .pc-splash__card) {
+  visibility: hidden;
+}
+
+/* ── The opening: every delay counts from when .is-open was applied ── */
+
+.is-open .pc-splash__twitch--open {
+  animation: pc-splash-twitch var(--pc-twitch) ease-in-out var(--pc-open-twitch-at);
+}
+
+.is-open .pc-splash__lid {
+  animation: pc-splash-lid var(--pc-lid) cubic-bezier(0.34, 1.56, 0.64, 1) var(--pc-open-at) both;
+}
+
+.is-open .pc-splash__burst {
+  animation: pc-splash-burst var(--pc-burst) ease-out var(--pc-open-at) both;
+}
+
+.is-open .pc-splash__flash {
+  animation: pc-splash-flash var(--pc-flash) ease-out var(--pc-flash-at) both;
+}
+
+.is-open .pc-splash__ball-fade {
+  animation: pc-splash-out 200ms ease-in var(--pc-ball-out-at) both;
+}
+
+.is-open .pc-splash__aura {
+  animation: pc-splash-fade var(--pc-pop) ease-out var(--pc-pop-at) both;
+}
+
+.is-open .pc-splash__sprite {
   animation: pc-splash-pop var(--pc-pop) ease-out var(--pc-pop-at) both;
 }
 
-.pc-splash__sprite:not([data-sized]) {
-  visibility: hidden;
+.is-open .pc-splash__sparkle {
+  animation: pc-splash-twinkle var(--pc-sparkle) steps(4, end) calc(var(--pc-sparkle-at) + var(--pc-sparkle-delay, 0ms)) 3 both;
+}
+
+.is-open .pc-splash__box {
+  animation: pc-splash-box 160ms steps(2, end) var(--pc-box-at) both;
+}
+
+.is-open .pc-splash__line--1 {
+  animation: pc-splash-type var(--pc-type-1) steps(var(--pc-chars-1), end) var(--pc-type-1-at) both;
+}
+
+.is-open .pc-splash__line--2 {
+  animation: pc-splash-type var(--pc-type-2) steps(var(--pc-chars-2), end) var(--pc-type-2-at) both;
+}
+
+.is-open .pc-splash__card {
+  animation: pc-splash-card var(--pc-card) ease-out var(--pc-card-at) both;
+}
+
+/* ── "Wild … appeared!": a pixel text box ── */
+
+.pc-splash__box {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--font-px) * 4);
+  box-sizing: border-box;
+  width: min(100%, calc(var(--px) * 48));
+  padding: calc(var(--font-px) * 6) calc(var(--font-px) * 8);
+  border: calc(var(--font-px) * 2) solid #26262e;
+  border-radius: calc(var(--font-px) * 4);
+  background: #f8f8f6;
+  box-shadow: inset 0 0 0 calc(var(--font-px) * 1) #f8f8f6, inset 0 0 0 calc(var(--font-px) * 2) #a4a8b8;
+  color: #26262e;
+}
+
+.pc-splash__line {
+  display: block;
+  flex: none;
 }
 
 /* ── The Pokédex card ── */
@@ -194,7 +290,6 @@
   align-items: center;
   max-width: min(360px, 100%);
   text-align: center;
-  animation: pc-splash-card var(--pc-card) ease-out var(--pc-card-at) both;
 }
 
 .pc-splash__number {
@@ -214,23 +309,52 @@
   background: var(--pc-type);
 }
 
+.pc-splash__shiny {
+  color: #ffd94a;
+  letter-spacing: 0.02em;
+}
+
 .pc-splash__name {
-  margin: 4px 0 0;
+  margin: 2px 0 0;
   font: 800 28px/34px var(--font-display, ui-rounded, -apple-system, system-ui, sans-serif);
   color: #fff;
 }
 
 .pc-splash__meta {
-  margin: 2px 0 0;
+  margin: 0;
   font-size: 15px;
   line-height: 20px;
   color: var(--color-text-secondary, rgba(235, 235, 245, 0.6));
+}
+
+.pc-splash__stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px 18px;
+  margin: 8px 0 0;
+  font-size: 15px;
+  line-height: 20px;
   font-variant-numeric: tabular-nums;
+}
+
+.pc-splash__stats div {
+  display: flex;
+  gap: 6px;
+}
+
+.pc-splash__stats dt {
+  color: var(--color-text-secondary, rgba(235, 235, 245, 0.6));
+}
+
+.pc-splash__stats dd {
+  margin: 0;
+  color: #fff;
 }
 
 .pc-splash__fact {
   display: -webkit-box;
-  max-width: 34ch;
+  max-width: 36ch;
   margin: 12px 0 0;
   overflow: hidden;
   font-size: 15px;
@@ -239,6 +363,19 @@
   text-wrap: pretty;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 4;
+}
+
+.pc-splash__fact-label {
+  display: block;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  color: var(--pc-light);
+}
+
+.pc-splash__fact strong {
+  font-weight: 600;
+  color: #fff;
 }
 
 .pc-splash__live {
@@ -259,7 +396,7 @@
   position: absolute;
   z-index: 6;
   left: 50%;
-  bottom: max(16px, calc(env(safe-area-inset-bottom) + 8px));
+  bottom: max(14px, calc(env(safe-area-inset-bottom) + 6px));
   min-width: 44px;
   min-height: 44px;
   padding: 0 20px;
@@ -291,22 +428,28 @@
   }
 }
 
-/* ── Reduce Motion: the revealed card, still, with only a fade ── */
+/* ── Reduce Motion: no roll, twitch or flash; the revealed card with only a fade ── */
 
 .pc-splash.is-still {
   animation: pc-splash-fade 240ms ease-out backwards;
 }
 
-.pc-splash.is-still .pc-splash__ball,
+.pc-splash.is-still.is-open .pc-splash__ball,
 .pc-splash.is-still .pc-splash__burst,
 .pc-splash.is-still .pc-splash__flash {
   display: none;
 }
 
 .pc-splash.is-still .pc-splash__scene *,
+.pc-splash.is-still .pc-splash__box,
+.pc-splash.is-still .pc-splash__line,
 .pc-splash.is-still .pc-splash__card,
 .pc-splash.is-still .pc-splash__skip {
-  animation: none;
+  animation: none !important;
+}
+
+.pc-splash.is-still .pc-splash__sparkle {
+  opacity: 1;
 }
 
 /* ── Sizes and orientations ── */
@@ -317,9 +460,21 @@
   }
 }
 
-@media (min-width: 768px) and (min-height: 760px) {
+@media (max-height: 700px) and (orientation: portrait) {
+  .pc-splash {
+    --px: 5px;
+    gap: calc(var(--px) * 2);
+  }
+
+  .pc-splash__fact {
+    -webkit-line-clamp: 3;
+  }
+}
+
+@media (min-width: 768px) and (min-height: 860px) {
   .pc-splash {
     --px: 8px;
+    --font-px: 3px;
   }
 
   .pc-splash__name {
@@ -328,19 +483,40 @@
   }
 }
 
-/* Phones on their side: the scene and the card side by side. */
+/* Phones on their side: the scene on the left, the box and the card on the right. */
 @media (orientation: landscape) and (max-height: 520px) {
   .pc-splash {
-    --px: 5px;
-    flex-direction: row;
-    gap: 40px;
-    padding-bottom: max(56px, calc(env(safe-area-inset-bottom) + 48px));
+    --px: 4px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 340px);
+    grid-template-rows: auto auto;
+    align-content: center;
+    justify-content: center;
+    column-gap: 32px;
+    row-gap: 10px;
+    padding-bottom: max(52px, calc(env(safe-area-inset-bottom) + 44px));
+  }
+
+  .pc-splash__scene {
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+
+  .pc-splash__box {
+    width: 100%;
   }
 
   .pc-splash__card {
     align-items: flex-start;
-    max-width: min(340px, 45vw);
     text-align: left;
+  }
+
+  .pc-splash__stats {
+    justify-content: flex-start;
+  }
+
+  .pc-splash__fact {
+    -webkit-line-clamp: 3;
   }
 }
 
@@ -417,6 +593,22 @@
   55% { transform: scale(1.14); filter: brightness(0) invert(1); }
   80% { transform: scale(0.96); filter: brightness(1) invert(0); }
   100% { opacity: 1; transform: scale(1); filter: brightness(1) invert(0); }
+}
+
+@keyframes pc-splash-twinkle {
+  0% { opacity: 0; transform: scale(0.4) rotate(0deg); }
+  50% { opacity: 1; transform: scale(1) rotate(45deg); }
+  100% { opacity: 0; transform: scale(0.4) rotate(90deg); }
+}
+
+@keyframes pc-splash-box {
+  from { opacity: 0; transform: translateY(calc(var(--font-px) * 4)); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes pc-splash-type {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
 }
 
 @keyframes pc-splash-card {

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { NEXT_KEY, SEEN_KEY, readNextEntry } from './entryStore.js'
-import { SPRITE_CACHE, prefetchNextEntry, spriteSource } from './prefetch.js'
-import { encodeSeen } from './shuffleBag.js'
+import { DAYS_KEY, readDay } from './entryStore.js'
+import { SPRITE_CACHE, cacheSprite, ensureDay, fetchDay, prefetchDays, spriteSource } from './prefetch.js'
 
 function memoryStorage(initial = {}) {
   const values = new Map(Object.entries(initial))
@@ -30,105 +29,133 @@ function fakeCaches() {
   return {
     open,
     match: async (url, { cacheName }) => (stores.has(cacheName) ? (await open(cacheName)).match(url) : undefined),
-    paths: name => [...(stores.get(name)?.keys() ?? [])],
+    paths: name => [...(stores.get(name)?.keys() ?? [])].sort(),
   }
 }
 
-const entry = {
-  dex_id: 921,
-  name: 'Pawmi',
+const NOW = new Date(2026, 9, 21, 9, 30)
+const day = (date, dexId = 921) => ({
+  date,
+  dex_id: dexId,
+  name: `Pokémon ${dexId}`,
   lang: 'en',
   generation: 9,
   region: 'Paldea',
   types: ['electric'],
+  height_m: 0.3,
   weight_kg: 2.5,
-  fact: 'A fact.',
-  sprite_url: '/api/pokedex/images/sprites/921.png',
-}
+  shiny: false,
+  facts: [{ kind: 'trait', text: 'A test fact.' }],
+  sprite_url: `/api/pokedex/images/showdown/${dexId}.gif`,
+  sprite_style: 'animated',
+})
 
-const image = () => new Response(new Blob(['png']), { headers: { 'Content-Type': 'image/png' } })
+const image = () => new Response(new Blob(['gif']), { headers: { 'Content-Type': 'image/gif' } })
 
-function fakeFetch({ splash = () => Response.json(entry), sprite = image } = {}) {
+function fakeFetch({ entries = { '2026-10-21': day('2026-10-21', 921), '2026-10-22': day('2026-10-22', 7) }, sprite = image, splash } = {}) {
   const calls = []
   const fetchImpl = async (url, options) => {
     calls.push({ url, options })
-    if (url.startsWith('/api/pokedex/splash')) return splash()
-    if (url.startsWith('/api/pokedex/images/')) return sprite(url)
+    const parsed = new URL(url, 'http://localhost')
+    if (parsed.pathname === '/api/pokedex/splash') {
+      if (splash) return splash(parsed)
+      const found = entries[parsed.searchParams.get('date')]
+      return found ? Response.json(found) : new Response('{}', { status: 404 })
+    }
+    if (parsed.pathname.startsWith('/api/pokedex/images/')) return sprite(parsed.pathname)
     throw new Error(`unexpected ${url}`)
   }
   return { fetchImpl, calls }
 }
 
-describe('prefetchNextEntry', () => {
-  it('stores the next entry once its sprite and the starter sprite are cached', async () => {
-    const storage = memoryStorage({ [SEEN_KEY]: encodeSeen([25]) })
-    const cacheStorage = fakeCaches()
+describe('fetchDay', () => {
+  it('asks for a date in the app language and checks the answer', async () => {
     const { fetchImpl, calls } = fakeFetch()
-
-    expect(await prefetchNextEntry({ language: 'de', fetchImpl, cacheStorage, storage })).toBe('stored')
-
+    expect(await fetchDay('2026-10-21', { language: 'de', fetchImpl })).toMatchObject({ dex_id: 921 })
     const request = new URL(calls[0].url, 'http://localhost')
-    expect(request.pathname).toBe('/api/pokedex/splash')
-    expect(request.searchParams.get('lang')).toBe('de')
-    expect(request.searchParams.get('seen')).toBe(encodeSeen([25]))
+    expect(Object.fromEntries(request.searchParams)).toEqual({ date: '2026-10-21', lang: 'de' })
     expect(calls[0].options).toMatchObject({ cache: 'no-store', credentials: 'same-origin' })
-    expect(readNextEntry(storage)).toMatchObject({ dex_id: 921, name: 'Pawmi' })
-    expect(cacheStorage.paths(SPRITE_CACHE).sort()).toEqual([
-      '/api/pokedex/images/animated/25.gif',
-      '/api/pokedex/images/sprites/921.png',
-    ])
   })
 
-  it('keeps only the next sprite and the starter, never a growing pile', async () => {
-    const storage = memoryStorage()
-    const cacheStorage = fakeCaches()
-    const old = await cacheStorage.open(SPRITE_CACHE)
-    await old.put('/api/pokedex/images/animated/7.gif', image())
-    await prefetchNextEntry({ fetchImpl: fakeFetch().fetchImpl, cacheStorage, storage })
-    expect(cacheStorage.paths(SPRITE_CACHE)).not.toContain('/api/pokedex/images/animated/7.gif')
-    expect(cacheStorage.paths(SPRITE_CACHE)).toHaveLength(2)
-  })
-
-  it('omits an empty bag and works without Cache Storage', async () => {
-    const storage = memoryStorage()
-    const { fetchImpl, calls } = fakeFetch()
-    expect(await prefetchNextEntry({ fetchImpl, cacheStorage: undefined, storage })).toBe('stored')
-    expect(new URL(calls[0].url, 'http://localhost').searchParams.has('seen')).toBe(false)
-  })
-
-  it('keeps the previous entry when the server, the payload or the sprite fails', async () => {
-    const previous = JSON.stringify({ ...entry, dex_id: 7, name: 'Squirtle', sprite_url: '/api/pokedex/images/animated/7.gif' })
+  it('returns null for errors, junk, another date or no network', async () => {
     const cases = [
       fakeFetch({ splash: () => new Response('nope', { status: 503 }) }),
-      fakeFetch({ splash: () => Response.json({ ...entry, sprite_url: 'https://example.com/x.png' }) }),
-      fakeFetch({ sprite: () => new Response('missing', { status: 404 }) }),
-      fakeFetch({ sprite: () => new Response('<html>', { headers: { 'Content-Type': 'text/html' } }) }),
+      fakeFetch({ splash: () => Response.json({ name: 'x' }) }),
+      fakeFetch({ splash: () => Response.json(day('2026-10-20')) }),
       fakeFetch({ splash: () => { throw new TypeError('offline') } }),
     ]
-    for (const { fetchImpl } of cases) {
-      const storage = memoryStorage({ [NEXT_KEY]: previous })
-      expect(await prefetchNextEntry({ fetchImpl, cacheStorage: fakeCaches(), storage })).toBe('failed')
-      expect(readNextEntry(storage).name).toBe('Squirtle')
-    }
-  })
-
-  it('does nothing without fetch', async () => {
-    expect(await prefetchNextEntry({ fetchImpl: null, storage: memoryStorage() })).toBe('skipped')
+    for (const { fetchImpl } of cases) expect(await fetchDay('2026-10-21', { fetchImpl })).toBeNull()
+    expect(await fetchDay('2026-10-21', { fetchImpl: null })).toBeNull()
   })
 })
 
-describe('spriteSource', () => {
-  it('serves a cached sprite as a blob URL, so it shows offline', async () => {
+describe('ensureDay', () => {
+  it('uses the stored entry, else fetches, caches the sprite and stores it', async () => {
+    const storage = memoryStorage()
     const cacheStorage = fakeCaches()
+    const { fetchImpl, calls } = fakeFetch()
+    const first = await ensureDay('2026-10-21', { fetchImpl, cacheStorage, storage, now: NOW })
+    expect(first.dex_id).toBe(921)
+    expect(readDay('2026-10-21', storage).dex_id).toBe(921)
+    expect(cacheStorage.paths(SPRITE_CACHE)).toEqual(['/api/pokedex/images/showdown/921.gif'])
+    const callsBefore = calls.length
+    expect((await ensureDay('2026-10-21', { fetchImpl, cacheStorage, storage, now: NOW })).dex_id).toBe(921)
+    expect(calls.length).toBe(callsBefore)
+  })
+
+  it('fetches again after the app language changed, keeping the old entry if that fails', async () => {
+    const storage = memoryStorage()
+    await ensureDay('2026-10-21', { fetchImpl: fakeFetch().fetchImpl, cacheStorage: fakeCaches(), storage, now: NOW })
+    const offline = fakeFetch({ splash: () => { throw new TypeError('offline') } })
+    expect((await ensureDay('2026-10-21', { language: 'de', fetchImpl: offline.fetchImpl, storage, now: NOW })).lang).toBe('en')
+  })
+
+  it('does not store an entry whose sprite cannot be fetched', async () => {
+    const storage = memoryStorage()
+    const { fetchImpl } = fakeFetch({ sprite: () => new Response('missing', { status: 404 }) })
+    expect(await ensureDay('2026-10-21', { fetchImpl, cacheStorage: fakeCaches(), storage, now: NOW })).toBeNull()
+    expect(storage.values.has(DAYS_KEY)).toBe(false)
+  })
+})
+
+describe('prefetchDays', () => {
+  it('stores today and tomorrow, and keeps only their sprites and the starter', async () => {
+    const storage = memoryStorage()
+    const cacheStorage = fakeCaches()
+    await (await cacheStorage.open(SPRITE_CACHE)).put('/api/pokedex/images/showdown/150.gif', image())
+    expect(await prefetchDays({ fetchImpl: fakeFetch().fetchImpl, cacheStorage, storage, now: NOW })).toBe('stored')
+    expect(readDay('2026-10-22', storage).dex_id).toBe(7)
+    expect(cacheStorage.paths(SPRITE_CACHE)).toEqual([
+      '/api/pokedex/images/showdown/25.gif',
+      '/api/pokedex/images/showdown/7.gif',
+      '/api/pokedex/images/showdown/921.gif',
+    ])
+  })
+
+  it('works without Cache Storage, and reports a failure', async () => {
+    expect(await prefetchDays({ fetchImpl: fakeFetch().fetchImpl, cacheStorage: undefined, storage: memoryStorage(), now: NOW })).toBe('stored')
+    const down = fakeFetch({ splash: () => new Response('', { status: 503 }) })
+    expect(await prefetchDays({ fetchImpl: down.fetchImpl, cacheStorage: fakeCaches(), storage: memoryStorage(), now: NOW })).toBe('failed')
+    expect(await prefetchDays({ fetchImpl: null, storage: memoryStorage() })).toBe('skipped')
+  })
+})
+
+describe('sprites', () => {
+  it('cacheSprite accepts images only', async () => {
+    const cacheStorage = fakeCaches()
+    const html = fakeFetch({ sprite: () => new Response('<html>', { headers: { 'Content-Type': 'text/html' } }) })
+    expect(await cacheSprite('/api/pokedex/images/showdown/1.gif', { fetchImpl: html.fetchImpl, cacheStorage })).toBe(false)
+    expect(await cacheSprite('/api/pokedex/images/showdown/1.gif', { fetchImpl: fakeFetch().fetchImpl, cacheStorage })).toBe(true)
+  })
+
+  it('spriteSource serves a cached sprite as a blob URL, else the server URL', async () => {
+    const cacheStorage = fakeCaches()
+    const entry = day('2026-10-21')
+    expect(await spriteSource(entry, { cacheStorage })).toBe(entry.sprite_url)
     await (await cacheStorage.open(SPRITE_CACHE)).put(entry.sprite_url, image())
     const source = await spriteSource(entry, { cacheStorage })
     expect(source.startsWith('blob:')).toBe(true)
     URL.revokeObjectURL(source)
-  })
-
-  it('falls back to the server URL', async () => {
-    expect(await spriteSource(entry, { cacheStorage: fakeCaches() })).toBe(entry.sprite_url)
-    expect(await spriteSource(entry, { cacheStorage: undefined })).toBe(entry.sprite_url)
-    expect(await spriteSource({}, { cacheStorage: undefined })).toBeNull()
+    expect(await spriteSource({}, { cacheStorage })).toBeNull()
   })
 })
