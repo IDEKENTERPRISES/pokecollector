@@ -9,10 +9,11 @@ from services.client_ip import client_ip
 from services.display_language import get_tcgdex_display_language
 from services.pokedex import MAX_DEX_ID, aggregate_pokedex, pokedex_summary, species_detail
 from services.pokedex_forms import FORM_FAMILY_PATTERN, get_entry
-from services.pokedex_images import ANIMATED_MAX_DEX_ID, cache_path, fetch_image, media_type
+from services.pokedex_images import cache_path, fetch_image, media_type
 from services.pokedex_splash import (
-    SEEN_MAX_CHARS,
-    decode_seen,
+    FALLBACKS,
+    parse_day,
+    schedule_prewarm,
     splash_cache_warmer,
     splash_entry,
     splash_throttle,
@@ -61,20 +62,30 @@ def get_pokedex_summary(
     return pokedex_summary(db, current_user.id)
 
 
+def _cached_image(kinds, image_id: int):
+    """The first of these images that is cached or can be fetched, as (kind, path)."""
+    for kind in kinds:
+        try:
+            path = cache_path(kind, image_id)
+            if not path.is_file():
+                path = fetch_image(kind, image_id)
+        except Exception:
+            path = None
+        if path and path.is_file():
+            return kind, path
+    return None, None
+
+
 @router.get("/images/{kind}/{entry_id}.png", include_in_schema=False)
 def get_species_image(kind: str, entry_id: str):
-    """Serve a persistent local image, populating a missing cache entry lazily."""
+    """Serve a persistent local image, populating a missing cache entry lazily. The splash's
+    shiny kinds fall back along services/pokedex_splash.FALLBACKS when one is missing upstream."""
     entry = get_entry(entry_id)
-    if kind not in {"sprites", "artwork"} or not entry:
+    if kind not in {"sprites", "artwork", "sprites-shiny", "artwork-shiny"} or not entry:
         raise HTTPException(status_code=404, detail="Image not found")
     image_id = int(entry.get("image_id") or entry["dex_id"])
-    try:
-        path = cache_path(kind, image_id)
-        if not path.is_file():
-            path = fetch_image(kind, image_id)
-    except Exception:
-        path = None
-    if not path or not path.is_file():
+    served, path = _cached_image((kind, *FALLBACKS.get(kind, ())), image_id)
+    if not path:
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(
         path,
@@ -85,39 +96,34 @@ def get_species_image(kind: str, entry_id: str):
 
 @router.get("/images/{kind}/{dex_id}.gif", include_in_schema=False)
 def get_species_animation(kind: str, dex_id: int):
-    """An animated pixel sprite for the splash screen, cached like the PNGs above. Species
-    without one (after Black/White, or missing upstream) get the static sprite instead."""
-    if kind not in {"animated", "showdown"} or not 1 <= dex_id <= MAX_DEX_ID:
+    """An animated sprite for the Pokémon of the day, cached like the PNGs above. A species
+    without one gets the official artwork, then the static sprite (FALLBACKS)."""
+    if kind not in {"showdown", "showdown-shiny", "animated"} or not 1 <= dex_id <= MAX_DEX_ID:
         raise HTTPException(status_code=404, detail="Image not found")
-    candidates = [(kind, dex_id)] if kind == "showdown" or dex_id <= ANIMATED_MAX_DEX_ID else []
-    for image_kind, image_id in [*candidates, ("sprites", dex_id)]:
-        try:
-            path = cache_path(image_kind, image_id)
-            if not path.is_file():
-                path = fetch_image(image_kind, image_id)
-        except Exception:
-            path = None
-        if path and path.is_file():
-            return FileResponse(
-                path,
-                media_type=media_type(image_kind),
-                headers={"Cache-Control": "public, max-age=604800"},
-            )
-    raise HTTPException(status_code=404, detail="Image not found")
+    served, path = _cached_image((kind, *FALLBACKS.get(kind, ())), dex_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(
+        path,
+        media_type=media_type(served),
+        headers={"Cache-Control": "public, max-age=604800"},
+    )
 
 
 @router.get("/splash")
 def get_splash(
     request: Request,
     response: Response,
+    date: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     lang: str | None = Query(None, max_length=16),
-    seen: str | None = Query(None, max_length=SEEN_MAX_CHARS),
     dex_id: int | None = Query(None, alias="id", ge=1, le=MAX_DEX_ID),
+    shiny: bool | None = None,
 ):
-    """One random species for the launch splash screen (about 0.5 KB).
+    """The Pokémon of the day for the launch splash and Home (about 1 KB).
 
-    Public, because it only serves public Pokédex data and runs before sign-in, but throttled
-    per client. ``seen`` is the device's shuffle bag (see services/pokedex_splash.py)."""
+    ``date`` is the client's local date; every device gets the same Pokémon for it. Public,
+    because it only serves public Pokédex data and runs before sign-in, but throttled per client.
+    ``id`` and ``shiny`` pick a species for the DEV preview."""
     retry_after = splash_throttle.hit(client_ip(request))
     if retry_after:
         raise HTTPException(
@@ -125,8 +131,15 @@ def get_splash(
             detail="Too many requests",
             headers={"Retry-After": str(retry_after), "Cache-Control": "no-store"},
         )
+    try:
+        day = parse_day(date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid date")
     response.headers["Cache-Control"] = "no-store"
-    return splash_entry(lang=lang, seen=decode_seen(seen), requested_id=dex_id)
+    entry = splash_entry(day=day, lang=lang, requested_id=dex_id, shiny=shiny)
+    if dex_id is None:
+        schedule_prewarm(day)
+    return entry
 
 
 @router.get("/splash/cache")
@@ -139,7 +152,7 @@ def get_splash_cache(current_user: User = Depends(get_current_user)):
 
 @router.post("/splash/cache")
 def start_splash_cache(current_user: User = Depends(get_current_user)):
-    """Download every species' splash data and sprite in the background (about 10 minutes)."""
+    """Download every species' facts and sprite in the background (about 17 minutes)."""
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     return splash_cache_warmer.start()

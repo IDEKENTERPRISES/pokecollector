@@ -15,16 +15,23 @@ MAX_IMAGE_ID = 20000  # PokeAPI form IDs currently use the 10000 range.
 # Black/White's animated sprites cover the first five generations only.
 ANIMATED_MAX_DEX_ID = 649
 CACHE_ROOT = Path(os.environ.get("POKEDEX_IMAGE_CACHE_DIR", "/app/data/pokedex-images"))
+_REPO = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon"
 URLS = {
-    "sprites": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{dex_id}.png",
-    "artwork": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/{dex_id}.png",
-    # The splash screen's pixel sprites (services/pokedex_splash.py).
-    "animated": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/{dex_id}.gif",
-    "showdown": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/showdown/{dex_id}.gif",
+    "sprites": _REPO + "/{dex_id}.png",
+    "artwork": _REPO + "/other/official-artwork/{dex_id}.png",
+    # The splash screen's Pokémon of the day (services/pokedex_splash.py).
+    "sprites-shiny": _REPO + "/shiny/{dex_id}.png",
+    "artwork-shiny": _REPO + "/other/official-artwork/shiny/{dex_id}.png",
+    "showdown": _REPO + "/other/showdown/{dex_id}.gif",
+    "showdown-shiny": _REPO + "/other/showdown/shiny/{dex_id}.gif",
+    "animated": _REPO + "/versions/generation-v/black-white/animated/{dex_id}.gif",
 }
-EXTENSIONS = {"sprites": "png", "artwork": "png", "animated": "gif", "showdown": "gif"}
+EXTENSIONS = {kind: url.rsplit(".", 1)[1] for kind, url in URLS.items()}
 MEDIA_TYPES = {"png": "image/png", "gif": "image/gif"}
 USER_AGENT = "pokecollector-pokedex-cache/1.0"
+# A 404 is remembered beside the cache, so a missing image is not requested again on every view;
+# after this long upstream is asked again, in case the image has been added since.
+MISSING_TTL_SECONDS = 30 * 24 * 3600
 
 
 def validate_kind(kind: str) -> str:
@@ -50,6 +57,19 @@ def media_type(kind: str) -> str:
     return MEDIA_TYPES[EXTENSIONS[validate_kind(kind)]]
 
 
+def missing_path(kind: str, dex_id: int) -> Path:
+    validate_kind(kind)
+    return CACHE_ROOT / kind / f"{validate_dex_id(dex_id)}.missing"
+
+
+def is_known_missing(kind: str, dex_id: int) -> bool:
+    """True while a recent 404 for this image is remembered."""
+    try:
+        return time.time() - missing_path(kind, dex_id).stat().st_mtime < MISSING_TTL_SECONDS
+    except OSError:
+        return False
+
+
 def fetch_image(
     kind: str,
     dex_id: int,
@@ -61,12 +81,15 @@ def fetch_image(
     path = cache_path(kind, dex_id)
     if path.is_file() and not refresh:
         return path
+    if not refresh and is_known_missing(kind, dex_id):
+        return None
     path.parent.mkdir(parents=True, exist_ok=True)
     owns_client = client is None
     client = client or httpx.Client(timeout=timeout, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
     try:
         response = client.get(URLS[kind].format(dex_id=dex_id))
         if response.status_code == 404:
+            missing_path(kind, dex_id).touch()
             return None
         response.raise_for_status()
         if not response.content:

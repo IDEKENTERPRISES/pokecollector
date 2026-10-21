@@ -1,12 +1,16 @@
 """Per-species Pokédex extras for the splash screen, cached from PokéAPI.
 
 The bundled catalogue (``data/pokedex.json``) has numbers, names, generations, regions and
-types. The splash screen also wants a weight and a Pokédex entry, so the first time a species
-is needed its ``pokemon/{id}`` and ``pokemon-species/{id}`` resources are fetched from PokéAPI
-and reduced to one small JSON file:
+types. The splash screen also wants the height, weight and genus, plus what its fun facts are
+built from (services/pokedex_facts.py), so the first time a species is needed its
+``pokemon/{id}`` and ``pokemon-species/{id}`` resources are fetched from PokéAPI and reduced to
+one small JSON file:
 
-    {"v": 1, "dex_id": 25, "weight_kg": 6.0, "height_m": 0.4,
-     "genus": {"en": "Mouse Pokémon", ...}, "flavor": {"en": ["...", ...], "de": [...]}}
+    {"v": 2, "dex_id": 25, "weight_kg": 6.0, "height_m": 0.4, "genus": {"en": "Mouse Pokémon"},
+     "flavor": {"en": ["...", ...], "de": [...]},
+     "abilities": [{"name": "static", "hidden": false}, ...],
+     "moves": {"level": [["thunder", 44], ...], "all": ["volt-tackle", ...]},
+     "chain_id": 10, "traits": {"legendary": false, "capture_rate": 190, ...}}
 
 The files live in ``<POKEDEX_IMAGE_CACHE_DIR>/extras``, beside the sprite cache, so they share
 its persistent volume. Fetched texts are never committed to the repository.
@@ -31,7 +35,8 @@ MAX_DEX_ID = 1025
 POKEAPI_BASE = "https://pokeapi.co/api/v2"
 # Languages kept from PokéAPI's genera and flavour texts. The catalogue has names in these too.
 EXTRAS_LANGUAGES = ("en", "de")
-EXTRAS_VERSION = 1
+# Version 2 added what the fun facts need; older records are fetched again.
+EXTRAS_VERSION = 2
 MAX_TEXTS_PER_LANGUAGE = 40
 USER_AGENT = pokedex_images.USER_AGENT
 # How long the list of cached species is trusted before the directory is read again.
@@ -91,6 +96,46 @@ def _language(item: dict) -> str | None:
     return language.get("name") if isinstance(language, dict) else None
 
 
+def resource_id(reference) -> int | None:
+    """The number at the end of a PokéAPI resource URL ({"url": ".../move/344/"})."""
+    url = reference.get("url") if isinstance(reference, dict) else None
+    tail = str(url or "").rstrip("/").rsplit("/", 1)[-1]
+    return int(tail) if tail.isdigit() else None
+
+
+def _moves(pokemon: dict) -> dict:
+    """Level-up moves in the newest game that lists any for the species, and every move it
+    can learn. (Some newer games list a species with machine and tutor moves only.)"""
+    details = []
+    names = []
+    for entry in pokemon.get("moves") or []:
+        name = (entry.get("move") or {}).get("name")
+        if not name:
+            continue
+        names.append(name)
+        for detail in entry.get("version_group_details") or []:
+            group = resource_id(detail.get("version_group")) or 0
+            method = (detail.get("move_learn_method") or {}).get("name")
+            details.append((group, method, name, int(detail.get("level_learned_at") or 0)))
+    newest = max((group for group, method, _name, at in details if method == "level-up" and at > 0), default=0)
+    level = sorted(
+        {(name, at) for group, method, name, at in details if group == newest and method == "level-up" and at > 0},
+        key=lambda move: (-move[1], move[0]),
+    )
+    return {"level": [list(move) for move in level], "all": sorted(set(names))}
+
+
+def _traits(species: dict) -> dict:
+    return {
+        "legendary": bool(species.get("is_legendary")),
+        "mythical": bool(species.get("is_mythical")),
+        "baby": bool(species.get("is_baby")),
+        "capture_rate": species.get("capture_rate"),
+        "hatch_counter": species.get("hatch_counter"),
+        "gender_rate": species.get("gender_rate"),
+    }
+
+
 def parse_extras(dex_id: int, pokemon: dict, species: dict) -> dict:
     """Reduce PokéAPI's two resources to the cached record. Pure; unit-tested."""
     weight = pokemon.get("weight")
@@ -121,6 +166,14 @@ def parse_extras(dex_id: int, pokemon: dict, species: dict) -> dict:
         "height_m": round(height / 10, 1) if isinstance(height, (int, float)) and height > 0 else None,
         "genus": genus,
         "flavor": {lang: texts for lang, texts in flavor.items() if texts},
+        "abilities": [
+            {"name": (item.get("ability") or {}).get("name"), "hidden": bool(item.get("is_hidden"))}
+            for item in sorted(pokemon.get("abilities") or [], key=lambda item: item.get("slot") or 0)
+            if (item.get("ability") or {}).get("name")
+        ],
+        "moves": _moves(pokemon),
+        "chain_id": resource_id(species.get("evolution_chain")),
+        "traits": _traits(species),
         "fetched_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
     }
 
@@ -162,6 +215,10 @@ def _remember(dex_id: int) -> None:
     with _index_lock:
         if _index is not None:
             _index.add(dex_id)
+
+
+def is_current(extras: dict | None) -> bool:
+    return bool(extras) and int(extras.get("v") or 1) >= EXTRAS_VERSION
 
 
 def load_extras(dex_id) -> dict | None:
@@ -221,7 +278,7 @@ def fetch_extras(
     dex_id = validate_species_id(dex_id)
     if not refresh:
         cached = load_extras(dex_id)
-        if cached:
+        if is_current(cached):
             return cached
     owns_client = client is None
     client = client or httpx.Client(
