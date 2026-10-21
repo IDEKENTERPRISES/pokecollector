@@ -138,6 +138,42 @@ test.describe('launch splash', () => {
     }
   })
 
+  test.describe('while the splash code is still loading', () => {
+    // Holds the lazy Splash module back, as a slow first-launch network would.
+    async function holdSplashChunk(page) {
+      await page.route(url => /\/Splash(-[\w-]+)?\.(jsx|js)$/.test(url.pathname), () => {})
+    }
+    const cover = page => page.getByTestId('launch-cover')
+
+    test('a tap closes the black cover', async ({ page }) => {
+      await installApi(page)
+      await holdSplashChunk(page)
+      await page.goto('/')
+      await expect(cover(page)).toBeVisible()
+      await cover(page).click()
+      await expect(cover(page)).toHaveCount(0)
+      await expect(page.locator('#root')).not.toHaveAttribute('inert', '')
+    })
+
+    test('Escape closes it', async ({ page }) => {
+      await installApi(page)
+      await holdSplashChunk(page)
+      await page.goto('/')
+      await expect(cover(page)).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(cover(page)).toHaveCount(0)
+    })
+
+    test('it closes by itself after the maximum wait', async ({ page }) => {
+      await installApi(page)
+      await holdSplashChunk(page)
+      await page.goto('/')
+      await expect(cover(page)).toBeVisible()
+      await expect(cover(page)).toHaveCount(0, { timeout: 5000 })
+      await expect(page.locator('#root')).not.toHaveAttribute('inert', '')
+    })
+  })
+
   test('announces the Pokémon in a dialog with a focusable Skip button', async ({ page }) => {
     await installApi(page)
     await page.goto('/')
