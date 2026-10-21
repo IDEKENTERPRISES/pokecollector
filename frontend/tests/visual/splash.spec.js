@@ -141,7 +141,7 @@ test.describe('launch splash', () => {
   test.describe('while the splash code is still loading', () => {
     // Holds the lazy Splash module back, as a slow first-launch network would.
     async function holdSplashChunk(page) {
-      await page.route(url => //Splash(-[w-]+)?.(jsx|js)$/.test(url.pathname), () => {})
+      await page.route(url => /\/Splash(-[\w-]+)?\.(jsx|js)$/.test(url.pathname), () => {})
     }
     const cover = page => page.getByTestId('launch-cover')
 
