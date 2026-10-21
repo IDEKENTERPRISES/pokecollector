@@ -18,7 +18,10 @@ export default function TodayCard() {
   const { data: entry } = useQuery({
     queryKey: ['pokemon-of-the-day', date, lang],
     queryFn: async () => (await ensureDay(date, { language: lang })) ?? null,
-    initialData: () => readDay(date) ?? undefined,
+    initialData: () => {
+      const stored = readDay(date)
+      return stored?.lang === lang ? stored : undefined
+    },
     staleTime: 6 * 60 * 60 * 1000,
     retry: 1,
   })

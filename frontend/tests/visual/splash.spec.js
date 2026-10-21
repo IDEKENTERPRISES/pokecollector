@@ -238,8 +238,11 @@ test.describe('launch splash', () => {
     await expect(page.getByTestId('launch-splash-card')).toBeVisible()
     await expect(page.locator('.pc-splash__ball')).toBeHidden()
     await expect(page.locator('.pc-splash__flash')).toBeHidden()
-    // No roll, twitch or flash: at most the gentle fade of the whole overlay.
-    expect(await page.evaluate(() => document.getAnimations().filter(a => a.playState === 'running').length)).toBeLessThanOrEqual(1)
+    // No roll, twitch or flash: at most the gentle fade of the whole overlay. (The app underneath
+    // may run its own spinner, so only the splash's animations count.)
+    expect(await page.evaluate(() => document.querySelector('[data-testid="launch-splash"]')
+      .getAnimations({ subtree: true })
+      .filter(animation => animation.playState === 'running').length)).toBeLessThanOrEqual(1)
     await expect(splash).toHaveCount(0, { timeout: 5000 })
 
     await page.reload()

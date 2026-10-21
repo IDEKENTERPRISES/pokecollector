@@ -118,8 +118,12 @@ export default function Splash({
   const [exiting, setExiting] = useState(null) // null | 'auto' | 'skip'
   const [revealed, setRevealed] = useState(false)
   const [announced, setAnnounced] = useState(false)
-  const [fit, setFit] = useState(null)
-  const [spriteFailed, setSpriteFailed] = useState(false)
+  // Both remember the source they belong to, so a new sprite starts unmeasured without an effect
+  // racing its (possibly instant) load event.
+  const [measured, setMeasured] = useState(null)
+  const [failedSrc, setFailedSrc] = useState(null)
+  const fit = measured?.src === spriteSrc ? measured.fit : null
+  const spriteFailed = Boolean(spriteSrc) && failedSrc === spriteSrc
   const rootRef = useRef(null)
   const skipRef = useRef(null)
   const readyRef = useRef(ready)
@@ -136,11 +140,6 @@ export default function Splash({
   useEffect(() => {
     skipRef.current?.focus({ preventScroll: true })
   }, [])
-
-  useEffect(() => {
-    setFit(null)
-    setSpriteFailed(false)
-  }, [spriteSrc])
 
   // Ready later, but before the third twitch: that twitch still opens it.
   useEffect(() => {
@@ -207,14 +206,17 @@ export default function Splash({
   const measureSprite = event => {
     const image = event.currentTarget
     const pixel = parseFloat(getComputedStyle(rootRef.current).getPropertyValue('--px')) || 6
-    setFit(fitSprite({
-      width: image.naturalWidth,
-      height: image.naturalHeight,
-      bounds: measureBounds(image),
-      target: (SPRITE_TARGET_PX * pixel) / 6,
-      smooth: entry?.sprite_style !== 'pixel',
-      maxSmooth: MAX_SMOOTH_SCALE,
-    }))
+    setMeasured({
+      src: image.getAttribute('src'),
+      fit: fitSprite({
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+        bounds: measureBounds(image),
+        target: (SPRITE_TARGET_PX * pixel) / 6,
+        smooth: entry?.sprite_style !== 'pixel',
+        maxSmooth: MAX_SMOOTH_SCALE,
+      }),
+    })
   }
 
   const groundName = GROUND_FOR_TYPE[String(entry?.types?.[0] ?? '').toLowerCase()] ?? 'grass'
@@ -256,7 +258,7 @@ export default function Splash({
                 draggable="false"
                 data-style={entry?.sprite_style ?? 'animated'}
                 onLoad={measureSprite}
-                onError={() => setSpriteFailed(true)}
+                onError={event => setFailedSrc(event.currentTarget.getAttribute('src'))}
               />
               {entry?.shiny && SHOW_SHINY_SPARKLES && SPARKLES.map(({ left, top, delay }) => (
                 <PixelArt

@@ -411,9 +411,10 @@
   animation: pc-splash-fade 400ms ease-out var(--pc-hint-at) both;
 }
 
+/* Skip takes focus when the splash opens (VoiceOver, keyboards): a visible but quiet ring. */
 .pc-splash__skip:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.6);
-  outline-offset: 2px;
+  outline: 1.5px solid rgba(255, 255, 255, 0.4);
+  outline-offset: 0;
 }
 
 @media (hover: hover) and (pointer: fine) {
