@@ -38,7 +38,8 @@ export { TWITCH_EVERY }
 export const WAIT_TWITCHES = 4
 
 // Milliseconds after the reveal before the splash opens the app by itself; null waits for a tap.
-export const AUTO_CONTINUE_MS = 2500
+// The owner found 2.5 s too quick to read the card and asked for 6 s.
+export const AUTO_CONTINUE_MS = 6000
 
 // Under Reduce Motion: 'card' shows the revealed card, still, for REDUCED_MOTION_HOLD_MS with a
 // fade; 'off' shows no splash at all.

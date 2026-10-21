@@ -137,14 +137,15 @@ describe('launch detection', () => {
 })
 
 describe('the timeline', () => {
-  it('opens on the third twitch and lasts about five seconds', () => {
+  it('opens on the third twitch, reveals within three seconds and leaves six seconds to read', () => {
     const thirdTwitch = TIMELINE.firstTwitchAt + 2 * (TIMELINE.twitch + TIMELINE.twitchGap)
     expect(OPEN_AT).toBeGreaterThan(thirdTwitch)
     expect(OPEN_AT).toBeLessThan(thirdTwitch + TIMELINE.twitch)
     expect(TIMELINE.firstTwitchAt).toBeGreaterThan(TIMELINE.roll + TIMELINE.settle)
     expect(CARD_AT).toBeGreaterThan(REVEAL_AT)
-    const total = REVEAL_AT + AUTO_CONTINUE_MS + TIMELINE.fadeOut
-    expect(total).toBeGreaterThan(4500)
-    expect(total).toBeLessThan(6500)
+    expect(REVEAL_AT).toBeLessThan(3000)
+    // The owner's answer: the app opens by itself 6 s after the reveal (about 9 s in all).
+    expect(AUTO_CONTINUE_MS).toBe(6000)
+    expect(REVEAL_AT + AUTO_CONTINUE_MS + TIMELINE.fadeOut).toBeLessThan(10000)
   })
 })
