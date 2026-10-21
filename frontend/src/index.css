@@ -426,9 +426,6 @@ input:-webkit-autofill:focus {
   .safe-area-bottom {
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
-  .pb-nav {
-    padding-bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px) + 0.5rem);
-  }
 
   /* ── More Sheet Animation ── */
   .more-sheet-enter {
