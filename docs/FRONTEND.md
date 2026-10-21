@@ -13,7 +13,7 @@ The app can be added to an iPhone Home Screen (Share, then Add to Home Screen) a
 - `public/manifest.json` declares `id`, `scope`, `start_url: /`, `display: standalone`, `theme_color`/`background_color` `#000000` and four icons (`any` and `maskable`, 192 and 512 px).
 - Icons live in `public/icons/` with a version suffix in the filename (`pc-*-v3.png`). nginx serves `.png` as `immutable` for a year, so a changed icon needs a new filename, not a query string. The older root icons stay for `og:image` and proxy allow-lists.
 - `index.html` links the 180 px opaque `apple-touch-icon` and sets the iOS meta tags (`apple-mobile-web-app-capable`, `mobile-web-app-capable`, `apple-mobile-web-app-title`, `apple-mobile-web-app-status-bar-style=black`).
-- `AppNav.jsx` pads the top strip and positions the floating Home button with `env(safe-area-inset-*)`, so they clear the notch and home indicator.
+- `NavBar` and `TabBar` pad themselves with `env(safe-area-inset-*)`, so they clear the notch and home indicator.
 - Standalone detection (not used by any component yet): `navigator.standalone === true || matchMedia('(display-mode: standalone)').matches`.
 - nginx revalidates `/`, `/index.html`, `/manifest.json` and SPA deep links (`Cache-Control: no-cache`); the security headers live in `nginx-security-headers.conf`, which `nginx.conf` includes in every location that sets its own `add_header`.
 - `scripts/pwa-assets.test.mjs` and `scripts/nginx-config.test.mjs` guard these files and run as part of `npm test`.
@@ -40,7 +40,7 @@ Routes are defined in `frontend/src/App.jsx`.
 | `/login` | `pages/Login.jsx` | Multi-user login screen |
 | `/invite/:token` | `pages/InviteAccept.jsx` | Public, outside the shell: checks an invite link, shows why it fails (expired, used, revoked, not valid) or the account form (trainer name, password, confirmation with `autocomplete` `username` / `new-password`), then signs the new account in and opens Home |
 | `/` | `pages/HomeScreen.jsx` | Home tab root |
-| `/dashboard` | redirect | Redirects to `/` (`pages/Dashboard.jsx` stays until P9) |
+| `/dashboard` | redirect | Redirects to `/` |
 | `/profile` | `pages/Profile.jsx` | Profile tab root: trainer card, shortcut tiles, Settings / Sync & offline / migration / install rows, Log out (multi-user), app version. Works offline from cached data |
 | `/search` | `pages/CardSearch.jsx` | Card search, scanner entry, and multi-select bulk add |
 | `/scans` | `pages/ScanQueue.jsx` | Persistent scan inbox |
@@ -171,9 +171,14 @@ The shell follows `docs/IOS_UI_DESIGN.md`. `components/Layout.jsx` renders one `
 - **Tabs:** Home · Collection · (Scan) · Search · Profile. `TabBar` is a glass capsule with a Poké Ball Scan button; the badge is the scan inbox's attention count (`scan-jobs` query). It is hidden outside the shell, at 1024 px and wider (the sidebar replaces it), while the scanner is open and while the keyboard is up (`useKeyboardOpen`).
 - **Tab memory** (`tabMemory.js`, `sessionStorage['pc.tabs.v1']`): a tab remembers its last location; tapping the active tab on a pushed page returns to its root, at the root it scrolls to the top.
 - **Back:** `historyMirror.js` mirrors the in-app history (`pc.nav.history.v1`, 50 entries). `useBack()` goes `navigate(-1)` when the previous entry is in the same section, otherwise to the route's parent with `replace`.
-- **`NavBar`** is a plain `<div>` (not a `<header>`: DeckEditor's tests use the only `header`). Pages customise it with `useNavBar({ title, subtitle, largeTitle, trailing, backLabel, hideBack })` and render `<LargeTitle>` on tab roots. Without a call (interim mode) the bar shows the `navConfig` title and a back button unless the route is marked "own back". `StatusLine` (offline and saved-data text) and `SyncIndicator` live in the bar.
+- **`NavBar`** is a plain `<div>` (not a `<header>`: DeckEditor's tests use the only `header`). Pages customise it with `useNavBar({ title, subtitle, largeTitle, trailing, backLabel, hideBack })` (the Back button always reads just "Back"; `backLabel` only names the parent in its accessible name, "Back to Profile") and render `<LargeTitle>` on tab roots. Without a call (interim mode) the bar shows the `navConfig` title and a back button unless the route is marked "own back". `StatusLine` (offline and saved-data text) and `SyncIndicator` live in the bar.
 - **`ScannerContext`** (`useScanner()` → `openScanner`, `closeScanner`, `isOpen`) shows the existing `UnifiedCardScanner` outside the routed `<Outlet>`. The Scan circle, the sidebar button and CardSearch's camera button call `openScanner()`.
-- **Profile** (`/profile`) holds Log out (it calls `AuthContext.logout()`, so the logout guard runs). `AppNav` and the floating Pokéball button are no longer rendered (the files stay until P9); `PublicHomeButton` stays on `/u`.
+- **Pull to refresh** (`components/ios/PullToRefresh.jsx`, `navigation/pullToRefresh.js`): on the four tab roots, pulling the page down from the very top refetches its active queries. The indicator hangs under the sticky bar (the page itself does not move). It does nothing away from the top, with two fingers, inside a sheet, dialog, menu or text field, or while a sheet has locked the page scroll. Offline, a pull shows "Offline mode" briefly instead of spinning.
+- **Slide transitions** (`navigation/viewTransition.js`, `components/ios/TransitionLink.jsx`): opening a pushed page from an iOS list row, tile or badge link slides it in, and the nav bar's Back button slides it out, using `document.startViewTransition` + `flushSync`. Feature-detected and off under reduced motion; tab switches never animate; the browser's own Back is a plain popstate and does not animate. **One switch:** `SLIDE_TRANSITIONS` in `viewTransition.js` (set it to `false` to drop the feature). Plain `<Link>`s and `navigate()` calls elsewhere in the pages are not animated.
+- **Sheets:** `PageSheet` (bottom sheet with drag-to-dismiss, `sheetGesture.js`), `ActionSheet`, `Alert` and `Menu` in `components/ios/` replace the old overflow menu and ad-hoc modals; an open sheet locks the page scroll.
+- **Blur** is only on bars, sheets and menus: `--blur-radius` (24 px) and `--blur-radius-edge` (6 px) in `index.css` are the numbers to tune; `.glass` has an opaque fallback without `backdrop-filter` and under Reduce Transparency; small controls inside the nav bar use a solid fill (`--glass-solid`) instead of a blur layer each.
+- **Accessibility:** after a navigation focus moves to `<main>` (so VoiceOver announces the new screen), the document title follows the nav bar title ("Sets · PokéCollector"), the Back button reads "Back to <parent>" (its visible text is just "Back"), and the Scan button reads "Scan, N need review" when scans wait. Large titles hand over to the compact title once the title row (not the controls under it) is under the bar.
+- **Profile** (`/profile`) holds Log out (it calls `AuthContext.logout()`, so the logout guard runs). The old top nav, bottom nav, sidebar, overflow menu and Dashboard page are gone; `PublicHomeButton` stays on `/u`.
 
 ### `TabNav`
 
@@ -181,12 +186,11 @@ Defined in `frontend/src/components/TabNav.jsx`.
 
 - Reusable horizontal tab bar
 - Marks a tab active if the current pathname equals or starts with the tab path
-- Used by pages such as `Dashboard`, `Collection`, `Wishlist`, `Binders`, `Analytics`, `Products`, `Leaderboard`, and `Achievements`
+- Used by `PublicProfileShell` (public profile pages)
 
 ### `Layout`
 
 - `components/Layout.jsx` wraps protected routes (see App shell above)
-- `components/AppNav.jsx` is no longer rendered; P9 deletes it
 
 ## Key Screens
 

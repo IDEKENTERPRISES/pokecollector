@@ -492,7 +492,7 @@ export function UnifiedCardDialog({
     </>
   ) : (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-xs sm:p-6"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 sm:p-6"
       onClick={onClose}
     >
       <div

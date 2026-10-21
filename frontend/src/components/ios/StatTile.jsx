@@ -1,5 +1,5 @@
 import { createElement, isValidElement } from 'react'
-import { Link } from 'react-router-dom'
+import Link from './TransitionLink'
 import clsx from 'clsx'
 import EnergyIcon from './EnergyIcon'
 import { TYPE_COLOURS, typeKeyFor } from './pokemon'

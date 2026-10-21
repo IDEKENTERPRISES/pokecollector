@@ -47,9 +47,10 @@ export default function TrainerCard({ user = {}, stats = {}, badges, className =
 
       <dl className="relative mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-black/20 px-3 py-2.5 text-center">
         {statItems.map(item => (
-          <div key={item.key} className="min-w-0">
-            <dd className="truncate text-title-3 font-display tabular-nums">{item.value ?? '–'}</dd>
+          // The term comes first in the DOM (screen readers read "Cards, 12"); flex-col-reverse keeps the look.
+          <div key={item.key} className="flex min-w-0 flex-col-reverse">
             <dt className="text-caption-1 opacity-85">{item.label}</dt>
+            <dd className="truncate text-title-3 font-display tabular-nums">{item.value ?? '–'}</dd>
           </div>
         ))}
       </dl>

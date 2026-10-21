@@ -18,7 +18,7 @@ const lookup = key => key.split('.').reduce((node, part) => node?.[part], en)
 
 // `queue` switches the offline queue flag on (the dev server's default is off), which the sync
 // center at /offline needs: with the queue off that page redirects Home.
-async function installApi(page, { onLogout, queue = false } = {}) {
+async function installApi(page, { onLogout, queue = false, counts } = {}) {
   if (queue) {
     await page.addInitScript(() => {
       const add = () => {
@@ -40,6 +40,7 @@ async function installApi(page, { onLogout, queue = false } = {}) {
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname
     if (!path.startsWith('/api/')) return route.continue()
+    if (counts) counts[path] = (counts[path] || 0) + 1
     if (path === '/api/auth/mode') return route.fulfill({ json: { multi_user: true, locked: false } })
     if (path === '/api/auth/me') return route.fulfill({ json: USER })
     if (path === '/api/auth/logout') {
@@ -97,9 +98,11 @@ test.describe('shell on a phone', () => {
       if (route.kind === 'root' || isOwnBack(url)) {
         await expect(back, url).toHaveCount(0)
       } else {
+        // Always just "Back" (owner feedback); the parent is only in the accessible name.
+        await expect(back, url).toHaveText(en.common.back)
         const labelKey = backLabelKeyForPath(url)
         // The scan inbox goes back to the previous screen: Home after a cold start.
-        await expect(back, url).toHaveText(labelKey ? lookup(labelKey) : en.nav.home)
+        await expect(back, url).toHaveAttribute('aria-label', en.nav.backTo.replace('{name}', labelKey ? lookup(labelKey) : en.nav.home))
       }
     })
   }
@@ -212,6 +215,138 @@ test.describe('shell on a phone', () => {
     const back = await page.getByTestId('nav-back').boundingBox()
     expect(back.y).toBeGreaterThanOrEqual(0)
     expect(back.y + back.height).toBeLessThanOrEqual(100)
+  })
+
+  // Touch events as a finger would send them; a plain Event with `touches` works in every engine.
+  async function pullAndRelease(page, options) {
+    await page.evaluate(({ from = 120, to = 360 }) => {
+      const send = (type, y) => {
+        const event = new Event(type, { bubbles: true, cancelable: true })
+        Object.defineProperty(event, 'touches', { value: type === 'touchend' ? [] : [{ clientY: y }] })
+        document.body.dispatchEvent(event)
+      }
+      send('touchstart', from)
+      send('touchmove', from + 40)
+      send('touchmove', to)
+      send('touchend', to)
+    }, options ?? {})
+  }
+
+  test('pull to refresh on a tab root refetches the page and shows the indicator', async ({ page }) => {
+    const counts = {}
+    await installApi(page, { counts })
+    await page.goto('/')
+    await expect(page.getByTestId('nav-title')).toHaveText('Home')
+    await expect.poll(() => counts['/api/dashboard/'] ?? 0).toBeGreaterThan(0)
+    await page.waitForTimeout(300)
+    const before = counts['/api/dashboard/']
+
+    await pullAndRelease(page)
+    await expect.poll(() => counts['/api/dashboard/']).toBeGreaterThan(before)
+    await expect(page.getByTestId('pull-status')).toHaveText(/Refreshing|Updated/)
+    await expect(page.getByTestId('pull-indicator')).toHaveAttribute('data-phase', 'idle', { timeout: 10000 })
+  })
+
+  test('a short pull does nothing', async ({ page }) => {
+    const counts = {}
+    await installApi(page, { counts })
+    await page.goto('/')
+    await expect.poll(() => counts['/api/dashboard/'] ?? 0).toBeGreaterThan(0)
+    await page.waitForTimeout(300)
+    const before = counts['/api/dashboard/']
+    await pullAndRelease(page, { from: 120, to: 170 })
+    await page.waitForTimeout(500)
+    expect(counts['/api/dashboard/']).toBe(before)
+  })
+
+  test('no pull to refresh away from the top of the page or on a pushed page', async ({ page }) => {
+    const counts = {}
+    await installApi(page, { counts })
+    await page.goto('/')
+    await expect.poll(() => counts['/api/dashboard/'] ?? 0).toBeGreaterThan(0)
+    await page.evaluate(() => {
+      const filler = document.createElement('div')
+      filler.style.height = '3000px'
+      document.querySelector('main').appendChild(filler)
+      window.scrollTo(0, 600)
+    })
+    await page.waitForTimeout(300)
+    const before = counts['/api/dashboard/']
+    await pullAndRelease(page)
+    await page.waitForTimeout(500)
+    expect(counts['/api/dashboard/']).toBe(before)
+
+    await page.goto('/settings')
+    await expect(page.getByTestId('settings-section-account')).toBeVisible()
+    await pullAndRelease(page)
+    await expect(page.getByTestId('pull-indicator')).toHaveAttribute('data-phase', 'idle')
+  })
+
+  test('slide transitions: a push and the Back button animate, tab switches do not, reduced motion turns them off', async ({ page }) => {
+    await page.addInitScript(() => {
+      window.__vt = []
+      document.startViewTransition = callback => {
+        window.__vt.push(document.documentElement.dataset.vt)
+        return { finished: Promise.resolve(callback()) }
+      }
+    })
+    await installApi(page)
+    await page.goto('/profile')
+    await expect(page.getByTestId('nav-title')).toHaveText('Profile')
+
+    await page.getByTestId('profile-settings').click()
+    await expect(page.getByTestId('nav-title')).toHaveText('Settings')
+    expect(await page.evaluate(() => window.__vt)).toEqual(['push'])
+
+    await page.getByTestId('nav-back').click()
+    await expect(page.getByTestId('nav-title')).toHaveText('Profile')
+    expect(await page.evaluate(() => window.__vt)).toEqual(['push', 'back'])
+    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.vt)).toBeUndefined()
+
+    await page.getByTestId('tab-search').click()
+    await expect(page.getByTestId('nav-title')).toHaveText('Search')
+    expect(await page.evaluate(() => window.__vt)).toEqual(['push', 'back'])
+
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.getByTestId('tab-profile').click()
+    await expect(page.getByTestId('nav-title')).toHaveText('Profile')
+    await page.getByTestId('profile-settings').click()
+    await expect(page.getByTestId('nav-title')).toHaveText('Settings')
+    expect(await page.evaluate(() => window.__vt)).toEqual(['push', 'back'])
+  })
+
+  test('VoiceOver basics: labels, the page takes focus after a push, the document title follows', async ({ page }) => {
+    await installApi(page)
+    await page.goto('/profile')
+    await expect(page.getByTestId('nav-title')).toHaveText('Profile')
+    await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Scan' })).toBeVisible()
+    await expect(page.getByTestId('tab-profile')).toHaveAttribute('aria-current', 'page')
+    expect(await page.title()).toBe('Profile · PokéCollector')
+
+    await page.getByTestId('profile-settings').click()
+    await expect(page.getByTestId('nav-title')).toHaveText('Settings')
+    await expect(page.getByRole('button', { name: 'Back to Profile' })).toBeVisible()
+    await expect(page.getByTestId('nav-back')).toHaveText('Back')
+    await expect(page.locator('main')).toBeFocused()
+    expect(await page.title()).toBe('Settings · PokéCollector')
+  })
+
+  test('the large title hands over to the compact title once it scrolls under the bar', async ({ page }) => {
+    await installApi(page)
+    await page.goto('/collection')
+    await expect(page.getByTestId('large-title-row')).toBeVisible()
+    const title = page.getByTestId('nav-title')
+    await expect(title).toHaveCSS('opacity', '0')
+    await page.evaluate(() => {
+      const filler = document.createElement('div')
+      filler.style.height = '3000px'
+      document.querySelector('main').appendChild(filler)
+      window.scrollTo(0, 400)
+    })
+    await expect(title).toHaveCSS('opacity', '1')
+    await page.evaluate(() => window.scrollTo(0, 0))
+    await expect(title).toHaveCSS('opacity', '0')
   })
 
   test('the shell has no second <header> and one <main>', async ({ page }) => {

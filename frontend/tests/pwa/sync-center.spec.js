@@ -152,8 +152,11 @@ test.describe('sync center', () => {
     await expect(page.getByTestId('offline-banner')).toHaveAttribute('role', 'status')
 
     state.health = 'up'
-    await syncNow.click()
-    await expect(page.getByTestId('offline-banner')).toHaveCount(0)
+    // A click while a probe or sync is still running is skipped, so retry until the banner clears.
+    await expect(async () => {
+      await syncNow.click()
+      await expect(page.getByTestId('offline-banner')).toHaveCount(0, { timeout: 1500 })
+    }).toPass({ timeout: 15000 })
   })
 
   test('pages that need the server show OfflineUnavailable while offline', async ({ page, context }) => {
