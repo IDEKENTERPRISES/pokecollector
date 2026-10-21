@@ -43,6 +43,7 @@ import { useNavBar } from '../navigation/useNavBar'
 import { useOffline } from '../offline/useOffline'
 import { groupSetsBySeries } from '../utils/setSeries'
 import { getPokedexFormFamily } from '../utils/pokedexUrlState'
+import { correctionNoticeParts } from '../utils/searchCorrection'
 
 export const CARD_CODE_NUMBER_RE = /^([A-Za-z][A-Za-z0-9]*)\s+(\d+)$/
 
@@ -939,6 +940,15 @@ export default function CardSearch() {
             </div>
           )}
 
+          {data.corrected && (
+            <p className="text-footnote text-text-secondary" data-testid="search-corrected">
+              {correctionNoticeParts(t('cardSearch.correctedNotice'), data.corrected).map((part, index) => (
+                part.strong
+                  ? <strong key={index} className="font-semibold text-text-primary">{part.text}</strong>
+                  : <span key={index}>{part.text}</span>
+              ))}
+            </p>
+          )}
           <div className="flex items-center justify-between flex-wrap gap-2">
             <p className="text-sm text-text-secondary">
               {data.total_count?.toLocaleString()} {t('cardSearch.results')}

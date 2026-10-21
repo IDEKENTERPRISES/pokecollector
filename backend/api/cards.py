@@ -35,6 +35,7 @@ from services.image_url_security import validate_public_https_image_url
 from services.pokedex import card_pokedex_entry_ids
 from services.pokedex_forms import get_entry as get_pokedex_entry
 from services.card_numbers import card_number_filter
+from services.card_search_query import SetIndex, parse_query, species_words, suggest_names, normalize_words
 from services.tcgdex_languages import english_fallback_languages, has_lang_suffix, is_supported_tcgdex_language, normalize_tcgdex_language
 from services.text_search import accent_insensitive_contains, json_array_text_matches, normalize_search_term
 from services.card_state import card_state_summaries
@@ -50,6 +51,23 @@ router = APIRouter()
 # Pattern: an alphanumeric set code beginning with a letter, then a numeric card
 # number (e.g. "MEP 022", "sv08 032", "M2a 228").
 _CODE_NUMBER_RE = re.compile(r'^([A-Za-z][A-Za-z0-9]*)\s+(\d+)$')
+
+
+def _is_set_code(db: Session, current_user: User, token: str, lang: str) -> bool:
+    """Whether "<token> <number>" should use the set-code lookup.
+
+    True when the token is a visible set's abbreviation or id, or is not a Pokémon name
+    (so a set that is not synced yet still resolves through the live fallback). A Pokémon
+    name such as "Morpeko" goes to the free-text parser instead.
+    """
+    upper = token.upper()
+    local = db.query(Set.id).filter(
+        (func.upper(Set.abbreviation) == upper) | (func.upper(Set.id) == upper) | (func.upper(Set.tcg_set_id) == upper),
+        visible_set_filter(db, current_user.id, lang),
+    ).first()
+    if local:
+        return True
+    return "".join(normalize_words(token)) not in species_words()
 
 
 def _card_to_dict(card: Card, current_user_id: int | None = None) -> dict:
@@ -619,138 +637,176 @@ def search_cards(
 
     try:
         # ── Code + number pattern: "MEP 022", "SSP 136", "sv08 032" ──────────
+        smart = None
         if search_term:
             m = _CODE_NUMBER_RE.match(search_term)
-            if m:
-                set_code = m.group(1)
-                card_number = m.group(2)
+            if m and _is_set_code(db, current_user, m.group(1), search_lang):
                 return _search_by_code_number(
                     db,
                     current_user,
-                    set_code,
-                    card_number,
+                    m.group(1),
+                    m.group(2),
                     page,
                     page_size,
                     lang=search_lang,
                     background_tasks=background_tasks,
                     rule_text=rule_text,
                 )
+            # ── Free text: name, set and number in any order ("Morpeko 117 PBL") ──
+            sets_for_index = db.query(Set).filter(visible_set_filter(db, current_user.id, search_lang)).all()
+            parsed = parse_query(search_term, SetIndex.from_sets(sets_for_index))
+            if parsed.changed:
+                smart = parsed
 
-        # ── Pure DB search ────────────────────────────────────────────────────
-        query = db.query(Card).filter(Card.is_custom == False, visible_card_filter(db, current_user.id, search_lang))
+        def run_search(name_text, smart_set_ids=None, smart_number=None):
+            # ── Pure DB search ────────────────────────────────────────────────────
+            query = db.query(Card).filter(Card.is_custom == False, visible_card_filter(db, current_user.id, search_lang))
 
-        if search_term:
-            query = query.filter(accent_insensitive_contains(db, Card.name, search_term))
+            if name_text:
+                query = query.filter(accent_insensitive_contains(db, Card.name, name_text))
+            if smart_set_ids:
+                query = query.filter(Card.set_id.in_(smart_set_ids))
+            if smart_number:
+                query = query.filter(card_number_filter(Card.number, smart_number))
 
-        if set_id:
-            # set_id may be composite DB key (sv1_en) or original tcg id (sv1)
-            set_obj = db.query(Set).filter(
-                ((Set.id == set_id) | (Set.tcg_set_id == set_id)),
-                visible_set_filter(db, current_user.id, search_lang),
-            ).first()
-            if set_obj:
-                query = query.filter(Card.set_id == (set_obj.tcg_set_id or set_obj.id))
-            elif has_lang_suffix(set_id):
-                query = query.filter(False)
+            if set_id:
+                # set_id may be composite DB key (sv1_en) or original tcg id (sv1)
+                set_obj = db.query(Set).filter(
+                    ((Set.id == set_id) | (Set.tcg_set_id == set_id)),
+                    visible_set_filter(db, current_user.id, search_lang),
+                ).first()
+                if set_obj:
+                    query = query.filter(Card.set_id == (set_obj.tcg_set_id or set_obj.id))
+                elif has_lang_suffix(set_id):
+                    query = query.filter(False)
+                else:
+                    query = query.filter(Card.set_id == set_id)
+
+            normalized_number = normalize_search_term(number)
+            if normalized_number:
+                query = query.filter(card_number_filter(Card.number, normalized_number))
+
+            if type_filter:
+                query = query.filter(accent_insensitive_contains(db, cast(Card.types, String), type_filter))
+
+            if category:
+                query = query.filter(accent_insensitive_contains(db, Card.supertype, category))
+
+            if subtype:
+                query = query.filter(or_(
+                    accent_insensitive_contains(db, Card.trainer_type, subtype),
+                    accent_insensitive_contains(db, Card.energy_type, subtype),
+                    accent_insensitive_contains(db, Card.stage, subtype),
+                    accent_insensitive_contains(db, Card.suffix, subtype),
+                    accent_insensitive_contains(db, cast(Card.subtypes, String), subtype),
+                ))
+
+            if rarity:
+                query = query.filter(accent_insensitive_contains(db, Card.rarity, rarity))
+
+            if artist:
+                query = query.filter(accent_insensitive_contains(db, Card.artist, artist))
+
+            rule_text_term = normalize_search_term(rule_text)
+            if rule_text_term:
+                query = query.filter(or_(
+                    accent_insensitive_contains(db, Card.card_effect, rule_text_term),
+                    json_array_text_matches(db, Card.attacks, ("name", "effect"), rule_text_term),
+                    json_array_text_matches(db, Card.abilities, ("name", "effect"), rule_text_term),
+                ))
+
+            if hp_min is not None:
+                query = query.filter(cast(Card.hp, Integer) >= hp_min)
+
+            if hp_max is not None:
+                query = query.filter(cast(Card.hp, Integer) <= hp_max)
+
+            if isinstance(dex_id, int):
+                query = query.filter(Card.dex_ids.op("@>")(cast([dex_id], JSONB)))
+
+            exact_pokedex_entry_id = None
+            if isinstance(pokedex_entry_id, str) and pokedex_entry_id:
+                pokedex_entry = get_pokedex_entry(pokedex_entry_id)
+                if not pokedex_entry:
+                    query = query.filter(False)
+                else:
+                    exact_pokedex_entry_id = pokedex_entry["entry_id"]
+                    if db.bind and db.bind.dialect.name == "postgresql":
+                        stored_match = Card.pokedex_entry_ids.op("@>")(cast([exact_pokedex_entry_id], JSONB))
+                        fallback_match = and_(
+                            Card.pokedex_entry_ids.is_(None),
+                            Card.dex_ids.op("@>")(cast([int(pokedex_entry["dex_id"])], JSONB)),
+                        )
+                        query = query.filter(or_(stored_match, fallback_match))
+                    # SQLite is used by tests and small local tools. Its JSON type
+                    # can persist Python None as JSON ``null`` rather than SQL
+                    # NULL, so let the shared classifier post-filter the visible
+                    # rows instead of relying on dialect-specific JSON matching.
+
+            if sort_by == "name":
+                col = Card.name
+            elif sort_by == "number":
+                col = Card.number
+            elif sort_by == "rarity":
+                col = Card.rarity
+            elif sort_by == "price_low":
+                col = Card.price_low
+            elif sort_by == "price_market":
+                col = Card.price_market
             else:
-                query = query.filter(Card.set_id == set_id)
+                col = Card.name
 
-        normalized_number = normalize_search_term(number)
-        if normalized_number:
-            query = query.filter(card_number_filter(Card.number, normalized_number))
-
-        if type_filter:
-            query = query.filter(accent_insensitive_contains(db, cast(Card.types, String), type_filter))
-
-        if category:
-            query = query.filter(accent_insensitive_contains(db, Card.supertype, category))
-
-        if subtype:
-            query = query.filter(or_(
-                accent_insensitive_contains(db, Card.trainer_type, subtype),
-                accent_insensitive_contains(db, Card.energy_type, subtype),
-                accent_insensitive_contains(db, Card.stage, subtype),
-                accent_insensitive_contains(db, Card.suffix, subtype),
-                accent_insensitive_contains(db, cast(Card.subtypes, String), subtype),
-            ))
-
-        if rarity:
-            query = query.filter(accent_insensitive_contains(db, Card.rarity, rarity))
-
-        if artist:
-            query = query.filter(accent_insensitive_contains(db, Card.artist, artist))
-
-        rule_text = normalize_search_term(rule_text)
-        if rule_text:
-            query = query.filter(or_(
-                accent_insensitive_contains(db, Card.card_effect, rule_text),
-                json_array_text_matches(db, Card.attacks, ("name", "effect"), rule_text),
-                json_array_text_matches(db, Card.abilities, ("name", "effect"), rule_text),
-            ))
-
-        if hp_min is not None:
-            query = query.filter(cast(Card.hp, Integer) >= hp_min)
-
-        if hp_max is not None:
-            query = query.filter(cast(Card.hp, Integer) <= hp_max)
-
-        if isinstance(dex_id, int):
-            query = query.filter(Card.dex_ids.op("@>")(cast([dex_id], JSONB)))
-
-        exact_pokedex_entry_id = None
-        if isinstance(pokedex_entry_id, str) and pokedex_entry_id:
-            pokedex_entry = get_pokedex_entry(pokedex_entry_id)
-            if not pokedex_entry:
-                query = query.filter(False)
+            if sort_order == "desc":
+                query = query.order_by(col.desc())
             else:
-                exact_pokedex_entry_id = pokedex_entry["entry_id"]
-                if db.bind and db.bind.dialect.name == "postgresql":
-                    stored_match = Card.pokedex_entry_ids.op("@>")(cast([exact_pokedex_entry_id], JSONB))
-                    fallback_match = and_(
-                        Card.pokedex_entry_ids.is_(None),
-                        Card.dex_ids.op("@>")(cast([int(pokedex_entry["dex_id"])], JSONB)),
+                query = query.order_by(col.asc())
+
+            if exact_pokedex_entry_id:
+                matching_cards = [
+                    card for card in query.all()
+                    if exact_pokedex_entry_id in card_pokedex_entry_ids(
+                        name=card.name,
+                        dex_ids=card.dex_ids,
+                        stored_entry_ids=card.pokedex_entry_ids,
+                        supertype=card.supertype,
+                        tcg_card_id=card.tcg_card_id,
                     )
-                    query = query.filter(or_(stored_match, fallback_match))
-                # SQLite is used by tests and small local tools. Its JSON type
-                # can persist Python None as JSON ``null`` rather than SQL
-                # NULL, so let the shared classifier post-filter the visible
-                # rows instead of relying on dialect-specific JSON matching.
+                ]
+                total_count = len(matching_cards)
+                start = (page - 1) * page_size
+                cards = matching_cards[start:start + page_size]
+            else:
+                total_count = query.count()
+                cards = query.offset((page - 1) * page_size).limit(page_size).all()
 
-        if sort_by == "name":
-            col = Card.name
-        elif sort_by == "number":
-            col = Card.number
-        elif sort_by == "rarity":
-            col = Card.rarity
-        elif sort_by == "price_low":
-            col = Card.price_low
-        elif sort_by == "price_market":
-            col = Card.price_market
-        else:
-            col = Card.name
+            return total_count, cards
 
-        if sort_order == "desc":
-            query = query.order_by(col.desc())
-        else:
-            query = query.order_by(col.asc())
+        attempts = []
+        if smart:
+            attempts.append((smart.name, smart.set_ids, smart.number))
+        attempts.append((search_term, None, None))
+        total_count, cards = 0, []
+        for name_text, smart_set_ids, smart_number in attempts:
+            total_count, cards = run_search(name_text, smart_set_ids, smart_number)
+            if total_count:
+                break
 
-        if exact_pokedex_entry_id:
-            matching_cards = [
-                card for card in query.all()
-                if exact_pokedex_entry_id in card_pokedex_entry_ids(
-                    name=card.name,
-                    dex_ids=card.dex_ids,
-                    stored_entry_ids=card.pokedex_entry_ids,
-                    supertype=card.supertype,
-                    tcg_card_id=card.tcg_card_id,
+        # ── Fuzzy name: only when nothing matched, and only to a name that has results ──
+        corrected = None
+        if not total_count and search_term:
+            base = smart if smart else None
+            typo_text = base.name if base else search_term
+            for suggestion in suggest_names(db, typo_text):
+                fuzzy_total, fuzzy_cards = run_search(
+                    suggestion,
+                    base.set_ids if base else None,
+                    base.number if base else None,
                 )
-            ]
-            total_count = len(matching_cards)
-            start = (page - 1) * page_size
-            cards = matching_cards[start:start + page_size]
-        else:
-            total_count = query.count()
-            cards = query.offset((page - 1) * page_size).limit(page_size).all()
+                if fuzzy_total:
+                    total_count, cards = fuzzy_total, fuzzy_cards
+                    corrected = {"from": typo_text, "to": suggestion}
+                break
+
         _schedule_search_page_metadata_enrichment(background_tasks, cards)
         card_dicts = _with_collection_summary(
             db,
@@ -758,12 +814,15 @@ def search_cards(
             [_card_to_dict(c, current_user.id) for c in cards],
         )
 
-        return {
+        response = {
             "data": card_dicts,
             "total_count": total_count,
             "page": page,
             "page_size": page_size,
         }
+        if corrected:
+            response["corrected"] = corrected
+        return response
     except Exception as e:
         logger.exception("Unexpected error in the card API")
         raise HTTPException(status_code=500, detail=GENERIC_ERROR)

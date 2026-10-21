@@ -281,6 +281,7 @@ const de = {
     trySearchHint: 'z.B. "Glurak", "Pikachu", "MEP 022" oder einen anderen Kartennamen',
     results: 'Ergebnisse',
     noCardsFound: 'Keine Karten gefunden',
+    correctedNotice: 'Suche nach {to}. „{from}“ wurde nicht gefunden.',
     searchFailed: 'Suche fehlgeschlagen. Bitte erneut versuchen.',
     filters: 'Filter',
     sortBy: 'Sortieren nach',
