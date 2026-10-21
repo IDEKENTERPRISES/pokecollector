@@ -69,6 +69,10 @@ export const MAX_SMOOTH_SCALE = 2
 // the app's own start-up requests.
 export const PREFETCH_DELAY_MS = 3000
 
+// If the splash's own code has not rendered after this long (a slow first-launch network), the
+// black cover closes and the app shows, for this launch only.
+export const CHUNK_WAIT_MS = 2500
+
 // How long the splash waits for today's entry when nothing was pre-fetched.
 export const TODAY_TIMEOUT_MS = 6000
 

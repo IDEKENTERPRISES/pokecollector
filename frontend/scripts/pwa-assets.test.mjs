@@ -68,3 +68,20 @@ test('index.html has a pure black fallback layer and downloads no web fonts', ()
   assert.ok(!html.includes('fonts.gstatic.com'));
   assert.ok(!html.includes('data-pc-fonts'));
 });
+
+test('every apple-touch-startup-image is a black-ground PNG of the size its media query names', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const links = [...html.matchAll(/rel="apple-touch-startup-image" href="([^"]+)" media="([^"]+)"/g)];
+  assert.ok(links.length >= 24, 'portrait and landscape for the current iPhones');
+  for (const [, href, media] of links) {
+    const file = path.join(publicDir, href);
+    assert.ok(fs.existsSync(file), `${href} is missing on disk`);
+    const { width, height, colorType } = readPngHeader(file);
+    assert.equal(colorType, 2, `${href} must have no alpha channel`);
+    const [, cw, ch, ratio, orientation] = media.match(/device-width: (\d+)px\) and \(device-height: (\d+)px\) and \(-webkit-device-pixel-ratio: (\d)\) and \(orientation: (\w+)\)/);
+    const portrait = orientation === 'portrait';
+    assert.equal(width, (portrait ? cw : ch) * ratio, `${href} width`);
+    assert.equal(height, (portrait ? ch : cw) * ratio, `${href} height`);
+    assert.ok(fs.statSync(file).size < 40 * 1024, `${href} must stay tiny`);
+  }
+});

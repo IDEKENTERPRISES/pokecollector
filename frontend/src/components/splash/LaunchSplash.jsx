@@ -1,7 +1,7 @@
 import { Component, Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useSettings } from '../../contexts/SettingsContext'
-import { PREFETCH_DELAY_MS, TODAY_TIMEOUT_MS } from './config'
+import { CHUNK_WAIT_MS, PREFETCH_DELAY_MS, TODAY_TIMEOUT_MS } from './config'
 import { localDate, readDay, splashLanguage, starterEntry, takeFactTurn, writeDay } from './entryStore'
 import { launchSplashMode, markLaunchSplashClosed } from './launch'
 import { cacheSprite, fetchDay, prefetchDays, spriteSource } from './prefetch'
@@ -13,6 +13,24 @@ const PRELOAD_TIMEOUT_MS = 3000
 const loadSplash = () => import('./Splash')
 const Splash = lazy(loadSplash)
 const COVER = { position: 'fixed', inset: 0, zIndex: 10000 /* --z-splash */, background: '#000' }
+
+/** The black cover shown while the splash's code loads. It is never a dead end: a tap, click,
+ * Escape, Enter or Space closes the splash, and so does CHUNK_WAIT_MS passing. It unmounts the
+ * moment the splash renders, which also clears its timer and listeners. */
+function LaunchCover({ onSkip }) {
+  useEffect(() => {
+    const timer = window.setTimeout(onSkip, CHUNK_WAIT_MS)
+    const onKey = event => {
+      if (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ') onSkip()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [onSkip])
+  return <div style={COVER} data-testid="launch-cover" aria-hidden="true" onClick={onSkip} />
+}
 
 // A broken splash must never take the app down with it: it just closes.
 class SplashBoundary extends Component {
@@ -138,7 +156,7 @@ export default function LaunchSplash() {
   if (!showing) return null
   return createPortal(
     <SplashBoundary onError={finish}>
-      <Suspense fallback={<div style={COVER} aria-hidden="true" />}>
+      <Suspense fallback={<LaunchCover onSkip={finish} />}>
         <Splash
           entry={entry}
           spriteSrc={spriteSrc}
