@@ -41,6 +41,9 @@ test.describe('offline banner without a queue', () => {
     await mockApi(context, state)
     await signIn(page)
     await page.goto('/collection')
+    // Wait for the app shell itself: an absent "Starting" text also holds before React has mounted,
+    // and the mode flip below would then race the startup requests.
+    await expect(page.getByTestId('nav-bar')).toBeVisible({ timeout: 30000 })
     await expect(page.getByText('Starting PokéCollector')).toHaveCount(0)
     await expect(page.getByTestId('offline-banner')).toHaveCount(0)
 
@@ -67,6 +70,9 @@ test.describe('offline banner without a queue', () => {
     await mockApi(context, state)
     await signIn(page)
     await page.goto('/collection')
+    // Wait for the app shell itself: an absent "Starting" text also holds before React has mounted,
+    // and the mode flip below would then race the startup requests.
+    await expect(page.getByTestId('nav-bar')).toBeVisible({ timeout: 30000 })
     await expect(page.getByText('Starting PokéCollector')).toHaveCount(0)
     await page.waitForTimeout(1500) // let the signed-in snapshot and first probe settle
     // The signed-in start saved a snapshot; relaunch with the network dead. (Requests fail fast
