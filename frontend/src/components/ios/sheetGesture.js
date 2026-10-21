@@ -37,7 +37,8 @@ export function useSwipeDismiss({ onDismiss, beforeDismiss, enabled = true }) {
   useEffect(() => () => clearTimeout(timer.current), [])
 
   const setTransform = (panel, dy, animate) => {
-    panel.style.transition = animate ? 'transform 0.3s cubic-bezier(0.32, 0.72, 0, 1)' : 'none'
+    const reduced = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    panel.style.transition = animate && !reduced ? 'transform 0.3s cubic-bezier(0.32, 0.72, 0, 1)' : 'none'
     panel.style.transform = dy ? `translateY(${dy}px)` : ''
   }
 

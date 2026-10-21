@@ -150,6 +150,11 @@ export function isOutsideShell(pathname) {
   return matchRoute(pathname)?.kind === 'outside'
 }
 
+/** A route one level into a tab (a detail, a section, a series), where a slide transition fits. */
+export function isPushedPath(pathname) {
+  return routeFor(pathname)?.route.kind === 'pushed'
+}
+
 export function isRootPath(pathname) {
   return routeFor(pathname)?.route.kind === 'root'
 }

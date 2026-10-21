@@ -76,6 +76,11 @@ export default function NavBar() {
   const titleKey = titleKeyForPath(pathname)
   const title = options?.title ?? (titleKey ? t(titleKey) : '')
   const largeTitleShowing = Boolean(largeElement) && largeVisible
+
+  // One title per screen for VoiceOver's app switcher and history: "Sets · PokéCollector".
+  useEffect(() => {
+    document.title = title ? `${title} · PokéCollector` : 'PokéCollector'
+  }, [title])
   const edge = scrolled || (Boolean(largeElement) && !largeVisible)
 
   return (
@@ -84,21 +89,14 @@ export default function NavBar() {
       <div
         data-testid="nav-bar"
         data-scrolled={edge ? 'true' : 'false'}
-        className="sticky top-0 z-navbar"
+        className="vt-navbar shell-navbar sticky top-0 z-navbar"
         style={{ paddingTop: 'var(--safe-top)' }}
       >
         {/* Scroll edge: black at the top (meeting the opaque status bar), fading out, with a light masked blur. */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 -bottom-4 top-0 transition-opacity duration-150 motion-reduce:transition-none"
-          style={{
-            opacity: edge ? 1 : 0,
-            background: 'linear-gradient(to bottom, #000 0%, #000 60%, rgba(0,0,0,0) 100%)',
-            WebkitBackdropFilter: 'blur(6px)',
-            backdropFilter: 'blur(6px)',
-            WebkitMaskImage: 'linear-gradient(to bottom, #000 70%, transparent 100%)',
-            maskImage: 'linear-gradient(to bottom, #000 70%, transparent 100%)',
-          }}
+          className="nav-scroll-edge pointer-events-none absolute inset-x-0 -bottom-4 top-0"
+          style={{ opacity: edge ? 1 : 0 }}
         />
         <div
           ref={barRef}

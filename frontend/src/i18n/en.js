@@ -30,6 +30,9 @@ const en = {
     sidebar: 'Sidebar',
     scanCards: 'Scan cards',
     browse: 'Browse',
+    refreshing: 'Refreshing…',
+    backTo: 'Back to {name}',
+    refreshed: 'Updated',
   },
 
   profile: {
