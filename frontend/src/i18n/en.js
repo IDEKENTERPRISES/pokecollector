@@ -33,6 +33,7 @@ const en = {
     refreshing: 'Refreshing…',
     backTo: 'Back to {name}',
     refreshed: 'Updated',
+    refreshFailed: "Couldn't refresh",
   },
 
   profile: {
