@@ -109,8 +109,6 @@
   --font-text:    -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-display: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 
-  /* Legacy: only the unused .pb-nav class reads this (removed in P9) */
-  --bottom-nav-height: 4rem; /* 64px */
 }
 
 /* Safari autofill override */
@@ -424,35 +422,9 @@ input:-webkit-autofill:focus {
     color: var(--color-text-primary);
   }
 
-  /* ── Bottom Nav — unused, removed in P9 ── */
-  .bottom-nav {
-    @apply fixed bottom-0 left-0 right-0 z-40
-           flex items-stretch
-           pb-[env(safe-area-inset-bottom,0px)]
-           lg:hidden;
-    background: var(--glass-bg);
-    backdrop-filter: var(--glass-filter);
-    -webkit-backdrop-filter: var(--glass-filter);
-    border-top: 1px solid var(--glass-border);
-  }
-  .bottom-nav-item {
-    @apply flex flex-col items-center justify-center gap-0.5
-           flex-1 py-2 text-[10px] font-medium
-           transition-colors duration-150 select-none cursor-pointer;
-  }
-  .bottom-nav-active {
-    @apply text-brand-red;
-  }
-  .bottom-nav-inactive {
-    @apply text-text-muted;
-  }
-
   /* ── Safe area utilities ── */
   .safe-area-bottom {
     padding-bottom: env(safe-area-inset-bottom, 0px);
-  }
-  .pb-nav {
-    padding-bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px) + 0.5rem);
   }
 
   /* ── More Sheet Animation ── */
@@ -921,12 +893,6 @@ input:-webkit-autofill:focus {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 700;
-}
-/* HomeScreen: floating energy orb animation. Unused once P3 rebuilds Home; removed in P9. */
-@keyframes float-orb {
-  0%, 100% { transform: translateY(0px) scale(1); }
-  33%       { transform: translateY(-20px) scale(1.05); }
-  66%       { transform: translateY(10px) scale(0.95); }
 }
 
 .energy-fire    { background: rgba(255,107,53,0.2); color: #ff8a65; border: 1px solid rgba(255,107,53,0.3); }
