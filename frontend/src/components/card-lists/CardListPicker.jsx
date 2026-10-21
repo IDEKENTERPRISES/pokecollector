@@ -285,7 +285,7 @@ export default function CardListPicker({
             {hasMore && <div className="flex justify-center py-4"><button type="button" className="btn-secondary" onClick={() => setVisibleCount(current => current + PAGE_SIZE)}>{t('common.more')}</button></div>}
           </div>
 
-          <div className="sticky bottom-2 z-30 flex items-center gap-3 rounded-xl border border-white/15 bg-bg-surface/95 p-3 shadow-2xl backdrop-blur sm:hidden">
+          <div className="sticky bottom-2 z-30 flex items-center gap-3 rounded-xl border border-white/15 bg-bg-surface/95 p-3 shadow-2xl backdrop-blur-(--blur-radius) [@media(prefers-reduced-transparency:reduce)]:backdrop-blur-none sm:hidden">
             <span className="min-w-0 flex-1 text-sm font-semibold text-text-primary">{selectedIds.size} {t('cardSearch.selected')}</span>
             <button type="button" className="btn-primary-sm justify-center" disabled={selectedIds.size === 0 || isSubmitting || submitting} onClick={prepareQuantities}>{t('common.add')} {selectedIds.size > 0 ? `(${selectedIds.size})` : ''}</button>
           </div>

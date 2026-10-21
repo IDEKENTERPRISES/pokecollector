@@ -126,7 +126,7 @@ function AddExpenseModal({ onClose, onSuccess }) {
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-end md:items-center justify-center md:bg-black/80 md:backdrop-blur-xs"
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-end md:items-center justify-center md:bg-black/80 md:backdrop-blur-(--blur-radius-edge) md:[@media(prefers-reduced-transparency:reduce)]:backdrop-blur-none"
       onClick={onClose}>
       <div className={[
         'w-full rounded-t-2xl max-h-[90dvh] overflow-y-auto',
