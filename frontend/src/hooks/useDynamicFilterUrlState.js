@@ -7,6 +7,14 @@ import {
   writeFilterUrlState,
 } from '../utils/filterUrlState'
 
+// Matches a rendered URL against the URLs this hook wrote that the router has not yet
+// rendered. Several keystrokes can queue several writes before the first renders; each
+// must be recognised as our own, or the older URL would reset newer typed text.
+export function consumePendingUrlKey(pending, urlKey) {
+  const index = pending.indexOf(urlKey)
+  return index === -1 ? { own: false, pending: [] } : { own: true, pending: pending.slice(index + 1) }
+}
+
 const serialize = (state) => JSON.stringify(state)
 
 export function useDynamicFilterUrlState(definitions, { normalizeState, resetParams = [] } = {}) {
@@ -25,16 +33,14 @@ export function useDynamicFilterUrlState(definitions, { normalizeState, resetPar
 
   const [filters, setFilters] = useState(() => readState(searchParams))
   const filtersRef = useRef(filters)
-  const ownUrlKeyRef = useRef(null)
+  const pendingUrlKeysRef = useRef([])
   filtersRef.current = filters
   const urlKey = searchParams.toString()
 
   useEffect(() => {
-    if (ownUrlKeyRef.current === urlKey) {
-      ownUrlKeyRef.current = null
-      return
-    }
-    ownUrlKeyRef.current = null
+    const { own, pending } = consumePendingUrlKey(pendingUrlKeysRef.current, urlKey)
+    pendingUrlKeysRef.current = pending
+    if (own) return
 
     const next = readState(searchParams)
     if (serialize(next) === serialize(filtersRef.current)) return
@@ -55,7 +61,7 @@ export function useDynamicFilterUrlState(definitions, { normalizeState, resetPar
     resetParamsRef.current.forEach(param => nextParams.delete(param))
     const nextUrlKey = nextParams.toString()
     if (nextUrlKey !== currentParams.toString()) {
-      ownUrlKeyRef.current = nextUrlKey
+      pendingUrlKeysRef.current = [...pendingUrlKeysRef.current, nextUrlKey]
       setSearchParams(nextParams, { replace: true })
     }
     return next
