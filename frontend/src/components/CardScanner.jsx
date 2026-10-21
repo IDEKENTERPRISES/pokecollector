@@ -107,7 +107,7 @@ export function ScanAddModal({
       aria-label={t('scanner.addToCollection')}
       tabIndex={-1}
       onKeyDown={onDialogKeyDown}
-      className="fixed inset-0 z-[300] flex items-end justify-center bg-black/80 p-2 backdrop-blur-xs sm:items-center sm:p-3"
+      className="fixed inset-0 z-[300] flex items-end justify-center bg-black/80 p-2 sm:items-center sm:p-3"
       onClick={onClose}
     >
       <div
@@ -359,7 +359,7 @@ export default function CardScanner({ isOpen, onClose, onCardSelected }) {
 
   return createPortal(
     <div className="fixed inset-0 z-[200] flex flex-col"
-      style={{ background: 'rgba(0,0,0,0.95)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}>
+      style={{ background: 'rgba(0,0,0,0.95)' }}>
 
       {/* Header */}
       <div className="flex items-center justify-between px-4 pt-6 pb-4 flex-shrink-0">
@@ -575,7 +575,7 @@ export default function CardScanner({ isOpen, onClose, onCardSelected }) {
             </button>
 
             {selectedMatch && (
-              <div className="fixed bottom-3 left-3 right-3 z-20 rounded-2xl border border-white/15 bg-bg-surface/95 p-3 shadow-2xl backdrop-blur sm:sticky sm:bottom-3 sm:mx-auto sm:flex sm:max-w-xl sm:items-center sm:gap-3">
+              <div className="fixed bottom-3 left-3 right-3 z-20 rounded-2xl border border-white/15 bg-bg-surface/95 p-3 shadow-2xl backdrop-blur-(--blur-radius) [@media(prefers-reduced-transparency:reduce)]:backdrop-blur-none sm:sticky sm:bottom-3 sm:mx-auto sm:flex sm:max-w-xl sm:items-center sm:gap-3">
                 <div className="mb-2 min-w-0 flex-1 sm:mb-0">
                   <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-text-muted">{t('scanner.selectedMatch')}</p>
                   <p className="truncate text-sm font-bold text-text-primary">{selectedMatch.name}</p>

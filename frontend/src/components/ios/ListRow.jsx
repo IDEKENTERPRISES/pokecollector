@@ -1,5 +1,5 @@
 import { createElement, isValidElement } from 'react'
-import { Link } from 'react-router-dom'
+import Link from './TransitionLink'
 import { ChevronRight } from 'lucide-react'
 import clsx from 'clsx'
 import Badge from './Badge'

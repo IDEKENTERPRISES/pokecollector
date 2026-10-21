@@ -132,7 +132,7 @@ export default function TabBar() {
     <nav
       aria-label={t('nav.tabBar')}
       data-testid="tab-bar"
-      className="pointer-events-none fixed inset-x-0 z-tabbar flex justify-center px-3 lg:hidden"
+      className="vt-tabbar pointer-events-none fixed inset-x-0 z-tabbar flex justify-center px-3 lg:hidden"
       style={{ bottom: 'max(8px, calc(var(--safe-bottom) - 10px))' }}
     >
       <div

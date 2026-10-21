@@ -14,6 +14,7 @@ import { CardDisplay, CardLegend, withCollectionItemState } from '../components/
 import { useDynamicFilterUrlState } from '../hooks/useDynamicFilterUrlState'
 import PrintingDetailBadges from '../components/PrintingDetailBadges'
 import { useNavBar } from '../navigation/useNavBar'
+import { countLabel } from './socialParts'
 
 const USER_COLLECTION_FILTER_DEFINITIONS = {
   filterRarity: { param: 'rarity', default: '' },
@@ -110,12 +111,13 @@ export default function UserCollection() {
 
   return (
     <div className="page-container">
-      <div className="card">
-        <div className="flex items-center gap-3">
+      <div className="relative overflow-hidden rounded-xl bg-card p-4">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,203,5,0.16),transparent_45%)]" />
+        <div className="relative flex items-center gap-3">
           <div className="flex-1">
-            <h1 className="text-xl font-bold text-text-primary">{t('collection.userCollection')}</h1>
-            <p className="text-sm text-text-secondary">
-              {totalCards} {t('collection.cards')} · {formatPrice(totalValue)}
+            <h1 className="text-title-3 font-display font-bold text-text-primary">{t('collection.userCollection')}</h1>
+            <p className="text-footnote text-text-secondary">
+              {countLabel(t, 'leaderboard.cardCount', totalCards)} · <span className="font-semibold text-yellow">{formatPrice(totalValue)}</span>
             </p>
           </div>
         </div>
@@ -123,25 +125,27 @@ export default function UserCollection() {
         {/* Search + Filter toggle */}
         <div className="flex gap-2 mt-3">
           <div className="flex-1 relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+            <Search size={14} aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
             <input
               type="text"
               placeholder={t('collection.searchCards')}
               value={searchText}
               onChange={e => setSearchText(e.target.value)}
               className="input pl-9 w-full text-sm"
+              aria-label={t('collection.searchCards')}
             />
           </div>
           <button
             onClick={() => setShowFilters(current => !current)}
             aria-label={t('common.filter')}
+            aria-expanded={showFilters}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-sm font-medium transition-colors ${
               hasActiveFilters
                 ? 'bg-brand-red/10 border-brand-red/50 text-brand-red'
                 : 'border-border text-text-muted hover:text-text-primary'
             }`}
           >
-            <SlidersHorizontal size={14} />
+            <SlidersHorizontal size={14} aria-hidden="true" />
           </button>
         </div>
 

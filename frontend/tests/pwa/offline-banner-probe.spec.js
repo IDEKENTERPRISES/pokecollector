@@ -47,12 +47,19 @@ test.describe('offline banner without a queue', () => {
     state.mode = 'hang'
     expect(await page.evaluate(() => navigator.onLine)).toBe(true)
     // A focus event stands in for the user returning to the app; the monitor probes without a queue.
-    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-    await expect(page.getByTestId('offline-banner')).toBeVisible({ timeout: 12000 })
+    // A focus that lands while a probe is in flight is swallowed, so re-send it until the banner
+    // shows (two hanging probes need ~7s: 3s timeout + 1s confirm delay + 3s timeout).
+    await expect(async () => {
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+      await expect(page.getByTestId('offline-banner')).toBeVisible({ timeout: 1000 })
+    }).toPass({ timeout: 30000 })
 
     state.mode = 'online'
-    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-    await expect(page.getByTestId('offline-banner')).toHaveCount(0, { timeout: 12000 })
+    // The retry timer can be up to 10s away and focus is ignored while a probe is in flight.
+    await expect(async () => {
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+      await expect(page.getByTestId('offline-banner')).toHaveCount(0, { timeout: 1000 })
+    }).toPass({ timeout: 30000 })
   })
 
   test('appears within seconds of an offline launch with an empty outbox', async ({ page, context }) => {

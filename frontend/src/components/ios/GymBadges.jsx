@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import Link from './TransitionLink'
 import { ChevronRight } from 'lucide-react'
 import { TYPE_COLOURS, TYPE_KEYS } from './pokemon'
 

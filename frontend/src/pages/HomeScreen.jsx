@@ -5,7 +5,7 @@ import {
   Layers, Grid2X2, Wallet, Heart, Layers3, BarChart3, ScanLine, UploadCloud, Link2, ShoppingBag, Sparkles, Loader2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { getDashboard, getInvestmentTracker, getScanJobs, getSets, getPokedex, getCustomMatches } from '../api/client'
+import { getDashboard, getInvestmentTracker, getScanJobs, getSets, getPokedexSummary, getCustomMatches } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import { useAuth } from '../contexts/AuthContext'
 import { useOffline } from '../offline/useOffline'
@@ -23,6 +23,7 @@ import StatTile from '../components/ios/StatTile'
 import SetTile from '../components/ios/SetTile'
 import PokeBall from '../components/ios/PokeBall'
 import { TYPE_COLOURS } from '../components/ios/pokemon'
+import TodayCard from '../components/splash/TodayCard'
 import { useNavBar } from '../navigation/useNavBar'
 import {
   SCAN_JOBS_QUERY_KEY,
@@ -30,7 +31,7 @@ import {
   scanAttentionCount,
 } from '../utils/scanJobs'
 import {
-  closestToCompleteSets, completeSetCount, minutesSince, seriesChange, shortAge, todoCards, trackerSeries,
+  closestToCompleteSets, completeSetCount, minutesSince, pluralKey, seriesChange, shortAge, todoCards, trackerSeries,
 } from './homeHelpers'
 
 const NAV_BAR = { trailing: <HideValuesToggle /> }
@@ -108,7 +109,7 @@ function TodoCard({ type, icon: Icon, title, detail, action, to, onClick }) {
         <span className="block text-headline">{title}</span>
         <span className="block text-footnote opacity-90">{detail}</span>
       </span>
-      <span className="flex-shrink-0 rounded-full bg-black/25 px-3.5 py-1.5 text-subheadline font-semibold">{action}</span>
+      <span aria-hidden="true" className="flex-shrink-0 rounded-full bg-black/25 px-3.5 py-1.5 text-subheadline font-semibold">{action}</span>
     </>
   )
   const classes = 'ios-press no-callout flex min-h-[64px] w-full items-center gap-3 rounded-[18px] p-3 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tint'
@@ -139,7 +140,6 @@ export default function HomeScreen() {
   const offline = useOffline()
   const { enabled: queueEnabled, items: outboxItems } = useOutbox()
   const [syncOpen, setSyncOpen] = useState(false)
-  const language = settings.language === 'de' ? 'de' : 'en'
 
   useNavBar(NAV_BAR)
 
@@ -169,8 +169,8 @@ export default function HomeScreen() {
     queryFn: () => getSets({ lang: 'all' }).then(r => r.data),
   })
   const { data: pokedexSummary } = useQuery({
-    queryKey: ['pokedex-summary', language],
-    queryFn: () => getPokedex({ lang: language, status: 'all' }).then(result => result?.summary ?? null),
+    queryKey: ['pokedex-summary'],
+    queryFn: getPokedexSummary,
     staleTime: 24 * 60 * 60 * 1000,
     gcTime: 24 * 60 * 60 * 1000,
     enabled: !offline,
@@ -238,6 +238,7 @@ export default function HomeScreen() {
   return (
     <div className="relative isolate -mt-1 flex flex-col gap-6 px-4 pb-6">
       <HeaderBloom variant="home" />
+      <h1 className="sr-only">{t('nav.home')}</h1>
 
       <div className="-mx-4">
       <LargeTitle>
@@ -250,7 +251,7 @@ export default function HomeScreen() {
               {user?.avatar_id ? (
                 <img
                   src={`/api/pokedex/images/sprites/${user.avatar_id}.png`}
-                  alt={`${trainerName} avatar`}
+                  alt=""
                   className="pixelated h-12 w-12"
                 />
               ) : (
@@ -346,7 +347,7 @@ export default function HomeScreen() {
                 key={key}
                 type={view.type}
                 icon={view.icon}
-                title={fill(t(`home.${view.title}`), { count })}
+                title={fill(t(`home.${pluralKey(view.title, count)}`), { count })}
                 detail={t(`home.${view.detail}`)}
                 action={t(`home.${view.action}`)}
                 to={view.to}
@@ -357,6 +358,9 @@ export default function HomeScreen() {
         </section>
       )}
       {syncOpen && <SyncSheet isOpen onClose={() => setSyncOpen(false)} />}
+
+      {/* The splash's Pokémon of the day (components/splash). */}
+      <TodayCard />
 
       <section aria-label={t('home.quickActions')} className="grid grid-cols-4 gap-2">
         <QuickAction to="/wishlist" icon={Heart} label={t('nav.wishlist')} type="fairy" />

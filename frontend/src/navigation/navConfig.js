@@ -57,7 +57,7 @@ export const REDIRECTS = Object.freeze([
 ])
 
 /** Pages rendered outside the shell: no tab bar and no nav bar. A trailing `/*` matches the whole subtree. */
-export const OUTSIDE_SHELL = Object.freeze(['/login', '/invite/*', '/u/*', '/__card-system', '/__ios'])
+export const OUTSIDE_SHELL = Object.freeze(['/login', '/invite/*', '/u/*', '/__card-system', '/__ios', '/__splash'])
 
 /** Settings sections (design doc §5.6), in display order. Hidden sections are left out, never disabled. */
 export const SETTINGS_SECTIONS = Object.freeze([
@@ -148,6 +148,11 @@ export function tabForPath(pathname) {
 
 export function isOutsideShell(pathname) {
   return matchRoute(pathname)?.kind === 'outside'
+}
+
+/** A route one level into a tab (a detail, a section, a series), where a slide transition fits. */
+export function isPushedPath(pathname) {
+  return routeFor(pathname)?.route.kind === 'pushed'
 }
 
 export function isRootPath(pathname) {

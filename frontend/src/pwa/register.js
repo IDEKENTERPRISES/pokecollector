@@ -1,6 +1,7 @@
 // Service-worker registration, update flow and kill switch, page side
 // (docs/PWA_OFFLINE_DESIGN.md §6.3.4).
 import { FOREGROUND_UPDATE_CHECK_MS } from '../offline/constants'
+import { suppressNextSplash } from '../components/splash/launch'
 
 const CHECKED_AT_KEY = 'pc.swCheckedAt'
 const RELOADED_KEY = 'pc.reloaded'
@@ -70,6 +71,8 @@ export function applyUpdate(registration) {
     } catch {
       // ignore
     }
+    // The update reload is not a fresh launch: come back without the splash.
+    suppressNextSplash(store)
     window.location.reload()
   }, { once: true })
   waiting.postMessage({ type: 'SKIP_WAITING' })
@@ -159,5 +162,6 @@ export function handlePreloadError(event, { onUpdateReady, registration } = {}) 
   } catch {
     // ignore
   }
+  suppressNextSplash(store)
   window.location.reload()
 }

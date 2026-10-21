@@ -33,8 +33,11 @@ import ListRow from '../components/ios/ListRow'
 import ListSection from '../components/ios/ListSection'
 import PokeBall from '../components/ios/PokeBall'
 import Switch from '../components/ios/Switch'
+import { SyncProgressBar, SyncResultNote } from '../components/SyncProgress'
 import { NAV_ICONS } from '../navigation/navIcons'
 import { settingsSection, visibleSettingsSections } from '../navigation/navConfig'
+import { readSplashEnabled, writeSplashEnabled } from '../components/splash/launch'
+import SplashCacheSection from '../components/splash/SplashCacheSection'
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -487,6 +490,8 @@ export default function Settings() {
   const showGeneral = GENERAL_SECTIONS.includes(activeSection)
   const { view: setsView, setView: setSetsView } = useSetsView()
   const setsInSeries = setsView !== 'sets'
+  // The launch splash: per device, read synchronously at boot (components/splash/launch.js).
+  const [splashEnabled, setSplashEnabled] = useState(() => readSplashEnabled())
 
   const [backupOptions, setBackupOptions] = useState(['full'])
   const [debugModeEnabled, setDebugModeEnabled] = useState(false)
@@ -591,7 +596,10 @@ export default function Settings() {
   const { data: syncStatus } = useQuery({
     queryKey: ['sync-status'],
     queryFn: () => getSyncStatus().then((r) => r.data),
-    refetchInterval: 10000,
+    // Poll quickly only while a sync runs, so its progress bar moves.
+    refetchInterval: (query) => (
+      query.state.data?.progress || query.state.data?.is_running || query.state.data?.is_price_sync_running ? 2500 : 10000
+    ),
   })
 
   const { data: customMatches = [] } = useQuery({
@@ -634,6 +642,7 @@ export default function Settings() {
   const syncMutation = useMutation({
     mutationFn: triggerSync,
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sync-status'] })
       toast.success(t('settings.syncStarted'))
       setTimeout(() => queryClient.invalidateQueries(), 5000)
     },
@@ -645,6 +654,7 @@ export default function Settings() {
   const priceSyncMutation = useMutation({
     mutationFn: triggerPriceSync,
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sync-status'] })
       toast.success(t('settings.syncStarted'))
       setTimeout(() => queryClient.invalidateQueries(), 5000)
     },
@@ -654,6 +664,7 @@ export default function Settings() {
   const allPriceSyncMutation = useMutation({
     mutationFn: triggerAllPriceSync,
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sync-status'] })
       toast.success(t('settings.syncStarted'))
       setTimeout(() => queryClient.invalidateQueries(), 5000)
     },
@@ -1241,6 +1252,16 @@ export default function Settings() {
                   onChange={handleSetsViewChange}
                 />
               </SettingsRow>
+              <SettingsRow label={t('splash.setting')} description={t('splash.settingDesc')}>
+                <Toggle
+                  value={splashEnabled}
+                  label={t('splash.setting')}
+                  onChange={(value) => {
+                    writeSplashEnabled(value)
+                    setSplashEnabled(value)
+                  }}
+                />
+              </SettingsRow>
               <SettingsRow label={t('settings.language')} description={t('settings.languageDesc')}>
                 <SelectControl
                   value={currentAppLang}
@@ -1406,6 +1427,7 @@ export default function Settings() {
           {/* ── 3. SYNCHRONISATION ── */}
           <section className="space-y-1">
             <SectionHeader title={t('settings.sectionSync')} />
+            <SyncProgressBar progress={syncStatus?.progress} t={t} className="pb-2" />
 
             {/* Card 1: Full Sync */}
             <SettingsCard>
@@ -1419,6 +1441,7 @@ export default function Settings() {
                   {isRunning ? t('settings.running') : t('settings.syncButton')}
                 </button>
               </SettingsRow>
+              {!syncStatus?.progress && <SyncResultNote sync={syncStatus?.last_sync} t={t} className="pb-2" />}
               {user?.role === 'admin' && (
                 <SettingsRow label={t('settings.tcgdexSyncLanguages')} description={t('settings.tcgdexSyncLanguagesDesc')} stacked>
                   <TcgdexLanguageControl
@@ -1621,6 +1644,8 @@ export default function Settings() {
               </SettingsRow>}
             </SettingsCard>
           </section>
+
+          {user?.role === 'admin' && <SplashCacheSection t={t} />}
 
           {user?.role === 'admin' && (
             <section className="space-y-1">

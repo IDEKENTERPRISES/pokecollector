@@ -72,23 +72,20 @@ export default function Login() {
                   <User size={40} className="text-text-primary" />
                 )}
               </div>
-              <p className="mt-3 text-title-3 text-text-primary">{lastUser}</p>
+              <label htmlFor="login-username-saved" className="sr-only">{t('auth.username')}</label>
+              <input
+                type="text"
+                name="username"
+                id="login-username-saved"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                className="mt-3 w-full max-w-[16rem] bg-transparent text-center text-title-3 text-text-primary outline-hidden"
+              />
             </div>
-
-            <input
-              type="text"
-              name="username"
-              id="login-username-saved"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              autoComplete="username"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              tabIndex={-1}
-              aria-label={t('auth.username')}
-              className="sr-only"
-            />
 
             <div className="overflow-hidden rounded-xl bg-card">
               <label htmlFor="login-password-saved" className={labelClass}>{t('auth.password')}</label>

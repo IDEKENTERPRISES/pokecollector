@@ -207,7 +207,7 @@ export function CustomCardModal({ onClose, onCreated, sets: setsProp = [], autoA
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-50 bg-black/60 md:flex md:items-center md:justify-center md:bg-black/80 md:backdrop-blur-xs"
+    <div className="fixed inset-0 z-50 bg-black/60 md:flex md:items-center md:justify-center md:bg-black/80 md:backdrop-blur-(--blur-radius-edge) md:[@media(prefers-reduced-transparency:reduce)]:backdrop-blur-none"
       onClick={onClose}>
       <div className={[
         'fixed bottom-0 left-0 right-0 rounded-t-2xl max-h-[90dvh] overflow-y-auto',

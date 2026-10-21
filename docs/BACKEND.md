@@ -406,6 +406,8 @@ Important behavior:
 - `/api/sync/prices` runs the small tracked-card price sync
 - `/api/sync/prices/all` force-refreshes prices for all tracked cards
 - Sync status returns current flags plus the last 10 sync log rows
+- Sync status also returns `progress` while a sync runs: `{kind, stage, done, total}` (`kind` is `full` or `price`; `stage` is `sets`, `cards`, `metadata`, `prices` or `retrying`; `total` 0 means the size is not known yet), else `null`. It lives in memory (`services/sync_progress.py`), with no database write per card. Each sync log row (`last_sync`, `history`) carries `retry`: `{retried, recovered, still_failing, permanent}` or `null`.
+- Transient TCGdex failures (5xx, 429, timeouts, connection errors) are not dropped: the sync queues the failed set-detail, set card list, card metadata and price lookups (`services/sync_retry.py`) and retries them at the end, up to 3 rounds with exponential backoff (2 s, 4 s, 8 s) that honours `Retry-After` (capped at 60 s). A transient metadata failure gives its claim back, so it does not start the 7-day `last_metadata_enrichment_attempt_at` cooldown; a 404 or other 4xx keeps today's behaviour. Lookups that still fail are counted in `still_failing` and tried again by the next sync. Each round logs one summary line, and the counts are stored in `sync_log.retry_summary` (JSON text).
 - Full sync and price sync can be rescheduled through dedicated endpoints
 
 ### Selective Backup

@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import Link from './TransitionLink'
 import clsx from 'clsx'
 import { useSettings } from '../../contexts/SettingsContext'
 import HpBar from './HpBar'

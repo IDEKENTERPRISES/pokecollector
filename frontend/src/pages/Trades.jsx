@@ -27,6 +27,7 @@ import { invalidateCardState, invalidateTcgdexFilterLanguages } from '../utils/q
 import { buildTradeUpdatePayload, findNewTradeDraftItem, isCashTradeItem, snapshotTradeCard, tradeToDraft } from '../utils/tradeDraft'
 import PrintingDetailBadges from '../components/PrintingDetailBadges'
 import PrintingDetailSelector from '../components/PrintingDetailSelector'
+import SegmentedControl from '../components/ios/SegmentedControl'
 import { useNavBar } from '../navigation/useNavBar'
 
 const CONDITIONS = ['Mint', 'NM', 'LP', 'MP', 'HP']
@@ -539,31 +540,16 @@ export default function Trades() {
       <div className="space-y-2">
         <h1 className="sr-only">{t('trades.title')}</h1>
         <p className="text-footnote text-text-secondary">{t('trades.subtitle')}</p>
-        {/* Segmented look with real buttons: the existing specs find the History tab by its button role. */}
-        <div className="relative flex h-9 w-full rounded-full bg-fill-tertiary p-0.5">
-          <span
-            aria-hidden="true"
-            className="absolute bottom-0.5 left-0.5 top-0.5 w-[calc((100%-4px)/2)] rounded-full bg-accent shadow-[0_2px_6px_rgba(0,0,0,0.4)] motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-ios"
-            style={{ transform: tab === 'history' ? 'translateX(100%)' : 'translateX(0)' }}
-          />
-          {[
-            ['live', t('trades.liveTrade')],
-            ['history', t('trades.history')],
-          ].map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={tab === id}
-              onClick={() => setTab(id)}
-              className={clsx(
-                'relative z-10 flex-1 truncate rounded-full px-2 text-footnote font-semibold ios-press focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-tint',
-                tab === id ? 'text-on-accent' : 'text-text-primary',
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          size="md"
+          ariaLabel={t('trades.title')}
+          options={[
+            { value: 'live', label: t('trades.liveTrade') },
+            { value: 'history', label: t('trades.history') },
+          ]}
+          value={tab}
+          onChange={setTab}
+        />
       </div>
 
       {tab === 'live' ? (
@@ -603,8 +589,8 @@ export default function Trades() {
                       meta={`${item.variant} - ${item.condition} - ${t('common.quantity')}: ${item.quantity}`}
                       value={formatPrice(getEffectiveCardPrice(item.card, item.variant, priceField))}
                       rightAction={
-                        <button onClick={() => addOutgoing(item)} className="btn-ghost p-2" aria-label={t('common.add')}>
-                          <Plus size={15} />
+                        <button onClick={() => addOutgoing(item)} className="btn-ghost p-2" aria-label={`${t('common.add')} ${item.card?.name ?? ''}`.trim()}>
+                          <Plus size={15} aria-hidden="true" />
                         </button>
                       }
                     />
@@ -664,8 +650,8 @@ export default function Trades() {
                       meta={card.is_custom ? t('cardSearch.customCard') : cardSubtitle(card)}
                       value={formatPrice(getEffectiveCardPrice(card, getDefaultVariantOrNull(card), priceField))}
                       rightAction={
-                        <button onClick={() => addIncomingCard(card)} className="btn-ghost p-2" aria-label={t('common.add')}>
-                          <Plus size={15} />
+                        <button onClick={() => addIncomingCard(card)} className="btn-ghost p-2" aria-label={`${t('common.add')} ${card.name ?? ''}`.trim()}>
+                          <Plus size={15} aria-hidden="true" />
                         </button>
                       }
                     />
@@ -725,10 +711,10 @@ export default function Trades() {
           </div>
 
           {(outgoing.length > 0 || incoming.length > 0) && !isFinalizeVisible && (
-            <div className="fixed bottom-20 left-3 right-3 z-40 flex items-center gap-3 rounded-2xl border border-white/15 bg-bg-surface/95 p-3 shadow-2xl backdrop-blur md:hidden">
+            <div className="fixed bottom-20 left-3 right-3 z-40 flex items-center gap-3 rounded-2xl border border-white/15 bg-bg-surface/95 p-3 shadow-2xl backdrop-blur-(--blur-radius) [@media(prefers-reduced-transparency:reduce)]:backdrop-blur-none md:hidden">
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-bold text-text-primary">
-                  {outgoing.length + incoming.length} {t('trades.selectedCards')}
+                  {outgoing.length + incoming.length === 1 ? t('trades.selectedCardsOne') : t('trades.selectedCardsCount').replace('{count}', outgoing.length + incoming.length)}
                 </p>
                 <p className="truncate text-[11px] text-text-muted">
                   {formatPrice(totals.outgoingValue)} → {formatPrice(totals.incomingValue)}

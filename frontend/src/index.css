@@ -81,7 +81,10 @@
 
   /* Materials */
   --glass-bg:     rgba(28,28,30,0.72);
-  --glass-filter: blur(24px) saturate(180%);
+  --blur-radius:  24px;  /* bars, sheets, menus: the one number to tune for performance */
+  --blur-radius-edge: 6px;  /* the nav bar's scroll edge */
+  --glass-filter: blur(var(--blur-radius)) saturate(180%);
+  --glass-solid:  rgba(44,44,46,0.92);  /* small controls inside the nav bar: no blur layer of their own */
   --glass-border: rgba(255,255,255,0.12);
 
   /* Safe areas. The standalone bottom inset can read about 93px instead of 34, so cap it. */
@@ -106,8 +109,6 @@
   --font-text:    -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-display: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 
-  /* Legacy: only the unused .pb-nav class reads this (removed in P9) */
-  --bottom-nav-height: 4rem; /* 64px */
 }
 
 /* Safari autofill override */
@@ -421,35 +422,9 @@ input:-webkit-autofill:focus {
     color: var(--color-text-primary);
   }
 
-  /* ── Bottom Nav — unused, removed in P9 ── */
-  .bottom-nav {
-    @apply fixed bottom-0 left-0 right-0 z-40
-           flex items-stretch
-           pb-[env(safe-area-inset-bottom,0px)]
-           lg:hidden;
-    background: var(--glass-bg);
-    backdrop-filter: var(--glass-filter);
-    -webkit-backdrop-filter: var(--glass-filter);
-    border-top: 1px solid var(--glass-border);
-  }
-  .bottom-nav-item {
-    @apply flex flex-col items-center justify-center gap-0.5
-           flex-1 py-2 text-[10px] font-medium
-           transition-colors duration-150 select-none cursor-pointer;
-  }
-  .bottom-nav-active {
-    @apply text-brand-red;
-  }
-  .bottom-nav-inactive {
-    @apply text-text-muted;
-  }
-
   /* ── Safe area utilities ── */
   .safe-area-bottom {
     padding-bottom: env(safe-area-inset-bottom, 0px);
-  }
-  .pb-nav {
-    padding-bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px) + 0.5rem);
   }
 
   /* ── More Sheet Animation ── */
@@ -919,12 +894,6 @@ input:-webkit-autofill:focus {
   font-size: 11px;
   font-weight: 700;
 }
-/* HomeScreen: floating energy orb animation. Unused once P3 rebuilds Home; removed in P9. */
-@keyframes float-orb {
-  0%, 100% { transform: translateY(0px) scale(1); }
-  33%       { transform: translateY(-20px) scale(1.05); }
-  66%       { transform: translateY(10px) scale(0.95); }
-}
 
 .energy-fire    { background: rgba(255,107,53,0.2); color: #ff8a65; border: 1px solid rgba(255,107,53,0.3); }
 .energy-water   { background: rgba(79,195,247,0.2); color: #4fc3f7; border: 1px solid rgba(79,195,247,0.3); }
@@ -953,6 +922,52 @@ input:-webkit-autofill:focus {
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .glass { background: #1c1c1e; }
+}
+/* Reduce Transparency: opaque material instead of blur. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass { background: #1c1c1e; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .nav-scroll-edge { -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+/* Blur only the bars, sheets and menus (design doc §7.7): the buttons inside the nav bar sit on its
+   black scroll edge, so they use a solid translucent fill instead of one blur layer each. */
+.shell-navbar .glass {
+  background: var(--glass-solid);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* The nav bar's scroll edge: black at the top (it meets the opaque status bar), fading out, with a
+   light masked blur. */
+.nav-scroll-edge {
+  background: linear-gradient(to bottom, #000 0%, #000 60%, rgba(0,0,0,0) 100%);
+  -webkit-backdrop-filter: blur(var(--blur-radius-edge));
+  backdrop-filter: blur(var(--blur-radius-edge));
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 70%, transparent 100%);
+  transition: opacity 0.15s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-scroll-edge { transition: none; }
+}
+
+/* Slide transitions for push and back (navigation/viewTransition.js). While a transition runs the
+   page slides and the bars stay put; tab switches never use this. */
+@media (prefers-reduced-motion: no-preference) {
+  html[data-vt] .vt-page { view-transition-name: shell-page; }
+  html[data-vt] .vt-navbar { view-transition-name: shell-navbar; }
+  html[data-vt] .vt-tabbar { view-transition-name: shell-tabbar; }
+  ::view-transition-group(shell-navbar),
+  ::view-transition-group(shell-tabbar) { animation: none; }
+  ::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+
+  @keyframes vt-in-from-right { from { transform: translateX(100%); } to { transform: none; } }
+  @keyframes vt-out-to-left { from { transform: none; filter: none; } to { transform: translateX(-28%); filter: brightness(0.55); } }
+  @keyframes vt-out-to-right { from { transform: none; } to { transform: translateX(100%); } }
+  @keyframes vt-in-from-left { from { transform: translateX(-28%); filter: brightness(0.55); } to { transform: none; filter: none; } }
+  html[data-vt='push']::view-transition-old(shell-page) { animation: vt-out-to-left 0.38s var(--ease-ios) both; }
+  html[data-vt='push']::view-transition-new(shell-page) { animation: vt-in-from-right 0.38s var(--ease-ios) both; }
+  html[data-vt='back']::view-transition-old(shell-page) { animation: vt-out-to-right 0.38s var(--ease-ios) both; z-index: 2; }
+  html[data-vt='back']::view-transition-new(shell-page) { animation: vt-in-from-left 0.38s var(--ease-ios) both; }
 }
 
 /* Static rainbow sheen for featured cards and the trainer card. No animation. */

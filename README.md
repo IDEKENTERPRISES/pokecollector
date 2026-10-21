@@ -89,7 +89,7 @@ Be kind. Be clear. Assume good intent. Keep feedback constructive.
 ### 📈 Prices, Portfolio & Analytics
 - Cardmarket EUR pricing and TCGPlayer USD pricing via TCGdex
 - Price history charts and portfolio snapshots
-- Dashboard, duplicates, top movers, rarity stats, and investment tracker
+- Home summary, duplicates, top movers, rarity stats, and investment tracker
 - Sealed product tracking with batch creation, lifecycle states, product images/Cardmarket links, linked pulls, a realized-gains ledger, and realized/unrealized P&L
 - Trade journal with incoming/outgoing cards and cash, automatic collection updates, editable trades, valuation, and trade analytics
 
@@ -119,7 +119,7 @@ Binders, Planned Binders, Planned Decks, and Real Decks share the existing `bind
 - Community section in Settings with GitHub contributors and PokéCollector supporters
 
 ### 🎨 UX & Localization
-- Compact portal navigation with 6 primary home items and grouped tab navigation
+- iPhone-style app shell: a bottom tab bar (Home, Collection, Scan, Search, Profile), large-title navigation bars with a Back button, bottom sheets, pull to refresh and slide transitions, with a sidebar on wide screens
 - App UI translations for all supported TCGdex languages, plus Swedish
 - 9 Pokemon-type color themes: Default, Fire, Water, Grass, Electric, Psychic, Dragon, Dark, Fairy
 
