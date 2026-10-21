@@ -711,7 +711,7 @@ export default function Trades() {
           </div>
 
           {(outgoing.length > 0 || incoming.length > 0) && !isFinalizeVisible && (
-            <div className="fixed bottom-20 left-3 right-3 z-40 flex items-center gap-3 rounded-2xl border border-white/15 bg-bg-surface/95 p-3 shadow-2xl backdrop-blur md:hidden">
+            <div className="fixed bottom-20 left-3 right-3 z-40 flex items-center gap-3 rounded-2xl border border-white/15 bg-bg-surface/95 p-3 shadow-2xl backdrop-blur-(--blur-radius) [@media(prefers-reduced-transparency:reduce)]:backdrop-blur-none md:hidden">
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-bold text-text-primary">
                   {outgoing.length + incoming.length === 1 ? t('trades.selectedCardsOne') : t('trades.selectedCardsCount').replace('{count}', outgoing.length + incoming.length)}

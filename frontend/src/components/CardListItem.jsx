@@ -106,7 +106,7 @@ export default function CardListItem({
       ref={viewportRef}
       className={clsx(
         'flex items-center gap-3 p-3 rounded-xl border border-transparent',
-        'bg-[rgba(20,20,40,0.6)] backdrop-blur-xl',
+        'bg-card',
         'border-[rgba(255,255,255,0.05)]',
         onClick && 'cursor-pointer hover:border-brand-red/30 hover:bg-bg-elevated hover:shadow-glow active:bg-bg-elevated transition-all duration-200',
         onClick && 'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-red/70',

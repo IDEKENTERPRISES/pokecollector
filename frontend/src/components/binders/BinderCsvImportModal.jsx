@@ -31,7 +31,7 @@ export default function BinderCsvImportModal({ t, listType = 'collection', onClo
 
   // Portaled so a page transform can never offset the fixed sheet (the optimise sheet bug).
   return createPortal(
-    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs md:flex md:items-center md:justify-center md:bg-black/80" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/75 md:flex md:items-center md:justify-center md:bg-black/80" onClick={onClose}>
       <div
         className="fixed bottom-0 left-0 right-0 max-h-[90dvh] overflow-y-auto rounded-t-2xl border-t border-border bg-bg-surface md:static md:max-h-[85vh] md:w-full md:max-w-lg md:rounded-2xl md:border"
         onClick={event => event.stopPropagation()}

@@ -644,7 +644,7 @@ export default function CardSearch() {
       <LargeTitle title={t('nav.search')} />
 
       <div
-        className="sticky z-20 -mx-4 bg-bg/90 px-4 py-2 backdrop-blur"
+        className="sticky z-20 -mx-4 bg-bg/90 px-4 py-2 backdrop-blur-(--blur-radius) [@media(prefers-reduced-transparency:reduce)]:backdrop-blur-none"
         style={{ top: 'calc(var(--safe-top, 0px) + var(--navbar-height, 44px))' }}
       >
         <SearchField
@@ -859,7 +859,7 @@ export default function CardSearch() {
       {data && !isLoading && hasQuery && (
         <>
           {selectMode && (
-            <div className="card sticky top-2 z-20 hidden flex-wrap items-center gap-2 bg-bg-elevated/95 backdrop-blur sm:flex">
+            <div className="card sticky top-2 z-20 hidden flex-wrap items-center gap-2 bg-bg-elevated sm:flex">
               <span className="text-sm font-semibold text-brand-red">
                 {selectedItems.size} {t('cardSearch.selected')}
               </span>
@@ -906,7 +906,7 @@ export default function CardSearch() {
             </div>
           )}
           {selectMode && (
-            <div className="fixed bottom-24 left-3 right-3 z-40 flex items-center gap-2 rounded-2xl border border-white/15 bg-bg-surface/95 p-3 shadow-2xl backdrop-blur sm:hidden">
+            <div className="fixed bottom-24 left-3 right-3 z-40 flex items-center gap-2 rounded-2xl border border-white/15 bg-bg-surface/95 p-3 shadow-2xl backdrop-blur-(--blur-radius) [@media(prefers-reduced-transparency:reduce)]:backdrop-blur-none sm:hidden">
               <span className="min-w-0 flex-1 text-sm font-semibold text-brand-red">
                 {selectedItems.size} {t('cardSearch.selected')}
               </span>

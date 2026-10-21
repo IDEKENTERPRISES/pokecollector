@@ -120,7 +120,7 @@ export default function Compare() {
             <section className="overflow-hidden rounded-xl bg-card lg:order-none">
               <div className="flex items-center justify-center gap-3 p-4" aria-hidden="true">
                 <span className="grid h-20 w-20 place-items-center rounded-full bg-fill-tertiary text-title-2 font-display font-black text-blue shadow-[inset_0_0_0_1px_rgba(42,117,187,0.5)]">{data.only_a}</span>
-                <span className="-mx-6 z-10 grid h-16 w-16 place-items-center rounded-full bg-card text-title-3 font-display font-black text-yellow shadow-[inset_0_0_0_1px_rgba(255,203,5,0.55)] backdrop-blur-xs">{data.overlap}</span>
+                <span className="-mx-6 z-10 grid h-16 w-16 place-items-center rounded-full bg-card text-title-3 font-display font-black text-yellow shadow-[inset_0_0_0_1px_rgba(255,203,5,0.55)]">{data.overlap}</span>
                 <span className="grid h-20 w-20 place-items-center rounded-full bg-fill-tertiary text-title-2 font-display font-black text-red shadow-[inset_0_0_0_1px_rgba(227,53,13,0.5)]">{data.only_b}</span>
               </div>
               <dl className="divide-y divide-border border-t border-border">
