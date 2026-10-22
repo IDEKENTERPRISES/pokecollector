@@ -9,9 +9,11 @@ const HEALTH_OK = {
 }
 
 async function mockApi(context, state) {
-  await context.route(url => url.pathname.startsWith('/api/'), route => {
+  await context.route(url => url.pathname.startsWith('/api/'), async route => {
+    if (state.hang) return new Promise(() => {}) // never answers, like Airplane Mode on iPhone
     if (state.offline) return route.abort('connectionrefused')
     const path = new URL(route.request().url()).pathname
+    if (state.slow && path === state.slow.path) await new Promise(resolve => setTimeout(resolve, state.slow.ms))
     if (path === '/api/health') return route.fulfill({ json: HEALTH_OK })
     if (path === '/api/auth/mode') return route.fulfill({ json: { multi_user: false, locked: false } })
     if (path === '/api/auth/me') return route.fulfill({ json: ada })
@@ -130,4 +132,68 @@ test('iPhone airplane mode (still "online", every request hangs): a pull shows "
   const indicator = page.getByTestId('pull-indicator')
   await expect(indicator).toHaveAttribute('data-note', 'offline', { timeout: 10000 })
   await expect(indicator).toHaveAttribute('data-phase', 'idle', { timeout: 8000 })
+})
+
+// Owner feedback F10: the app is open, navigator.onLine stays true (as on iPhone in Airplane Mode)
+// and the API stops answering. The offline banner must follow, and clear again by itself.
+const banner = page => page.getByTestId('offline-banner')
+const openSets = page => page.getByTestId('sidebar-nav').getByRole('link', { name: 'Sets', exact: true }).click()
+
+test.describe('offline banner while the app is open', () => {
+  test.setTimeout(90000)
+
+  test('a pull to refresh with a dead connection shows the banner at once, and a pull with the server back clears it at once', async ({ page, context }) => {
+    const state = { offline: false }
+    await openProfileSignedIn(page, context, state)
+    await expect(banner(page)).toHaveCount(0)
+    expect(await page.evaluate(() => navigator.onLine)).toBe(true)
+
+    state.hang = true
+    await pullDown(page)
+    await expect(banner(page)).toBeVisible({ timeout: 8000 })
+    await expect(page.getByTestId('pull-indicator')).toHaveAttribute('data-phase', 'idle', { timeout: 8000 })
+
+    state.hang = false
+    await pullDown(page)
+    await expect(banner(page)).toHaveCount(0, { timeout: 8000 })
+  })
+
+  test('navigating to a page that loads while requests fail shows the banner, and it clears by itself when the network is back', async ({ page, context }) => {
+    const state = { offline: false }
+    await openProfileSignedIn(page, context, state)
+    await expect(banner(page)).toHaveCount(0)
+
+    state.offline = true // every request now fails at once, navigator.onLine stays true
+    await openSets(page)
+    await expect(page.getByTestId('nav-title')).toHaveText('Sets')
+    await expect(banner(page)).toBeVisible({ timeout: 15000 })
+
+    state.offline = false
+    await expect(banner(page)).toHaveCount(0, { timeout: 25000 })
+  })
+
+  test('requests that hang (no error, no answer) show the banner after a few seconds, and it clears by itself', async ({ page, context }) => {
+    const state = { offline: false }
+    await openProfileSignedIn(page, context, state)
+    await expect(banner(page)).toHaveCount(0)
+
+    state.hang = true
+    await openSets(page)
+    await expect(page.getByTestId('nav-title')).toHaveText('Sets')
+    // About 5 s until the hint, then two failed probes with the 1 s confirmation between them.
+    await expect(banner(page)).toBeVisible({ timeout: 30000 })
+
+    state.hang = false
+    await expect(banner(page)).toHaveCount(0, { timeout: 30000 })
+  })
+
+  test('a server that is reachable but slow never shows the banner', async ({ page, context }) => {
+    const state = { offline: false, slow: { path: '/api/sets/', ms: 8000 } }
+    await openProfileSignedIn(page, context, state)
+    await openSets(page)
+    await expect(page.getByTestId('nav-title')).toHaveText('Sets')
+    // The request is still pending after 5 s, the hint triggers a health check, the server answers it.
+    await page.waitForTimeout(10000)
+    await expect(banner(page)).toHaveCount(0)
+  })
 })

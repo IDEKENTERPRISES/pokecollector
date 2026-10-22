@@ -13,10 +13,10 @@ import {
   looksOffline,
   refreshCeilingMs,
   refreshOutcome,
+  reportHealth,
   withTimeout,
 } from '../../navigation/refreshOutcome'
 import { probe } from '../../offline/outbox/probe'
-import { useOffline } from '../../offline/useOffline'
 import { useOutbox } from '../../offline/useOutbox'
 import PokeBall from './PokeBall'
 
@@ -34,15 +34,12 @@ import PokeBall from './PokeBall'
 export default function PullToRefresh({ enabled }) {
   const { t } = useSettings()
   const queryClient = useQueryClient()
-  const offline = useOffline()
-  const { reachability } = useOutbox()
+  const { outbox } = useOutbox()
+  const outboxRef = useRef(outbox)
+  outboxRef.current = outbox
   const [note, setNote] = useState(null)
   const { isOpen: scannerOpen } = useScanner()
   const [announcement, setAnnouncement] = useState('')
-  const offlineRef = useRef(offline)
-  offlineRef.current = offline
-  const reachabilityRef = useRef(reachability.state)
-  reachabilityRef.current = reachability.state
   const timer = useRef(0)
   useEffect(() => () => window.clearTimeout(timer.current), [])
 
@@ -57,13 +54,17 @@ export default function PullToRefresh({ enabled }) {
 
   const refresh = useCallback(async () => {
     const deviceOnline = globalThis.navigator?.onLine !== false
-    if (looksOffline({ onLine: deviceOnline, hookOffline: offlineRef.current, reachabilityState: reachabilityRef.current })) {
+    // Only a device that says it is offline skips the health check. A banner that is already up does
+    // not: a pull is how the user finds out the server is back, and it clears the banner at once.
+    if (looksOffline({ onLine: deviceOnline })) {
       await showNote('offline')
       return
     }
     setAnnouncement(t('nav.refreshing'))
     // Airplane mode keeps navigator.onLine true and lets requests hang: ask the server first.
     const health = await withTimeout(probe({ timeoutMs: HEALTH_CHECK_MS }), HEALTH_CHECK_MS + 500)
+    // The offline banner follows this check: shown at once when it fails or hangs, cleared at once when it passes.
+    reportHealth(outboxRef.current, health)
     if (health === TIMED_OUT || health?.state !== 'reachable') {
       await showNote('offline')
       return

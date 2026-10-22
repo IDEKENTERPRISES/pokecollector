@@ -51,3 +51,13 @@ export function refreshCeilingMs(storage = globalThis.localStorage) {
     return REFRESH_CEILING_MS
   }
 }
+
+/**
+ * Give the health check pull to refresh just ran to the shared reachability (the offline outbox's
+ * monitor), so the offline banner follows it: a failed or hanging check shows the banner at once and
+ * a reachable one clears it. `health` is a probe result, or TIMED_OUT. No outbox (queue off): nothing to do.
+ */
+export function reportHealth(outbox, health) {
+  if (!outbox?.reportProbe) return
+  outbox.reportProbe(health === TIMED_OUT || !health ? { state: 'unreachable' } : health)
+}

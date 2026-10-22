@@ -4,7 +4,7 @@ import re
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 from api.auth import get_current_user
@@ -277,6 +277,8 @@ def _get_user_settings(db: Session, user_id: int) -> dict:
         else:
             # Not theirs to see: the fallback is part of the scanner setup the admins chose.
             result.pop(SCANNER_GEMINI_FALLBACK_SETTING_KEY, None)
+            # Only that the section is not theirs, so the app can leave the Scanner row out.
+            result["scanner_managed_by_admin"] = "true"
     elif not gemini_enabled():
         result[SCANNER_GEMINI_FALLBACK_SETTING_KEY] = "false"
     result["scan_diagnostics_available"] = "true" if trace_available() else "false"
@@ -319,16 +321,77 @@ def _key_hint(value: str) -> str:
     return f"••{value[-4:]}" if len(value) >= 4 else "••"
 
 
-def _audit_scanner_change(db: Session, current_user: User, **details) -> None:
-    """Global scanner changes affect everyone, so they are audited (no secrets in the details)."""
-    if global_scanner_config_enabled():
-        record_audit(
-            db,
-            "scanner.config.updated",
-            actor=current_user,
-            target_type="scanner",
-            details=details,
-        )
+def _scanner_audit_snapshot(db: Session, user_id: int) -> dict | None:
+    """What the global scanner setup is right now, for a before/after comparison. None outside
+    global mode, where nothing is audited. The raw keys stay in memory only to tell "replaced" from
+    "unchanged"; _scanner_audit_changes never copies them."""
+    if not global_scanner_config_enabled():
+        return None
+    provider = configured_provider_name(db, user_id)
+    model = resolve_model(db, user_id, provider) if provider else None
+    return {
+        "provider": provider,
+        "model": model,
+        "request_timeout": (
+            resolve_scanner_request_timeout(db, user_id, provider) if provider else None
+        ),
+        "gemini_fallback": scanner_setting_value(
+            db, user_id, SCANNER_GEMINI_FALLBACK_SETTING_KEY
+        ) == "true",
+        "capability": scanner_capability_mode(db, user_id, provider, model) if provider else None,
+        "keys": {
+            name: scanner_setting_value(db, user_id, _scanner_key_name(name)).strip()
+            for name in (GEMINI, OPENAI)
+        },
+    }
+
+
+def _scanner_audit_changes(before: dict, after: dict) -> dict:
+    """Each field that changed as {"from", "to"}; keys only as added/replaced/removed with the
+    last four characters. Never a key value."""
+    changes = {}
+    for field in ("provider", "model", "request_timeout", "gemini_fallback", "capability"):
+        if before[field] != after[field]:
+            changes[field] = {"from": before[field], "to": after[field]}
+    keys = {}
+    for name in (GEMINI, OPENAI):
+        old, new = before["keys"][name], after["keys"][name]
+        if old == new:
+            continue
+        entry = {"action": "added" if not old else ("removed" if not new else "replaced")}
+        if old:
+            entry["from"] = _key_hint(old)
+        if new:
+            entry["to"] = _key_hint(new)
+        keys[name] = entry
+    if keys:
+        changes["api_key"] = keys
+    return changes
+
+
+def _audit_scanner_change(
+    db: Session,
+    current_user: User,
+    before: dict | None,
+    request=None,
+    **extra,
+) -> None:
+    """Global scanner changes affect everyone, so they are audited with what changed (before and
+    after for each field) and never a secret. Nothing is recorded in per-user mode or when
+    nothing changed."""
+    if before is None or not global_scanner_config_enabled():
+        return
+    changes = _scanner_audit_changes(before, _scanner_audit_snapshot(db, current_user.id))
+    if not changes and not extra:
+        return
+    record_audit(
+        db,
+        "scanner.config.updated",
+        request=request,
+        actor=current_user,
+        target_type="scanner",
+        details={"changes": changes, **extra},
+    )
 
 
 def _refuse_scanner_key_for_user(key: str, current_user: User) -> None:
@@ -344,7 +407,7 @@ def _refuse_scanner_key_for_user(key: str, current_user: User) -> None:
         )
 
 
-def _store_gemini_fallback(db: Session, current_user: User, value: str) -> None:
+def _store_gemini_fallback(db: Session, current_user: User, value: str, request=None) -> None:
     """The Gemini fallback opt-in: personal normally, shared (admin only) in global mode."""
     if not gemini_enabled():
         value = "false"
@@ -354,8 +417,9 @@ def _store_gemini_fallback(db: Session, current_user: User, value: str) -> None:
                 status_code=403,
                 detail="The scanner is configured by an administrator for everyone.",
             )
+        before = _scanner_audit_snapshot(db, current_user.id)
         upsert_scanner_setting(db, current_user.id, SCANNER_GEMINI_FALLBACK_SETTING_KEY, value)
-        _audit_scanner_change(db, current_user, gemini_fallback=value == "true")
+        _audit_scanner_change(db, current_user, before, request)
         return
     row = db.query(UserSetting).filter(
         UserSetting.user_id == current_user.id,
@@ -658,6 +722,7 @@ def update_scanner_configuration(
     data: ScannerConfigurationUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    request: Request = None,
 ):
     _require_scanner_writer(current_user)
     provider, model, credential, custom_model, request_timeout_seconds = _validated_scanner_draft(
@@ -675,6 +740,7 @@ def update_scanner_configuration(
             status_code=409,
             detail="Scanner configuration changes must pass Test and save.",
         )
+    before = _scanner_audit_snapshot(db, current_user.id)
     _persist_scanner_draft(
         db,
         current_user.id,
@@ -685,16 +751,16 @@ def update_scanner_configuration(
         custom_model,
         request_timeout_seconds,
     )
-    _audit_scanner_change(
-        db, current_user, provider=provider, model=model, api_key_cleared=data.clear_api_key
-    )
+    _audit_scanner_change(db, current_user, before, request)
     db.commit()
     return _scanner_configuration(db, current_user.id, is_admin=current_user.role == "admin")
 
 
 @router.post("/scanner/global/adopt")
 def adopt_scanner_settings_for_everyone(
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    request: Request = None,
 ):
     """Copy the calling administrator's own scanner settings (key included) into the global
     configuration, once, when global mode is on and nothing has been saved yet."""
@@ -728,9 +794,17 @@ def adopt_scanner_settings_for_everyone(
         )
     if not gemini_enabled():
         own.pop(SCANNER_GEMINI_FALLBACK_SETTING_KEY, None)
+    before = _scanner_audit_snapshot(db, current_user.id)
     for key, value in own.items():
         db.add(Setting(key=global_scanner_key(key), value=value))
-    _audit_scanner_change(db, current_user, source="admin_settings_copied", provider=provider)
+    _audit_scanner_change(
+        db,
+        current_user,
+        before,
+        request,
+        source="admin_settings_copied",
+        copied_from={"user_id": current_user.id, "username": current_user.username},
+    )
     db.commit()
     return _scanner_configuration(db, current_user.id, is_admin=True)
 
@@ -740,6 +814,7 @@ async def test_scanner_configuration(
     data: ScannerConfigurationUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    request: Request = None,
 ):
     _require_scanner_writer(current_user)
     if data.accept_degraded_visual_verification and current_user.role != "admin":
@@ -830,6 +905,7 @@ async def test_scanner_configuration(
             capability_mode = SCANNER_CAPABILITY_DEGRADED
 
     if data.save_on_success:
+        before = _scanner_audit_snapshot(db, current_user.id)
         _persist_scanner_draft(
             db,
             current_user.id,
@@ -847,14 +923,7 @@ async def test_scanner_configuration(
             model,
             capability_mode,
         )
-        _audit_scanner_change(
-            db,
-            current_user,
-            provider=provider,
-            model=model,
-            capability=capability_mode,
-            api_key_changed=data.api_key is not None or data.clear_api_key,
-        )
+        _audit_scanner_change(db, current_user, before, request)
         db.commit()
     return {
         "status": "ready" if capability_mode == SCANNER_CAPABILITY_FULL else "degraded",
@@ -884,7 +953,12 @@ def get_tcgdex_filter_languages(db: Session = Depends(get_db), current_user: Use
 
 
 @router.put("/")
-def update_settings(data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def update_settings(
+    data: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    request: Request = None,
+):
     for scanner_key in data:
         _refuse_scanner_key_for_user(scanner_key, current_user)
     if MANAGED_SCANNER_KEYS.intersection(data):
@@ -908,7 +982,7 @@ def update_settings(data: dict, db: Session = Depends(get_db), current_user: Use
                 db.add(Setting(key=key, value=coerced_value))
             pending_side_effects.append((key, coerced_value))
         elif key == SCANNER_GEMINI_FALLBACK_SETTING_KEY:
-            _store_gemini_fallback(db, current_user, coerced_value)
+            _store_gemini_fallback(db, current_user, coerced_value, request)
         else:
             row = db.query(UserSetting).filter(
                 UserSetting.user_id == current_user.id, UserSetting.key == key
@@ -1044,7 +1118,13 @@ def get_setting(key: str, db: Session = Depends(get_db), current_user: User = De
 
 
 @router.post("/{key}")
-def set_setting(key: str, body: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def set_setting(
+    key: str,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    request: Request = None,
+):
     _refuse_scanner_key_for_user(key, current_user)
     if key in MANAGED_SCANNER_KEYS:
         raise HTTPException(
@@ -1063,7 +1143,7 @@ def set_setting(key: str, body: dict, db: Session = Depends(get_db), current_use
             db.add(Setting(key=key, value=value))
         pending_side_effect = (key, value)
     elif key == SCANNER_GEMINI_FALLBACK_SETTING_KEY:
-        _store_gemini_fallback(db, current_user, value)
+        _store_gemini_fallback(db, current_user, value, request)
         value = scanner_setting_value(db, current_user.id, key) or "false"
     else:
         row = db.query(UserSetting).filter(

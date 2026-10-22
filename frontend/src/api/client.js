@@ -2,7 +2,7 @@ import axios from 'axios'
 import { isPublicSharePath } from '../utils/publicRoutes'
 import { prepareUploadPart } from '../utils/memoryBlob'
 import { readPwaFlags } from '../pwa/flags'
-import { notifyNetworkFailure } from '../offline/networkFailure'
+import { endSlowRequestHint, notifyNetworkFailure, startSlowRequestHint } from '../offline/networkFailure'
 import {
   scannerRecognitionRequestTimeoutMs,
   scannerTestRequestTimeoutMs,
@@ -27,6 +27,8 @@ const api = axios.create({
 })
 
 api.interceptors.request.use((config) => {
+  // A request with no answer after a few seconds hints at a dead connection (iPhone Airplane Mode).
+  startSlowRequestHint(config)
   if (config.skipAuthentication) return config
 
   const token = localStorage.getItem('token')
@@ -37,8 +39,12 @@ api.interceptors.request.use((config) => {
 })
 
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    endSlowRequestHint(response.config)
+    return response
+  },
   (error) => {
+    endSlowRequestHint(error.config)
     // No response at all (network error or timeout): let the reachability monitor check.
     if (!error.response && !axios.isCancel(error)) notifyNetworkFailure()
     if (error.response?.status === 401 && !error.config?.preserveSessionOnUnauthorized) {

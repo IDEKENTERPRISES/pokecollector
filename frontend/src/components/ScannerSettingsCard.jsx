@@ -15,6 +15,21 @@ import {
 } from '../utils/scannerTimeout'
 
 
+/**
+ * The form values a configuration payload starts the form with. An administrator's payload lists
+ * the providers; a user's payload in global mode has none, so every lookup has to tolerate that.
+ */
+export function draftFromConfiguration(data) {
+  const providers = Array.isArray(data?.providers) ? data.providers : []
+  const active = providers.find(item => item.id === data?.provider)
+  return {
+    provider: data?.provider || 'gemini',
+    model: data?.model || '',
+    requestTimeoutSeconds: data?.request_timeout_seconds || DEFAULT_SCANNER_REQUEST_TIMEOUT_SECONDS,
+    usingCustomModel: Boolean(active?.custom_model && active.custom_model === data?.model),
+  }
+}
+
 export default function ScannerSettingsCard({ t }) {
   const queryClient = useQueryClient()
   const { data, isLoading, isError } = useQuery({
@@ -43,11 +58,11 @@ export default function ScannerSettingsCard({ t }) {
 
   useEffect(() => {
     if (!data || dirty) return
-    setProvider(data.provider)
-    setModel(data.model)
-    setRequestTimeoutSeconds(data.request_timeout_seconds || DEFAULT_SCANNER_REQUEST_TIMEOUT_SECONDS)
-    const active = data.providers.find(item => item.id === data.provider)
-    setUsingCustomModel(Boolean(active?.custom_model && active.custom_model === data.model))
+    const draft = draftFromConfiguration(data)
+    setProvider(draft.provider)
+    setModel(draft.model)
+    setRequestTimeoutSeconds(draft.requestTimeoutSeconds)
+    setUsingCustomModel(draft.usingCustomModel)
     setApiKey('')
     setClearApiKey(false)
     setDegradedAvailable(false)
@@ -55,7 +70,8 @@ export default function ScannerSettingsCard({ t }) {
   }, [data, dirty])
 
   const chooseProvider = (nextProvider) => {
-    const next = data.providers.find(item => item.id === nextProvider)
+    const next = (data.providers || []).find(item => item.id === nextProvider)
+    if (!next) return
     setProvider(nextProvider)
     setModel(next.selected_model || next.default_model)
     setRequestTimeoutSeconds(next.request_timeout_seconds || DEFAULT_SCANNER_REQUEST_TIMEOUT_SECONDS)
@@ -261,7 +277,7 @@ export default function ScannerSettingsCard({ t }) {
           </div>
         )}
 
-        {data.providers.length > 1 && (
+        {(data.providers || []).length > 1 && (
           <label className="block">
             <span className="text-xs font-semibold text-text-primary">{t('settings.scannerProvider')}</span>
             <select value={provider} onChange={event => chooseProvider(event.target.value)} className="select mt-1.5 w-full text-xs font-semibold">

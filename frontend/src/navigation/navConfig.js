@@ -71,8 +71,14 @@ export const SETTINGS_SECTIONS = Object.freeze([
   { key: 'about', titleKey: 'settings.sections.about', icon: 'Info', colour: '#8E8E93' },
 ])
 
-export function visibleSettingsSections({ isAdmin = false } = {}) {
-  return SETTINGS_SECTIONS.filter(section => !section.adminOnly || isAdmin)
+/**
+ * `scannerManaged`: an administrator sets the scanner for everyone (SCANNER_GLOBAL_CONFIG) and this
+ * user is not one, so the Scanner section is not theirs to see.
+ */
+export function visibleSettingsSections({ isAdmin = false, scannerManaged = false } = {}) {
+  return SETTINGS_SECTIONS.filter(section => (
+    (!section.adminOnly || isAdmin) && !(scannerManaged && section.key === 'scanner')
+  ))
 }
 
 export function settingsSection(key) {
