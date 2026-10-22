@@ -124,6 +124,27 @@ export function createReachabilityMonitor({
       notify()
       check()
     },
+    /**
+     * Feed in a probe result someone else obtained (pull to refresh runs its own health check). An
+     * unreachable result shows the banner at once, like assumeUnreachable but also when the
+     * server was last seen reachable (an iPhone in Airplane Mode keeps `navigator.onLine` true), and
+     * the probes that follow keep checking and clear it when the server is back. A reachable result
+     * clears the banner at once and stops any retry timer.
+     */
+    report(result) {
+      if (!running || !isEnabled()) return
+      if (result?.state === 'reachable') {
+        clearScheduled()
+        reachability.record(result)
+        lastProbeAt = now()
+        notify()
+        return
+      }
+      reachability.record({ state: result?.state ?? 'unreachable' })
+      reachability.record({ state: result?.state ?? 'unreachable' })
+      notify()
+      check()
+    },
     /** Wrap the replay engine's probe so it never overlaps a monitor probe. */
     wrapProbe: probeImpl => (...args) => withLock(() => probeImpl(...args)),
   }

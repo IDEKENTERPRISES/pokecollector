@@ -6,6 +6,7 @@ import {
   looksOffline,
   refreshCeilingMs,
   refreshOutcome,
+  reportHealth,
   withTimeout,
 } from './refreshOutcome'
 
@@ -79,5 +80,33 @@ describe('refreshCeilingMs', () => {
     expect(refreshCeilingMs({ getItem: () => '1500' })).toBe(1500)
     expect(refreshCeilingMs({ getItem: () => 'nonsense' })).toBe(10_000)
     expect(refreshCeilingMs({ getItem: () => { throw new Error('blocked') } })).toBe(10_000)
+  })
+})
+
+describe('reportHealth (pull to refresh hands its health check to the shared reachability)', () => {
+  it('reports a reachable result so the banner clears', () => {
+    const outbox = { reportProbe: vi.fn() }
+    const ok = { state: 'reachable', serverInfo: {} }
+    reportHealth(outbox, ok)
+    expect(outbox.reportProbe).toHaveBeenCalledWith(ok)
+  })
+
+  it('reports an unreachable or captive result as it is', () => {
+    const outbox = { reportProbe: vi.fn() }
+    reportHealth(outbox, { state: 'unreachable' })
+    reportHealth(outbox, { state: 'captive' })
+    expect(outbox.reportProbe.mock.calls).toEqual([[{ state: 'unreachable' }], [{ state: 'captive' }]])
+  })
+
+  it('reports a hanging check (timed out) as unreachable', () => {
+    const outbox = { reportProbe: vi.fn() }
+    reportHealth(outbox, TIMED_OUT)
+    reportHealth(outbox, undefined)
+    expect(outbox.reportProbe.mock.calls).toEqual([[{ state: 'unreachable' }], [{ state: 'unreachable' }]])
+  })
+
+  it('does nothing without an outbox (the offline queue is off)', () => {
+    expect(() => reportHealth(null, { state: 'unreachable' })).not.toThrow()
+    expect(() => reportHealth({}, { state: 'unreachable' })).not.toThrow()
   })
 })

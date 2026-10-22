@@ -208,6 +208,11 @@ export function createOutbox({
       monitor.assumeUnreachable()
     },
 
+    /** A probe result obtained elsewhere (pull to refresh): the shared reachability and banner follow it. */
+    reportProbe(result) {
+      monitor.report(result)
+    },
+
     /** Persist-then-send entry point for every operation (§6.2.12). */
     async enqueue({ type, payload, photos = [], display } = {}) {
       await ready()

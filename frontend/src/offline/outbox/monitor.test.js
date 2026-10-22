@@ -156,4 +156,94 @@ describe('reachability monitor', () => {
     await vi.advanceTimersByTimeAsync(60000)
     expect(h.probe).toHaveBeenCalledTimes(1)
   })
+
+  describe('report (a probe result obtained elsewhere, e.g. pull to refresh)', () => {
+    it('shows the banner at once for a failed result even when the server was reachable, then keeps checking', async () => {
+      const h = setup({ results: [OK, OK, DOWN, OK] })
+      h.monitor.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(h.reachability.snapshot().state).toBe('reachable')
+      expect(h.reachability.snapshot().bannerVisible).toBe(false)
+
+      h.monitor.report(DOWN)
+      expect(h.reachability.snapshot().bannerVisible).toBe(true)
+      expect(h.onlineManager.setOnline).toHaveBeenLastCalledWith(false)
+      expect(h.notify).toHaveBeenCalled()
+      // The monitor's own probe follows and clears it when the server is back.
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(15000)
+      expect(h.reachability.snapshot().bannerVisible).toBe(false)
+    })
+
+    it('clears the banner at once for a reachable result and stops the retry timer', async () => {
+      const h = setup({ results: [DOWN, DOWN, DOWN] })
+      h.monitor.start()
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(h.reachability.snapshot().bannerVisible).toBe(true)
+      const probes = h.probe.mock.calls.length
+
+      h.monitor.report(OK)
+      expect(h.reachability.snapshot().bannerVisible).toBe(false)
+      expect(h.reachability.snapshot().state).toBe('reachable')
+      expect(h.onlineManager.setOnline).toHaveBeenLastCalledWith(true)
+      await vi.advanceTimersByTimeAsync(60000)
+      expect(h.probe.mock.calls.length).toBe(probes)
+    })
+
+    it('counts a captive portal as a failure', async () => {
+      const h = setup({ results: [OK] })
+      h.monitor.start()
+      await vi.advanceTimersByTimeAsync(0)
+      h.monitor.report({ state: 'captive' })
+      expect(h.reachability.snapshot().bannerVisible).toBe(true)
+    })
+
+    it('is ignored while stopped or disabled', async () => {
+      const stopped = setup({ results: [OK] })
+      stopped.monitor.report(DOWN)
+      expect(stopped.reachability.snapshot().bannerVisible).toBe(false)
+
+      const disabled = setup({ results: [OK], enabled: false })
+      disabled.monitor.start()
+      disabled.monitor.report(DOWN)
+      expect(disabled.reachability.snapshot().bannerVisible).toBe(false)
+    })
+  })
+
+  describe('a slow request hint', () => {
+    it('triggers a check like a failed request, without showing the banner for a reachable server', async () => {
+      const h = setup({ results: [OK] })
+      h.monitor.start()
+      await vi.advanceTimersByTimeAsync(0)
+      const probes = h.probe.mock.calls.length
+      h.failRequest() // the slow-request hint arrives through the same bus
+      await vi.advanceTimersByTimeAsync(0)
+      expect(h.probe.mock.calls.length).toBe(probes + 1)
+      expect(h.reachability.snapshot().bannerVisible).toBe(false)
+    })
+
+    it('shows the banner after two failed probes (hint, then the 1 s confirmation)', async () => {
+      const h = setup({ results: [OK, DOWN, DOWN, OK] })
+      h.monitor.start()
+      await vi.advanceTimersByTimeAsync(0)
+      h.failRequest()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(h.reachability.snapshot().bannerVisible).toBe(false)
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(h.reachability.snapshot().bannerVisible).toBe(true)
+    })
+
+    it('a burst of hints makes one probe', async () => {
+      const h = setup({ results: [OK] })
+      h.monitor.start()
+      await vi.advanceTimersByTimeAsync(0)
+      const probes = h.probe.mock.calls.length
+      h.failRequest()
+      h.failRequest()
+      h.failRequest()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(h.probe.mock.calls.length).toBe(probes + 1)
+    })
+  })
 })
