@@ -1232,3 +1232,11 @@ def perform_price_sync(db: Session, *, force: bool = False) -> dict:
 def perform_sync(db: Session) -> dict:
     """Alias for perform_full_sync (backward compatibility)."""
     return perform_full_sync(db)
+
+
+# The offline card database (services/offline_carddb.py) rebuilds after a card or price sync.
+from services import offline_carddb as _offline_carddb  # noqa: E402
+
+perform_full_sync = _offline_carddb.with_invalidation(static=True, prices=True)(perform_full_sync)
+perform_price_sync = _offline_carddb.with_invalidation(static=False, prices=True)(perform_price_sync)
+perform_sync = _offline_carddb.with_invalidation(static=True, prices=True)(perform_sync)

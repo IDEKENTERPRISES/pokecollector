@@ -197,6 +197,31 @@ const en = {
   },
 
   // The launch splash (components/splash)
+  offlineDb: {
+    title: 'Offline card database',
+    description: 'Keeps every set, series and card on this device so you can browse and search without a connection. It updates itself when the app opens and the server has changed, and only fetches what changed.',
+    keep: 'Keep the card database on this device',
+    checking: 'Checking for updates…',
+    downloading: 'Downloading card data: {done} of {total} sets ({size} of {totalSize})',
+    waiting: 'Waiting for a connection to continue',
+    failed: 'The card database could not be updated',
+    storageFailed: 'This device cannot store the card database',
+    retry: 'Try again',
+    updated: 'Updated {date} · {cards} cards · {size}',
+    notDownloaded: 'Not downloaded yet',
+    pricesFrom: 'Prices from',
+    pictures: 'Card pictures',
+    picturesDownload: 'Download card pictures (about {size})',
+    picturesProgress: '{done} of {total}',
+    picturesPaused: 'Paused',
+    picturesDone: 'Downloaded',
+    download: 'Download',
+    pause: 'Pause',
+    resume: 'Resume',
+    remove: 'Remove',
+    removeAll: 'Remove from this device',
+  },
+
   splash: {
     label: 'Welcome to PokéCollector',
     tapToSkip: 'Tap to skip',

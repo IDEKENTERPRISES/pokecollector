@@ -13,6 +13,7 @@ import PublicHomeButton from './components/PublicHomeButton'
 import { ConfirmDialogProvider } from './contexts/ConfirmDialogContext'
 import UpdateBanner from './components/pwa/UpdateBanner'
 import { OfflineProvider } from './offline/OfflineProvider'
+import { CardDbAutoSync } from './offline/carddb/useCardDb'
 import LaunchSplash from './components/splash/LaunchSplash'
 
 const HomeScreen = lazy(() => import('./pages/HomeScreen'))
@@ -268,6 +269,8 @@ export default function App() {
           <UpdateBanner />
           {/* Fresh launches only; portaled above everything while the app renders underneath. */}
           <LaunchSplash />
+          {/* Keeps the offline card database up to date in the background (Settings > Data & sync). */}
+          <CardDbAutoSync />
         </ConfirmDialogProvider>
         </OfflineProvider>
       </SettingsProvider>

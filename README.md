@@ -335,6 +335,7 @@ If you are already locked out of multi-user mode, set `USER_MODE=single` in the 
 | `GEMINI_API_KEY` | Initial Gemini key for the admin user; other users configure their own key in Settings | *(empty)* |
 | `GEMINI_MODEL` | Gemini model used by the card scanner. Change this if Google retires the default model for new API keys. | `gemini-flash-latest` |
 | `GEMINI_SCANNER_ENABLED` | Set to `false` to disable Gemini for every user. Gemini then disappears from Scanner Settings, the Gemini fallback is off, and anyone whose saved choice is Gemini sees a clear message instead of a silent switch. | `true` |
+| `OFFLINE_CARD_DB_ENABLED` | Set to `false` to switch the offline card database off for everyone: its endpoints answer 404 and the Settings option disappears. | `true` |
 | `SCANNER_GLOBAL_CONFIG` | Set to `true` so administrators set one scanner configuration (provider, model, timeout, API key, Gemini fallback) that applies to every user. Everyone's scans then use the administrator's API key and its quota. | `false` |
 | `OPENAI_SCANNER_ENABLED` | Exposes the OpenAI-compatible provider in Scanner Settings. It stays hidden until deliberately enabled by an administrator. | `false` |
 | `OPENAI_PROVIDER_LABEL` | Friendly name shown in Scanner Settings, for example `Local Ollama`. | `OpenAI` for the hosted API; `OpenAI-compatible` for a custom endpoint |

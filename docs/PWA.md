@@ -87,6 +87,15 @@ Log out is the last row of the **Profile** tab (multi-user mode). If items are w
 
 Sync before moving the app to a different address or port: waiting items belong to the old address.
 
+## Offline card database
+
+Settings › Data & sync › **Offline card database** keeps the card catalogue on the device: sets, series, cards (names, numbers, rarity, types, attacks, abilities) and the latest prices, for each language the server syncs. It is on by default on every device; each language has its own switch.
+
+- **Server:** `GET /api/offline/carddb/manifest` lists, per language, a hash for the whole language, a hash and size per set and a separate **prices** hash (price syncs run often and never change a set's hash). `GET /api/offline/carddb/sets/{lang}/{set_id}` and `GET /api/offline/carddb/prices/{lang}` return gzip JSON with the hash as the ETag. Everything is built once, kept in memory and rebuilt after a card or price sync (and when the card count changes); no user data and no custom cards are included.
+- **App:** a separate IndexedDB (`pokecollector-carddb`). When the app opens, when the connection returns and when it comes back to the foreground, the manifest is compared with the stored hashes and only changed sets (and the prices, if their hash changed) are fetched, two at a time. An interrupted download resumes from what is stored. The app asks the browser to keep the storage (`navigator.storage.persist()`).
+- **Pictures** are optional and off by default: Settings › Data & sync › Card pictures, per language, with pause, resume, cancel and remove. They go in their own Cache Storage caches (`pc-carddb-images-v1-<lang>`), which the service worker's image route checks first. Pictures update only when you tap.
+- **Switch off:** set `OFFLINE_CARD_DB_ENABLED=false` (default `true`) in the environment: the endpoints answer 404, the setting disappears and devices drop their copy at their next check.
+
 ## Sync center
 
 With `OFFLINE_QUEUE_ENABLED` on, anything that waits on this device is visible:
