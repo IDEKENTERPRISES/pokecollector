@@ -8,9 +8,15 @@ describe('pageHasNoSavedData', () => {
     expect(pageHasNoSavedData([query('sets', undefined), query('binders', undefined)])).toBe(true)
   })
 
-  it('is false as soon as one page query holds data (a saved copy or fresh data)', () => {
-    expect(pageHasNoSavedData([query('sets', undefined), query('binders', [])])).toBe(false)
+  it('is true when at least half of the queries of a page hold no data, even if one is shared with a saved page', () => {
+    expect(pageHasNoSavedData([query('sets', undefined), query('binders', [])])).toBe(true)
+    expect(pageHasNoSavedData([query('dashboard', {}), query('duplicates', undefined), query('top-movers', undefined), query('rarity-stats', undefined)])).toBe(true)
+  })
+
+  it('is false when most of the page is saved (a saved copy or fresh data)', () => {
     expect(pageHasNoSavedData([query('collection', ['x'])])).toBe(false)
+    expect(pageHasNoSavedData([query('collection', ['x']), query('wishlist', []), query('binders', [])])).toBe(false)
+    expect(pageHasNoSavedData([query('collection', ['x']), query('wishlist', []), query('binders', []), query('sets', undefined)])).toBe(false)
   })
 
   it('ignores the shell\'s own queries (scan badge, sync status, small settings)', () => {
@@ -19,6 +25,7 @@ describe('pageHasNoSavedData', () => {
     }
     expect(pageHasNoSavedData([query('scan-jobs', ['job']), query('sets', undefined)])).toBe(true)
     expect(pageHasNoSavedData([query('scan-jobs', undefined), query('sets', ['x'])])).toBe(false)
+    expect(pageHasNoSavedData([query('scan-jobs', ['job']), query('sets', undefined), query('binders', undefined)])).toBe(true)
   })
 
   it('is false for a page with no queries of its own', () => {
