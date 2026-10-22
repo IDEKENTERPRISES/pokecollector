@@ -16,36 +16,37 @@ export const SCAN_SECTION = 'scan'
 // kind: 'root' (a tab root, large title) or 'pushed'. `parent` is the logical back target;
 // `backToPrevious` sends the user to the previous screen instead (the scan inbox). `label` is the
 // key used when the route is a back target (defaults to titleKey): `/binders` reads "Card Lists".
+// Every page opens offline (offline/routes.js), so rows carry no offline flag.
 // `ownBack` marks pages that still render their own back link until their phase migrates them.
 export const ROUTES = Object.freeze([
-  { path: '/', section: 'home', kind: 'root', titleKey: 'nav.home', offline: true },
-  { path: '/collection', section: 'collection', kind: 'root', titleKey: 'nav.collection', offline: true },
-  { path: '/binders', section: 'collection', kind: 'root', titleKey: 'nav.collection', label: 'nav.binders', offline: true },
-  { path: '/wishlist', section: 'collection', kind: 'root', titleKey: 'nav.collection', offline: true },
-  { path: '/binders/:binderId', section: 'collection', kind: 'pushed', parent: '/binders', titleKey: 'nav.binders', offline: true },
-  { path: '/decks/compare', section: 'collection', kind: 'pushed', parent: '/binders', titleKey: 'nav.binders', offline: false },
-  { path: '/decks/:deckId', section: 'collection', kind: 'pushed', parent: '/binders', titleKey: 'nav.binders', offline: false },
-  { path: '/search', section: 'search', kind: 'root', titleKey: 'nav.search', offline: true },
-  { path: '/sets', section: 'search', kind: 'pushed', parent: '/search', titleKey: 'nav.sets', offline: true },
-  { path: '/sets/series/:seriesKey', section: 'search', kind: 'pushed', parent: '/sets', titleKey: 'nav.sets', offline: true },
-  { path: '/sets/:setId', section: 'search', kind: 'pushed', parent: '/sets', titleKey: 'nav.sets', offline: true },
-  { path: '/pokedex', section: 'search', kind: 'pushed', parent: '/search', titleKey: 'nav.pokedex', offline: false },
-  { path: '/pokedex/:dexId', section: 'search', kind: 'pushed', parent: '/pokedex', titleKey: 'nav.pokedex', offline: false },
-  { path: '/scans', section: 'scan', kind: 'pushed', backToPrevious: true, titleKey: 'scanner.queueTitle', offline: false },
-  { path: '/scans/:jobId', section: 'scan', kind: 'pushed', parent: '/scans', titleKey: 'scanner.queueTitle', offline: false },
-  { path: '/profile', section: 'profile', kind: 'root', titleKey: 'nav.profile', offline: true },
-  { path: '/analytics', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.analytics', offline: false },
-  { path: '/products', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.products', offline: false },
-  { path: '/trades', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.trades', offline: false },
-  { path: '/leaderboard', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.leaderboard', offline: false },
-  { path: '/leaderboard/compare/:userId', section: 'profile', kind: 'pushed', parent: '/leaderboard', titleKey: 'nav.leaderboard', offline: false },
-  { path: '/collection/user/:userId', section: 'profile', kind: 'pushed', parent: '/leaderboard', titleKey: 'nav.leaderboard', offline: false },
-  { path: '/achievements', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.achievements', offline: false },
-  { path: '/achievements/:userId', section: 'profile', kind: 'pushed', parent: '/leaderboard', titleKey: 'nav.achievements', offline: false },
-  { path: '/settings', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.settings', offline: false },
-  { path: '/settings/:section', section: 'profile', kind: 'pushed', parent: '/settings', titleKey: 'nav.settings', offline: false },
-  { path: '/offline', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'sync.centerTitle', offline: true },
-  { path: '/migration', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'migration.title', offline: false },
+  { path: '/', section: 'home', kind: 'root', titleKey: 'nav.home' },
+  { path: '/collection', section: 'collection', kind: 'root', titleKey: 'nav.collection' },
+  { path: '/binders', section: 'collection', kind: 'root', titleKey: 'nav.collection', label: 'nav.binders' },
+  { path: '/wishlist', section: 'collection', kind: 'root', titleKey: 'nav.collection' },
+  { path: '/binders/:binderId', section: 'collection', kind: 'pushed', parent: '/binders', titleKey: 'nav.binders' },
+  { path: '/decks/compare', section: 'collection', kind: 'pushed', parent: '/binders', titleKey: 'nav.binders' },
+  { path: '/decks/:deckId', section: 'collection', kind: 'pushed', parent: '/binders', titleKey: 'nav.binders' },
+  { path: '/search', section: 'search', kind: 'root', titleKey: 'nav.search' },
+  { path: '/sets', section: 'search', kind: 'pushed', parent: '/search', titleKey: 'nav.sets' },
+  { path: '/sets/series/:seriesKey', section: 'search', kind: 'pushed', parent: '/sets', titleKey: 'nav.sets' },
+  { path: '/sets/:setId', section: 'search', kind: 'pushed', parent: '/sets', titleKey: 'nav.sets' },
+  { path: '/pokedex', section: 'search', kind: 'pushed', parent: '/search', titleKey: 'nav.pokedex' },
+  { path: '/pokedex/:dexId', section: 'search', kind: 'pushed', parent: '/pokedex', titleKey: 'nav.pokedex' },
+  { path: '/scans', section: 'scan', kind: 'pushed', backToPrevious: true, titleKey: 'scanner.queueTitle' },
+  { path: '/scans/:jobId', section: 'scan', kind: 'pushed', parent: '/scans', titleKey: 'scanner.queueTitle' },
+  { path: '/profile', section: 'profile', kind: 'root', titleKey: 'nav.profile' },
+  { path: '/analytics', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.analytics' },
+  { path: '/products', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.products' },
+  { path: '/trades', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.trades' },
+  { path: '/leaderboard', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.leaderboard' },
+  { path: '/leaderboard/compare/:userId', section: 'profile', kind: 'pushed', parent: '/leaderboard', titleKey: 'nav.leaderboard' },
+  { path: '/collection/user/:userId', section: 'profile', kind: 'pushed', parent: '/leaderboard', titleKey: 'nav.leaderboard' },
+  { path: '/achievements', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.achievements' },
+  { path: '/achievements/:userId', section: 'profile', kind: 'pushed', parent: '/leaderboard', titleKey: 'nav.achievements' },
+  { path: '/settings', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.settings' },
+  { path: '/settings/:section', section: 'profile', kind: 'pushed', parent: '/settings', titleKey: 'nav.settings' },
+  { path: '/offline', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'sync.centerTitle' },
+  { path: '/migration', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'migration.title' },
 ])
 
 /** Routes that only redirect: `to` may reference the params of `path`. */
@@ -121,13 +122,14 @@ export function fillPattern(pattern, params = {}) {
 
 /** → `{ kind: 'route' | 'redirect' | 'outside', route, params }`, or null for an unknown path. */
 export function matchRoute(pathname) {
-  for (const route of ROUTES) {
-    const params = matchPattern(route.path, pathname)
-    if (params) return { kind: 'route', route, params }
-  }
+  // Redirects first: `/decks/inventory` is a redirect, not a deck whose id is "inventory".
   for (const redirect of REDIRECTS) {
     const params = matchPattern(redirect.path, pathname)
     if (params) return { kind: 'redirect', route: redirect, params }
+  }
+  for (const route of ROUTES) {
+    const params = matchPattern(route.path, pathname)
+    if (params) return { kind: 'route', route, params }
   }
   for (const pattern of OUTSIDE_SHELL) {
     const params = matchPattern(pattern, pathname)

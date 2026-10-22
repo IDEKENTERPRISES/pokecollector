@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Outlet, useLocation, useNavigationType } from 'react-router-dom'
 import clsx from 'clsx'
+import NotSavedNote from './NotSavedNote'
 import OfflineUnavailable from './OfflineUnavailable'
 import NavBar from './ios/NavBar'
 import PullToRefresh from './ios/PullToRefresh'
@@ -86,7 +87,12 @@ export default function Layout() {
                   !isHome && 'w-full px-4 sm:px-8 lg:px-8',
                 )}
               >
-                {showUnavailable ? <OfflineUnavailable /> : <Outlet />}
+                {showUnavailable ? <OfflineUnavailable /> : (
+                  <>
+                    <NotSavedNote />
+                    <Outlet />
+                  </>
+                )}
               </main>
             </div>
           </div>

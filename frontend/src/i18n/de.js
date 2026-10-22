@@ -1977,6 +1977,8 @@ const de = {
     staleData: 'Zeige gespeicherte Daten von',
     pendingTotalsNote: 'Summen enthalten keine Einträge, die auf Synchronisierung warten.',
     unavailableOffline: 'Diese Seite ist offline nicht verfügbar.',
+    notSavedYet: 'Noch nicht für offline gespeichert. Öffne sie einmal online.',
+    actionNeedsConnection: 'Benötigt eine Verbindung. Versuche es erneut, wenn du wieder online bist.',
     needsConnection: 'Benötigt eine Verbindung',
     serverTooOld: 'Der Server muss aktualisiert werden, bevor Änderungen offline gespeichert werden können.',
     photoTooLarge: 'Dieses Foto ist größer als 15 MB und kann nicht hochgeladen werden.',

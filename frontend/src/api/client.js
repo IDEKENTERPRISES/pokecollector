@@ -3,6 +3,7 @@ import { isPublicSharePath } from '../utils/publicRoutes'
 import { prepareUploadPart } from '../utils/memoryBlob'
 import { readPwaFlags } from '../pwa/flags'
 import { endSlowRequestHint, notifyNetworkFailure, startSlowRequestHint } from '../offline/networkFailure'
+import { offlineRequestError, shouldRefuseOffline } from '../offline/offlineStatus'
 import {
   scannerRecognitionRequestTimeoutMs,
   scannerTestRequestTimeoutMs,
@@ -28,6 +29,8 @@ const api = axios.create({
 
 api.interceptors.request.use((config) => {
   // A request with no answer after a few seconds hints at a dead connection (iPhone Airplane Mode).
+  // Offline, a request that changes something is refused at once instead of hanging until it times out.
+  if (shouldRefuseOffline(config)) return Promise.reject(offlineRequestError(config))
   startSlowRequestHint(config)
   if (config.skipAuthentication) return config
 

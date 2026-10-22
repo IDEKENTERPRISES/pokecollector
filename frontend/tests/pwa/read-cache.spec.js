@@ -113,7 +113,7 @@ test.describe('read cache', () => {
     await context.setOffline(false)
   })
 
-  test('a page that is not available offline still shows OfflineUnavailable', async ({ page, context }) => {
+  test('a page that was never opened shows its normal state with the "not saved yet" note, not a blocked page', async ({ page, context }) => {
     const state = await viewCollectionOnline(page, context, ada)
     state.offline = true
     await page.reload()
@@ -129,7 +129,9 @@ test.describe('read cache', () => {
     await context.setOffline(true)
     // The device event shows the banner at once; both checks wait for that state, not for a delay.
     await expect(page.getByTestId('offline-banner')).toBeVisible({ timeout: 30000 })
-    await expect(page.getByTestId('offline-unavailable')).toBeVisible()
+    // Every page opens offline now: nothing was saved for this one, so it says so in one line.
+    await expect(page.getByTestId('not-saved-note')).toBeVisible()
+    await expect(page.getByTestId('offline-unavailable')).toHaveCount(0)
     await context.setOffline(false)
   })
 

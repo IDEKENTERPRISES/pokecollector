@@ -1,5 +1,6 @@
 // Read cache of previously viewed data (docs/PWA_OFFLINE_DESIGN.md §9.2 P8, D1, D8, D10).
-// Successful, allow-listed TanStack queries are saved per user and origin in their own IndexedDB
+// Successful TanStack queries of every page are saved (owner feedback F12: every page opens offline),
+// except a deny list of anything sensitive or useless offline. They are saved per user and origin in their own IndexedDB
 // database (never the outbox's) and put back when the app starts degraded. Every IndexedDB access
 // is guarded: a failure means the feature is off, never a crash.
 
@@ -13,24 +14,45 @@ export const READ_CACHE_DB_NAME = 'pokecollector-readcache'
 export const READ_CACHE_DB_VERSION = 1
 export const READ_CACHE_STORE = 'qc'
 export const READ_CACHE_RECORD_VERSION = 1
-export const READ_CACHE_MAX_QUERY_BYTES = 5 * MIB
-export const READ_CACHE_MAX_TOTAL_BYTES = 20 * MIB
+export const READ_CACHE_MAX_QUERY_BYTES = 15 * MIB
+export const READ_CACHE_MAX_TOTAL_BYTES = 50 * MIB
 export const READ_CACHE_MAX_AGE_MS = 30 * DAY_MS
 export const READ_CACHE_THROTTLE_MS = 5000
 
-export const READ_CACHE_ALLOW = new Set([
-  'collection',
-  'wishlist',
-  'dashboard',
-  'sets',
-  'set-checklist',
-  'binders',
-  'binder-cards',
-  'scanner-configuration',
-  'printing-detail-tags',
-  'investment-tracker',
-  'pokedex-summary',
+/**
+ * Queries that are never saved, by the first element of their key: anything holding a link, token or
+ * key, administration data, and data that is useless offline because it only describes the server's
+ * live state. Everything else is saved when it succeeds. To keep a new query out, add its key here.
+ */
+export const READ_CACHE_DENY = new Set([
+  'invites', // invite links and who used them
+  'audit-log', // the audit log
+  'users', // the admin user list
+  'user-sessions',
+  'sessions', // signed-in devices
+  'scanner-configuration', // provider setup (keys are masked server-side, but it is admin configuration)
+  'push', // push subscriptions
+  'push-subscription',
+  'telegram-status', // bot tokens and chat ids
+  'setting', // single admin settings, some of them secrets
+  'sync-status', // live sync progress
+  'scan-jobs', // the live scan inbox
+  'scan-job',
+  'collection-photo', // blobs, not JSON
 ])
+
+// A key part that names a secret keeps the query out whatever its first element is.
+const SENSITIVE_KEY_PART = /token|secret|password|passwd|api[-_]?key|credential|authorization|invite|session/i
+// A field of that kind anywhere in the data keeps the query out too (checked while measuring it).
+const SENSITIVE_FIELD = /"[A-Za-z_]*(?:token|secret|password|passwd|api_?key|credential)[A-Za-z_]*"\s*:/i
+
+/** Whether a query with this key may be saved in the read cache. */
+export function isSavableKey(queryKey) {
+  const first = queryKey?.[0]
+  if (typeof first !== 'string' || first === '') return false
+  if (READ_CACHE_DENY.has(first)) return false
+  return !queryKey.some(part => typeof part === 'string' && SENSITIVE_KEY_PART.test(part))
+}
 
 function currentAppVersion() {
   // eslint-disable-next-line no-undef
@@ -39,11 +61,18 @@ function currentAppVersion() {
 
 export const recordKey = (origin, userId) => `${origin}|${userId}`
 
-const isAllowed = query => query.state.status === 'success' && READ_CACHE_ALLOW.has(String(query.queryKey?.[0]))
+const isAllowed = query => query.state.status === 'success' && isSavableKey(query.queryKey)
+
+/** True when the data holds a field named like a secret (a token, password or API key). */
+export function holdsSecret(json) {
+  return typeof json === 'string' && SENSITIVE_FIELD.test(json)
+}
 
 function sizeOf(data) {
   try {
-    return JSON.stringify(data)?.length ?? 0
+    const json = JSON.stringify(data)
+    if (holdsSecret(json)) return Infinity // dropped by applyCaps like an oversized query
+    return json?.length ?? 0
   } catch {
     return Infinity
   }
@@ -144,7 +173,8 @@ export function buildRecord(queryClient, previous, { now = Date.now() } = {}) {
   // Pages not opened this session keep their saved data, until they are 30 days old.
   if (isUsable(previous, now)) {
     for (const query of previous.state.queries) {
-      if (query?.state && now - (query.state.dataUpdatedAt || 0) <= READ_CACHE_MAX_AGE_MS) byHash.set(query.queryHash, query)
+      // A record written before a key went on the deny list loses that query on the next write.
+      if (query?.state && isSavableKey(query.queryKey) && now - (query.state.dataUpdatedAt || 0) <= READ_CACHE_MAX_AGE_MS) byHash.set(query.queryHash, query)
     }
   }
   // This session's results replace the saved ones, except that an older copy (data put back by a
@@ -186,7 +216,7 @@ export function persist(queryClient, { origin, userId, indexedDB = globalThis.in
 
   const unsubscribe = queryClient.getQueryCache().subscribe(event => {
     if (stopped || event.type !== 'updated' || event.action?.type !== 'success') return
-    if (!READ_CACHE_ALLOW.has(String(event.query.queryKey?.[0]))) return
+    if (!isSavableKey(event.query.queryKey)) return
     if (timer === null) timer = setTimeout(write, throttleMs)
   })
 
@@ -210,7 +240,8 @@ export async function restore(queryClient, { origin, userId, indexedDB = globalT
   try {
     const record = await readRecord(indexedDB, recordKey(origin, userId))
     if (!isUsable(record, now)) return null
-    hydrate(queryClient, record.state)
+    // Never bring back a query that is on the deny list now, whatever an older record still holds.
+    hydrate(queryClient, { ...record.state, queries: record.state.queries.filter(query => isSavableKey(query?.queryKey)) })
     return record.savedAt
   } catch {
     return null
@@ -228,6 +259,7 @@ export async function restoreMissing(queryClient, { origin, userId, indexedDB = 
     if (!isUsable(record, now)) return { savedAt: null, restored: 0 }
     const cache = queryClient.getQueryCache()
     const missing = record.state.queries.filter(query => {
+      if (!isSavableKey(query?.queryKey)) return false
       const held = cache.get(query.queryHash)
       return held?.state.data === undefined
     })
