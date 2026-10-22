@@ -147,7 +147,12 @@ export function buildRecord(queryClient, previous, { now = Date.now() } = {}) {
       if (query?.state && now - (query.state.dataUpdatedAt || 0) <= READ_CACHE_MAX_AGE_MS) byHash.set(query.queryHash, query)
     }
   }
-  for (const query of fresh.queries) byHash.set(query.queryHash, query)
+  // This session's results replace the saved ones, except that an older copy (data put back by a
+  // mid-session restore, or fetched before another tab saved a newer record) never overwrites a newer one.
+  for (const query of fresh.queries) {
+    const saved = byHash.get(query.queryHash)
+    if (!saved || (query.state.dataUpdatedAt || 0) >= (saved.state?.dataUpdatedAt || 0)) byHash.set(query.queryHash, query)
+  }
   return {
     v: READ_CACHE_RECORD_VERSION,
     savedAt: now,
@@ -209,6 +214,27 @@ export async function restore(queryClient, { origin, userId, indexedDB = globalT
     return record.savedAt
   } catch {
     return null
+  }
+}
+
+/**
+ * Mid-session restore (the app went offline while open): puts back the saved queries this session
+ * does not hold yet. Merge only: a query that already has data keeps it, whatever the record says.
+ * → `{ savedAt, restored }` (`savedAt` null when there is no usable record, `restored` the number of queries).
+ */
+export async function restoreMissing(queryClient, { origin, userId, indexedDB = globalThis.indexedDB, now = Date.now() } = {}) {
+  try {
+    const record = await readRecord(indexedDB, recordKey(origin, userId))
+    if (!isUsable(record, now)) return { savedAt: null, restored: 0 }
+    const cache = queryClient.getQueryCache()
+    const missing = record.state.queries.filter(query => {
+      const held = cache.get(query.queryHash)
+      return held?.state.data === undefined
+    })
+    if (missing.length > 0) hydrate(queryClient, { mutations: [], queries: missing })
+    return { savedAt: record.savedAt, restored: missing.length }
+  } catch {
+    return { savedAt: null, restored: 0 }
   }
 }
 
