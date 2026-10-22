@@ -18,6 +18,9 @@ import { flushSync } from 'react-dom'
 export const SLIDE_TRANSITIONS = true
 
 const COMMIT_TIMEOUT_MS = 800
+// While a view transition runs the page ignores taps. A slow phone (a busy main thread) can stretch one
+// out, so after this long it is skipped and the page is live again: taps on Back or the tab bar never get lost.
+const MAX_TRANSITION_MS = 1500
 const waiters = new Set()
 
 export function viewTransitionsSupported(doc = globalThis.document) {
@@ -64,6 +67,7 @@ export function runViewTransition(update, { direction = 'push', doc = globalThis
     return null
   }
   const clear = () => { delete root.dataset.vt }
+  win.setTimeout(() => { try { transition.skipTransition?.() } catch { /* already finished */ } }, MAX_TRANSITION_MS)
   transition.finished?.then(clear, clear)
   return transition
 }

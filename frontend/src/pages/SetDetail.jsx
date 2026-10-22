@@ -12,6 +12,7 @@ import clsx from 'clsx'
 import { resolveCardImageUrl, resolveSetImageUrl } from '../utils/imageUrl'
 import { HOLO_FIELD_MAP } from '../utils/prices'
 import { useDetailBackNavigation, useScrollToTopOnPush } from '../hooks/useListScrollRestoration'
+import { useProgressiveCount } from '../hooks/useProgressiveCount'
 import { CardDisplay, CardLegend } from '../components/card-system'
 import { CardModal } from '../components/CardItem'
 import HeaderBloom from '../components/ios/HeaderBloom'
@@ -219,6 +220,8 @@ export default function SetDetail() {
     [filteredCards, splitVariants],
   )
 
+  const shownTiles = useProgressiveCount(tiles.length, { resetKey: `${setId}|${filter}|${sortBy}|${rarityFilter}|${query}|${splitVariants}` })
+
   if (isLoading) {
     return (
       <div className="space-y-4">
@@ -380,7 +383,7 @@ export default function SetDetail() {
 
       {/* Card Grid */}
       <div className="grid grid-cols-3 gap-2">
-        {tiles.map(({ key, card, source }) => (
+        {tiles.slice(0, shownTiles).map(({ key, card, source }) => (
           <CardDisplay
             key={key}
             card={card}

@@ -18,6 +18,10 @@ export const READ_CACHE_MAX_QUERY_BYTES = 15 * MIB
 export const READ_CACHE_MAX_TOTAL_BYTES = 50 * MIB
 export const READ_CACHE_MAX_AGE_MS = 30 * DAY_MS
 export const READ_CACHE_THROTTLE_MS = 5000
+// Startup (F14c): next to the full record, the small queries are saved again in a "head" record that a
+// cold start reads first, so the first screen never waits for a structured clone of up to 50 MiB.
+export const READ_CACHE_HEAD_QUERY_BYTES = 256 * KIB
+export const READ_CACHE_HEAD_TOTAL_BYTES = 4 * MIB
 
 /**
  * Queries that are never saved, by the first element of their key: anything holding a link, token or
@@ -61,6 +65,7 @@ function currentAppVersion() {
 }
 
 export const recordKey = (origin, userId) => `${origin}|${userId}`
+export const headKey = (origin, userId) => `${recordKey(origin, userId)}|head`
 
 const isAllowed = query => query.state.status === 'success' && isSavableKey(query.queryKey)
 
@@ -147,6 +152,11 @@ const readRecord = (indexedDB, key) => withStore(indexedDB, 'readonly', store =>
  * is dropped first until the total fits).
  */
 export function applyCaps(queries) {
+  return applyCapsSized(queries).map(entry => entry.query)
+}
+
+// Same as applyCaps, keeping each query's size (JSON characters) for the head record.
+function applyCapsSized(queries) {
   const sized = queries
     .map(query => ({ query, bytes: sizeOf(query.state?.data) }))
     .filter(entry => entry.bytes <= READ_CACHE_MAX_QUERY_BYTES)
@@ -155,7 +165,7 @@ export function applyCaps(queries) {
     sized.sort((a, b) => (b.query.state.dataUpdatedAt || 0) - (a.query.state.dataUpdatedAt || 0))
     while (total > READ_CACHE_MAX_TOTAL_BYTES && sized.length > 0) total -= sized.pop().bytes
   }
-  return sized.map(entry => entry.query)
+  return sized
 }
 
 function isUsable(record, now) {
@@ -168,7 +178,12 @@ function isUsable(record, now) {
 }
 
 /** Builds the record to store: this session's allow-listed queries merged over the saved ones. */
-export function buildRecord(queryClient, previous, { now = Date.now() } = {}) {
+export function buildRecord(queryClient, previous, options) {
+  return buildRecords(queryClient, previous, options).record
+}
+
+/** Like buildRecord, plus the head record: the newest small queries that fit READ_CACHE_HEAD_TOTAL_BYTES. */
+export function buildRecords(queryClient, previous, { now = Date.now() } = {}) {
   const fresh = dehydrate(queryClient, { shouldDehydrateQuery: isAllowed })
   const byHash = new Map()
   // Pages not opened this session keep their saved data, until they are 30 days old.
@@ -184,12 +199,24 @@ export function buildRecord(queryClient, previous, { now = Date.now() } = {}) {
     const saved = byHash.get(query.queryHash)
     if (!saved || (query.state.dataUpdatedAt || 0) >= (saved.state?.dataUpdatedAt || 0)) byHash.set(query.queryHash, query)
   }
-  return {
+  const sized = applyCapsSized([...byHash.values()])
+  const envelope = queries => ({
     v: READ_CACHE_RECORD_VERSION,
     savedAt: now,
     appVersion: currentAppVersion(),
-    state: { mutations: [], queries: applyCaps([...byHash.values()]) },
+    state: { mutations: [], queries },
+  })
+  const small = sized
+    .filter(entry => entry.bytes <= READ_CACHE_HEAD_QUERY_BYTES)
+    .sort((a, b) => (b.query.state.dataUpdatedAt || 0) - (a.query.state.dataUpdatedAt || 0))
+  const headQueries = []
+  let headBytes = 0
+  for (const entry of small) {
+    if (headBytes + entry.bytes > READ_CACHE_HEAD_TOTAL_BYTES) continue
+    headBytes += entry.bytes
+    headQueries.push(entry.query)
   }
+  return { record: envelope(sized.map(entry => entry.query)), head: envelope(headQueries) }
 }
 
 /**
@@ -209,7 +236,9 @@ export function persist(queryClient, { origin, userId, indexedDB = globalThis.in
     inFlight = inFlight.then(() => withStore(indexedDB, 'readwrite', async store => {
       if (stopped) return false
       const previous = await promisify(store.get(key))
-      store.put(buildRecord(queryClient, previous), key)
+      const { record, head } = buildRecords(queryClient, previous)
+      store.put(record, key)
+      store.put(head, headKey(origin, userId))
       return true
     }, false))
     return inFlight
@@ -236,16 +265,48 @@ export function persist(queryClient, { origin, userId, indexedDB = globalThis.in
   }
 }
 
+function hydrateRecord(queryClient, record) {
+  // Never bring back a query that is on the deny list now, whatever an older record still holds.
+  hydrate(queryClient, { ...record.state, queries: record.state.queries.filter(query => isSavableKey(query?.queryKey)) })
+  return record.savedAt
+}
+
 /** Puts the saved queries of `{origin, userId}` back; → `savedAt` (ms) or `null`. */
 export async function restore(queryClient, { origin, userId, indexedDB = globalThis.indexedDB, now = Date.now() } = {}) {
   try {
     const record = await readRecord(indexedDB, recordKey(origin, userId))
     if (!isUsable(record, now)) return null
-    // Never bring back a query that is on the deny list now, whatever an older record still holds.
-    hydrate(queryClient, { ...record.state, queries: record.state.queries.filter(query => isSavableKey(query?.queryKey)) })
-    return record.savedAt
+    return hydrateRecord(queryClient, record)
   } catch {
     return null
+  }
+}
+
+/**
+ * Cold-start restore, step 1 (F14c): reads the head record (the small queries, which are what the first
+ * screen needs) instead of the whole record. → `{ record, complete }`. `complete` is false when only the
+ * head was read (the rest follows through restoreMissing), true when no head exists yet (a record from
+ * before the head was written) and the whole record had to be read. `record` is null when nothing is
+ * usable. It only reads, so it can start while the sign-in check is still waiting.
+ */
+export async function readFirst({ origin, userId, indexedDB = globalThis.indexedDB, now = Date.now() } = {}) {
+  try {
+    const head = await readRecord(indexedDB, headKey(origin, userId))
+    if (isUsable(head, now)) return { record: head, complete: false }
+    const record = await readRecord(indexedDB, recordKey(origin, userId))
+    return { record: isUsable(record, now) ? record : null, complete: true }
+  } catch {
+    return { record: null, complete: true }
+  }
+}
+
+/** Step 2: puts what readFirst read into `queryClient`. → `{ savedAt, complete }` (`savedAt` null when nothing was usable). */
+export function applyFirst(queryClient, first) {
+  if (!first?.record) return { savedAt: null, complete: true }
+  try {
+    return { savedAt: hydrateRecord(queryClient, first.record), complete: first.complete }
+  } catch {
+    return { savedAt: null, complete: true }
   }
 }
 
@@ -272,15 +333,19 @@ export async function restoreMissing(queryClient, { origin, userId, indexedDB = 
 }
 
 export async function purge({ origin, userId, indexedDB = globalThis.indexedDB } = {}) {
-  return withStore(indexedDB, 'readwrite', store => { store.delete(recordKey(origin, userId)) }, undefined)
+  return withStore(indexedDB, 'readwrite', store => {
+    store.delete(recordKey(origin, userId))
+    store.delete(headKey(origin, userId))
+  }, undefined)
 }
 
 /** Deletes every record except the one of `keepUserId`. */
 export async function purgeOthers({ origin, keepUserId, indexedDB = globalThis.indexedDB } = {}) {
   const keep = recordKey(origin, keepUserId)
+  const keepHead = headKey(origin, keepUserId)
   return withStore(indexedDB, 'readwrite', async store => {
     const keys = await promisify(store.getAllKeys())
-    for (const key of keys) if (key !== keep) store.delete(key)
+    for (const key of keys) if (key !== keep && key !== keepHead) store.delete(key)
   }, undefined)
 }
 

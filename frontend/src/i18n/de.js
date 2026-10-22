@@ -319,6 +319,7 @@ const de = {
   cardSearch: {
     title: 'Kartensuche',
     subtitle: 'TCGdex-API nach Karten durchsuchen',
+    needsCardData: 'Lade Kartendaten unter Einstellungen › Daten & Sync herunter, um offline zu suchen',
     searchPlaceholder: 'Kartenname oder Set-Kürzel + Nummer (z.B. MEP 022)...',
     trySearch: 'Pokémon-Karten suchen',
     trySearchHint: 'z.B. "Glurak", "Pikachu", "MEP 022" oder einen anderen Kartennamen',
