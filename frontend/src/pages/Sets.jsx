@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import clsx from 'clsx'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useCatalogQuery } from '../offline/carddb/useCatalogQuery.jsx'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Bell, BellOff, Filter, ChevronUp, ChevronDown, Eye, EyeOff } from 'lucide-react'
 import { getSets, markSetsSeen } from '../api/client'
@@ -125,9 +126,10 @@ export default function Sets() {
       })
   }, [t, updateSettings])
 
-  const { data: sets = [], isLoading } = useQuery({
+  const { data: sets = [], isLoading } = useCatalogQuery({
     queryKey: ['sets', langFilter],
     queryFn: () => getSets({ lang: langFilter }).then(r => r.data),
+    offlineFn: cardDb => cardDb.sets({ lang: langFilter }),
     enabled: filtersHydrated,
   })
   const { saveScrollPosition, createDetailNavigationState } = useListScrollRestoration({

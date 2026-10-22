@@ -1,6 +1,7 @@
 import { CloudOff } from 'lucide-react'
 import { useSettings } from '../contexts/SettingsContext'
 import { useNotSaved } from '../offline/notSaved'
+import { useServingFromCardDb } from '../offline/carddb/serving'
 import { useOffline } from '../offline/useOffline'
 
 /**
@@ -11,7 +12,8 @@ export default function NotSavedNote() {
   const { t } = useSettings()
   const offline = useOffline()
   const notSaved = useNotSaved()
-  if (!offline || !notSaved) return null
+  const fromCardDb = useServingFromCardDb()
+  if (!offline || !notSaved || fromCardDb) return null
 
   return (
     <p

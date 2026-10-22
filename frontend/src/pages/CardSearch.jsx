@@ -41,6 +41,7 @@ import EnergyIcon from '../components/ios/EnergyIcon'
 import { tileTextFor, typeKeyFor } from '../components/ios/pokemon'
 import { useNavBar } from '../navigation/useNavBar'
 import { useOffline } from '../offline/useOffline'
+import { PricesFromNote, useCatalogQuery } from '../offline/carddb/useCatalogQuery.jsx'
 import { groupSetsBySeries } from '../utils/setSeries'
 import { getPokedexFormFamily } from '../utils/pokedexUrlState'
 import { correctionNoticeParts } from '../utils/searchCorrection'
@@ -226,9 +227,10 @@ export default function CardSearch() {
   const scanAttention = scanAttentionCount(scanJobs)
   const scansActive = hasActiveScanJobs(scanJobs)
 
-  const { data: allSets = [] } = useQuery({
+  const { data: allSets = [] } = useCatalogQuery({
     queryKey: ['sets', settings.language || 'en'],
     queryFn: () => getSets().then(r => r.data),
+    offlineFn: cardDb => cardDb.sets({ lang: settings.language || 'en' }),
     staleTime: 5 * 60 * 1000,
   })
 
@@ -340,9 +342,10 @@ export default function CardSearch() {
 
   const hasQuery = filters.name || queryFilters.category || queryFilters.type || queryFilters.subtype || queryFilters.rarity || queryFilters.set_id || queryFilters.artist || queryFilters.rule_text.trim() || queryFilters.hp_min || queryFilters.hp_max || queryFilters.series
 
-  const { data, isLoading, error, isFetching } = useQuery({
+  const { data, isLoading, error, isFetching, source: dataSource, pricesUpdatedAt } = useCatalogQuery({
     queryKey: ['card-search', queryParams],
     queryFn: () => searchCards(queryParams).then(r => r.data),
+    offlineFn: cardDb => cardDb.search(queryParams),
     enabled: !!hasQuery,
     placeholderData: (prev) => prev,
   })
@@ -949,6 +952,7 @@ export default function CardSearch() {
               ))}
             </p>
           )}
+          <PricesFromNote source={dataSource} pricesUpdatedAt={pricesUpdatedAt} />
           <div className="flex items-center justify-between flex-wrap gap-2">
             <p className="text-sm text-text-secondary">
               {data.total_count?.toLocaleString()} {t('cardSearch.results')}

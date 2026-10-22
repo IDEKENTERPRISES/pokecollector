@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { PricesFromNote, useCatalogQuery } from '../offline/carddb/useCatalogQuery.jsx'
 import { Plus, X, BookMarked, HelpCircle, ArrowUpDown, ListFilter, Layers } from 'lucide-react'
 import { getSetChecklist, getBinders, addOwnedSetToBinder, addOwnedSetToAutoBinder } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
@@ -128,9 +129,10 @@ export default function SetDetail() {
   const [binderPickerOpen, setBinderPickerOpen] = useState(false)
   const [badgeLegendOpen, setBadgeLegendOpen] = useState(false)
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, source: dataSource, pricesUpdatedAt } = useCatalogQuery({
     queryKey: ['set-checklist', setId],
     queryFn: () => getSetChecklist(setId).then(r => r.data),
+    offlineFn: cardDb => cardDb.setChecklist(setId),
   })
 
   const setLang = data?.set?.lang || 'en'
@@ -282,6 +284,8 @@ export default function SetDetail() {
           </p>
         </div>
       </div>
+
+      <PricesFromNote source={dataSource} pricesUpdatedAt={pricesUpdatedAt} className="px-1" />
 
       {/* Swipeable stat cards */}
       <div
