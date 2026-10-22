@@ -125,6 +125,22 @@ test.describe('card picture download by set pack', () => {
     expect(await page.evaluate(async () => (await caches.keys()).filter(name => name.startsWith('pc-carddb-images-v1-')))).toEqual([])
   })
 
+  test('"Remove from this device" leaves no pictures behind, including the pictures seen while browsing', async ({ page, context }) => {
+    const state = newState()
+    await openDataSettings(page, context, state)
+    await startDownload(page)
+    await expect(row(page)).toContainText('Downloaded', { timeout: 60000 })
+    await page.evaluate(async () => {
+      await (await caches.open('pc-images-v1')).put('/api/images/card/seen/small', new Response('x', { headers: { 'Content-Type': 'image/png' } }))
+    })
+    expect(await page.evaluate(async () => (await caches.keys()).sort())).toEqual(['pc-carddb-images-v1-en', 'pc-images-v1'])
+
+    await page.getByTestId('carddb-remove').click()
+    await expect.poll(() => page.evaluate(async () => (await caches.keys()).filter(name => name.startsWith('pc-')))).toEqual([])
+    expect(await savedSets(page)).toEqual([])
+    await expect(page.getByTestId('carddb-section')).toHaveCount(0, { timeout: 15000 })
+  })
+
   test('reloading midway then resuming does not fetch the finished sets again', async ({ page, context }) => {
     const state = newState()
     state.delayMs = 250

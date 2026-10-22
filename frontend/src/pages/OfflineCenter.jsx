@@ -6,6 +6,7 @@ import InstallHint from '../components/pwa/InstallHint'
 import { StorageSummary, SyncControls, SyncItemList } from '../components/sync/SyncSheet'
 import { useSettings } from '../contexts/SettingsContext'
 import { getCapabilities } from '../offline/capabilities'
+import { getCardDbController } from '../offline/carddb/useCardDb'
 import { offlineCenterGate } from '../offline/centerGate'
 import { probe } from '../offline/outbox/probe'
 import { purgeAll } from '../offline/readCache'
@@ -99,6 +100,8 @@ export default function OfflineCenter() {
 
   const reset = async () => {
     await purgeAll()
+    // No pictures or card data may stay behind: the card database, the downloaded and the viewed pictures.
+    await getCardDbController()?.removeAll().catch(() => {})
     await resetServiceWorker()
     toast.success(t('pwa.resetDone'))
   }

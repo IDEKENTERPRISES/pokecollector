@@ -15,6 +15,8 @@ import { AbortedError, OfflineError, runCardDbSync } from './sync.js'
 
 export const PREFS_KEY = 'pc-carddb-prefs'
 export const SYNC_THROTTLE_MS = 60 * 1000
+// The service worker's cache of pictures seen while browsing; "remove everything" clears it too.
+export const VIEWED_IMAGES_CACHE = 'pc-images-v1'
 export const JSON_TIMEOUT_MS = 45 * 1000
 const RETRY_STATUSES = new Set([429, 502, 503, 504])
 const SPEED_WINDOW_MS = 15 * 1000
@@ -364,7 +366,7 @@ export function createCardDbController({
     await Promise.all([...pictureRuns.keys()].map(lang => stopPictures(lang, { removed: true })))
     await store.clearAll()
     for (const name of await listCaches()) {
-      if (name.startsWith(PICTURE_CACHE_PREFIX)) await deleteCache(name)
+      if (name.startsWith(PICTURE_CACHE_PREFIX) || name === VIEWED_IMAGES_CACHE) await deleteCache(name)
     }
     for (const lang of langs) pictureRecord(lang).clear()
     savePrefs({ ...snapshot.prefs, pictures: {} })
