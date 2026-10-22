@@ -159,7 +159,7 @@ test.describe('sync center', () => {
     }).toPass({ timeout: 15000 })
   })
 
-  test('pages that need the server show OfflineUnavailable while offline', async ({ page, context }) => {
+  test('pages that need the server open offline too: a never-opened one shows the "not saved yet" note', async ({ page, context }) => {
     await mockApi(context, { health: 'down' })
     await openApp(page)
     await seed(page, { state: 'pending' })
@@ -173,8 +173,9 @@ test.describe('sync center', () => {
     await page.keyboard.press('Escape')
 
     await navigate(page, '/analytics')
-    await expect(page.getByTestId('offline-unavailable')).toBeVisible()
-    await expect(page.getByText('This page isn\'t available offline.')).toBeVisible()
+    await expect(page.getByTestId('not-saved-note')).toBeVisible()
+    await expect(page.getByTestId('offline-unavailable')).toHaveCount(0)
+    await expect(page.getByText('Not saved for offline yet. Open it once while online.')).toBeVisible()
     await navigate(page, '/collection')
     await expect(page.getByTestId('offline-unavailable')).toHaveCount(0)
     await navigate(page, '/offline')

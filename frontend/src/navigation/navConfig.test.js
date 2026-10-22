@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { OFFLINE_ROUTES, isOfflineRoute } from '../offline/routes.js'
+import { OFFLINE_EXCEPTIONS, isOfflineRoute } from '../offline/routes.js'
 import en from '../i18n/en.js'
 import {
   OUTSIDE_SHELL,
@@ -182,14 +182,11 @@ describe('navConfig table (design doc §4.2)', () => {
 })
 
 describe('navConfig and the offline routes', () => {
-  it('flags exactly the routes in OFFLINE_ROUTES as offline', () => {
+  it('opens every page of the shell offline (the exceptions list is empty)', () => {
+    expect(OFFLINE_EXCEPTIONS).toEqual([])
     for (const route of ROUTES) {
       const sample = route.path.replace(/:[A-Za-z]+/g, 'x')
-      expect({ path: route.path, offline: isOfflineRoute(sample) }).toEqual({ path: route.path, offline: route.offline })
-    }
-    for (const pattern of OFFLINE_ROUTES) {
-      const route = ROUTES.find(r => r.path === pattern) ?? REDIRECTS.find(r => r.path === pattern)
-      expect({ pattern, known: Boolean(route) }).toEqual({ pattern, known: true })
+      expect({ path: route.path, offline: isOfflineRoute(sample) }).toEqual({ path: route.path, offline: true })
     }
   })
 })

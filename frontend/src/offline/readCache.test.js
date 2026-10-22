@@ -4,10 +4,13 @@ import { QueryClient } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   READ_CACHE_DB_NAME,
+  READ_CACHE_DENY,
   READ_CACHE_MAX_AGE_MS,
   READ_CACHE_MAX_QUERY_BYTES,
   READ_CACHE_MAX_TOTAL_BYTES,
   applyCaps,
+  holdsSecret,
+  isSavableKey,
   persist,
   purge,
   purgeAll,
@@ -74,16 +77,20 @@ afterEach(() => {
 })
 
 describe('read cache', () => {
-  it('saves only successful allow-listed queries', async () => {
+  it('saves successful queries of every page except the deny list', async () => {
     seed(['collection', { page: 1 }], [{ id: 1 }])
     seed(['wishlist'], [{ id: 2 }])
     seed(['profile'], { name: 'x' })
+    seed(['pokedex', 'en'], { entries: [] })
+    seed(['analytics', 'duplicates'], [{ id: 5 }])
     seed(['users'], [{ id: 9 }])
+    seed(['invites'], [{ id: 3 }])
+    seed(['audit-log', 25], { pages: [] })
     await client.fetchQuery({ queryKey: ['dashboard'], queryFn: () => { throw new Error('boom') }, retry: false }).catch(() => {})
     await save()
     const record = await getRecord(recordKey(origin, 1))
     expect(record.v).toBe(1)
-    expect(record.state.queries.map(query => query.queryKey[0]).sort()).toEqual(['collection', 'wishlist'])
+    expect(record.state.queries.map(query => query.queryKey[0]).sort()).toEqual(['analytics', 'collection', 'pokedex', 'profile', 'wishlist'])
   })
 
   it('restores into a fresh client and returns savedAt', async () => {
@@ -111,14 +118,67 @@ describe('read cache', () => {
     expect(hashes(await getRecord(recordKey(origin, 1)))).toEqual(['["wishlist"]'])
   })
 
-  it('drops the oldest queries until the total fits in 20 MiB', () => {
-    const big = 'x'.repeat(4 * 1024 * 1024)
+  it('drops the oldest queries until the total fits in 50 MiB', () => {
+    const big = 'x'.repeat(12 * 1024 * 1024)
     const queries = [1, 2, 3, 4, 5, 6].map(n => ({ queryHash: `q${n}`, state: { data: big, dataUpdatedAt: n } }))
     const kept = applyCaps(queries).map(query => query.queryHash).sort()
     expect(kept).toHaveLength(4)
     expect(kept).not.toContain('q1')
     expect(kept).not.toContain('q2')
-    expect(READ_CACHE_MAX_TOTAL_BYTES).toBe(20 * 1024 * 1024)
+    expect(READ_CACHE_MAX_TOTAL_BYTES).toBe(50 * 1024 * 1024)
+  })
+
+  describe('deny list', () => {
+    it('keeps invite links, the audit log, admin lists, sessions, scanner configuration and push out', () => {
+      for (const key of ['invites', 'audit-log', 'users', 'user-sessions', 'sessions', 'scanner-configuration', 'push', 'push-subscription', 'telegram-status', 'setting']) {
+        expect(isSavableKey([key]), key).toBe(false)
+        expect(READ_CACHE_DENY.has(key)).toBe(true)
+      }
+    })
+
+    it('keeps live-state and blob queries out', () => {
+      for (const key of ['sync-status', 'scan-jobs', 'scan-job', 'collection-photo']) expect(isSavableKey([key, 3]), key).toBe(false)
+    })
+
+    it('saves the pages: collection, sets, decks, Pokédex, analytics, products, trades, leaderboard, profile', () => {
+      for (const key of ['collection', 'sets', 'set-checklist', 'binders', 'binder-cards', 'decks', 'deck', 'pokedex', 'analytics', 'duplicates', 'top-movers', 'rarity-stats', 'products', 'trades', 'leaderboard', 'achievements', 'profile', 'dashboard', 'wishlist']) {
+        expect(isSavableKey([key, 'x']), key).toBe(true)
+      }
+    })
+
+    it('keeps a query out when a key part names a secret', () => {
+      expect(isSavableKey(['settings-page', 'telegram_bot_token'])).toBe(false)
+      expect(isSavableKey(['collection', 'api_key'])).toBe(false)
+      expect(isSavableKey(['reset-password-form'])).toBe(false)
+    })
+
+    it('ignores empty and non-string first keys', () => {
+      expect(isSavableKey([])).toBe(false)
+      expect(isSavableKey([{ a: 1 }])).toBe(false)
+      expect(isSavableKey(undefined)).toBe(false)
+    })
+
+    it('spots a secret field in the data, and drops that query from the record', async () => {
+      expect(holdsSecret(JSON.stringify({ items: [{ name: 'x', access_token: 'abc' }] }))).toBe(true)
+      expect(holdsSecret(JSON.stringify({ user: { password: 'x' } }))).toBe(true)
+      expect(holdsSecret(JSON.stringify({ gemini_api_key: 'x' }))).toBe(true)
+      expect(holdsSecret(JSON.stringify({ name: 'a token of appreciation' }))).toBe(false)
+      seed(['collection'], [{ id: 1 }])
+      seed(['products'], [{ id: 1, client_secret: 'shh' }])
+      await save()
+      expect(hashes(await getRecord(recordKey(origin, 1)))).toEqual(['["collection"]'])
+    })
+
+    it('never restores a denied query that an older record held', async () => {
+      seed(['collection'], ['ok'])
+      await save()
+      const record = await getRecord(recordKey(origin, 1))
+      record.state.queries.push({ queryHash: '["invites"]', queryKey: ['invites'], state: { ...record.state.queries[0].state, data: [{ token: 'x' }] } })
+      await putRaw(recordKey(origin, 1), record)
+      const other = newClient()
+      await restore(other, { origin, userId: 1, indexedDB })
+      expect(other.getQueryData(['invites'])).toBeUndefined()
+    })
   })
 
   it('keeps saved pages that were not opened this session', async () => {

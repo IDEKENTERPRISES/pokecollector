@@ -1,35 +1,37 @@
 import { describe, expect, it } from 'vitest'
-import { isOfflineRoute, OFFLINE_ROUTES } from './routes.js'
+import { REDIRECTS, ROUTES } from '../navigation/navConfig.js'
+import { OFFLINE_EXCEPTIONS, isOfflineRoute } from './routes.js'
 
-describe('isOfflineRoute', () => {
-  it('accepts every listed static route', () => {
-    for (const path of ['/', '/dashboard', '/collection', '/wishlist', '/sets', '/binders', '/search', '/offline', '/profile']) {
-      expect(isOfflineRoute(path)).toBe(true)
+describe('isOfflineRoute (every page of the shell opens offline)', () => {
+  it('accepts every route of the shell, with params filled in', () => {
+    for (const route of ROUTES) {
+      expect(isOfflineRoute(route.path.replace(/:[A-Za-z]+/g, 'abc'))).toBe(true)
     }
   })
 
-  it('accepts parameterised routes with one segment', () => {
-    expect(isOfflineRoute('/sets/base1')).toBe(true)
-    expect(isOfflineRoute('/sets/series/sv')).toBe(true)
-    expect(isOfflineRoute('/sets/series/sv/extra')).toBe(false)
-    expect(isOfflineRoute('/binders/42')).toBe(true)
-    expect(isOfflineRoute('/sets/base1/extra')).toBe(false)
-    expect(isOfflineRoute('/binders//')).toBe(false)
+  it('accepts the pages that were blocked before F12', () => {
+    for (const path of [
+      '/decks/12', '/decks/compare', '/pokedex', '/pokedex/25', '/analytics', '/products', '/trades',
+      '/leaderboard', '/achievements', '/settings', '/settings/appearance', '/scans', '/scans/3', '/migration',
+      '/sets/base1_en', '/sets/series/sv', '/binders/42', '/collection/user/3',
+    ]) {
+      expect({ path, offline: isOfflineRoute(path) }).toEqual({ path, offline: true })
+    }
   })
 
   it('ignores a trailing slash', () => {
     expect(isOfflineRoute('/collection/')).toBe(true)
     expect(isOfflineRoute('/sets/base1/')).toBe(true)
-    expect(isOfflineRoute('/offline/')).toBe(true)
   })
 
-  it('rejects everything else', () => {
-    for (const path of ['/analytics', '/settings', '/settings/appearance', '/scans', '/collection/user/3', '/pokedex', '/collections', '', undefined]) {
+  it('does not treat unknown paths, redirects or pages outside the shell as shell pages', () => {
+    for (const path of ['/nowhere', '/login', '/u/misty', '/sets/base1/extra', '', undefined]) {
       expect(isOfflineRoute(path)).toBe(false)
     }
+    for (const redirect of REDIRECTS) expect(isOfflineRoute(redirect.path.replace(/:[A-Za-z]+/g, 'abc'))).toBe(false)
   })
 
-  it('lists the routes of the design document', () => {
-    expect(OFFLINE_ROUTES).toHaveLength(12)
+  it('has no exceptions: a page that cannot work offline would have to be listed with a reason', () => {
+    expect(OFFLINE_EXCEPTIONS).toEqual([])
   })
 })
