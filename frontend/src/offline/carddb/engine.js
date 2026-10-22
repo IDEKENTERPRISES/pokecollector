@@ -52,6 +52,7 @@ const langOfId = id => {
 export function createCardDbEngine({ store }) {
   const loaded = new Map() // lang -> { signature, promise of { sets, cards, byId, setByTcg, pricesUpdatedAt } }
   const building = new Map() // lang -> Promise<index record>
+  const fullPrices = new Map() // lang -> { signature, map: Promise<Map> }
   const combined = new Map() // signatures key -> prepared search helpers
 
   async function build(lang, meta) {
@@ -148,7 +149,11 @@ export function createCardDbEngine({ store }) {
   async function pricesOfSet(lang, setId, signature) {
     const record = await store.getSetPrices(lang, setId)
     if (record && record.signature === signature) return priceMap(record)
-    return priceMap(await store.getPrices(lang))
+    // Not derived yet (a sync just finished): read the whole prices file once and keep it until the next sync.
+    if (fullPrices.get(lang)?.signature !== signature) {
+      fullPrices.set(lang, { signature, map: store.getPrices(lang).then(priceMap) })
+    }
+    return fullPrices.get(lang).map
   }
 
   /** Full card objects (as the pages expect) for index rows, in the given order. */
