@@ -14,6 +14,7 @@ import {
   purgeOthers,
   recordKey,
   restore,
+  restoreMissing,
 } from './readCache.js'
 
 const origin = 'https://pokes.test'
@@ -127,6 +128,81 @@ describe('read cache', () => {
     seed(['wishlist'], ['new'])
     await save()
     expect(hashes(await getRecord(recordKey(origin, 1)))).toEqual(['["collection"]', '["wishlist"]'])
+  })
+
+  describe('mid-session restore (restoreMissing)', () => {
+    it('puts back saved queries this session does not hold', async () => {
+      seed(['collection'], [{ id: 1 }])
+      seed(['wishlist'], [{ id: 2 }])
+      await save()
+      const session = newClient()
+      const result = await restoreMissing(session, { origin, userId: 1, indexedDB })
+      expect(result.restored).toBe(2)
+      expect(typeof result.savedAt).toBe('number')
+      expect(session.getQueryData(['collection'])).toEqual([{ id: 1 }])
+      expect(session.getQueryData(['wishlist'])).toEqual([{ id: 2 }])
+    })
+
+    it('never overwrites data this session already holds, even when the saved copy is newer', async () => {
+      seed(['collection'], ['saved'])
+      await save()
+      const session = newClient()
+      session.setQueryData(['collection'], ['this session'], { updatedAt: Date.now() - 60_000 })
+      const result = await restoreMissing(session, { origin, userId: 1, indexedDB })
+      expect(result.restored).toBe(0)
+      expect(session.getQueryData(['collection'])).toEqual(['this session'])
+    })
+
+    it('fills a query that is pending with no data', async () => {
+      seed(['collection'], ['saved'])
+      await save()
+      const session = newClient()
+      session.getQueryCache().build(session, { queryKey: ['collection'] }) // mounted, nothing fetched yet
+      expect((await restoreMissing(session, { origin, userId: 1, indexedDB })).restored).toBe(1)
+      expect(session.getQueryData(['collection'])).toEqual(['saved'])
+    })
+
+    it('returns nothing without a usable record (none, other user, other version)', async () => {
+      const session = newClient()
+      expect(await restoreMissing(session, { origin, userId: 1, indexedDB })).toEqual({ savedAt: null, restored: 0 })
+      seed(['collection'], ['x'])
+      await save(1)
+      expect((await restoreMissing(newClient(), { origin, userId: 2, indexedDB })).restored).toBe(0)
+      const record = await getRecord(recordKey(origin, 1))
+      await putRaw(recordKey(origin, 1), { ...record, appVersion: 'other-build' })
+      expect((await restoreMissing(newClient(), { origin, userId: 1, indexedDB })).restored).toBe(0)
+    })
+
+    it('never throws without IndexedDB', async () => {
+      expect(await restoreMissing(newClient(), { origin, userId: 1, indexedDB: null })).toEqual({ savedAt: null, restored: 0 })
+    })
+
+    it('does not let restored (older) data replace a newer saved record', async () => {
+      seed(['collection'], ['v1'])
+      await save()
+      const first = await getRecord(recordKey(origin, 1))
+      const session = newClient()
+      await restoreMissing(session, { origin, userId: 1, indexedDB }) // this tab now holds v1
+      // Another tab saves a newer record in the meantime.
+      const newer = structuredClone(first)
+      newer.state.queries[0].state.data = ['v2']
+      newer.state.queries[0].state.dataUpdatedAt = first.state.queries[0].state.dataUpdatedAt + 60_000
+      await putRaw(recordKey(origin, 1), newer)
+      // This tab's persister now writes: the restored v1 must not win.
+      await persist(session, { origin, userId: 1, indexedDB, throttleMs: 5000 }).flush()
+      const after = await getRecord(recordKey(origin, 1))
+      expect(after.state.queries.find(query => query.queryHash === '["collection"]').state.data).toEqual(['v2'])
+    })
+  })
+
+  it('a fresh result replaces an older saved copy of the same query', async () => {
+    seed(['collection'], ['old'])
+    await save()
+    client = newClient()
+    seed(['collection'], ['new'])
+    await save()
+    const record = await getRecord(recordKey(origin, 1))
+    expect(record.state.queries.find(query => query.queryHash === '["collection"]').state.data).toEqual(['new'])
   })
 
   it('ignores a record from another app version', async () => {
