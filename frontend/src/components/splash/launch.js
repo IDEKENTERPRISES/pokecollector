@@ -86,6 +86,7 @@ export function browserLaunchEnv() {
 let decided = false
 let mode = null
 let closed = false
+const closeWaiters = new Set()
 
 export function launchSplashMode(env = browserLaunchEnv) {
   if (!decided) {
@@ -97,10 +98,28 @@ export function launchSplashMode(env = browserLaunchEnv) {
 
 export function markLaunchSplashClosed() {
   closed = true
+  for (const resolve of closeWaiters) resolve()
+  closeWaiters.clear()
+}
+
+/** Resolves once the launch splash has closed (or at once when this launch has none), at the latest after `maxMs`.
+ * For work that should not compete with the splash's first frames. */
+export function whenLaunchSplashClosed(maxMs = 6000) {
+  if (closed || !launchSplashMode()) return Promise.resolve()
+  return new Promise(resolve => {
+    const done = () => {
+      window.clearTimeout(timer)
+      closeWaiters.delete(done)
+      resolve()
+    }
+    const timer = window.setTimeout(done, maxMs)
+    closeWaiters.add(done)
+  })
 }
 
 export function resetLaunchForTests() {
   decided = false
   mode = null
   closed = false
+  closeWaiters.clear()
 }

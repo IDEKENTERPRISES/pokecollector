@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { getAuthMode, getMe, logoutSession } from '../api/client'
-import { authRetryDelay, loadAuthState } from './authBootstrap'
+import { AUTH_SNAPSHOT_TIMEOUT_MS, AUTH_STARTUP_TIMEOUT_MS, authRetryDelay, loadAuthState } from './authBootstrap'
 import { clearSettingsCache } from '../offline/settingsCache'
 import { clearAuthSnapshot, readAuthSnapshot, writeAuthSnapshot } from '../offline/authSnapshot'
 import { readPwaFlags } from '../pwa/flags'
@@ -30,10 +30,14 @@ export function AuthProvider({ children }) {
 
     const bootstrap = async (attempt = 0) => {
       try {
+        const token = localStorage.getItem('token')
+        // A device that has signed in before (and may be offline) must not wait the full timeout.
+        const remembered = attempt === 0 && readPwaFlags().queue && Boolean(readAuthSnapshot({ token }))
         const result = await loadAuthState({
-          token: localStorage.getItem('token'),
+          token,
           getAuthMode,
           getMe,
+          timeout: remembered ? AUTH_SNAPSHOT_TIMEOUT_MS : AUTH_STARTUP_TIMEOUT_MS,
         })
         if (cancelled) return
 

@@ -5,6 +5,10 @@ const MAX_RETRY_DELAY_MS = 10_000
 // response), never a 401, so it takes the existing degraded/offline path.
 export const AUTH_STARTUP_TIMEOUT_MS = 5_000
 
+// With a remembered sign-in the first check gives up sooner: the saved data is waiting, and a server
+// that is up answers in well under this. A slow answer only means a short stay in the degraded state.
+export const AUTH_SNAPSHOT_TIMEOUT_MS = 1_500
+
 export function authRetryDelay(attempt) {
   const safeAttempt = Number.isInteger(attempt) && attempt > 0 ? attempt : 0
   return Math.min(1_000 * (2 ** safeAttempt), MAX_RETRY_DELAY_MS)
@@ -14,8 +18,8 @@ export function isUnauthorized(error) {
   return error?.response?.status === 401
 }
 
-export async function loadAuthState({ token, getAuthMode, getMe }) {
-  const { multi_user: multiUser, locked } = await getAuthMode({ timeout: AUTH_STARTUP_TIMEOUT_MS })
+export async function loadAuthState({ token, getAuthMode, getMe, timeout = AUTH_STARTUP_TIMEOUT_MS }) {
+  const { multi_user: multiUser, locked } = await getAuthMode({ timeout })
 
   if (typeof multiUser !== 'boolean') {
     throw new Error('Invalid authentication mode response')
@@ -39,7 +43,7 @@ export async function loadAuthState({ token, getAuthMode, getMe }) {
       // Bootstrap decides whether a 401 is an expired session. The shared
       // interceptor must not redirect or clear storage before that decision.
       preserveSession: true,
-      timeout: AUTH_STARTUP_TIMEOUT_MS,
+      timeout,
     })
     return {
       user,
