@@ -4,27 +4,32 @@ on:
   pull_request:
     paths:
       - frontend/**
+      - backend/**
       - docs/CARD_SYSTEM.md
       - docs/FRONTEND.md
       - CONTRIBUTING.md
       - .github/workflows/frontend-card-system.yml
+  # Every push to the integration and deploy branches runs the full suite, so a green run on the
+  # branch head replaces a local pre-deploy test run.
   push:
     branches:
       - main
-    paths:
-      - frontend/**
-      - docs/CARD_SYSTEM.md
-      - docs/FRONTEND.md
-      - CONTRIBUTING.md
-      - .github/workflows/frontend-card-system.yml
+      - feature/ios-ui
+      - deploy
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: card-system-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  card-system:
+  unit-build:
+    name: Unit tests and build
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Same image the Linux snapshots are generated in, so fonts and rendering match.
     container:
       image: mcr.microsoft.com/playwright:v1.62.1-noble
@@ -47,13 +52,15 @@ jobs:
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: Basic ${auth_header}" fetch --force origin "${GITHUB_REF}"
           git checkout --detach FETCH_HEAD
 
-      - name: Show Node.js toolchain
-        run: |
-          node --version
-          npm --version
+      - name: Cache npm downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --prefer-offline --no-audit --no-fund
 
       - name: Run translation and unit tests
         run: npm test
@@ -61,11 +68,157 @@ jobs:
       - name: Build production frontend
         run: npm run build
 
+  visual:
+    name: Visual (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
+      options: --ipc=host
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout repository
+        shell: bash
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          auth_header="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          echo "::add-mask::${auth_header}"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: Basic ${auth_header}" fetch --force origin "${GITHUB_REF}"
+          git checkout --detach FETCH_HEAD
+
+      - name: Cache npm downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
       - name: Run desktop and mobile visual regression tests
         run: npm run test:visual
+
+  visual-webkit:
+    name: Visual (WebKit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
+      options: --ipc=host
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout repository
+        shell: bash
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          auth_header="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          echo "::add-mask::${auth_header}"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: Basic ${auth_header}" fetch --force origin "${GITHUB_REF}"
+          git checkout --detach FETCH_HEAD
+
+      - name: Cache npm downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
 
       - name: Run WebKit card-list regression test
         run: npm run test:visual:webkit
 
-      - name: Run PWA service-worker tests (Chromium)
-        run: npm run test:pwa
+  pwa:
+    name: PWA ${{ matrix.shard }}/3
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
+      options: --ipc=host
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout repository
+        shell: bash
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          auth_header="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          echo "::add-mask::${auth_header}"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: Basic ${auth_header}" fetch --force origin "${GITHUB_REF}"
+          git checkout --detach FETCH_HEAD
+
+      - name: Cache npm downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      # Each shard builds and serves its own copy on port 4175 (own runner, no shared server).
+      - name: Run PWA service-worker tests (shard ${{ matrix.shard }}/3)
+        run: npx playwright test --config=playwright.pwa.config.js --shard=${{ matrix.shard }}/3
+
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run backend tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+  # Single check that needs every job above; keeps the `card-system` check name working.
+  card-system:
+    name: card-system
+    if: always()
+    needs: [unit-build, visual, visual-webkit, pwa, backend]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every job to pass
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for r in $RESULTS; do [ "$r" = success ] || exit 1; done
