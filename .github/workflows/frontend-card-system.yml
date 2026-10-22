@@ -145,13 +145,9 @@ jobs:
         run: npm run test:visual:webkit
 
   pwa:
-    name: PWA ${{ matrix.shard }}/3
+    name: PWA service worker
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3]
     container:
       image: mcr.microsoft.com/playwright:v1.62.1-noble
       options: --ipc=host
@@ -183,9 +179,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
 
-      # Each shard builds and serves its own copy on port 4175 (own runner, no shared server).
-      - name: Run PWA service-worker tests (shard ${{ matrix.shard }}/3)
-        run: npx playwright test --config=playwright.pwa.config.js --shard=${{ matrix.shard }}/3
+      # The test harness builds the app and serves it on port 4175.
+      - name: Run PWA service-worker tests (Chromium)
+        run: npx playwright test --config=playwright.pwa.config.js 
 
   backend:
     name: Backend tests
