@@ -14,6 +14,7 @@ import { checkCanary, initCanary, requestPersistence } from './durability'
 import { openOutboxDb } from './outbox/db.js'
 import { createOutbox } from './outbox/index.js'
 import { cancelHungQueries, createOfflineEpisodes, refreshAfterReconnect } from './offlineEpisode'
+import { setOfflineMessage, setOfflineStatus } from './offlineStatus'
 import { persist, purge, purgeOthers, restore, restoreMissing } from './readCache'
 import { createSyncReporter } from './syncToasts'
 import { OutboxContext } from './useOutbox'
@@ -171,7 +172,11 @@ export function OfflineProvider({ children }) {
     const episodes = createOfflineEpisodes()
     let cancelled = false
     const onChange = async () => {
-      const event = episodes.update(outbox.getSnapshot().reachability.bannerVisible)
+      const bannerVisible = outbox.getSnapshot().reachability.bannerVisible
+      // The API client refuses changes at once while the app is offline (no spinner, no silent failure).
+      setOfflineMessage(tRef.current('sync.actionNeedsConnection'))
+      setOfflineStatus(bannerVisible)
+      const event = episodes.update(bannerVisible)
       if (event === 'start') {
         const { savedAt: saved, restored } = await restoreMissing(queryClient, { origin: window.location.origin, userId })
         if (cancelled || !episodes.isOffline()) return
@@ -187,6 +192,7 @@ export function OfflineProvider({ children }) {
     return () => {
       cancelled = true
       unsubscribe()
+      setOfflineStatus(false)
     }
   }, [outbox, active, userId, queryClient])
 

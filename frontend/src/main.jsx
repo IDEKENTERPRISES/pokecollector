@@ -23,6 +23,11 @@ const queryClient = new QueryClient({
       staleTime: 30000,
       refetchOnWindowFocus: false,
     },
+    // A mutation never waits for the connection (it would spin for ever offline): it runs, and the API
+    // client refuses it at once with a short message while the app is offline (offline/offlineStatus.js).
+    mutations: {
+      networkMode: 'always',
+    },
   },
 })
 

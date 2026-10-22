@@ -2242,6 +2242,8 @@ const en = {
     staleData: 'Showing saved data from',
     pendingTotalsNote: 'Totals do not include items waiting to sync.',
     unavailableOffline: "This page isn't available offline.",
+    notSavedYet: 'Not saved for offline yet. Open it once while online.',
+    actionNeedsConnection: "Needs a connection. Try again when you're back online.",
     needsConnection: 'Needs a connection',
     serverTooOld: 'The server must be updated before changes can be saved offline.',
     photoTooLarge: "This photo is larger than 15 MB and can't be uploaded.",
