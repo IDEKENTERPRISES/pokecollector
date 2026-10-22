@@ -207,4 +207,13 @@ describe('settings sections', () => {
     ])
     expect(visibleSettingsSections({ isAdmin: true })).toHaveLength(8)
   })
+
+  it('leaves the Scanner section out for a user whose scanner an administrator manages', () => {
+    expect(visibleSettingsSections({ isAdmin: false, scannerManaged: true }).map(s => s.key)).toEqual([
+      'account', 'appearance', 'notifications', 'community', 'about',
+    ])
+    // Administrators and per-user installations keep it.
+    expect(visibleSettingsSections({ isAdmin: true, scannerManaged: false }).map(s => s.key)).toContain('scanner')
+    expect(visibleSettingsSections({ isAdmin: false, scannerManaged: false }).map(s => s.key)).toContain('scanner')
+  })
 })
