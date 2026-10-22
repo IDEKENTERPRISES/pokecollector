@@ -13,7 +13,8 @@ import { applyDebugParams } from './debug'
 import { checkCanary, initCanary, requestPersistence } from './durability'
 import { openOutboxDb } from './outbox/db.js'
 import { createOutbox } from './outbox/index.js'
-import { persist, purge, purgeOthers, restore } from './readCache'
+import { cancelHungQueries, createOfflineEpisodes, refreshAfterReconnect } from './offlineEpisode'
+import { persist, purge, purgeOthers, restore, restoreMissing } from './readCache'
 import { createSyncReporter } from './syncToasts'
 import { OutboxContext } from './useOutbox'
 
@@ -159,6 +160,35 @@ export function OfflineProvider({ children }) {
         setRestoreDone(true)
       })
   }, [enabled, status, userId, queryClient])
+
+  // Going offline while the app is open (owner feedback F11): once per offline episode the saved read
+  // cache is merged back (never over data this session already holds), the label shows, and fetches
+  // that can only hang (in flight, nothing to show) are cancelled, so a page opened now shows the saved
+  // data, or its normal empty state, instead of spinning. Back online, mounted queries refetch and the
+  // label goes. A degraded start restores on its own (above); this covers a session that started online.
+  useEffect(() => {
+    if (!outbox || !active) return undefined
+    const episodes = createOfflineEpisodes()
+    let cancelled = false
+    const onChange = async () => {
+      const event = episodes.update(outbox.getSnapshot().reachability.bannerVisible)
+      if (event === 'start') {
+        const { savedAt: saved, restored } = await restoreMissing(queryClient, { origin: window.location.origin, userId })
+        if (cancelled || !episodes.isOffline()) return
+        if (restored > 0) setSavedAt(saved)
+        cancelHungQueries(queryClient)
+      } else if (event === 'end') {
+        setSavedAt(null)
+        refreshAfterReconnect(queryClient)
+      }
+    }
+    const unsubscribe = outbox.subscribe(onChange)
+    onChange()
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [outbox, active, userId, queryClient])
 
   // The server answered again: the pages hold fresh data, so the "saved data" label goes.
   useEffect(() => {
