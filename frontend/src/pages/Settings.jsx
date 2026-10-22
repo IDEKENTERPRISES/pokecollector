@@ -9,7 +9,7 @@ import {
   getSetting, setSetting, getTelegramStatus, saveSettings, setAuthMode,
   getUsers, createUser, updateUser, deleteUser, changePassword, changeAvatar, changeUsername,
   getContributors, getSupporters, getCustomMatches, downloadDebugLog, logoutOtherDevices,
-  getProfile, updateProfile, deleteScanDiagnostics,
+  getProfile, updateProfile, deleteScanDiagnostics, getScannerConfiguration,
   deleteAllCollectionCardPhotos,
 } from '../api/client'
 import api from '../api/client'
@@ -498,6 +498,11 @@ export default function Settings() {
   const [scanDiagnosticsSaving, setScanDiagnosticsSaving] = useState(false)
   const [scanDiagnosticsDeleting, setScanDiagnosticsDeleting] = useState(false)
   const [geminiFallbackSaving, setGeminiFallbackSaving] = useState(false)
+  const { data: scannerConfiguration } = useQuery({
+    queryKey: ['scanner-configuration'],
+    queryFn: getScannerConfiguration,
+    enabled: section === 'scanner',
+  })
   const [cardPhotosDeleting, setCardPhotosDeleting] = useState(false)
 
   // Recurring automatic full sync interval (days) and small price sync interval (minutes).
@@ -978,6 +983,10 @@ export default function Settings() {
   const scanDiagnosticsAvailable = settings.scan_diagnostics_available === 'true'
   const scanDiagnosticsDeletionAvailable = settings.scan_diagnostics_deletion_available === 'true'
   const geminiFallbackEnabled = settings.scanner_gemini_fallback === 'true'
+  // The fallback row exists only while Gemini is enabled, and in global mode only admins change it.
+  const showGeminiFallback = scannerConfiguration
+    ? scannerConfiguration.gemini_enabled !== false && scannerConfiguration.editable !== false
+    : true
   const preferOwnCardPhotos = settings.prefer_own_card_photos === 'true'
 
   const usernameMutation = useMutation({
@@ -1322,17 +1331,21 @@ export default function Settings() {
             <SectionHeader title={t('settings.sectionAI')} />
             <ScannerSettingsCard t={t} />
             <SettingsCard>
-              <SettingsRow
-                label={t('settings.geminiFallback')}
-                description={t('settings.geminiFallbackDesc')}
-              >
-                <Toggle
-                  value={geminiFallbackEnabled}
+              {showGeminiFallback && (
+                <SettingsRow
                   label={t('settings.geminiFallback')}
-                  onChange={handleGeminiFallbackToggle}
-                  disabled={geminiFallbackSaving}
-                />
-              </SettingsRow>
+                  description={scannerConfiguration?.scope === 'global'
+                    ? `${t('settings.geminiFallbackDesc')} ${t('settings.adminScannerGlobalTitle')}.`
+                    : t('settings.geminiFallbackDesc')}
+                >
+                  <Toggle
+                    value={geminiFallbackEnabled}
+                    label={t('settings.geminiFallback')}
+                    onChange={handleGeminiFallbackToggle}
+                    disabled={geminiFallbackSaving}
+                  />
+                </SettingsRow>
+              )}
               <SettingsRow
                 label={t('settings.scanDiagnostics')}
                 description={scanDiagnosticsAvailable

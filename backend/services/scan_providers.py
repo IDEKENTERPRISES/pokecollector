@@ -32,7 +32,7 @@ import httpx
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from models import User, UserSetting
+from models import Setting, User, UserSetting
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +111,107 @@ def _env_bool(name: str, default: bool) -> bool:
     return default
 
 
+def global_scanner_config_enabled() -> bool:
+    """One scanner configuration for everyone, set by administrators (SCANNER_GLOBAL_CONFIG)."""
+    return _env_bool("SCANNER_GLOBAL_CONFIG", False)
+
+
+def gemini_enabled() -> bool:
+    """Gemini can be switched off for the whole installation (GEMINI_SCANNER_ENABLED)."""
+    return _env_bool("GEMINI_SCANNER_ENABLED", True)
+
+
+# Global mode keeps the same keys as the per-user settings, in the Setting table under this
+# prefix, so every reader below only differs in where it looks.
+GLOBAL_SCANNER_PREFIX = "scanner_global."
+
+
+def global_scanner_key(key: str) -> str:
+    return f"{GLOBAL_SCANNER_PREFIX}{key}"
+
+
+def scanner_setting_row(db: Session, user_id: int | None, key: str):
+    """The row holding a scanner setting: the global one in global mode, else the user's own."""
+    if global_scanner_config_enabled():
+        return db.query(Setting).filter(Setting.key == global_scanner_key(key)).first()
+    if user_id is None:
+        return None
+    return (
+        db.query(UserSetting)
+        .filter(UserSetting.user_id == user_id, UserSetting.key == key)
+        .first()
+    )
+
+
+def scanner_setting_value(db: Session, user_id: int | None, key: str) -> str:
+    row = scanner_setting_row(db, user_id, key)
+    return ((row.value if row else "") or "")
+
+
+def upsert_scanner_setting(db: Session, user_id: int, key: str, value: str) -> None:
+    row = scanner_setting_row(db, user_id, key)
+    if row:
+        row.value = value
+    elif global_scanner_config_enabled():
+        db.add(Setting(key=global_scanner_key(key), value=value))
+    else:
+        db.add(UserSetting(user_id=user_id, key=key, value=value))
+
+
+NEUTRAL_SCAN_ERROR = "Scanning isn't available right now. Ask your admin."
+
+# Words that mark an error as being about the scanner setup rather than the photo.
+_CONFIG_ERROR_MARKERS = (
+    "api key",
+    "api-key",
+    "settings",
+    "einstellungen",
+    "scanner model",
+    "billing",
+    "quota",
+    "no longer enabled",
+    "isn't set up",
+    "endpoint",
+    "gemini",
+    "openai",
+    "administrator",
+)
+
+
+def scanner_config_hidden(db: Session, user_id: int | None) -> bool:
+    """In global mode only administrators may know how the scanner is configured."""
+    if user_id is None or not global_scanner_config_enabled():
+        return False
+    user = db.query(User).filter(User.id == user_id).first()
+    return user is not None and user.role != "admin"
+
+
+def user_scan_error(db: Session, user_id: int | None, detail):
+    """The message a user may see: a neutral one when it would reveal the scanner setup."""
+    if not isinstance(detail, str) or not scanner_config_hidden(db, user_id):
+        return detail
+    lowered = detail.lower()
+    return NEUTRAL_SCAN_ERROR if any(marker in lowered for marker in _CONFIG_ERROR_MARKERS) else detail
+
+
+def config_error(db: Session, user_id: int | None, status_code: int, detail: str) -> HTTPException:
+    """An HTTPException about the scanner setup, neutral for users who must not see it."""
+    return HTTPException(
+        status_code=status_code,
+        detail=NEUTRAL_SCAN_ERROR if scanner_config_hidden(db, user_id) else detail,
+    )
+
+
+def global_scanner_config_exists(db: Session) -> bool:
+    """Whether an administrator has saved a global scanner provider yet."""
+    return (
+        db.query(Setting)
+        .filter(Setting.key == global_scanner_key(SCANNER_PROVIDER_SETTING))
+        .first()
+        is not None
+    )
+
+
 def openai_enabled() -> bool:
     """OpenAI-compatible scanning is opt-in at installation level."""
     return _env_bool("OPENAI_SCANNER_ENABLED", False)
@@ -164,7 +265,12 @@ def allowed_models(provider: str) -> list[str]:
 
 
 def enabled_providers() -> tuple[str, ...]:
-    return (GEMINI, OPENAI) if openai_enabled() else (GEMINI,)
+    providers = []
+    if gemini_enabled():
+        providers.append(GEMINI)
+    if openai_enabled():
+        providers.append(OPENAI)
+    return tuple(providers)
 
 
 def _capability_endpoint_fingerprint(provider: str) -> str:
@@ -205,18 +311,12 @@ def scanner_capability_mode(
     """
     if provider == GEMINI:
         return SCANNER_CAPABILITY_FULL
-    if user_id is None:
+    if user_id is None and not global_scanner_config_enabled():
         return None
-    row = (
-        db.query(UserSetting)
-        .filter(
-            UserSetting.user_id == user_id,
-            UserSetting.key == SCANNER_CAPABILITY_SETTINGS[provider],
-        )
-        .first()
-    )
     try:
-        proof = json.loads((row.value if row else "") or "")
+        proof = json.loads(
+            scanner_setting_value(db, user_id, SCANNER_CAPABILITY_SETTINGS[provider]) or ""
+        )
     except (TypeError, ValueError):
         return None
     if not isinstance(proof, dict):
@@ -240,12 +340,12 @@ def require_scanner_capability_mode(
     """Require a proof for compatible providers before any scan reaches them."""
     mode = scanner_capability_mode(db, user_id, provider, model)
     if provider == OPENAI and mode is None:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "The scanner provider or endpoint changed. Test and save it again "
-                "in Scanner Settings before scanning."
-            ),
+        raise config_error(
+            db,
+            user_id,
+            409,
+            "The scanner provider or endpoint changed. Test and save it again "
+            "in Scanner Settings before scanning.",
         )
     return mode or SCANNER_CAPABILITY_FULL
 
@@ -253,30 +353,21 @@ def require_scanner_capability_mode(
 def resolve_model(db: Session, user_id: int | None, provider: str) -> str:
     """Resolve a provider-specific model, constrained by the admin allowlist."""
     models = allowed_models(provider)
-    if user_id is None:
+    is_global = global_scanner_config_enabled()
+    if user_id is None and not is_global:
         return models[0] if models else ""
-    row = (
-        db.query(UserSetting)
-        .filter(
-            UserSetting.user_id == user_id,
-            UserSetting.key == SCANNER_MODEL_SETTINGS[provider],
-        )
-        .first()
-    )
-    selected = ((row.value if row else "") or "").strip()
+    selected = scanner_setting_value(db, user_id, SCANNER_MODEL_SETTINGS[provider]).strip()
     if selected in models:
         return selected
 
-    custom_row = (
-        db.query(UserSetting)
-        .filter(
-            UserSetting.user_id == user_id,
-            UserSetting.key == SCANNER_CUSTOM_MODEL_SETTINGS[provider],
-        )
-        .first()
-    )
-    custom_model = ((custom_row.value if custom_row else "") or "").strip()
+    custom_model = scanner_setting_value(
+        db, user_id, SCANNER_CUSTOM_MODEL_SETTINGS[provider]
+    ).strip()
     if custom_model == selected and MODEL_PATTERN.fullmatch(custom_model):
+        # A global custom model was saved by an administrator; a per-user one only counts
+        # while its owner is still one.
+        if is_global:
+            return custom_model
         user = db.query(User).filter(User.id == user_id).first()
         if user and user.role == "admin":
             return custom_model
@@ -300,49 +391,32 @@ def resolve_scanner_request_timeout(
     provider: str,
 ) -> int:
     """Return a safe provider-specific timeout, defaulting legacy/bad rows."""
-    if user_id is None:
+    if user_id is None and not global_scanner_config_enabled():
         return DEFAULT_SCANNER_REQUEST_TIMEOUT_SECONDS
-    row = (
-        db.query(UserSetting)
-        .filter(
-            UserSetting.user_id == user_id,
-            UserSetting.key == SCANNER_REQUEST_TIMEOUT_SETTINGS[provider],
-        )
-        .first()
-    )
     try:
-        return normalize_scanner_request_timeout(row.value if row else None)
+        return normalize_scanner_request_timeout(
+            scanner_setting_value(db, user_id, SCANNER_REQUEST_TIMEOUT_SETTINGS[provider]) or None
+        )
     except ValueError:
         return DEFAULT_SCANNER_REQUEST_TIMEOUT_SECONDS
 
 
 def configured_provider_name(db: Session, user_id: int | None) -> str | None:
     """Return a recognized stored provider without applying availability fallback."""
-    if user_id is None:
+    if user_id is None and not global_scanner_config_enabled():
         return None
-    row = (
-        db.query(UserSetting)
-        .filter(UserSetting.user_id == user_id, UserSetting.key == SCANNER_PROVIDER_SETTING)
-        .first()
-    )
-    value = ((row.value if row else "") or "").strip().lower()
+    value = scanner_setting_value(db, user_id, SCANNER_PROVIDER_SETTING).strip().lower()
     return value if value in {GEMINI, OPENAI} else None
 
 
 def gemini_fallback_enabled(db: Session, user_id: int | None) -> bool:
     """Whether this user opted in to retrying an unconfident OpenAI-provider
     scan with Gemini. Off by default; only meaningful for OPENAI as primary."""
-    if user_id is None:
+    if not gemini_enabled():
         return False
-    row = (
-        db.query(UserSetting)
-        .filter(
-            UserSetting.user_id == user_id,
-            UserSetting.key == SCANNER_GEMINI_FALLBACK_SETTING_KEY,
-        )
-        .first()
-    )
-    return (row.value if row else "") == "true"
+    if user_id is None and not global_scanner_config_enabled():
+        return False
+    return scanner_setting_value(db, user_id, SCANNER_GEMINI_FALLBACK_SETTING_KEY) == "true"
 
 
 def resolve_provider_name(
@@ -359,19 +433,29 @@ def resolve_provider_name(
     may fall back only while rendering Settings. Runtime provider resolution fails
     closed so a card photo can never be rerouted to another provider silently.
     """
-    value = configured_provider_name(db, user_id)
-    if value is None:
-        return GEMINI
-    if value not in enabled_providers():
+    enabled = enabled_providers()
+    if not enabled:
         if require_enabled:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Your selected scanner provider is no longer enabled. Choose and "
-                    "test an available provider in Scanner Settings before scanning."
-                ),
+            raise config_error(
+                db,
+                user_id,
+                409,
+                "Scanning isn't set up. Ask an administrator to enable a scanner provider.",
             )
         return GEMINI
+    value = configured_provider_name(db, user_id)
+    if value is None:
+        return enabled[0]
+    if value not in enabled:
+        if require_enabled:
+            raise config_error(
+                db,
+                user_id,
+                409,
+                "Your selected scanner provider is no longer enabled. Choose and "
+                "test an available provider in Scanner Settings before scanning.",
+            )
+        return enabled[0]
     return value
 
 
@@ -743,14 +827,7 @@ class ScanProvider:
 
         if self.is_gemini:
             return get_gemini_key(db, user_id=user_id)
-        if user_id is None:
-            return ""
-        row = (
-            db.query(UserSetting)
-            .filter(UserSetting.user_id == user_id, UserSetting.key == "openai_api_key")
-            .first()
-        )
-        return ((row.value if row else "") or "").strip()
+        return scanner_setting_value(db, user_id, "openai_api_key").strip()
 
     def requires_credential(self) -> bool:
         return True if self.is_gemini else openai_requires_key()
@@ -831,8 +908,10 @@ def get_provider(db: Session, user_id: int | None) -> ScanProvider:
     name = resolve_provider_name(db, user_id, require_enabled=True)
     model = resolve_model(db, user_id, name)
     if not model:
-        raise HTTPException(
-            status_code=400,
-            detail="No valid scanner model is configured. Ask an administrator to check Scanner Settings.",
+        raise config_error(
+            db,
+            user_id,
+            400,
+            "No valid scanner model is configured. Ask an administrator to check Scanner Settings.",
         )
     return ScanProvider(name, model)

@@ -92,6 +92,19 @@ def _get_own_item(
 
 
 def _item_payload(item: ScanJobItem) -> dict:
+    from sqlalchemy.orm import object_session
+    from services.scan_providers import scanner_config_hidden, user_scan_error
+
+    recognized = item.recognized
+    error = item.error
+    db = object_session(item)
+    owner_id = item.job.user_id if item.job is not None else None
+    if db is not None and scanner_config_hidden(db, owner_id):
+        # In global mode only administrators learn how the scanner is set up: no provider
+        # names in the review, and no setup details in an error.
+        error = user_scan_error(db, owner_id, error)
+        if isinstance(recognized, dict) and "_gemini_fallback_used" in recognized:
+            recognized = {k: v for k, v in recognized.items() if k != "_gemini_fallback_used"}
     return {
         "id": item.id,
         "position": item.position,
@@ -100,9 +113,9 @@ def _item_payload(item: ScanJobItem) -> dict:
         "resolved": item.resolved,
         "attempts": item.attempts,
         "transient_failures": item.transient_failures,
-        "recognized": item.recognized,
+        "recognized": recognized,
         "matches": item.matches,
-        "error": item.error,
+        "error": error,
         "has_image": bool(item.image_path),
         "next_attempt_at": (
             item.next_attempt_at.isoformat() if item.next_attempt_at else None
@@ -162,6 +175,8 @@ async def enqueue_scan_job(
         if idem.replay is not None:
             return replay_response(idem.replay)
 
+    from services.scan_providers import user_scan_error
+
     provider = get_provider(db, current_user.id)
     capability_mode = require_scanner_capability_mode(
         db, current_user.id, provider.name, provider.model()
@@ -169,7 +184,7 @@ async def enqueue_scan_job(
     if provider.requires_credential() and not provider.credential(db, current_user.id):
         raise HTTPException(
             status_code=400,
-            detail=provider.missing_credential_message(),
+            detail=user_scan_error(db, current_user.id, provider.missing_credential_message()),
         )
     if idem is None:
         requested_individual = _requested_individual_positions(individual_positions, len(files))
