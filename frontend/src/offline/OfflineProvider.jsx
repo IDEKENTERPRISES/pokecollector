@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { onlineManager, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { useAuth } from '../contexts/AuthContext'
@@ -15,12 +15,23 @@ import { openOutboxDb } from './outbox/db.js'
 import { createOutbox } from './outbox/index.js'
 import { cancelHungQueries, createOfflineEpisodes, refreshAfterReconnect } from './offlineEpisode'
 import { setOfflineMessage, setOfflineStatus } from './offlineStatus'
-import { persist, purge, purgeOthers, restore, restoreMissing } from './readCache'
+import { whenLaunchSplashClosed } from '../components/splash/launch'
+import { applyFirst, persist, purge, purgeOthers, readFirst, restoreMissing } from './readCache'
 import { createSyncReporter } from './syncToasts'
 import { OutboxContext } from './useOutbox'
 
 const ignore = () => {}
 const RESTORE_WAIT_MS = 1500
+// The rest of the saved data (the large queries) follows the first screen, once the launch splash
+// is gone (or after this long), so reading it never competes with the first frames.
+const RESTORE_REST_MAX_WAIT_MS = 6000
+
+const RestoreGateContext = createContext(false)
+
+/** True while a degraded (offline) start is still putting the saved data back; protected routes wait on it. */
+export function useRestoreGate() {
+  return useContext(RestoreGateContext)
+}
 
 /**
  * The logout guard's decision loop (D7, A6). `ask()` resolves with 'sync' | 'keep' | 'discard' |
@@ -100,6 +111,7 @@ export function OfflineProvider({ children }) {
   const resolveRef = useRef(null)
   const persisterRef = useRef(null)
   const restoreStartedRef = useRef(false)
+  const firstReadRef = useRef(null)
   const userIdRef = useRef(null)
   userIdRef.current = typeof user?.id === 'number' ? user.id : null
 
@@ -148,18 +160,40 @@ export function OfflineProvider({ children }) {
     if (enabled && userId !== null) purgeOthers({ origin: window.location.origin, keepUserId: userId }).catch(ignore)
   }, [enabled, userId])
 
-  // A degraded start puts the saved data back before protected routes mount (or after 1.5 s).
+  // Cold start (F14c): the small saved queries are read while the sign-in check is still waiting, so
+  // a degraded start only has to put them back. Only reads here; nothing is hydrated unless degraded.
   useEffect(() => {
-    if (!enabled || status !== 'degraded' || userId === null || restoreStartedRef.current) return
+    if (!enabled || userId === null || firstReadRef.current) return
+    firstReadRef.current = readFirst({ origin: window.location.origin, userId })
+  }, [enabled, userId])
+
+  // A degraded start puts the first screen's saved data back before protected routes mount (or after
+  // 1.5 s); the large queries follow once the launch splash has closed.
+  useEffect(() => {
+    if (!enabled || status !== 'degraded' || userId === null || restoreStartedRef.current) return undefined
     restoreStartedRef.current = true
+    let cancelled = false
     const timer = window.setTimeout(() => setRestoreDone(true), RESTORE_WAIT_MS)
-    restore(queryClient, { origin: window.location.origin, userId })
-      .then(saved => { if (saved) setSavedAt(saved) })
-      .catch(ignore)
-      .finally(() => {
+    const origin = window.location.origin
+    const first = firstReadRef.current || readFirst({ origin, userId })
+    first
+      .then(result => {
+        const { savedAt: saved, complete } = applyFirst(queryClient, result)
+        if (saved) setSavedAt(saved)
+        return complete
+      })
+      .catch(() => true)
+      .then(complete => {
         window.clearTimeout(timer)
         setRestoreDone(true)
+        if (complete) return undefined
+        return whenLaunchSplashClosed(RESTORE_REST_MAX_WAIT_MS).then(() => (
+          cancelled ? null : restoreMissing(queryClient, { origin, userId })
+        ))
       })
+      .then(rest => { if (rest?.restored > 0) setSavedAt(rest.savedAt) })
+      .catch(ignore)
+    return () => { cancelled = true }
   }, [enabled, status, userId, queryClient])
 
   // Going offline while the app is open (owner feedback F11): once per offline episode the saved read
@@ -305,12 +339,16 @@ export function OfflineProvider({ children }) {
   if (!enabled) return children
 
   const choose = choice => resolveRef.current?.(choice)
+  // Only the protected routes wait (App's ProtectedRoutes asks useRestoreGate); the rest of the tree,
+  // the launch splash included, stays mounted, so a restore never blanks the screen.
   const gated = status === 'degraded' && userId !== null && !restoreDone
 
   return (
     <OutboxContext.Provider value={outbox}>
       <SavedAtContext.Provider value={savedAt}>
-        {gated ? null : children}
+        <RestoreGateContext.Provider value={gated}>
+          {children}
+        </RestoreGateContext.Provider>
       </SavedAtContext.Provider>
       <EvictedNotice isOpen={evicted} onClose={() => setEvicted(false)} />
       <LogoutGuardDialog

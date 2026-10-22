@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { AUTH_STARTUP_TIMEOUT_MS, authRetryDelay, loadAuthState } from './authBootstrap'
+import { AUTH_SNAPSHOT_TIMEOUT_MS, AUTH_STARTUP_TIMEOUT_MS, authRetryDelay, loadAuthState, withStartupDeadline } from './authBootstrap'
 
 const timeoutError = () => Object.assign(new Error('timeout of 5000ms exceeded'), { code: 'ECONNABORTED' })
 
@@ -152,5 +152,27 @@ describe('authRetryDelay', () => {
     expect([0, 1, 2, 3, 4, 10].map(authRetryDelay)).toEqual([
       1_000, 2_000, 4_000, 8_000, 10_000, 10_000,
     ])
+  })
+})
+
+describe('start-up deadline', () => {
+  it('uses the request timeout it is given', async () => {
+    const getAuthMode = vi.fn().mockResolvedValue({ multi_user: false, locked: false })
+    await loadAuthState({ token: null, getAuthMode, getMe: vi.fn().mockResolvedValue({ id: 1 }), timeout: AUTH_SNAPSHOT_TIMEOUT_MS })
+    expect(getAuthMode).toHaveBeenCalledWith({ timeout: AUTH_SNAPSHOT_TIMEOUT_MS })
+    expect(AUTH_SNAPSHOT_TIMEOUT_MS).toBeLessThan(AUTH_STARTUP_TIMEOUT_MS)
+  })
+
+  it('gives up as a network error when the request never answers', async () => {
+    vi.useFakeTimers()
+    const pending = withStartupDeadline(() => new Promise(() => {}), 3500)
+    const settled = expect(pending).rejects.toMatchObject({ code: 'ECONNABORTED' })
+    await vi.advanceTimersByTimeAsync(3500)
+    await settled
+    vi.useRealTimers()
+  })
+
+  it('passes through an answer that arrives in time', async () => {
+    await expect(withStartupDeadline(() => Promise.resolve('ok'), 1000)).resolves.toBe('ok')
   })
 })
