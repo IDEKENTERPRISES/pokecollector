@@ -58,10 +58,17 @@ export function useCatalogQuery({ offlineFn, ...options }) {
   useEffect(() => {
     if (!reading) return undefined
     let cancelled = false
+    const started = performance.now()
     Promise.resolve()
       .then(() => readRef.current(getCardDbReader()))
       .catch(() => null)
       .then(data => {
+        // Visible in the performance timeline (and to tests): how long the database took to answer.
+        try {
+          performance.measure('carddb-read', { start: started, end: performance.now(), detail: { key: argsKey } })
+        } catch {
+          // no User Timing level 3
+        }
         if (!cancelled) setAnswer({ key: argsKey, data: data ?? null })
       })
     return () => { cancelled = true }

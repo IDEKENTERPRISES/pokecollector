@@ -60,10 +60,26 @@ const carddbState = page => page.evaluate(async () => {
   return result
 })
 
-async function timed(label, timings, action) {
+// Long tasks (main thread blocked for 50 ms or more) seen by the page; Chromium only.
+const LONG_TASKS = () => {
+  window.__longTasks = []
+  try {
+    new PerformanceObserver(list => {
+      for (const entry of list.getEntries()) window.__longTasks.push(Math.round(entry.duration))
+    }).observe({ type: 'longtask', buffered: true })
+  } catch {
+    // not supported (WebKit)
+  }
+}
+const longestTask = (page, since) => page.evaluate(from => Math.max(0, ...(window.__longTasks ?? []).slice(from)), since)
+const taskCount = page => page.evaluate(() => (window.__longTasks ?? []).length)
+
+async function timed(label, timings, page, action) {
+  const before = await taskCount(page)
   const started = Date.now()
   await action()
   timings[label] = Date.now() - started
+  timings[`${label} longest block`] = await longestTask(page, before)
 }
 
 test.describe('the offline card database at full size', () => {
@@ -74,6 +90,7 @@ test.describe('the offline card database at full size', () => {
     const timings = {}
     await mockApi(context, state)
     await page.setViewportSize({ width: 390, height: 844 })
+    await page.addInitScript(LONG_TASKS)
     await page.addInitScript(user => {
       if (!sessionStorage.getItem('pc-test-seeded')) {
         sessionStorage.setItem('pc-test-seeded', '1')
@@ -104,7 +121,7 @@ test.describe('the offline card database at full size', () => {
     await tabBar.getByRole('link', { name: 'Search' }).click()
     await expect(page.getByTestId('search-browse')).toBeVisible({ timeout: 20000 })
     await expect(page.getByTestId('offline-banner')).toBeVisible({ timeout: 40000 })
-    await timed('sets list', timings, async () => {
+    await timed('sets list', timings, page, async () => {
       await page.getByTestId('browse-sets').click()
       await expect(page.getByTestId('series-grid').getByRole('link').first()).toBeVisible({ timeout: 30000 })
     })
@@ -112,7 +129,7 @@ test.describe('the offline card database at full size', () => {
     // A series, then a set that was never opened online: the cards must appear.
     await page.getByTestId('series-grid').getByRole('link', { name: new RegExp(db.landmark.series.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).first().click()
     await expect(page.getByTestId('sets-grid')).toBeVisible({ timeout: 20000 })
-    await timed('set page', timings, async () => {
+    await timed('set page', timings, page, async () => {
       await page.getByRole('button', { name: db.landmark.setName }).first().click()
       await expect(page.getByRole('button', { name: `Add ${db.landmark.name}` })).toBeVisible({ timeout: 30000 })
     })
@@ -137,6 +154,20 @@ test.describe('the offline card database at full size', () => {
     await tabBar.getByRole('link', { name: 'Profile' }).click()
     await expect(page).toHaveURL(/\/profile/)
 
+    // An impatient person: open the set again, hit Back three times in a row, then use the tab bar.
+    await tabBar.getByRole('link', { name: 'Search' }).click()
+    if (!page.url().includes('/sets')) await page.getByTestId('browse-sets').click()
+    await page.getByTestId('series-grid').getByRole('link', { name: new RegExp(db.landmark.series.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).first().click()
+    await page.getByRole('button', { name: db.landmark.setName }).first().click()
+    await expect(page.getByRole('button', { name: `Add ${db.landmark.name}` })).toBeVisible({ timeout: 30000 })
+    const back = page.getByTestId('nav-back')
+    for (let tap = 0; tap < 3; tap += 1) await back.click({ timeout: 5000 }).catch(() => {})
+    await expect(page).not.toHaveURL(/\/sets\/fx/)
+    await tabBar.getByRole('link', { name: 'Collection' }).click()
+    await expect(page).toHaveURL(/\/collection/)
+    await tabBar.getByRole('link', { name: 'Profile' }).click()
+    await expect(page).toHaveURL(/\/profile/)
+
     // Search: type like a person.
     await tabBar.getByRole('link', { name: 'Search' }).click()
     // The tab remembers where it was; tapping it again goes to its root.
@@ -144,15 +175,20 @@ test.describe('the offline card database at full size', () => {
     await expect(page).toHaveURL(/\/search/)
     const field = page.getByRole('searchbox')
     await expect(field).toBeEnabled()
-    await timed('search', timings, async () => {
+    await timed('search', timings, page, async () => {
       await field.click()
       await field.pressSequentially(db.landmark.name)
+      await field.press('Enter') // the keyboard's Search key
       await expect(page.getByTestId('prices-from-note')).toBeVisible({ timeout: 30000 })
     })
     await field.fill('')
     await field.pressSequentially(`${db.landmark.name.slice(0, -1)}k`) // a typo is corrected like the server does
+    await field.press('Enter')
     await expect(page.getByTestId('search-corrected')).toContainText(db.landmark.name, { timeout: 30000 })
 
+    // How long the card database itself took to answer each page's read (tap-to-pixels is above).
+    const reads = await page.evaluate(() => performance.getEntriesByName('carddb-read').map(entry => [String(entry.detail?.key ?? '').slice(0, 40), Math.round(entry.duration)]))
+    timings.reads = reads
     test.info().annotations.push({ type: 'timings', description: JSON.stringify(timings) })
     console.log(`[${browserName}] timings (ms): ${JSON.stringify(timings)}`)
   })
