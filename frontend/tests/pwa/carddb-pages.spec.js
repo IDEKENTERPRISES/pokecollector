@@ -129,6 +129,12 @@ test.describe('offline pages read the card database', () => {
     // The collection was never loaded on this device: owned figures are unknown, not "0 of 3".
     await expect(page.getByTestId('owned-unavailable')).toContainText('Owned cards unavailable offline')
     await expect(page.getByTestId('set-stat-cards')).toHaveCount(0)
+
+    // The card detail sheet opens from the offline set.
+    await page.getByRole('button', { name: 'Add Pikachu' }).dispatchEvent('click')
+    const sheet = page.getByRole('dialog', { name: 'Pikachu' })
+    await expect(sheet).toBeVisible({ timeout: 10000 })
+    await expect(sheet).toContainText('Overview')
   })
 
   test('with the collection saved, the owned state of a never-opened set comes from it', async ({ page, context }) => {
