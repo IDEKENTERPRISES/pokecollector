@@ -21,7 +21,8 @@ async function mockApi(context, state) {
     if (path === '/api/settings/exchange-rate') return route.fulfill({ json: { rate: 1 } })
     if (path === '/api/dashboard/') return route.fulfill({ json: { recent_additions: [], top_cards: [] } })
     if (path === '/api/sync/status') return route.fulfill({ json: { is_running: false, is_price_sync_running: false } })
-    if (path === '/api/offline/carddb/manifest') return route.fulfill({ json: { enabled: false, languages: {} } })
+    // Never answers: a manifest that says "off" would make the app delete the seeded card database.
+    if (path === '/api/offline/carddb/manifest') return new Promise(() => {})
     if (path.startsWith('/api/images/')) return route.fulfill({ status: 404, json: {} })
     return route.fulfill({ json: [] })
   })
@@ -127,5 +128,21 @@ test.describe('offline cold start with large saved data', () => {
     expect(result.marks.interactive, 'the app is interactive with the splash still running').toBeLessThan(browserName === 'chromium' ? 3000 : 5000)
     // Offline, the card database does not try to sync: its manifest request would only hang.
     expect(manifestRequests).toEqual([])
+
+    // The seeded card database is the version 1 one deployed phones have: the app upgraded it on this
+    // offline cold start, and the offline Sets page reads the seeded series from it (the read cache only
+    // knows the series "Fixture").
+    await page.goto('/sets')
+    await expect(page.getByText('Series 3').first()).toBeVisible({ timeout: 30000 })
+    expect(await page.evaluate(async () => {
+      const db = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('pokecollector-carddb')
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      const version = db.version
+      db.close()
+      return version
+    })).toBeGreaterThanOrEqual(2)
   })
 })

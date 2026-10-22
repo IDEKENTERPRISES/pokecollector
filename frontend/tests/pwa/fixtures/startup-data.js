@@ -76,9 +76,20 @@ export function seedReadCache(page, userId, { bytes = STARTUP_SIZES.readCacheByt
   }, { userId, bytes, version: appVersion(), withHead })
 }
 
-/** Seeds the offline card database (`en`): `sets` sets of `cardsPerSet` cards each. */
+/**
+ * Seeds the offline card database (`en`) the way phones that installed F13a have it: a version 1 database
+ * (four stores, no derived ones). Any database the app already created is deleted first, so the app's own
+ * upgrade to the current version (and the rebuild of the derived stores) runs on the next start.
+ * `sets` sets of `cardsPerSet` cards each.
+ */
 export function seedCardDb(page, { sets = STARTUP_SIZES.sets, cardsPerSet = STARTUP_SIZES.cardsPerSet } = {}) {
   return page.evaluate(async ({ sets: setCount, cardsPerSet: perSet }) => {
+    await new Promise((resolve, reject) => {
+      const request = indexedDB.deleteDatabase('pokecollector-carddb')
+      request.onsuccess = resolve
+      request.onerror = () => reject(request.error)
+      request.onblocked = resolve
+    })
     const db = await new Promise((resolve, reject) => {
       const request = indexedDB.open('pokecollector-carddb', 1)
       request.onupgradeneeded = () => {
