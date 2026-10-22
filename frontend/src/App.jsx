@@ -12,7 +12,7 @@ import { useSettings } from './contexts/SettingsContext'
 import PublicHomeButton from './components/PublicHomeButton'
 import { ConfirmDialogProvider } from './contexts/ConfirmDialogContext'
 import UpdateBanner from './components/pwa/UpdateBanner'
-import { OfflineProvider } from './offline/OfflineProvider'
+import { OfflineProvider, useRestoreGate } from './offline/OfflineProvider'
 import { CardDbAutoSync } from './offline/carddb/useCardDb'
 import LaunchSplash from './components/splash/LaunchSplash'
 
@@ -179,6 +179,10 @@ function PublicRoutes() {
 
 function ProtectedRoutes() {
   const { user, loading, connectionError, multiUser, retryConnection } = useAuth()
+  const restoring = useRestoreGate()
+
+  // An offline start waits (on the black app background) for the first screen's saved data.
+  if (restoring) return <div className="min-h-screen bg-bg" />
 
   if (loading) {
     return <AuthStartupScreen connectionError={connectionError} onRetry={retryConnection} />

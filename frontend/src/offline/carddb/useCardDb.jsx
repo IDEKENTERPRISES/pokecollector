@@ -1,5 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
+import { whenLaunchSplashClosed } from '../../components/splash/launch'
 import { createCardDbController, createFetchJson } from './controller.js'
 import { createCardDbStore } from './store.js'
 
@@ -30,19 +31,24 @@ export function useCardDb() {
 /**
  * Starts a sync when the app opens (signed in) and again when the connection comes back or the
  * app returns to the foreground. It never blocks anything and is throttled by the controller.
+ * It does not exist at all until the server has answered the sign-in check (a start without the
+ * server, the iPhone's offline start included, never touches the card database or sends the
+ * manifest request that would only hang), and then waits for the first screen and the splash.
  */
 export function CardDbAutoSync() {
-  const { user } = useAuth()
-  const signedIn = Boolean(user)
+  const { user, status } = useAuth()
+  const ready = Boolean(user) && status === 'ready'
   useEffect(() => {
-    if (!signedIn) return undefined
+    if (!ready) return undefined
     const instance = getCardDbController()
     if (!instance) return undefined
     const run = () => {
       instance.sync().catch(() => {})
     }
     // Let the first screen render and its own queries go first.
-    const timer = window.setTimeout(run, 3000)
+    const timer = window.setTimeout(() => {
+      whenLaunchSplashClosed(3000).then(run)
+    }, 3000)
     const onVisible = () => {
       if (document.visibilityState === 'visible') run()
     }
@@ -53,6 +59,6 @@ export function CardDbAutoSync() {
       window.removeEventListener('online', run)
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [signedIn])
+  }, [ready])
   return null
 }
