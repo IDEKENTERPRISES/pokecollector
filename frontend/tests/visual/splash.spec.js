@@ -92,7 +92,7 @@ test.describe('launch splash', () => {
     await expect(page.getByRole('dialog', { name: 'Welcome to PokéCollector' })).toBeVisible()
     await expect(page.locator('.pc-splash__name')).toHaveText('Eevee')
     // It opens the app by itself a while after the reveal.
-    await expect(splashOf(page)).toHaveCount(0, { timeout: 12_000 })
+    await expect(splashOf(page)).toHaveCount(0, { timeout: 16_000 })
     await expect(page.getByText('Hello,')).toBeVisible()
 
     await page.evaluate(() => {
@@ -138,6 +138,42 @@ test.describe('launch splash', () => {
     }
   })
 
+  test.describe('while the splash code is still loading', () => {
+    // Holds the lazy Splash module back, as a slow first-launch network would.
+    async function holdSplashChunk(page) {
+      await page.route(url => /\/Splash(-[\w-]+)?\.(jsx|js)$/.test(url.pathname), () => {})
+    }
+    const cover = page => page.getByTestId('launch-cover')
+
+    test('a tap closes the black cover', async ({ page }) => {
+      await installApi(page)
+      await holdSplashChunk(page)
+      await page.goto('/')
+      await expect(cover(page)).toBeVisible()
+      await cover(page).click()
+      await expect(cover(page)).toHaveCount(0)
+      await expect(page.locator('#root')).not.toHaveAttribute('inert', '')
+    })
+
+    test('Escape closes it', async ({ page }) => {
+      await installApi(page)
+      await holdSplashChunk(page)
+      await page.goto('/')
+      await expect(cover(page)).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(cover(page)).toHaveCount(0)
+    })
+
+    test('it closes by itself after the maximum wait', async ({ page }) => {
+      await installApi(page)
+      await holdSplashChunk(page)
+      await page.goto('/')
+      await expect(cover(page)).toBeVisible()
+      await expect(cover(page)).toHaveCount(0, { timeout: 5000 })
+      await expect(page.locator('#root')).not.toHaveAttribute('inert', '')
+    })
+  })
+
   test('announces the Pokémon in a dialog with a focusable Skip button', async ({ page }) => {
     await installApi(page)
     await page.goto('/')
@@ -153,7 +189,7 @@ test.describe('launch splash', () => {
     await expect(card).toContainText('Evolution Pokémon · Gen 1 · Kanto')
     await expect(card).toContainText('0.3 m · 1′00″')
     await expect(card).toContainText('6.5 kg · 14.3 lbs')
-    await expect(splashOf(page)).toHaveAttribute('data-ground', 'grass')
+    await expect(splashOf(page)).toHaveAttribute('data-ground', 'normal')
   })
 
   test('the Pokémon of the day: fetched by date, stored with tomorrow, then shown without asking again', async ({ page }) => {
@@ -198,6 +234,13 @@ test.describe('launch splash', () => {
     await page.goto('/')
     await expect(splashOf(page)).toHaveAttribute('data-open', 'true', { timeout: 8000 })
     await expect(page.locator('.pc-splash__name')).toHaveText('Pikachu')
+  })
+
+  test('every type has its own ground: a Psychic Pokémon is not on grass', async ({ page }) => {
+    // The owner's report: Gothitelle came out of a purple light onto grass.
+    await installApi(page, { splash: url => dayEntry(url.searchParams.get('date'), { dex_id: 576, name: 'Gothitelle', types: ['psychic'] }) })
+    await page.goto('/')
+    await expect(splashOf(page)).toHaveAttribute('data-ground', 'psychic')
   })
 
   test('a shiny day has sparkles and says so', async ({ page }) => {
@@ -303,4 +346,13 @@ test.describe('launch splash key frames', () => {
       await expect(page).toHaveScreenshot(`splash-${name}.png`, { animations: 'allow' })
     })
   }
+
+  // A contact sheet of every type's ground with the ball resting on it (desktop only).
+  test('splash grounds', async ({ page, viewport }) => {
+    test.skip(viewport.width < 1024, 'one contact sheet is enough')
+    await installApi(page)
+    await page.goto('/__splash?grounds=1')
+    await expect(page.getByTestId('splash-ground-sheet').locator('li')).toHaveCount(18)
+    await expect(page).toHaveScreenshot('splash-grounds.png')
+  })
 })

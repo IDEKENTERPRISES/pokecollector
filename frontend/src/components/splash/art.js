@@ -40,8 +40,10 @@ const BALL = [
 export const BALL_LID = { rows: BALL.slice(0, 8), palette: BALL_PALETTE }
 export const BALL_BASE = { rows: BALL.slice(8), palette: BALL_PALETTE }
 
-// The ground under the ball matches the Pokémon's type. Every strip is 48 x 5 and the ball rests
-// on columns 16-31, so the second clump hides the bottom of the ball.
+// The ground under the ball: one for each of the 18 types, by the Pokémon's first type. Every
+// strip is 48 x 5 and the ball rests on columns 16-31, so decorations that would sit in front of
+// it stay to the sides. `lift` raises the ball and the Pokémon (in art pixels) onto flat floors,
+// so they stand on the surface instead of sinking into it.
 const GRASS_PALETTE = { l: '#8fe07a', G: '#43b04a', g: '#2c7a31' }
 const GRASS_ROWS = [
   '.....l...l.......l...l...........l..l...........',
@@ -50,9 +52,33 @@ const GRASS_ROWS = [
   '...gGGG.GGGg...GGGlGGGGG.......gGGGGGGg..GGG....',
   '...gGGGgGGGg..gGGGGGGGGGg......gGGGGGGg.gGGGg...',
 ]
+const EMPTY = '................................................'
+const repeat = pattern => pattern.repeat(Math.ceil(48 / pattern.length)).slice(0, 48)
 
 export const GROUNDS = {
+  // A lawn edge over a dirt path.
+  normal: {
+    palette: { l: '#8fe07a', G: '#5fae4f', d: '#c9a46b', D: '#a07a45', p: '#8c7a62' },
+    rows: [
+      EMPTY,
+      EMPTY,
+      '..l.......l....l.......l.....l.......l....l.....',
+      repeat('G'),
+      'dddDdddddddpddddDddddddddddDdddpdddddDdddddddDdd',
+    ],
+  },
   grass: { palette: GRASS_PALETTE, rows: GRASS_ROWS },
+  // Tall grass, where wild Pokémon hide.
+  bug: {
+    palette: { l: '#9ee07a', G: '#3f9f3c', g: '#246b2c' },
+    rows: [
+      repeat('.l....l...l.....l..'),
+      repeat('lGl..lGl.lGl...lGl.'),
+      repeat('GGGllGGGlGGGl.lGGGl'),
+      repeat('gGGGGgGGGGgGGGGGgGG'),
+      repeat('ggGggggGggggGgggggG'),
+    ],
+  },
   electric: {
     palette: { ...GRASS_PALETTE, y: '#f7c815' },
     rows: [
@@ -63,77 +89,81 @@ export const GROUNDS = {
       GRASS_ROWS[4],
     ],
   },
-  sand: {
-    palette: { S: '#f0d391', s: '#d8b56a', D: '#a7843f', p: '#8c7a62' },
-    rows: [
-      '................................................',
-      '.................SSSS...........................',
-      '.....SSS.......SSsSSSSS..........SSS............',
-      '...SSsSSSS....SsssSsssSS....p...SsSSS....p......',
-      '..SsssssspS..SsssssssssDs..pD..SsssssS..SsS.....',
-    ],
-  },
+  // Ripples.
   water: {
     palette: { w: '#e8f6ff', L: '#7cc4ff', B: '#2f8ff0', D: '#1b5fae' },
     rows: [
-      '................................................',
+      EMPTY,
       '..ww.........ww..........ww..........ww.........',
       '.wLLw.......wLLw........wLLw........wLLw........',
       'LLBBLLLLLLLLLBBLLLLLLLLLLBBLLLLLLLLLLBBLLLLLLLLL',
       'BBDDBBBBBBBBBDDBBBBBBBBBBDDBBBBBBBBBBDDBBBBBBBBB',
     ],
   },
-  snow: {
-    palette: { W: '#ffffff', w: '#dfeefe', b: '#a9c8ea', g: '#9fe8ff' },
+  // Snow drifts on a frozen floor, with glints.
+  ice: {
+    palette: { g: '#ffffff', W: '#f4fbff', w: '#d6ecfa', I: '#a8e2f7', i: '#7cc8ea', b: '#4f9fd0' },
     rows: [
-      '................................................',
-      '.................WWWW...........................',
-      '.....WWW.......WWwWWWWW..........WWW............',
-      '...WWwWWWW....WwbbWwwwWW........WwWWW....W......',
-      '..WwbbwwgwW..Wwbbbbwwbbwg......WbbwwgW..WbW.....',
+      '....g................................g..........',
+      '...gWg.......................g......gWg.....g...',
+      '..WWwWW.........WWWW........gWg....WWwWW...WWW..',
+      repeat('IIIIIiIIIIIIIIIIiIIIIIIIIIIIIIiIIIIIIIIIIIi'),
+      repeat('iiibiiiiiiiibiiiiiiiiiiiibiiiiiiiiiib'),
     ],
   },
+  // Embers and small flames on volcanic rock.
+  fire: {
+    palette: { y: '#ffe066', o: '#ff8a2b', r: '#e3350d', R: '#5a4038', v: '#3a2a26', l: '#ff6a2b', L: '#ffd23f' },
+    rows: [
+      '......y....o...........................y..y.....',
+      '..y..yoy...........................o..yoy.......',
+      '.....ror..............................ror.......',
+      repeat('R'),
+      'vvvlvvvvvvvvLlvvvvvvvvvvvlvvvvvvvvvLlvvvvvvvvvlv',
+    ],
+  },
+  // Sand.
+  ground: {
+    palette: { S: '#f0d391', s: '#d8b56a', D: '#a7843f', p: '#8c7a62' },
+    rows: [
+      EMPTY,
+      '.................SSSS...........................',
+      '.....SSS.......SSsSSSSS..........SSS............',
+      '...SSsSSSS....SsssSsssSS....p...SsSSS....p......',
+      '..SsssssspS..SsssssssssDs..pD..SsssssS..SsS.....',
+    ],
+  },
+  // Boulders.
   rock: {
     palette: { L: '#c2b8ab', M: '#958a7d', D: '#615850', s: '#7d7368' },
     rows: [
-      '................................................',
+      EMPTY,
       '.....LLL.........LLLL...........................',
       '....LLMMM......LLLMMMMM..........LL.....LLM.....',
       '...LMMMMDD....LLMMMMMMDD.....s..LMMD...LMMMD....',
       '...MMDDDDDs...MMMDDDMDDD.....Ls.MDDD...MMDDD....',
     ],
   },
-  fire: {
-    palette: { y: '#ffe066', o: '#ff8a2b', r: '#e3350d', d: '#5c2a1a' },
+  // A wooden dojo floor, planks edge-on.
+  fighting: {
+    lift: 1,
+    palette: { W: '#e8b77a', w: '#c98f52', b: '#7a4a24' },
+    rows: [EMPTY, EMPTY, repeat('W'), repeat('wwwwwwwwwwwbwwwwwwwwwwwwbwwwwwwwwwwwwb'), repeat('b')],
+  },
+  // Purple crystal tiles, a few crystals growing out of them.
+  psychic: {
+    lift: 1,
+    palette: { s: '#f5d6ff', P: '#c77ce8', p: '#8a3ba5', d: '#4e1f66' },
     rows: [
-      '..................y.............................',
-      '.....y...........yoy......................y.....',
-      '....yoy...y.....yooy........y.....y......yoy....',
-      '....ror..yoy....roorr......yoy...yoy.....ror....',
-      'dddrrorrdorodddrrorrrrddddroorrddorordddrrorrddd',
+      '....s......s..........................s.....s...',
+      '...sPs....sPs........................sPs...sPs..',
+      repeat('PPPPPPPd'),
+      repeat('pppPpppdpppppPpd'),
+      repeat('d'),
     ],
   },
-  cave: {
-    palette: { L: '#b48cff', M: '#7a52c7', D: '#3d2a66' },
-    rows: [
-      '..................L.............................',
-      '.................LMD.....................L......',
-      '.....L..........LMMD.L..........L.......LMD.....',
-      '....LMD.L......LMMMDLMD........LMD.....LMMD.....',
-      'DDDLMMDDMDDDDDLMMMMDMMDDDDDDDDDMMDDDDDLMMMDDDDDD',
-    ],
-  },
-  clouds: {
-    palette: { W: '#ffffff', w: '#e3ecf7', s: '#b8c7dc' },
-    rows: [
-      '................WWWWW...........................',
-      '....WWW.......WWWWWWWWWW........WWW.............',
-      '..WWWWWWW....WWWwwWWWWWWW......WWWWWW....WW.....',
-      '.WWwwWWWWW..WwwssswwwWWwwW....WwwWWwwW..WWWW....',
-      '.wwsswwwww..wsssssssswwssw....sssswwss..wsswW...',
-    ],
-  },
-  flowers: {
+  // Pink flowers.
+  fairy: {
     palette: { ...GRASS_PALETTE, p: '#ef6fae', P: '#ffd1e6', y: '#ffe066' },
     rows: [
       '....p...l.......P...p............p.......P......',
@@ -143,24 +173,73 @@ export const GROUNDS = {
       '...gGGgGGGg...gGGGgGGGGGg......gGGGGGg..gGGg....',
     ],
   },
+  // Dark soil with wisps floating over it.
+  ghost: {
+    palette: { w: '#e6dbff', W: '#9f86e0', S: '#5a4a62', s: '#3a2f40' },
+    rows: [
+      '....w......w.........................w......w...',
+      '...wWw....wWw.......................wWw....wWw..',
+      '....W......W.........................W......W...',
+      repeat('SSSSSsSSSSSSSSSSsSSSSSSSsSSSS'),
+      repeat('s'),
+    ],
+  },
+  // Black cobbles.
+  dark: {
+    lift: 1,
+    palette: { C: '#84849a', c: '#5a5a70', k: '#2a2a36' },
+    rows: [EMPTY, EMPTY, repeat('kCCCCkCCCkCCCCC'), repeat('cccckccccckccck'), repeat('k')],
+  },
+  // A rocky ledge with a gold vein, ending in a drop on the right.
+  dragon: {
+    lift: 1,
+    palette: { m: '#6aa84f', T: '#a89a80', t: '#7d705a', v: '#c9a227', d: '#4f4636' },
+    rows: [
+      EMPTY,
+      '...m.........m.............................m....',
+      'TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT..',
+      'tttvtttttttttttttttvvttttttttttttttvttttttttt...',
+      'dddddddvdddddddddddddddddddddddddddddddddddd....',
+    ],
+  },
+  // Riveted plates.
+  steel: {
+    lift: 1,
+    palette: { S: '#d2dbe3', s: '#94a2b0', d: '#5e6a76', r: '#ffffff' },
+    rows: [EMPTY, EMPTY, repeat('SSSSSSSSSSSd'), repeat('srsssssssrsd'), repeat('d')],
+  },
+  // A purple bog with bubbles.
+  poison: {
+    palette: { u: '#e0b0ff', B: '#9a5cc4', b: '#6a3f8c', d: '#3f2457' },
+    rows: [
+      '.....u....u..........................u.......u..',
+      '....u....uBu........................uBu.....u...',
+      '...uBu.....................................uBu..',
+      repeat('BBbBBBBBBbBBBBBBBBBbBBBBBBb'),
+      repeat('bbbbbdbbbbbbbbbdbbbbbbbbbb'),
+    ],
+  },
+  // A cloud bank.
+  flying: {
+    palette: { W: '#ffffff', w: '#e3ecf7', s: '#b8c7dc' },
+    rows: [
+      '................WWWWW...........................',
+      '....WWW.......WWWWWWWWWW........WWW.............',
+      '..WWWWWWW....WWWwwWWWWWWW......WWWWWW....WW.....',
+      '.WWwwWWWWW..WwwssswwwWWwwW....WwwWWwwW..WWWW....',
+      '.wwsswwwww..wsssssssswwssw....sssswwss..wsswW...',
+    ],
+  },
 }
 
-// The 18 game types on the grounds above (by the Pokémon's first type).
-export const GROUND_FOR_TYPE = {
-  grass: 'grass', bug: 'grass', normal: 'grass',
-  electric: 'electric',
-  ground: 'sand',
-  water: 'water',
-  ice: 'snow',
-  rock: 'rock', fighting: 'rock', steel: 'rock',
-  fire: 'fire',
-  dark: 'cave', ghost: 'cave', poison: 'cave',
-  flying: 'clouds', dragon: 'clouds',
-  fairy: 'flowers', psychic: 'flowers',
+/** The ground's name for a Pokémon's types: its first type, or grass when unknown. */
+export function groundName(types) {
+  const type = String(types?.[0] ?? '').toLowerCase()
+  return Object.hasOwn(GROUNDS, type) ? type : 'grass'
 }
 
 export function groundFor(types) {
-  return GROUNDS[GROUND_FOR_TYPE[String(types?.[0] ?? '').toLowerCase()]] ?? GROUNDS.grass
+  return GROUNDS[groundName(types)]
 }
 
 // The light from the opening ball: rays in the type's colour around a white core.

@@ -3,7 +3,7 @@ import pokedex from '../../../../backend/data/pokedex.json'
 import en from '../../i18n/en.js'
 import de from '../../i18n/de.js'
 import {
-  BALL_BASE, BALL_LID, BURST, GLYPH_ADVANCE, GROUNDS, GROUND_FOR_TYPE, SPARKLE, artSize, groundFor, pixelPaths, textArt,
+  BALL_BASE, BALL_LID, BURST, GLYPH_ADVANCE, GROUNDS, SPARKLE, artSize, groundFor, groundName, pixelPaths, textArt,
 } from './art.js'
 import { contentBounds, fitSprite } from './spriteFit.js'
 
@@ -24,12 +24,32 @@ describe('pixel art', () => {
     for (const [name, ground] of Object.entries(GROUNDS)) expect(artSize(ground), name).toEqual({ width: 48, height: 5 })
   })
 
-  it('every type in the Pokédex has a ground', () => {
+  it('every type in the Pokédex has a ground of its own', () => {
     const types = new Set(pokedex.flatMap(entry => entry.types))
     expect(types.size).toBe(18)
-    for (const type of types) expect(GROUNDS[GROUND_FOR_TYPE[type]], type).toBeDefined()
+    expect(new Set(Object.keys(GROUNDS))).toEqual(types)
+    for (const type of types) {
+      expect(groundName([type]), type).toBe(type)
+      expect(groundFor([type]), type).toBe(GROUNDS[type])
+    }
+    // No two types share a drawing, so no type falls back to grass.
+    const drawings = new Set(Object.values(GROUNDS).map(ground => ground.rows.join('\n')))
+    expect(drawings.size).toBe(18)
+  })
+
+  it('uses the first type, and grass only for an unknown type', () => {
     expect(groundFor(['water', 'flying'])).toBe(GROUNDS.water)
+    expect(groundName(['Psychic'])).toBe('psychic')
     expect(groundFor(undefined)).toBe(GROUNDS.grass)
+    expect(groundFor(['stellar'])).toBe(GROUNDS.grass)
+  })
+
+  it('lifts the ball onto flat floors by at most two art pixels', () => {
+    for (const [type, ground] of Object.entries(GROUNDS)) {
+      expect([0, 1, 2], type).toContain(ground.lift ?? 0)
+    }
+    expect(GROUNDS.fighting.lift).toBe(1)
+    expect(GROUNDS.grass.lift ?? 0).toBe(0)
   })
 
   it('the light takes the type colour', () => {

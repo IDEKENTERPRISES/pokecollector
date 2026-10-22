@@ -452,15 +452,11 @@ def gemini_rate_limit_reason(resp: httpx.Response) -> str:
 
 
 def get_gemini_key(db: Session, user_id: int = None) -> str:
-    """Read Gemini API key from user settings only. No cross-user fallback."""
-    if user_id is not None:
-        row = db.query(UserSetting).filter(
-            UserSetting.user_id == user_id, UserSetting.key == "gemini_api_key"
-        ).first()
-        if row and row.value:
-            return row.value.strip()
-    # No global/env fallback — each user must configure their own key
-    return ""
+    """Read the Gemini API key: the user's own, or the administrators' when the installation
+    uses one global scanner configuration. No other cross-user fallback."""
+    from services.scan_providers import scanner_setting_value
+
+    return scanner_setting_value(db, user_id, "gemini_api_key").strip()
 
 
 def _requested_gemini_model(gemini_url: str) -> str:
@@ -1723,9 +1719,11 @@ async def _recognize_with_provider(
     if provider.requires_credential() and not api_key:
         if trace:
             trace.record_error(f"No {provider.name} API key is configured.")
+        from services.scan_providers import user_scan_error
+
         raise HTTPException(
             status_code=400,
-            detail=provider.missing_credential_message(),
+            detail=user_scan_error(db, user_id, provider.missing_credential_message()),
         )
 
     image_b64 = base64.b64encode(image_bytes).decode()
@@ -1944,6 +1942,12 @@ async def recognize_card(
             sanitized.content_type,
             trace=trace,
         )
+    except HTTPException as exc:
+        from services.scan_providers import user_scan_error
+
+        # In global mode a user who is not an administrator must not learn the scanner setup.
+        exc.detail = user_scan_error(db, current_user.id, exc.detail)
+        raise
     finally:
         trace.save()
 

@@ -10,7 +10,6 @@ import { ScannerProvider } from '../contexts/ScannerContext'
 import { useReleaseManualHistoryScrollRestoration } from '../hooks/useListScrollRestoration'
 import { recordNavigation } from '../navigation/historyMirror'
 import { NavBarContext, createNavBarStore } from '../navigation/NavBarContext'
-import { isRootPath } from '../navigation/navConfig'
 import { notifyLocationCommitted } from '../navigation/viewTransition'
 import { locationId, restorePendingScroll, visitLocation } from '../navigation/tabMemory'
 import { isOfflineRoute } from '../offline/routes'
@@ -92,7 +91,7 @@ export default function Layout() {
             </div>
           </div>
         </div>
-        <PullToRefresh enabled={isRootPath(location.pathname)} />
+        <PullToRefresh enabled />
         <TabBar />
       </ScannerProvider>
     </NavBarContext.Provider>

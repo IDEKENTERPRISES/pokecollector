@@ -23,11 +23,21 @@ export function pullReachedThreshold(distance) {
  * not inside a dialog (sheets, menus and alerts have their own scrolling), and no scroll lock is on
  * (an open sheet sets `overflow: hidden` on the body).
  */
-export function canStartPull({ scrollY, touchCount, target, bodyOverflow }) {
+export function canStartPull({ scrollY, touchCount, target, bodyOverflow, scrolledAncestor = false }) {
   if (scrollY > 0 || touchCount !== 1) return false
   if (bodyOverflow === 'hidden') return false
+  // A drag down inside a container that is itself scrolled down scrolls that container back up.
+  if (scrolledAncestor) return false
   if (target?.closest?.('[role="dialog"], [aria-modal="true"], [role="menu"], input, textarea, select')) return false
   return true
+}
+
+/** True when `target` sits inside an element (not the page) that is scrolled away from its top. */
+export function hasScrolledAncestor(target) {
+  for (let el = target; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+    if (el.scrollTop > 0 && el.scrollHeight > el.clientHeight) return true
+  }
+  return false
 }
 
 /**
@@ -65,6 +75,7 @@ export function usePullToRefresh({ enabled, onRefresh }) {
         touchCount: event.touches?.length ?? 0,
         target: event.target,
         bodyOverflow: document.body.style.overflow,
+        scrolledAncestor: hasScrolledAncestor(event.target),
       })
       startY = allowed ? event.touches[0].clientY : null
       lastDy = 0

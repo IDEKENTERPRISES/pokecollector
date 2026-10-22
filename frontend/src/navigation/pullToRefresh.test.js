@@ -41,6 +41,11 @@ describe('canStartPull', () => {
     }
   })
 
+  it('does not start inside a container that is scrolled down', () => {
+    expect(canStartPull({ ...base, scrolledAncestor: true })).toBe(false)
+    expect(canStartPull({ ...base, scrolledAncestor: false })).toBe(true)
+  })
+
   it('does not start while a sheet has locked the page scroll', () => {
     expect(canStartPull({ ...base, bodyOverflow: 'hidden' })).toBe(false)
   })

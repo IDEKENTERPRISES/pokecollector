@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 
+import ConfirmDialog from './ui/ConfirmDialog'
 import {
+  adoptScannerSettings,
   getScannerConfiguration,
   testScannerConfiguration,
   updateScannerConfiguration,
@@ -31,6 +33,8 @@ export default function ScannerSettingsCard({ t }) {
   const [testStatus, setTestStatus] = useState('not_tested')
   const [degradedAvailable, setDegradedAvailable] = useState(false)
   const [acceptDegraded, setAcceptDegraded] = useState(false)
+  const [adoptOpen, setAdoptOpen] = useState(false)
+  const [adopting, setAdopting] = useState(false)
 
   const selected = useMemo(
     () => data?.providers?.find(item => item.id === provider),
@@ -133,6 +137,21 @@ export default function ScannerSettingsCard({ t }) {
     }
   }
 
+  const adoptMine = async () => {
+    setAdopting(true)
+    try {
+      await adoptScannerSettings()
+      await queryClient.invalidateQueries({ queryKey: ['scanner-configuration'] })
+      setAdoptOpen(false)
+      setDirty(false)
+      toast.success(t('settings.adminScannerUseMineDone'))
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || t('settings.saveFailed'))
+    } finally {
+      setAdopting(false)
+    }
+  }
+
   const saveKeyRemoval = async () => {
     setSaving(true)
     try {
@@ -146,7 +165,43 @@ export default function ScannerSettingsCard({ t }) {
   }
 
   if (isLoading) return <div className="px-4 py-5 text-xs text-text-muted">{t('common.loading')}</div>
-  if (isError || !selected) return <div className="px-4 py-5 text-xs text-red">{t('settings.scannerLoadFailed')}</div>
+  if (isError || !data) return <div className="px-4 py-5 text-xs text-red">{t('settings.scannerLoadFailed')}</div>
+
+  // No provider is enabled on this installation (for example Gemini is off and the
+  // OpenAI-compatible provider is not enabled).
+  if (data.status === 'unavailable') {
+    return (
+      <div className="overflow-hidden rounded-xl bg-card">
+        <div role="status" className="space-y-1.5 px-4 py-4">
+          <p className="text-sm font-semibold text-text-primary">{t('settings.adminScannerUnavailableTitle')}</p>
+          <p className="text-footnote text-text-muted">
+            {data.administrator ? t('settings.adminScannerUnavailableAdmin') : t('settings.adminScannerUnavailableUser')}
+          </p>
+          {data.administrator?.setup_guide_url && (
+            <a href={data.administrator.setup_guide_url} target="_blank" rel="noreferrer" className="inline-block text-footnote font-semibold text-yellow hover:underline">
+              {t('settings.scannerAdminGuide')} ↗
+            </a>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // Global mode, not an administrator: the scanner setup is not theirs to see or change, so
+  // nothing about it is shown (the server sends no configuration to them either).
+  if (data.scope === 'global' && !data.editable) {
+    if (data.scanning_available !== false) return null
+    return (
+      <div className="overflow-hidden rounded-xl bg-card">
+        <div role="status" className="px-4 py-4">
+          <p className="text-footnote text-text-secondary">{t('settings.adminScannerUnavailableNeutral')}</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!selected) return <div className="px-4 py-5 text-xs text-red">{t('settings.scannerLoadFailed')}</div>
+  const isGlobal = data.scope === 'global'
 
   const hasUsableKey = !selected.requires_api_key
     || (!clearApiKey && (Boolean(apiKey) || selected.api_key_configured))
@@ -164,6 +219,11 @@ export default function ScannerSettingsCard({ t }) {
           <div>
             <p className="text-sm font-semibold text-text-primary">{t('settings.scannerConfiguration')}</p>
             <p className="text-xs text-text-muted mt-1 max-w-2xl">{t('settings.scannerConfigurationDesc')}</p>
+            {isGlobal && (
+              <p data-testid="scanner-applies-to-everyone" className="text-footnote font-semibold text-tint mt-1 max-w-2xl">
+                {t('settings.adminScannerGlobalTitle')} · {t('settings.adminScannerGlobalDesc')}
+              </p>
+            )}
             {selected.setup_help_url && (
               <a href={selected.setup_help_url} target="_blank" rel="noreferrer" className="inline-block mt-1.5 text-footnote font-semibold text-yellow hover:underline">
                 {t('settings.scannerSetupHelp')} ↗
@@ -188,6 +248,19 @@ export default function ScannerSettingsCard({ t }) {
           </div>
         )}
 
+        {isGlobal && data.global_configured === false && (
+          <div className="rounded-xl bg-fill-quaternary px-3 py-2.5">
+            <p className="text-footnote text-text-secondary">{t('settings.adminScannerGlobalNotSet')}</p>
+            <button
+              type="button"
+              onClick={() => setAdoptOpen(true)}
+              className="mt-2 inline-flex min-h-[36px] items-center justify-center rounded-full bg-fill-tertiary px-4 text-subheadline font-semibold text-tint ios-press"
+            >
+              {t('settings.adminScannerUseMine')}
+            </button>
+          </div>
+        )}
+
         {data.providers.length > 1 && (
           <label className="block">
             <span className="text-xs font-semibold text-text-primary">{t('settings.scannerProvider')}</span>
@@ -206,8 +279,8 @@ export default function ScannerSettingsCard({ t }) {
           </p>
           <p className="text-footnote text-text-muted mt-1">
             {selected.requires_api_key
-              ? t('settings.scannerPersonalKeyRequired')
-              : t('settings.scannerPersonalKeyNotRequired')}
+              ? t(isGlobal ? 'settings.adminScannerSharedKeyRequired' : 'settings.scannerPersonalKeyRequired')
+              : t(isGlobal ? 'settings.adminScannerSharedKeyNotRequired' : 'settings.scannerPersonalKeyNotRequired')}
           </p>
         </div>
 
@@ -299,7 +372,11 @@ export default function ScannerSettingsCard({ t }) {
               autoComplete="off"
               value={apiKey}
               onChange={event => changeDraft(() => { setApiKey(event.target.value); setClearApiKey(false) })}
-              placeholder={selected.api_key_configured && !clearApiKey ? t('settings.scannerKeyConfigured') : t('settings.scannerKeyPlaceholder')}
+              placeholder={selected.api_key_configured && !clearApiKey
+                ? (selected.api_key_hint
+                  ? t('settings.adminScannerKeySetEnding').replace('{hint}', selected.api_key_hint)
+                  : t('settings.scannerKeyConfigured'))
+                : t('settings.scannerKeyPlaceholder')}
               className="input mt-1.5 w-full text-xs font-mono"
             />
             {selected.api_key_configured && (
@@ -399,6 +476,16 @@ export default function ScannerSettingsCard({ t }) {
           </details>
         )}
       </div>
+      <ConfirmDialog
+        isOpen={adoptOpen}
+        onClose={() => setAdoptOpen(false)}
+        onConfirm={adoptMine}
+        title={t('settings.adminScannerUseMine')}
+        message={t('settings.adminScannerUseMineConfirm')}
+        confirmLabel={t('settings.adminScannerUseMine')}
+        cancelLabel={t('common.cancel')}
+        isPending={adopting}
+      />
     </div>
   )
 }

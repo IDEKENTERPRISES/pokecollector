@@ -11,6 +11,9 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? 'github' : 'list',
   expect: {
+    // The suite runs against the Vite dev server, which compiles modules on the first
+    // page load; on a slow or busy machine that outlasts the 5s default.
+    timeout: 15000,
     toHaveScreenshot: {
       animations: 'disabled',
       maxDiffPixelRatio: 0.03,

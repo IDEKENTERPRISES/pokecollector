@@ -10,6 +10,16 @@ PokéCollector can scan cards with Google Gemini, hosted OpenAI, or a vision ser
 
 A **base URL** is the address PokéCollector sends scanner requests to. PokéCollector adds `/chat/completions` to it, so an OpenAI-compatible base URL normally ends in `/v1`, for example `https://api.openai.com/v1` or `http://ollama:11434/v1`.
 
+## One scanner setup for everyone (optional)
+
+By default every user configures their own scanner. Two environment variables change that:
+
+- `SCANNER_GLOBAL_CONFIG=true` makes the scanner configuration global. Administrators choose the provider, model, response timeout, API key and Gemini fallback once, under **Settings → AI / Card Scanner → Applies to everyone**, and every user's scans (the scan queue, recognition and capability checks) use it. Other users see none of it: the server sends them no provider, model, timeout or key information, their writes to any scanner setting are refused (403), scan errors that would reveal the setup are replaced by "Scanning isn't available right now. Ask your admin.", and they keep only their personal preferences (for example preferring their own card photos, and diagnostics). Only administrators can read or change the global setup, API keys are never returned (only "set, ending ••1234"), and every change is recorded in the audit log as `scanner.config.updated` without secrets.
+  - **Everyone's scans use the administrator's API key and its quota.** Watch the provider's usage and billing.
+  - If global mode is on and nothing has been saved yet, an administrator can choose **Use my current scanner settings for everyone** to copy their own setup, key included, after a confirmation.
+  - Turning global mode off again brings back each user's own settings, which were never deleted.
+- `GEMINI_SCANNER_ENABLED=false` switches Gemini off everywhere. The default provider becomes the OpenAI-compatible one when it is enabled, the Gemini fallback is off and hidden, and a saved Gemini choice (personal or global) stops scanning with the message "Your selected scanner provider is no longer enabled" rather than being rerouted silently. If no provider is enabled at all, users see "Scanning isn't set up" and administrators see how to enable one.
+
 ## User setup
 
 1. Open **Settings → AI / Card Scanner**.
