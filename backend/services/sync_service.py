@@ -1251,20 +1251,7 @@ def _prewarm_card_pictures_after(fn):
         from services import card_picture_packs
         card_picture_packs.schedule_after_sync()
         return result
-    return wrapper
-
-
-perform_full_sync = _prewarm_card_pictures_after(perform_full_sync)
-
-
-def _prewarm_card_pictures_after(fn):
-    """After a card sync, fetch the pictures of any new cards in the background (F14b)."""
-    @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        result = fn(*args, **kwargs)
-        from services import card_picture_packs
-        card_picture_packs.schedule_after_sync()
-        return result
+    wrapper.prewarms_card_pictures = True
     return wrapper
 
 

@@ -225,3 +225,23 @@ class CardPictureWarmerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(DEPS_AVAILABLE, "FastAPI is not installed")
+class CardSyncWarmupHookTests(unittest.TestCase):
+    def test_one_full_sync_schedules_the_warm_up_once(self):
+        from services import sync_service
+
+        wrappers = 0
+        fn = sync_service.perform_full_sync
+        while fn is not None:
+            if fn.__dict__.get("prewarms_card_pictures"):
+                wrappers += 1
+            fn = getattr(fn, "__wrapped__", None)
+        self.assertEqual(wrappers, 1)
+
+        calls = []
+        wrapped = sync_service._prewarm_card_pictures_after(lambda: "done")
+        with patch.object(card_picture_packs, "schedule_after_sync", side_effect=lambda: calls.append(1)):
+            self.assertEqual(wrapped(), "done")
+        self.assertEqual(len(calls), 1)
