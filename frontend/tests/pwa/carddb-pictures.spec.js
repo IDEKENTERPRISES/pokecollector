@@ -138,7 +138,7 @@ test.describe('card picture download by set pack', () => {
     await page.getByTestId('carddb-remove').click()
     await expect.poll(() => page.evaluate(async () => (await caches.keys()).filter(name => name.startsWith('pc-')))).toEqual([])
     expect(await savedSets(page)).toEqual([])
-    await expect(page.getByTestId('carddb-section')).toHaveCount(0, { timeout: 15000 })
+    await expect(page.getByTestId('carddb-remove')).toHaveCount(0, { timeout: 15000 })
   })
 
   test('reloading midway then resuming does not fetch the finished sets again', async ({ page, context }) => {
