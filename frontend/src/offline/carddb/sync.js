@@ -145,13 +145,14 @@ export async function runCardDbSync({ wantedLanguages, store, fetchJson, signal,
   }
 
   const remoteLanguages = manifest?.languages ?? {}
+  const wanted = typeof wantedLanguages === 'function' ? wantedLanguages(Object.keys(remoteLanguages)) : wantedLanguages
   const summary = []
   for (const lang of await store.listLanguages()) {
-    if (!remoteLanguages[lang] || !wantedLanguages.includes(lang)) {
+    if (!remoteLanguages[lang] || !wanted.includes(lang)) {
       await store.deleteLanguage(lang)
     }
   }
-  for (const lang of wantedLanguages) {
+  for (const lang of wanted) {
     const remote = remoteLanguages[lang]
     if (!remote) continue
     const meta = await store.getMeta(lang)
