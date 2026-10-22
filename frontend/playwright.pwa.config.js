@@ -5,7 +5,7 @@ const executablePath = process.env.PLAYWRIGHT_CHROMIUM_PATH
 export default defineConfig({
   testDir: './tests/pwa',
   outputDir: './test-results-pwa',
-  workers: 1,
+  workers: Number(process.env.PWA_WORKERS || 1),
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,

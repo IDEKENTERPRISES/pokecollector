@@ -1,0 +1,41 @@
+name: PWA stability (temporary)
+on:
+  push:
+    branches: [feature/ios-ui-pwa-parallel]
+    paths: [.github/workflows/pwa-stability-temp.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  repeat:
+    name: run ${{ matrix.run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        run: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
+      options: --ipc=host
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout repository
+        shell: bash
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          auth_header="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          echo "::add-mask::${auth_header}"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: Basic ${auth_header}" fetch --force origin "${GITHUB_REF}"
+          git checkout --detach FETCH_HEAD
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      # Whole suite, 4 workers, no retries: any flake from shared state fails the run.
+      - run: npx playwright test --config=playwright.pwa.config.js --workers=4 --retries=0
