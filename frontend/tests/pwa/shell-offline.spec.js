@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 // The iPhone shell offline (docs/IOS_UI_DESIGN.md §12): the tab bar stays, the status line shows,
-// /profile renders its cached numbers and /analytics shows OfflineUnavailable.
+// /profile renders its cached numbers and /analytics (never opened) shows its normal page with a note.
 
 const ada = { id: 1, username: 'ada', role: 'user', avatar_id: null, must_change_password: false }
 const HEALTH_OK = {
@@ -78,7 +78,8 @@ test('offline: the tab bar stays, the status line shows, Profile keeps its numbe
 
   await page.getByTestId('profile-tiles').getByRole('link', { name: /Analytics/ }).click()
   await expect(page).toHaveURL(/\/analytics$/)
-  await expect(page.getByTestId('offline-unavailable')).toBeVisible()
+  await expect(page.getByTestId('not-saved-note')).toBeVisible()
+  await expect(page.getByTestId('offline-unavailable')).toHaveCount(0)
   await expect(tabBar).toBeVisible()
   await expect(page.getByTestId('offline-banner')).toBeVisible()
 })

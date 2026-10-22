@@ -1,0 +1,66 @@
+// Fixtures for the offline page tests, copied from tests/visual/card-pages.spec.js (the card and the
+// deck editor payload), so the deck page renders with real-shaped data.
+
+export const card = (index, overrides = {}) => ({
+  id: `visual-card-${index}`,
+  card_id: `visual-card-${index}`,
+  name: index === 2 ? 'Pikachu with a deliberately long aligned card name' : `Visual card ${index}`,
+  number: String(index).padStart(3, '0'),
+  set_id: 'visual-set_en',
+  set_name: 'Visual Set',
+  set_ref: { id: 'visual-set_en', name: 'Visual Set', abbreviation: 'VIS' },
+  rarity: index % 2 ? 'Illustration Rare' : 'Rare Holo',
+  supertype: 'Pokemon',
+  types: ['Lightning'],
+  price_market: 4 + index,
+  price_trend: 4 + index,
+  price_avg1: 3.8 + index,
+  price_avg7: 3.6 + index,
+  price_avg30: 3.4 + index,
+  price_low: 3 + index,
+  price_tcg_normal_market: 5 + index,
+  price_tcg_reverse_market: 6 + index,
+  price_tcg_holo_market: 7 + index,
+  variants_normal: true,
+  variants_reverse: true,
+  ...overrides,
+})
+
+export const deck = {
+  id: 1,
+  name: 'Visual Practice Deck',
+  target_size: 40,
+  description: 'A visual deck fixture',
+  current_card_count: 24,
+  remaining_to_target: 16,
+  over_target_by: 0,
+  missing_copy_count: 1,
+  status: 'under',
+  composition_counts: { Pokemon: 8, Trainer: 10, Energy: 6, Other: 0 },
+  entries: [
+    { id: 1, card_id: 'visual-card-1', required_quantity: 8, owned_quantity: 8, shortage: 0, card: card(1, { supertype: 'Pokemon' }) },
+    { id: 2, card_id: 'visual-card-2', required_quantity: 10, owned_quantity: 9, shortage: 1, card: card(2, { supertype: 'Trainer' }) },
+    { id: 3, card_id: 'visual-card-3', required_quantity: 6, owned_quantity: 6, shortage: 0, card: card(3, { supertype: 'Energy' }) },
+  ],
+  copy_limit_warnings: [{ name: 'Ultra Ball', quantity: 5 }],
+  format: 'Casual',
+  validation: {
+    valid: false,
+    errors: [{ code: 'deck_size', status: 'fail', severity: 'error', message: 'Deck contains 24 of 40 cards.', details: { current: 24, target: 40 } }, { code: 'basic_pokemon', status: 'pass', severity: 'error', message: 'Deck contains a Basic Pokemon.', details: { count: 1 } }],
+    warnings: [{ code: 'ownership', status: 'fail', severity: 'warning', message: 'Missing 1 copies from your collection.', details: { missing: 1, cards: [{ entry_id: 2, name: 'Visual card 2', missing: 1 }] } }],
+    checks: [{ code: 'deck_size', status: 'fail', severity: 'error', message: 'Deck contains 24 of 40 cards.', details: { current: 24, target: 40 } }, { code: 'basic_pokemon', status: 'pass', severity: 'error', message: 'Deck contains a Basic Pokemon.', details: { count: 1 } }, { code: 'copy_limit', status: 'fail', severity: 'error', message: 'One or more cards exceed the 4-copy limit.', details: { violations: [{ name: 'Visual card 1', quantity: 8 }] } }, { code: 'ownership', status: 'fail', severity: 'warning', message: 'Missing 1 copies from your collection.', details: { missing: 1, cards: [{ entry_id: 2, name: 'Visual card 2', missing: 1 }] } }],
+  },
+  analysis: {
+    composition: { total_cards: 24, pokemon_count: 8, trainer_count: 10, energy_count: 6, other_count: 0, pokemon_percent: 33.333, trainer_percent: 41.667, energy_percent: 25, other_percent: 0 },
+    pokemon: { stages: { Basic: 8, 'Stage 1': 0, 'Stage 2': 0, other_unknown: 0 }, types: { Lightning: 8 }, hp: { count: 8, min: 60, max: 60, average: 60, median: 60, missing_hp: 0 }, retreat: { count: 8, min: 1, max: 1, average: 1, median: 1, distribution: { 0: 0, 1: 8, 2: 0, '3+': 0 }, missing_retreat: 0 } },
+    trainers: { Item: 10, Supporter: 0, Stadium: 0, Tool: 0, other_unknown: 0 },
+    energy: { basic: 6, special: 0, other_unknown: 0, types: { Lightning: 6 } },
+    attacks: { fixed_attack_count: 8, variable_attack_count: 1, non_damage_attack_count: 1, unknown_attack_count: 0, unparseable_attack_count: 0, fixed_damage: { count: 8, min: 30, max: 30, average: 30, median: 30 }, cost_distribution: { 0: 0, 1: 8, 2: 0, 3: 0, '4+': 0, unknown: 0 } },
+    diversity: { total_cards: 24, unique_printings: 3, unique_card_names: 3 },
+    effects: {
+      coverage: { draw: { cards: 4, unique_sources: 1, sources: [{ card_id: 'research', name: "Professor's Research", quantity: 4 }] }, pokemon_search: { cards: 7, unique_sources: 2, sources: [{ card_id: 'ultra', name: 'Ultra Ball', quantity: 4 }, { card_id: 'nest', name: 'Nest Ball', quantity: 3 }] }, discard: { cards: 8, unique_sources: 2, sources: [{ card_id: 'ultra', name: 'Ultra Ball', quantity: 4 }, { card_id: 'research', name: "Professor's Research", quantity: 4 }] }, switching: { cards: 0, unique_sources: 0, sources: [] } },
+      outs: { draw_outs: { cards: 4, unique_sources: 1, sources: [{ card_id: 'research', name: "Professor's Research", quantity: 4 }] }, pokemon_search_outs: { cards: 7, unique_sources: 2, sources: [{ card_id: 'ultra', name: 'Ultra Ball', quantity: 4 }, { card_id: 'nest', name: 'Nest Ball', quantity: 3 }] }, energy_access_outs: { cards: 0, unique_sources: 0, sources: [] }, switching_outs: { cards: 0, unique_sources: 0, sources: [] }, recovery_outs: { cards: 0, unique_sources: 0, sources: [] } },
+      unclassified_cards: { cards: 13, unique_sources: 2 },
+    },
+  },
+}

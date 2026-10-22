@@ -1,33 +1,17 @@
-// Routes that still make sense without a connection (docs/PWA_OFFLINE_DESIGN.md §6.4.1).
-// Everything else shows <OfflineUnavailable/> while the server is unreachable.
+// Which pages open while the server is unreachable (owner feedback F12: "make sure that all pages are
+// cacheable"). Every page of the shell does: one that was opened before shows its saved copy, one that
+// never was shows its normal empty state plus a short note (see offline/notSaved.js). The exceptions
+// list is for a page that cannot work at all without the server; it is empty, and each entry would need
+// a reason here.
 
-export const OFFLINE_ROUTES = Object.freeze([
-  '/',
-  '/dashboard',
-  '/collection',
-  '/wishlist',
-  '/sets',
-  '/sets/series/:seriesKey', // built from the cached sets list
-  '/sets/:setId',
-  '/binders',
-  '/binders/:binderId',
-  '/search', // the scanner only; its search results still need the server
-  '/offline',
-  '/profile', // trainer card, tiles and rows render from cached data
-])
+import { matchPattern, matchRoute } from '../navigation/navConfig.js'
 
-function toRegExp(pattern) {
-  const source = pattern
-    .split('/')
-    .map(segment => (segment.startsWith(':') ? '[^/]+' : segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
-    .join('/')
-  return new RegExp(`^${source}/?$`)
-}
+export const OFFLINE_EXCEPTIONS = Object.freeze([])
 
-const MATCHERS = OFFLINE_ROUTES.map(toRegExp)
-
-/** True for `/collection`, `/collection/`, `/sets/base1`; false for `/sets/base1/extra`. */
+/** True for every page of the shell (not for unknown paths, redirects or pages outside the shell) unless excepted. */
 export function isOfflineRoute(pathname) {
-  const path = String(pathname || '')
-  return MATCHERS.some(matcher => matcher.test(path))
+  if (!pathname) return false
+  const match = matchRoute(String(pathname))
+  if (match?.kind !== 'route') return false
+  return !OFFLINE_EXCEPTIONS.some(pattern => matchPattern(pattern, pathname))
 }
