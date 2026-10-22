@@ -87,6 +87,23 @@ describe('runViewTransition', () => {
     }
   })
 
+  it('skips a transition that runs on, so the page takes taps again', async () => {
+    vi.useFakeTimers()
+    try {
+      const doc = fakeDoc()
+      const skipTransition = vi.fn()
+      const slow = new Promise(() => {})
+      doc.startViewTransition = () => ({ finished: slow, skipTransition })
+      runViewTransition(update, { doc, win: { matchMedia: () => ({ matches: false }), setTimeout: (fn, ms) => setTimeout(fn, ms) } })
+      await vi.advanceTimersByTimeAsync(1400)
+      expect(skipTransition).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(200)
+      expect(skipTransition).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('falls back to a plain navigation if the browser throws', () => {
     const doc = fakeDoc()
     doc.startViewTransition = () => { throw new Error('nope') }
