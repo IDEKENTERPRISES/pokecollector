@@ -65,6 +65,31 @@ const de = {
   },
 
   // Startanimation (components/splash)
+  offlineDb: {
+    title: 'Offline-Kartendatenbank',
+    description: 'Hält alle Sets, Serien und Karten auf diesem Gerät, damit du ohne Verbindung stöbern und suchen kannst. Sie aktualisiert sich selbst, wenn die App öffnet und sich der Server geändert hat, und lädt nur Geändertes.',
+    keep: 'Kartendatenbank auf diesem Gerät behalten',
+    checking: 'Suche nach Aktualisierungen …',
+    downloading: 'Kartendaten werden geladen: {done} von {total} Sets ({size} von {totalSize})',
+    waiting: 'Wartet auf eine Verbindung',
+    failed: 'Die Kartendatenbank konnte nicht aktualisiert werden',
+    storageFailed: 'Dieses Gerät kann die Kartendatenbank nicht speichern',
+    retry: 'Erneut versuchen',
+    updated: 'Aktualisiert {date} · {cards} Karten · {size}',
+    notDownloaded: 'Noch nicht geladen',
+    pricesFrom: 'Preise vom',
+    pictures: 'Kartenbilder',
+    picturesDownload: 'Kartenbilder laden (etwa {size})',
+    picturesProgress: '{done} von {total}',
+    picturesPaused: 'Pausiert',
+    picturesDone: 'Geladen',
+    download: 'Laden',
+    pause: 'Pause',
+    resume: 'Fortsetzen',
+    remove: 'Entfernen',
+    removeAll: 'Von diesem Gerät entfernen',
+  },
+
   splash: {
     label: 'Willkommen bei PokéCollector',
     tapToSkip: 'Zum Überspringen tippen',
