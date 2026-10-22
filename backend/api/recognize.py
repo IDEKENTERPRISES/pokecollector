@@ -1719,9 +1719,11 @@ async def _recognize_with_provider(
     if provider.requires_credential() and not api_key:
         if trace:
             trace.record_error(f"No {provider.name} API key is configured.")
+        from services.scan_providers import user_scan_error
+
         raise HTTPException(
             status_code=400,
-            detail=provider.missing_credential_message(),
+            detail=user_scan_error(db, user_id, provider.missing_credential_message()),
         )
 
     image_b64 = base64.b64encode(image_bytes).decode()
@@ -1940,6 +1942,12 @@ async def recognize_card(
             sanitized.content_type,
             trace=trace,
         )
+    except HTTPException as exc:
+        from services.scan_providers import user_scan_error
+
+        # In global mode a user who is not an administrator must not learn the scanner setup.
+        exc.detail = user_scan_error(db, current_user.id, exc.detail)
+        raise
     finally:
         trace.save()
 

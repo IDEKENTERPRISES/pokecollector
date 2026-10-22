@@ -91,7 +91,7 @@ async function installApi(page, user = USER, initialConfiguration = scannerConfi
         : {
             ...currentConfiguration,
             administrator: undefined,
-            providers: currentConfiguration.providers.map(({ custom_model_allowed, custom_model, ...item }) => item),
+            providers: (currentConfiguration.providers || []).map(({ custom_model_allowed, custom_model, ...item }) => item),
           }
       return route.fulfill({ json: visible })
     }
@@ -609,18 +609,33 @@ test('global mode: an administrator sees the setup as applying to everyone, with
   await expect(page.getByLabel('Scanner provider')).toBeVisible()
 })
 
-test('global mode: other users get a read-only summary and no provider controls', async ({ page }) => {
+test('global mode: other users see nothing of the scanner setup', async ({ page }) => {
   const member = { ...USER, id: 2, username: 'member', role: 'user' }
-  await installApi(page, member, { ...globalConfiguration, editable: false })
+  // What the server sends a user who is not an administrator in global mode: no setup at all.
+  await installApi(page, member, {
+    scope: 'global', editable: false, scanning_available: true, visual_verification: 'automatic',
+  })
   await page.goto('/settings/scanner')
 
-  await expect(page.getByTestId('scanner-set-by-admin')).toHaveText('Set by your admin: Gemini · gemini-flash-latest')
-  await expect(page.getByLabel('Scanner provider')).toHaveCount(0)
+  await expect(page.getByText('Scanner provider')).toHaveCount(0)
+  await expect(page.getByText('Set by your admin', { exact: false })).toHaveCount(0)
+  await expect(page.getByText('Gemini', { exact: false })).toHaveCount(0)
+  await expect(page.getByText('Applies to everyone')).toHaveCount(0)
   await expect(page.getByRole('button', { name: /Test and save|Test connection/ })).toHaveCount(0)
   // The shared Gemini fallback is the administrators' to change.
-  await expect(page.getByText('Gemini fallback', { exact: false })).toHaveCount(0)
+  await expect(page.getByText('Fall back to Gemini', { exact: false })).toHaveCount(0)
   // Personal preferences stay.
   await expect(page.getByText('scanner diagnostics', { exact: false }).first()).toBeVisible()
+})
+
+test('global mode: a user is told neutrally when scanning is unavailable', async ({ page }) => {
+  const member = { ...USER, id: 2, username: 'member', role: 'user' }
+  await installApi(page, member, {
+    scope: 'global', editable: false, scanning_available: false, visual_verification: 'unverified',
+  })
+  await page.goto('/settings/scanner')
+  await expect(page.getByText("Scanning isn't available right now. Ask your admin.")).toBeVisible()
+  await expect(page.getByText('OpenAI')).toHaveCount(0)
 })
 
 test('global mode: an administrator can copy their own settings for everyone after a confirmation', async ({ page }) => {

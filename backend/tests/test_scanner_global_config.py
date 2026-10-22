@@ -15,19 +15,22 @@ try:
         _get_user_settings,
         _scanner_configuration,
         adopt_scanner_settings_for_everyone,
+        get_setting,
         set_setting,
         test_scanner_configuration as run_scanner_configuration_test,
         update_scanner_configuration,
         update_settings,
     )
+    from api.scan_jobs import _item_payload
     from database import Base
-    from models import AuditLog, Setting, User, UserSetting
+    from models import AuditLog, ScanJob, ScanJobItem, Setting, User, UserSetting
     from services.scan_providers import (
         GEMINI,
         OPENAI,
         ScanProvider,
         enabled_providers,
         gemini_fallback_enabled,
+        NEUTRAL_SCAN_ERROR,
         get_provider,
         resolve_model,
         resolve_provider_name,
@@ -171,11 +174,15 @@ class ScannerGlobalConfigTests(unittest.TestCase):
         self.assertEqual(openai["api_key_hint"], "••1234")
         for payload in (result, admin_view, member_view):
             self.assertNotIn("sk-secret-1234", json.dumps(payload))
-        self.assertNotIn("api_key_hint", next(item for item in member_view["providers"] if item["id"] == "openai"))
-        self.assertEqual(member_view["scope"], "global")
+        # A user who is not an administrator gets no scanner configuration at all.
+        self.assertEqual(
+            set(member_view),
+            {"scope", "editable", "scanning_available", "visual_verification"},
+        )
         self.assertFalse(member_view["editable"])
-        self.assertEqual(member_view["provider"], "openai")
-        self.assertEqual(member_view["model"], "vision-fast")
+        self.assertTrue(member_view["scanning_available"])
+        self.assertNotIn("openai", json.dumps(member_view).lower())
+        self.assertNotIn("vision-fast", json.dumps(member_view))
         audit = self.db.query(AuditLog).filter(AuditLog.action == "scanner.config.updated").one()
         self.assertEqual(audit.actor_user_id, self.admin.id)
         self.assertNotIn("sk-secret", audit.details)
@@ -195,8 +202,102 @@ class ScannerGlobalConfigTests(unittest.TestCase):
         with patch.dict(os.environ, GLOBAL):
             update_settings({"scanner_gemini_fallback": "true"}, self.db, self.admin)
             self.assertTrue(gemini_fallback_enabled(self.db, self.member.id))
-            self.assertEqual(_get_user_settings(self.db, self.member.id)["scanner_gemini_fallback"], "true")
+            self.assertNotIn("scanner_gemini_fallback", _get_user_settings(self.db, self.member.id))
+            self.assertEqual(_get_user_settings(self.db, self.admin.id)["scanner_gemini_fallback"], "true")
         self.assertEqual(self.db.query(AuditLog).filter(AuditLog.action == "scanner.config.updated").count(), 1)
+
+    # ---- members see nothing of the scanner setup in global mode ---------------------------------
+
+    def test_settings_response_for_a_member_has_no_scanner_fields(self):
+        self._global_row("scanner_gemini_fallback", "true")
+        self._user_row(self.member, "scan_diagnostics", "true")
+        with patch.dict(os.environ, GLOBAL):
+            member = _get_user_settings(self.db, self.member.id)
+            admin = _get_user_settings(self.db, self.admin.id)
+        self.assertNotIn("scanner_gemini_fallback", member)
+        self.assertEqual(admin["scanner_gemini_fallback"], "true")
+        for key in member:
+            self.assertFalse(key.startswith("scanner_") or key.endswith("_api_key"), key)
+
+    def test_a_member_cannot_read_or_write_any_scanner_key_in_global_mode(self):
+        with patch.dict(os.environ, GLOBAL):
+            for key in (
+                "scanner_provider", "scanner_model_openai", "openai_api_key", "gemini_api_key",
+                "scanner_request_timeout_openai", "scanner_capability_openai",
+                "scanner_custom_model_openai", "scanner_gemini_fallback",
+            ):
+                with self.assertRaises(HTTPException) as put_error:
+                    update_settings({key: "x"}, self.db, self.member)
+                with self.assertRaises(HTTPException) as post_error:
+                    set_setting(key, {"value": "x"}, self.db, self.member)
+                with self.assertRaises(HTTPException) as get_error:
+                    get_setting(key, self.db, self.member)
+                for error in (put_error, post_error, get_error):
+                    self.assertEqual(error.exception.status_code, 403, key)
+        self.assertEqual(self.db.query(UserSetting).count(), 0)
+
+    def test_per_user_mode_still_refuses_scanner_keys_on_the_generic_endpoints_with_409(self):
+        with self.assertRaises(HTTPException) as error:
+            update_settings({"scanner_provider": "gemini"}, self.db, self.member)
+        self.assertEqual(error.exception.status_code, 409)
+
+    def test_config_errors_are_neutral_for_a_member_and_detailed_for_an_admin(self):
+        env = {**GLOBAL, "GEMINI_SCANNER_ENABLED": "false", "OPENAI_SCANNER_ENABLED": "true"}
+        self._global_row("scanner_provider", "gemini")
+        with patch.dict(os.environ, env):
+            with self.assertRaises(HTTPException) as member_error:
+                get_provider(self.db, self.member.id)
+            with self.assertRaises(HTTPException) as admin_error:
+                get_provider(self.db, self.admin.id)
+        self.assertEqual(member_error.exception.status_code, 409)
+        self.assertEqual(member_error.exception.detail, NEUTRAL_SCAN_ERROR)
+        self.assertIn("no longer enabled", admin_error.exception.detail)
+        self.assertIn("Scanner Settings", admin_error.exception.detail)
+
+    def test_nothing_enabled_is_neutral_for_a_member(self):
+        env = {**GLOBAL, "GEMINI_SCANNER_ENABLED": "false", "OPENAI_SCANNER_ENABLED": "false"}
+        with patch.dict(os.environ, env):
+            with self.assertRaises(HTTPException) as member_error:
+                get_provider(self.db, self.member.id)
+            config = _scanner_configuration(self.db, self.member.id)
+        self.assertEqual(member_error.exception.detail, NEUTRAL_SCAN_ERROR)
+        self.assertFalse(config["scanning_available"])
+        self.assertNotIn("providers", config)
+
+    def test_stored_item_errors_and_provider_names_are_hidden_from_a_member_only(self):
+        job = ScanJob(user_id=self.member.id, expires_at=__import__("datetime").datetime(2030, 1, 1))
+        self.db.add(job)
+        self.db.commit()
+        item = ScanJobItem(
+            job_id=job.id, user_id=self.member.id, position=0, byte_size=1, status="failed",
+            error="The OpenAI API key was rejected. Please check it in Settings.",
+            recognized={"name": "Bill", "_gemini_fallback_used": True},
+        )
+        photo_problem = ScanJobItem(
+            job_id=job.id, user_id=self.member.id, position=1, byte_size=1, status="failed",
+            error="The image could not be read.",
+        )
+        self.db.add_all([item, photo_problem])
+        self.db.commit()
+        with patch.dict(os.environ, GLOBAL):
+            hidden = _item_payload(item)
+            plain = _item_payload(photo_problem)
+            job.user_id = self.admin.id
+            self.db.commit()
+            shown = _item_payload(item)
+        self.assertEqual(hidden["error"], NEUTRAL_SCAN_ERROR)
+        self.assertEqual(hidden["recognized"], {"name": "Bill"})
+        self.assertEqual(plain["error"], "The image could not be read.")
+        self.assertIn("OpenAI API key", shown["error"])
+        self.assertTrue(shown["recognized"]["_gemini_fallback_used"])
+
+    def test_per_user_mode_keeps_detailed_errors_for_everyone(self):
+        env = {"GEMINI_SCANNER_ENABLED": "false", "OPENAI_SCANNER_ENABLED": "true"}
+        self._user_row(self.member, "scanner_provider", "gemini")
+        with patch.dict(os.environ, env):
+            with self.assertRaises(HTTPException) as error:
+                get_provider(self.db, self.member.id)
+        self.assertIn("no longer enabled", error.exception.detail)
 
     # ---- copy my settings -------------------------------------------------------------------
 

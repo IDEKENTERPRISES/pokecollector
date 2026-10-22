@@ -270,10 +270,14 @@ def _get_user_settings(db: Session, user_id: int) -> dict:
     for key, value in DEFAULT_SETTINGS.items():
         result.setdefault(key, value)
     if global_scanner_config_enabled():
-        result[SCANNER_GEMINI_FALLBACK_SETTING_KEY] = (
-            scanner_setting_value(db, user_id, SCANNER_GEMINI_FALLBACK_SETTING_KEY) or "false"
-        )
-    if not gemini_enabled():
+        if _is_admin(db, user_id):
+            result[SCANNER_GEMINI_FALLBACK_SETTING_KEY] = (
+                scanner_setting_value(db, user_id, SCANNER_GEMINI_FALLBACK_SETTING_KEY) or "false"
+            )
+        else:
+            # Not theirs to see: the fallback is part of the scanner setup the admins chose.
+            result.pop(SCANNER_GEMINI_FALLBACK_SETTING_KEY, None)
+    elif not gemini_enabled():
         result[SCANNER_GEMINI_FALLBACK_SETTING_KEY] = "false"
     result["scan_diagnostics_available"] = "true" if trace_available() else "false"
     result["scan_diagnostics_deletion_available"] = (
@@ -324,6 +328,19 @@ def _audit_scanner_change(db: Session, current_user: User, **details) -> None:
             actor=current_user,
             target_type="scanner",
             details=details,
+        )
+
+
+def _refuse_scanner_key_for_user(key: str, current_user: User) -> None:
+    """In global mode no one but an administrator may read or write any scanner config key."""
+    if (
+        global_scanner_config_enabled()
+        and current_user.role != "admin"
+        and (key in MANAGED_SCANNER_KEYS or key == SCANNER_GEMINI_FALLBACK_SETTING_KEY)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="The scanner is configured by an administrator for everyone.",
         )
 
 
@@ -402,6 +419,7 @@ def _scanner_configuration(db: Session, user_id: int, *, is_admin: bool = False)
     )
     selected = resolve_provider_name(db, user_id)
     is_global = global_scanner_config_enabled()
+    hidden = is_global and not is_admin
     providers = []
     for provider in enabled_providers():
         key_row = _user_setting(db, user_id, _scanner_key_name(provider))
@@ -446,6 +464,30 @@ def _scanner_configuration(db: Session, user_id: int, *, is_admin: bool = False)
         "request_timeout_options": list(SCANNER_REQUEST_TIMEOUT_OPTIONS),
     }
     active = next((item for item in providers if item["id"] == selected), None)
+    if hidden:
+        # Users who are not administrators get no scanner configuration at all in global mode:
+        # no provider, label, model, timeout or key status. Only what the scan screens need.
+        capability = (
+            scanner_capability_mode(db, user_id, selected, active["selected_model"])
+            if active is not None
+            else None
+        )
+        ready_for_scans = (
+            active is not None
+            and bool(active["selected_model"])
+            and (not active["requires_api_key"] or active["api_key_configured"])
+            and capability is not None
+        )
+        return {
+            "scope": "global",
+            "editable": False,
+            "scanning_available": ready_for_scans,
+            "visual_verification": (
+                "disabled"
+                if capability == SCANNER_CAPABILITY_DEGRADED
+                else ("automatic" if capability == SCANNER_CAPABILITY_FULL else "unverified")
+            ),
+        }
     if active is None:
         # No provider is enabled on this installation (for example Gemini is off and the
         # OpenAI-compatible provider is not enabled).
@@ -843,6 +885,8 @@ def get_tcgdex_filter_languages(db: Session = Depends(get_db), current_user: Use
 
 @router.put("/")
 def update_settings(data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    for scanner_key in data:
+        _refuse_scanner_key_for_user(scanner_key, current_user)
     if MANAGED_SCANNER_KEYS.intersection(data):
         raise HTTPException(
             status_code=409,
@@ -983,6 +1027,7 @@ def get_currencies(_current_user: User = Depends(get_current_user)):
 
 @router.get("/{key}")
 def get_setting(key: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    _refuse_scanner_key_for_user(key, current_user)
     if key in MANAGED_SCANNER_KEYS:
         raise HTTPException(
             status_code=409,
@@ -1000,6 +1045,7 @@ def get_setting(key: str, db: Session = Depends(get_db), current_user: User = De
 
 @router.post("/{key}")
 def set_setting(key: str, body: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    _refuse_scanner_key_for_user(key, current_user)
     if key in MANAGED_SCANNER_KEYS:
         raise HTTPException(
             status_code=409,

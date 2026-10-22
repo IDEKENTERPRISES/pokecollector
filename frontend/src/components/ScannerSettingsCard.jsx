@@ -187,24 +187,14 @@ export default function ScannerSettingsCard({ t }) {
     )
   }
 
-  // Global mode, not an administrator: a read-only summary of what the admin chose.
+  // Global mode, not an administrator: the scanner setup is not theirs to see or change, so
+  // nothing about it is shown (the server sends no configuration to them either).
   if (data.scope === 'global' && !data.editable) {
-    const active = data.providers.find(item => item.id === data.provider)
+    if (data.scanning_available !== false) return null
     return (
       <div className="overflow-hidden rounded-xl bg-card">
-        <div className="space-y-2 px-4 py-4">
-          <p className="text-sm font-semibold text-text-primary">{t('settings.scannerConfiguration')}</p>
-          <p data-testid="scanner-set-by-admin" className="text-footnote text-text-secondary">
-            {active && data.model
-              ? t('settings.adminScannerSetByAdmin').replace('{provider}', active.label).replace('{model}', data.model)
-              : t('settings.adminScannerSetByAdminNone')}
-          </p>
-          {data.visual_verification === 'disabled' && (
-            <div role="status" className="rounded-xl border border-yellow/35 bg-yellow/10 px-3 py-2.5">
-              <p className="text-xs font-semibold text-yellow">{t('settings.scannerDegradedTitle')}</p>
-              <p className="mt-1 text-footnote text-text-secondary">{t('settings.scannerDegradedWarning')}</p>
-            </div>
-          )}
+        <div role="status" className="px-4 py-4">
+          <p className="text-footnote text-text-secondary">{t('settings.adminScannerUnavailableNeutral')}</p>
         </div>
       </div>
     )

@@ -158,6 +158,50 @@ def upsert_scanner_setting(db: Session, user_id: int, key: str, value: str) -> N
         db.add(UserSetting(user_id=user_id, key=key, value=value))
 
 
+NEUTRAL_SCAN_ERROR = "Scanning isn't available right now. Ask your admin."
+
+# Words that mark an error as being about the scanner setup rather than the photo.
+_CONFIG_ERROR_MARKERS = (
+    "api key",
+    "api-key",
+    "settings",
+    "einstellungen",
+    "scanner model",
+    "billing",
+    "quota",
+    "no longer enabled",
+    "isn't set up",
+    "endpoint",
+    "gemini",
+    "openai",
+    "administrator",
+)
+
+
+def scanner_config_hidden(db: Session, user_id: int | None) -> bool:
+    """In global mode only administrators may know how the scanner is configured."""
+    if user_id is None or not global_scanner_config_enabled():
+        return False
+    user = db.query(User).filter(User.id == user_id).first()
+    return user is not None and user.role != "admin"
+
+
+def user_scan_error(db: Session, user_id: int | None, detail):
+    """The message a user may see: a neutral one when it would reveal the scanner setup."""
+    if not isinstance(detail, str) or not scanner_config_hidden(db, user_id):
+        return detail
+    lowered = detail.lower()
+    return NEUTRAL_SCAN_ERROR if any(marker in lowered for marker in _CONFIG_ERROR_MARKERS) else detail
+
+
+def config_error(db: Session, user_id: int | None, status_code: int, detail: str) -> HTTPException:
+    """An HTTPException about the scanner setup, neutral for users who must not see it."""
+    return HTTPException(
+        status_code=status_code,
+        detail=NEUTRAL_SCAN_ERROR if scanner_config_hidden(db, user_id) else detail,
+    )
+
+
 def global_scanner_config_exists(db: Session) -> bool:
     """Whether an administrator has saved a global scanner provider yet."""
     return (
@@ -296,12 +340,12 @@ def require_scanner_capability_mode(
     """Require a proof for compatible providers before any scan reaches them."""
     mode = scanner_capability_mode(db, user_id, provider, model)
     if provider == OPENAI and mode is None:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "The scanner provider or endpoint changed. Test and save it again "
-                "in Scanner Settings before scanning."
-            ),
+        raise config_error(
+            db,
+            user_id,
+            409,
+            "The scanner provider or endpoint changed. Test and save it again "
+            "in Scanner Settings before scanning.",
         )
     return mode or SCANNER_CAPABILITY_FULL
 
@@ -392,12 +436,11 @@ def resolve_provider_name(
     enabled = enabled_providers()
     if not enabled:
         if require_enabled:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Scanning isn't set up. Ask an administrator to enable a scanner "
-                    "provider."
-                ),
+            raise config_error(
+                db,
+                user_id,
+                409,
+                "Scanning isn't set up. Ask an administrator to enable a scanner provider.",
             )
         return GEMINI
     value = configured_provider_name(db, user_id)
@@ -405,12 +448,12 @@ def resolve_provider_name(
         return enabled[0]
     if value not in enabled:
         if require_enabled:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Your selected scanner provider is no longer enabled. Choose and "
-                    "test an available provider in Scanner Settings before scanning."
-                ),
+            raise config_error(
+                db,
+                user_id,
+                409,
+                "Your selected scanner provider is no longer enabled. Choose and "
+                "test an available provider in Scanner Settings before scanning.",
             )
         return enabled[0]
     return value
@@ -865,8 +908,10 @@ def get_provider(db: Session, user_id: int | None) -> ScanProvider:
     name = resolve_provider_name(db, user_id, require_enabled=True)
     model = resolve_model(db, user_id, name)
     if not model:
-        raise HTTPException(
-            status_code=400,
-            detail="No valid scanner model is configured. Ask an administrator to check Scanner Settings.",
+        raise config_error(
+            db,
+            user_id,
+            400,
+            "No valid scanner model is configured. Ask an administrator to check Scanner Settings.",
         )
     return ScanProvider(name, model)
