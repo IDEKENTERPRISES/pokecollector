@@ -210,6 +210,7 @@ const en = {
     updated: 'Updated {date} · {cards} cards · {size}',
     notDownloaded: 'Not downloaded yet',
     pricesFrom: 'Prices from',
+    ownedUnavailable: 'Owned cards unavailable offline',
     pictures: 'Card pictures',
     picturesDownload: 'Download card pictures (about {size})',
     picturesProgress: '{done} of {total}',

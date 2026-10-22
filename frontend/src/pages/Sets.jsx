@@ -1,6 +1,8 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import clsx from 'clsx'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { ownedFromQueryClient } from '../offline/carddb/owned.js'
+import { useCatalogQuery } from '../offline/carddb/useCatalogQuery.jsx'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Bell, BellOff, Filter, ChevronUp, ChevronDown, Eye, EyeOff } from 'lucide-react'
 import { getSets, markSetsSeen } from '../api/client'
@@ -125,11 +127,14 @@ export default function Sets() {
       })
   }, [t, updateSettings])
 
-  const { data: sets = [], isLoading } = useQuery({
+  const { data: sets = [], isLoading } = useCatalogQuery({
     queryKey: ['sets', langFilter],
     queryFn: () => getSets({ lang: langFilter }).then(r => r.data),
+    offlineFn: cardDb => cardDb.sets({ lang: langFilter, ownedCounts: ownedFromQueryClient(queryClient).ownedCounts }),
     enabled: filtersHydrated,
   })
+  // Offline sets from the card database with no collection list saved: owned figures are unknown, not zero.
+  const ownedUnknown = sets.length > 0 && sets.every(set => set.owned_count == null)
   const { saveScrollPosition, createDetailNavigationState } = useListScrollRestoration({
     key: 'sets',
     isReady: filtersHydrated && !isLoading && sets.length > 0,
@@ -413,6 +418,7 @@ export default function Sets() {
           <SetTile
             set={{ id: set.id, name: set.name, abbreviation: set.abbreviation, logo: resolveSetImageUrl(set, 'logo'), releaseLabel: set.release_date ? releaseLabelFor(set) : '' }}
             owned={owned}
+            ownedUnknown={ownedUnknown}
             total={total}
             upcoming={Boolean(set.release_date) && isUpcoming(set)}
             complete={total > 0 && owned >= total}
@@ -461,10 +467,16 @@ export default function Sets() {
             <p className="text-footnote text-text-secondary">
               {[activeGroup.years, t('ios.setsCount').replace('{count}', activeGroup.setCount)].filter(Boolean).join(' · ')}
             </p>
-            <HpBar value={activeGroup.owned} max={activeGroup.total} label={activeGroup.name} />
-            <p className="text-footnote tabular-nums text-text-secondary">
-              {t('ios.ownedOfTotal').replace('{owned}', activeGroup.owned).replace('{total}', activeGroup.total)} {t('sets.cards')}
-            </p>
+            {ownedUnknown ? (
+              <p className="text-footnote tabular-nums text-text-secondary" data-testid="owned-unavailable">{activeGroup.total} {t('sets.cards')} · {t('offlineDb.ownedUnavailable')}</p>
+            ) : (
+              <>
+                <HpBar value={activeGroup.owned} max={activeGroup.total} label={activeGroup.name} />
+                <p className="text-footnote tabular-nums text-text-secondary">
+                  {t('ios.ownedOfTotal').replace('{owned}', activeGroup.owned).replace('{total}', activeGroup.total)} {t('sets.cards')}
+                </p>
+              </>
+            )}
           </div>
         </header>
       ) : (
@@ -514,6 +526,7 @@ export default function Sets() {
               key={group.key}
               series={{ key: group.key, name: group.name, logo: group.logo, logoCandidates: group.logoCandidates, years: group.years, setCount: group.setCount }}
               owned={group.owned}
+              ownedUnknown={ownedUnknown}
               total={group.total}
               complete={group.complete}
               to={`/sets/series/${encodeURIComponent(group.key)}`}

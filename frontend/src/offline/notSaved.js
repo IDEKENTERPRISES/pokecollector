@@ -6,7 +6,7 @@ import { useSyncExternalStore } from 'react'
 
 // Queries every page of the shell holds (the tab bar's scan badge, sync progress, small settings): they say
 // nothing about whether the current page has saved data.
-export const SHELL_QUERY_KEYS = new Set(['scan-jobs', 'sync-status', 'setting', 'currencies', 'exchange-rate'])
+export const SHELL_QUERY_KEYS = new Set(['scan-jobs', 'sync-status', 'setting', 'currencies', 'exchange-rate', 'carddb'])
 
 /**
  * True when most of what the page loads is missing: at least half of its queries hold no data. A

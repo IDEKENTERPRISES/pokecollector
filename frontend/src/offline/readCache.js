@@ -39,6 +39,7 @@ export const READ_CACHE_DENY = new Set([
   'scan-jobs', // the live scan inbox
   'scan-job',
   'collection-photo', // blobs, not JSON
+  'carddb', // answers read from the offline card database (F13b), never saved as if the server sent them
 ])
 
 // A key part that names a secret keeps the query out whatever its first element is.
