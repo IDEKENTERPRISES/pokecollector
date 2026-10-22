@@ -177,10 +177,12 @@ class OfflineCardDbTests(unittest.TestCase):
             with patch.dict(os.environ, {"OFFLINE_CARD_DB_ENABLED": value}):
                 self.assertFalse(offline_carddb.offline_carddb_enabled(), value)
 
-    def test_signed_out_requests_are_refused(self):
-        main.app.dependency_overrides.pop(get_current_user, None)
-        for path in ("manifest", "sets/en/pbl_en", "prices/en"):
-            self.assertIn(self.client.get(f"/api/offline/carddb/{path}").status_code, (401, 403), path)
+    def test_every_endpoint_requires_a_signed_in_user(self):
+        routes = [r for r in main.app.routes if getattr(r, "path", "").startswith("/api/offline/carddb")]
+        self.assertEqual(len(routes), 3)
+        for route in routes:
+            calls = {dep.call for dep in route.dependant.dependencies}
+            self.assertIn(get_current_user, calls, route.path)
 
     def test_sync_wrappers_invalidate_the_cache(self):
         self._manifest()
