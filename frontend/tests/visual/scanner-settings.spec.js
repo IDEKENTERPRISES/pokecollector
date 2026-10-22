@@ -587,3 +587,95 @@ test('keeps administrator-only server details away from normal users', async ({ 
   await expect(page.getByText('http://ollama:11434', { exact: false })).toHaveCount(0)
   await expect(page.getByText('Advanced model', { exact: true })).toHaveCount(0)
 })
+
+const globalConfiguration = {
+  ...scannerConfiguration,
+  scope: 'global',
+  editable: true,
+  gemini_enabled: true,
+  global_configured: true,
+  providers: scannerConfiguration.providers.map(item => (
+    item.id === 'gemini' ? { ...item, api_key_hint: '••1234' } : item
+  )),
+}
+
+test('global mode: an administrator sees the setup as applying to everyone, with the key only as a hint', async ({ page }) => {
+  await installApi(page, USER, globalConfiguration)
+  await page.goto('/settings/scanner')
+
+  await expect(page.getByTestId('scanner-applies-to-everyone')).toContainText('Applies to everyone')
+  await expect(page.getByPlaceholder(/Set, ending ••1234/)).toBeVisible()
+  await expect(page.getByText('An API key is required. It is shared by everyone.')).toBeVisible()
+  await expect(page.getByLabel('Scanner provider')).toBeVisible()
+})
+
+test('global mode: other users get a read-only summary and no provider controls', async ({ page }) => {
+  const member = { ...USER, id: 2, username: 'member', role: 'user' }
+  await installApi(page, member, { ...globalConfiguration, editable: false })
+  await page.goto('/settings/scanner')
+
+  await expect(page.getByTestId('scanner-set-by-admin')).toHaveText('Set by your admin: Gemini · gemini-flash-latest')
+  await expect(page.getByLabel('Scanner provider')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /Test and save|Test connection/ })).toHaveCount(0)
+  // The shared Gemini fallback is the administrators' to change.
+  await expect(page.getByText('Gemini fallback', { exact: false })).toHaveCount(0)
+  // Personal preferences stay.
+  await expect(page.getByText('scanner diagnostics', { exact: false }).first()).toBeVisible()
+})
+
+test('global mode: an administrator can copy their own settings for everyone after a confirmation', async ({ page }) => {
+  await installApi(page, USER, { ...globalConfiguration, global_configured: false })
+  let adopted = 0
+  await page.route('**/api/settings/scanner/global/adopt', route => {
+    adopted += 1
+    return route.fulfill({ json: { ...globalConfiguration, global_configured: true } })
+  })
+  await page.goto('/settings/scanner')
+
+  await page.getByRole('button', { name: 'Use my current scanner settings for everyone' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toContainText("Everyone's scans will use your key")
+  expect(adopted).toBe(0)
+  await dialog.getByRole('button', { name: 'Use my current scanner settings for everyone' }).click()
+  await expect.poll(() => adopted).toBe(1)
+  await expect(page.getByText('Your scanner settings now apply to everyone')).toBeVisible()
+  await expect(dialog).toHaveCount(0)
+})
+
+test('Gemini switched off: it is not offered and its fallback row is hidden', async ({ page }) => {
+  const withoutGemini = {
+    ...scannerConfiguration,
+    provider: 'openai',
+    model: 'vision-fast',
+    gemini_enabled: false,
+    scope: 'user',
+    editable: true,
+    providers: scannerConfiguration.providers.filter(item => item.id === 'openai'),
+    administrator: {
+      ...scannerConfiguration.administrator,
+      providers: scannerConfiguration.administrator.providers.map(item => (
+        item.id === 'gemini' ? { ...item, enabled: false } : item
+      )),
+    },
+  }
+  await installApi(page, USER, withoutGemini)
+  await page.goto('/settings/scanner')
+
+  await expect(page.getByText('Local Ollama', { exact: true }).first()).toBeVisible()
+  await expect(page.getByLabel('Scanner provider')).toHaveCount(0)
+  await expect(page.getByRole('option', { name: 'Gemini' })).toHaveCount(0)
+  await expect(page.getByText('Gemini fallback', { exact: false })).toHaveCount(0)
+})
+
+test('no provider enabled: users are told scanning is not set up', async ({ page }) => {
+  const member = { ...USER, id: 2, username: 'member', role: 'user' }
+  const none = {
+    scope: 'user', editable: true, gemini_enabled: false, provider: '', model: '',
+    providers: [], status: 'unavailable', visual_verification: 'unverified',
+    request_timeout_seconds: 30, request_timeout_options: [30],
+  }
+  await installApi(page, member, none)
+  await page.goto('/settings/scanner')
+  await expect(page.getByText("Scanning isn't set up")).toBeVisible()
+  await expect(page.getByText('Ask an administrator to enable a scanner provider.')).toBeVisible()
+})

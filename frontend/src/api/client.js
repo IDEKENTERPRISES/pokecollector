@@ -431,6 +431,7 @@ export const getSetting = (key) => api.get(`/settings/${key}`).then(r => r.data)
 export const setSetting = (key, value) => api.post(`/settings/${key}`, { value }).then(r => r.data)
 export const getScannerConfiguration = () => api.get('/settings/scanner').then(r => r.data)
 export const updateScannerConfiguration = (data) => api.put('/settings/scanner', data).then(r => r.data)
+export const adoptScannerSettings = () => api.post('/settings/scanner/global/adopt').then(r => r.data)
 export const testScannerConfiguration = (data) => api.post('/settings/scanner/test', data, {
   timeout: scannerTestRequestTimeoutMs(data?.request_timeout_seconds),
 }).then(r => r.data)
