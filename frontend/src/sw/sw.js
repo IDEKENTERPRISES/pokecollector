@@ -8,6 +8,8 @@ const SHELL_NAME = 'pc-shell-' + BUILD_ID
 const IMAGES_NAME = 'pc-images-v1'
 const SHELL_KEY = '/shell'
 const IMAGE_CAP = 800
+// Pictures downloaded on purpose from Settings (offline card database), one cache per language.
+const CARDDB_IMAGES_PREFIX = 'pc-carddb-images-v1-'
 const NAV_TIMEOUT_MS = 2500
 const LARGE_IMAGE_TIMEOUT_MS = 4000
 const IMAGE_PREFIXES = ['/api/images/card/', '/api/images/set/', '/api/pokedex/images/']
@@ -152,7 +154,10 @@ async function storeImage(cache, request, res) {
 async function fetchLargeImage(event, cache, smallPath) {
   const network = fetch(event.request)
   const store = res => storeImage(cache, event.request, res).catch(() => {})
-  const smallCopy = () => cache.match(new URL(smallPath, self.location.origin).href, { ignoreSearch: true })
+  const smallCopy = async () => {
+    const url = new URL(smallPath, self.location.origin).href
+    return (await cache.match(url, { ignoreSearch: true })) || matchDownloadedPicture(new Request(url))
+  }
   const timer = new Promise(resolve => setTimeout(() => resolve(null), LARGE_IMAGE_TIMEOUT_MS))
   let res
   try {
@@ -176,8 +181,20 @@ async function fetchLargeImage(event, cache, smallPath) {
   return small
 }
 
+// Looks for a picture in the downloaded-pictures caches; null when there is none.
+async function matchDownloadedPicture(request) {
+  for (const name of await caches.keys()) {
+    if (!name.startsWith(CARDDB_IMAGES_PREFIX)) continue
+    const hit = await (await caches.open(name)).match(request, { ignoreSearch: true })
+    if (hit) return hit
+  }
+  return null
+}
+
 function handleImage(event) {
   event.respondWith((async () => {
+    const downloaded = await matchDownloadedPicture(event.request)
+    if (downloaded) return downloaded
     const cache = await caches.open(IMAGES_NAME)
     const hit = await cache.match(event.request)
     if (hit) return hit
