@@ -1,11 +1,11 @@
 // Pages read their catalogue data (sets, set checklist, card search) through useCatalogQuery: online it
 // is exactly the page's own useQuery. Offline, when the page has no saved copy (F12's read cache) but the
 // downloaded card database has the data, the answer comes from the database (F13b). The database
-// answer lives under its own `carddb` key, which the read cache never saves, so it is never mistaken
-// for server data; a saved copy always wins (it holds the exact owned state).
+// answer is kept in the hook's own state, never in the query cache, so the read cache can't save it as
+// server data (the `carddb` key stays on its deny list as a guard). A saved copy always wins (exact owned state).
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Database } from 'lucide-react'
 import { useSettings } from '../../contexts/SettingsContext'
 import { useOffline } from '../useOffline'
@@ -33,26 +33,32 @@ export function useCatalogQuery({ offlineFn, ...options }) {
   const queryClient = useQueryClient()
   const { languages, supported } = useCardDb()
   const version = Object.entries(languages ?? {}).map(([lang, state]) => `${lang}:${state?.meta?.syncedAt ?? 0}`).join(',')
-  // A finished sync changes what the database answers: drop the old answers.
-  useEffect(() => {
-    queryClient.invalidateQueries({ queryKey: [CARDDB_QUERY_KEY] })
-  }, [queryClient, version])
   const wanted = (options.enabled ?? true) && offline && supported
   const saved = queryClient.getQueryData(options.queryKey)
+  const reading = wanted && saved === undefined
 
-  const fromDb = useQuery({
-    queryKey: [CARDDB_QUERY_KEY, ...options.queryKey],
-    queryFn: async () => {
-      const data = await offlineFn(getCardDbReader())
-      return data ?? null
-    },
-    enabled: wanted && saved === undefined,
-    staleTime: 60 * 1000,
-    retry: false,
-    networkMode: 'always', // reads IndexedDB, not the network: it must run offline
-  })
+  // The database read is a plain effect, not a query: it must run offline and re-run when a sync
+  // finishes, and a cancelled query could be left idle (seen in WebKit). Its answers are kept
+  // here, never in the query cache, so the read cache can't save them as server data.
+  const argsKey = JSON.stringify(options.queryKey)
+  const readRef = useRef(offlineFn)
+  readRef.current = offlineFn
+  const [answer, setAnswer] = useState({ key: null, data: null })
+  useEffect(() => {
+    if (!reading) return undefined
+    let cancelled = false
+    Promise.resolve()
+      .then(() => readRef.current(getCardDbReader()))
+      .catch(() => null)
+      .then(data => {
+        if (!cancelled) setAnswer({ key: argsKey, data: data ?? null })
+      })
+    return () => { cancelled = true }
+  }, [reading, argsKey, version])
+  const answered = answer.key === argsKey
+  const fromDb = { isPending: !answered, data: answered ? answer.data : undefined }
   const dbHas = fromDb.data !== undefined && fromDb.data !== null
-  const blocking = wanted && saved === undefined && (fromDb.isPending || dbHas)
+  const blocking = reading && (fromDb.isPending || dbHas)
 
   useRegisterServing(blocking && !fromDb.isPending)
   const online = useQuery({ ...options, enabled: (options.enabled ?? true) && !blocking })

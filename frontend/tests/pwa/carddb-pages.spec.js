@@ -74,6 +74,15 @@ const storedSets = page => page.evaluate(async () => {
   db.close()
   return rows.map(item => item.setId).sort()
 })
+// WebKit sometimes interrupts a navigation that starts while the app is still settling: retry once.
+async function open(page, url) {
+  try {
+    await page.goto(url)
+  } catch (error) {
+    if (!/interrupted/i.test(String(error))) throw error
+    await page.goto(url)
+  }
+}
 const prefsOff = page => page.addInitScript(() => localStorage.setItem('pc-carddb-prefs', JSON.stringify({ enabled: false })))
 
 async function downloadDatabase(page, context, state) {
@@ -97,7 +106,7 @@ test.describe('offline pages read the card database', () => {
     await downloadDatabase(page, context, state)
     state.offline = true
 
-    await page.goto('/sets')
+    await open(page, '/sets')
     await expect(page.getByTestId('offline-banner')).toBeVisible({ timeout: 20000 })
     await expect(page.getByText('Fixture Series').first()).toBeVisible({ timeout: 15000 })
     await expect(page.getByTestId('not-saved-note')).toHaveCount(0)
@@ -107,7 +116,7 @@ test.describe('offline pages read the card database', () => {
     await expect(page.getByText('Perilous Bloom').first()).toBeVisible({ timeout: 15000 })
     await expect(page.getByText('Scarlet Fixture').first()).toBeVisible()
 
-    await page.goto('/sets/pbl_en')
+    await open(page, '/sets/pbl_en')
     await expect(page.getByTestId('offline-banner')).toBeVisible({ timeout: 20000 })
     await expect(page.getByText('Morpeko').first()).toBeVisible({ timeout: 15000 })
     await expect(page.getByText('Pikachu').first()).toBeVisible()
@@ -121,12 +130,12 @@ test.describe('offline pages read the card database', () => {
     await downloadDatabase(page, context, state)
     state.offline = true
 
-    await page.goto('/search?q=Morpeko%20117%20PBL')
+    await open(page, '/search?q=Morpeko%20117%20PBL')
     await expect(page.getByTestId('offline-banner')).toBeVisible({ timeout: 20000 })
     await expect(page.getByText('1 results').or(page.getByText(/^1\s+\S*results/i)).first()).toBeVisible({ timeout: 15000 })
     await expect(page.getByTestId('prices-from-note')).toBeVisible()
 
-    await page.goto('/search?q=Morbeko')
+    await open(page, '/search?q=Morbeko')
     await expect(page.getByTestId('search-corrected')).toContainText('Morbeko', { timeout: 20000 })
     await expect(page.getByTestId('search-corrected')).toContainText('Morpeko')
     await expect(page.getByTestId('not-saved-note')).toHaveCount(0)
@@ -140,11 +149,11 @@ test.describe('offline pages read the card database', () => {
       localStorage.setItem('token', 'test-token')
       localStorage.setItem('user', JSON.stringify(user))
     }, ada)
-    await page.goto('/')
+    await open(page, '/')
     await expect(page.getByTestId('nav-title')).toHaveText('Home')
     state.offline = true
 
-    await page.goto('/sets/pbl_en')
+    await open(page, '/sets/pbl_en')
     await expect(page.getByTestId('offline-banner')).toBeVisible({ timeout: 20000 })
 
     await expect(page.getByTestId('not-saved-note')).toBeVisible()
