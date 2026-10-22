@@ -2,6 +2,8 @@ import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PREFS_KEY, SYNC_THROTTLE_MS, createCardDbController, createFetchJson, readPrefs, wantedLanguages } from './controller.js'
+import { statusError } from './net.js'
+import { buildPack } from './packFixture.js'
 import { cardPictureUrl, pictureCacheName, pictureUrlsFor, setPictureUrl } from './pictures.js'
 import { createCardDbStore } from './store.js'
 import { MANIFEST_PATH } from './sync.js'
@@ -39,10 +41,16 @@ function setup({ manifest, online = true } = {}) {
     }
   }
   const fetchImage = vi.fn(async () => imageResponse())
+  const fetchPack = vi.fn(async path => {
+    const setId = decodeURIComponent(path.split('/').pop())
+    return { status: 200, buffer: buildPack([{ id: `${setId}-1`, bytes: new Uint8Array(10) }]) }
+  })
   const controller = createCardDbController({
     store,
     fetchJson,
     fetchImage,
+    fetchPack,
+    sleep: async () => {},
     openCache: cacheApi.open,
     deleteCache: cacheApi.remove,
     listCaches: cacheApi.keys,
@@ -51,7 +59,7 @@ function setup({ manifest, online = true } = {}) {
     requestPersist: vi.fn(async () => true),
     now: () => state.now ?? Date.now(),
   })
-  return { controller, store, storage, state, cacheApi, fetchImage }
+  return { controller, store, storage, state, cacheApi, fetchImage, fetchPack }
 }
 
 const manifest = () => ({
@@ -152,33 +160,83 @@ describe('pictures', () => {
   })
 
   it('downloads into a separate cache per language, resumes without refetching, and removes cleanly', async () => {
-    const { controller, cacheApi, fetchImage } = setup({ manifest: manifest() })
+    const { controller, cacheApi, fetchPack, storage } = setup({ manifest: manifest() })
     await controller.sync({ force: true })
     await controller.startPictures('en')
-    expect(controller.getSnapshot().languages.en.pictures).toMatchObject({ status: 'complete', done: 6, total: 6 })
+    expect(controller.getSnapshot().languages.en.pictures).toMatchObject({ status: 'complete', doneSets: 2, totalSets: 2 })
+    expect(controller.getSnapshot().languages.en.pictures.bytes).toBeGreaterThan(0)
     expect(cacheApi.caches.has(pictureCacheName('en'))).toBe(true)
     expect(controller.getSnapshot().prefs.pictures.en).toBe(true)
-    const calls = fetchImage.mock.calls.length
+    const calls = fetchPack.mock.calls.length
     await controller.startPictures('en')
-    expect(fetchImage.mock.calls.length).toBe(calls) // everything cached already
+    expect(fetchPack.mock.calls.length).toBe(calls) // every set is done already
     await controller.removePictures('en')
     expect(cacheApi.caches.has(pictureCacheName('en'))).toBe(false)
     expect(controller.getSnapshot().languages.en.pictures.status).toBe('none')
+    expect([...storage.keys?.() ?? []]).toEqual([])
+    await controller.startPictures('en')
+    expect(fetchPack.mock.calls.length).toBeGreaterThan(calls) // "remove" forgot the progress
   })
 
-  it('pauses on abort and keeps what was downloaded', async () => {
-    const { controller, fetchImage, cacheApi } = setup({ manifest: manifest() })
+  it('pauses when the user pauses and resumes with the sets still to do', async () => {
+    const { controller, fetchPack, cacheApi } = setup({ manifest: manifest() })
     await controller.sync({ force: true })
-    let count = 0
-    fetchImage.mockImplementation(async () => {
-      count += 1
-      if (count === 2) controller.pausePictures('en')
-      return imageResponse()
+    fetchPack.mockImplementationOnce(async path => {
+      controller.pausePictures('en')
+      const setId = decodeURIComponent(path.split('/').pop())
+      return { status: 200, buffer: buildPack([{ id: `${setId}-1`, bytes: new Uint8Array(10) }]) }
     })
     await controller.startPictures('en')
-    expect(controller.getSnapshot().languages.en.pictures.status).toBe('paused')
+    expect(controller.getSnapshot().languages.en.pictures).toMatchObject({ status: 'paused', reason: 'user' })
+    const finished = controller.getSnapshot().languages.en.pictures.doneSets
+    expect(finished).toBeLessThan(2)
+    fetchPack.mockClear()
+    await controller.resumePictures('en')
+    expect(controller.getSnapshot().languages.en.pictures.status).toBe('complete')
+    expect(fetchPack).toHaveBeenCalledTimes(2 - finished)
     expect(cacheApi.caches.get(pictureCacheName('en')).size).toBeGreaterThan(0)
-    expect(cacheApi.caches.get(pictureCacheName('en')).size).toBeLessThan(6)
+  })
+
+  it('a stalled download pauses with a reason and a later Resume works (no stuck state)', async () => {
+    const { controller, fetchPack, state } = setup({ manifest: manifest() })
+    await controller.sync({ force: true })
+    state.online = false
+    fetchPack.mockImplementation(async () => { throw statusError(503) })
+    await controller.startPictures('en')
+    expect(controller.getSnapshot().languages.en.pictures).toMatchObject({ status: 'paused', reason: 'offline' })
+    state.online = true
+    fetchPack.mockImplementation(async () => { throw statusError(503) })
+    await controller.startPictures('en')
+    expect(controller.getSnapshot().languages.en.pictures).toMatchObject({ status: 'paused', reason: 'server' })
+    fetchPack.mockImplementation(async path => ({ status: 200, buffer: buildPack([{ id: `${decodeURIComponent(path.split('/').pop())}-1`, bytes: new Uint8Array(3) }]) }))
+    await controller.startPictures('en')
+    expect(controller.getSnapshot().languages.en.pictures.status).toBe('complete')
+  })
+
+  it('resumeStalledPictures restarts a download that paused because the connection was lost', async () => {
+    const { controller, fetchPack, state } = setup({ manifest: manifest() })
+    await controller.sync({ force: true })
+    state.online = false
+    fetchPack.mockImplementation(async () => { throw statusError(503) })
+    await controller.startPictures('en')
+    state.online = true
+    fetchPack.mockImplementation(async path => ({ status: 200, buffer: buildPack([{ id: `${decodeURIComponent(path.split('/').pop())}-1`, bytes: new Uint8Array(3) }]) }))
+    controller.resumeStalledPictures()
+    await vi.waitFor(() => expect(controller.getSnapshot().languages.en.pictures.status).toBe('complete'))
+  })
+
+  it('after an app restart the progress is read back: sets done of total, paused', async () => {
+    const first = setup({ manifest: manifest() })
+    await first.controller.sync({ force: true })
+    first.fetchPack.mockImplementation(async path => {
+      if (path.endsWith('/b_en')) throw statusError(503)
+      return { status: 200, buffer: buildPack([{ id: 'a_en-1', bytes: new Uint8Array(3) }]) }
+    })
+    await first.controller.startPictures('en')
+    const second = createCardDbController({ store: first.store, fetchJson: async () => ({ status: 404 }), storage: first.storage, openCache: first.cacheApi.open, deleteCache: first.cacheApi.remove, listCaches: first.cacheApi.keys })
+    await second.hydrate()
+    await second.inspectPictures('en')
+    expect(second.getSnapshot().languages.en.pictures).toMatchObject({ status: 'paused', doneSets: 1, totalSets: 2 })
   })
 
   it('removing everything also deletes the picture caches', async () => {

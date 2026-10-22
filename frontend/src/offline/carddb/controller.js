@@ -2,19 +2,22 @@
 // optional pictures download, and a snapshot for the UI. Browser pieces (IndexedDB store, fetch,
 // Cache Storage, localStorage) are injected so it can be tested without a browser.
 
+import { PictureError, statusError, timed } from './net.js'
 import {
   PICTURE_CACHE_PREFIX,
-  countCachedPictures,
+  createPictureRecord,
   downloadPictures,
   estimatePictureBytes,
+  inspectPictureSets,
   pictureCacheName,
-  pictureUrlsFor,
 } from './pictures.js'
 import { AbortedError, OfflineError, runCardDbSync } from './sync.js'
 
 export const PREFS_KEY = 'pc-carddb-prefs'
 export const SYNC_THROTTLE_MS = 60 * 1000
+export const JSON_TIMEOUT_MS = 45 * 1000
 const RETRY_STATUSES = new Set([429, 502, 503, 504])
+const SPEED_WINDOW_MS = 15 * 1000
 
 /** Card data is on by default (design: F13 decision 5); languages are on unless switched off; pictures are off. */
 export function readPrefs(storage = globalThis.localStorage) {
@@ -45,13 +48,18 @@ export function createFetchJson({ fetchImpl = globalThis.fetch?.bind(globalThis)
   return async function fetchJson(path, signal) {
     for (let attempt = 0; ; attempt += 1) {
       let response
+      let data
       try {
         const token = getToken()
-        response = await fetchImpl(path, {
-          signal,
-          cache: 'no-cache',
-          headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        })
+        // The deadline covers the body too: a stalled connection must not hang a sync for good.
+        ;({ response, data } = await timed(async inner => {
+          const reply = await fetchImpl(path, {
+            signal: inner,
+            cache: 'no-cache',
+            headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          })
+          return { response: reply, data: reply.ok && reply.status !== 304 ? await reply.json() : undefined }
+        }, JSON_TIMEOUT_MS, signal))
       } catch (error) {
         if (signal?.aborted) throw new AbortedError()
         throw error // no status: a network failure
@@ -68,8 +76,24 @@ export function createFetchJson({ fetchImpl = globalThis.fetch?.bind(globalThis)
         throw error
       }
       const etag = (response.headers.get('ETag') || '').replace(/^W\//, '').replace(/"/g, '') || null
-      return { status: response.status, data: await response.json(), etag }
+      return { status: response.status, data, etag }
     }
+  }
+}
+
+/** A picture pack fetch (the body is read here, so the caller's deadline covers it). Rejects with a
+ *  statusError for 5xx, 429 and 401; 404 and 403 resolve as `{ status }` (packs are off or unknown). */
+export function createFetchPack({ fetchImpl = globalThis.fetch?.bind(globalThis), getToken = () => globalThis.localStorage?.getItem('token') } = {}) {
+  return async function fetchPack(path, signal) {
+    const token = getToken()
+    const response = await fetchImpl(path, {
+      signal,
+      cache: 'no-store',
+      headers: { Accept: 'application/octet-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    })
+    if (response.status === 404 || response.status === 403) return { status: response.status }
+    if (!response.ok) throw statusError(response.status)
+    return { status: 200, buffer: await response.arrayBuffer() }
   }
 }
 
@@ -88,6 +112,8 @@ export function createCardDbController({
   store,
   fetchJson,
   fetchImage = (url, signal) => globalThis.fetch(url, { signal }),
+  fetchPack = createFetchPack(),
+  sleep = undefined,
   openCache = name => globalThis.caches?.open(name),
   deleteCache = name => globalThis.caches?.delete(name),
   listCaches = () => globalThis.caches?.keys() ?? Promise.resolve([]),
@@ -103,6 +129,7 @@ export function createCardDbController({
   let persistAsked = false
   let syncAbort = null
   const pictureAborts = new Map()
+  const pictureRuns = new Map()
 
   const emit = patch => {
     snapshot = { ...snapshot, ...patch }
@@ -180,41 +207,98 @@ export function createCardDbController({
     return running
   }
 
-  async function startPictures(lang) {
-    if (pictureAborts.has(lang)) return
-    const prefs = { ...snapshot.prefs, pictures: { ...snapshot.prefs.pictures, [lang]: true } }
-    savePrefs(prefs)
-    const cache = await openCache(pictureCacheName(lang))
-    if (!cache) {
-      setPicture(lang, { status: 'error', error: 'storage' })
-      return
+  const pictureRecord = lang => createPictureRecord(storage, lang)
+
+  /** Speed (bytes/s over the last seconds), and the time left from the average size of the sets done so far. */
+  function pictureStats({ samples, startBytes, remainingEstimate }, { doneSets, totalSets, bytes }) {
+    const t = now()
+    samples.push({ t, bytes })
+    while (samples.length > 2 && t - samples[0].t > SPEED_WINDOW_MS) samples.shift()
+    const first = samples[0]
+    const span = (t - first.t) / 1000
+    const speed = span >= 1 && bytes > first.bytes ? (bytes - first.bytes) / span : null
+    const done = startBytes + bytes
+    const perSet = doneSets > 0 && done > 0 ? done / doneSets : remainingEstimate / Math.max(1, totalSets - doneSets)
+    const remainingBytes = perSet * (totalSets - doneSets)
+    return {
+      bytes: done,
+      speed,
+      etaSeconds: speed ? Math.round(remainingBytes / speed) : null,
     }
-    const urls = pictureUrlsFor(await store.getAllSets(lang))
+  }
+
+  async function runPictures(lang) {
     const controller = new AbortController()
     pictureAborts.set(lang, controller)
-    setPicture(lang, { status: 'downloading', done: 0, total: urls.length, error: null })
     try {
-      await downloadPictures({
-        urls,
-        cache,
-        fetchImage,
-        signal: controller.signal,
-        onProgress: ({ done, total }) => setPicture(lang, { status: 'downloading', done, total }),
+      savePrefs({ ...snapshot.prefs, pictures: { ...snapshot.prefs.pictures, [lang]: true } })
+      const cache = await openCache(pictureCacheName(lang))
+      if (!cache) {
+        setPicture(lang, { status: 'paused', reason: 'storage', error: 'storage' })
+        return
+      }
+      const sets = await store.getAllSets(lang)
+      const record = pictureRecord(lang)
+      const startBytes = record.bytes()
+      const samples = [{ t: now(), bytes: 0 }]
+      const context = { record, samples, startBytes, remainingEstimate: estimatePictureBytes(sets.length * 80) }
+      setPicture(lang, {
+        status: 'downloading', reason: null, error: null, doneSets: record.doneCount(), totalSets: sets.length,
+        bytes: startBytes, speed: null, etaSeconds: null,
       })
-      setPicture(lang, { status: 'complete', done: urls.length, total: urls.length })
-    } catch (error) {
-      if (error instanceof AbortedError) setPicture(lang, { status: controller.cancelled ? 'none' : 'paused' })
-      else setPicture(lang, { status: 'paused', error: error?.message || 'error' })
+      try {
+        await downloadPictures({
+          lang,
+          sets,
+          cache,
+          fetchPack,
+          fetchImage,
+          record,
+          signal: controller.signal,
+          sleep,
+          onProgress: progress => setPicture(lang, {
+            status: 'downloading', doneSets: progress.doneSets, totalSets: progress.totalSets, ...pictureStats(context, progress),
+          }),
+        })
+        setPicture(lang, { status: 'complete', reason: null, doneSets: sets.length, totalSets: sets.length, speed: null, etaSeconds: null, skipped: record.skipped() })
+      } catch (error) {
+        if (controller.removed) return
+        const stopped = { speed: null, etaSeconds: null, bytes: record.bytes(), doneSets: record.doneCount() }
+        if (error instanceof AbortedError) setPicture(lang, { status: 'paused', reason: 'user', ...stopped })
+        else {
+          // A request that hangs while the phone is offline times out; say "offline" then, not "stalled".
+          const reason = !isOnline() ? 'offline' : error instanceof PictureError ? error.reason : 'error'
+          setPicture(lang, { status: 'paused', reason, error: error?.message || 'error', ...stopped })
+        }
+      }
     } finally {
       pictureAborts.delete(lang)
     }
   }
 
+  /** Starts or resumes a language's pictures: finished sets are skipped. One run per language at a time. */
+  function startPictures(lang) {
+    if (pictureRuns.has(lang)) return pictureRuns.get(lang)
+    const run = runPictures(lang).finally(() => pictureRuns.delete(lang))
+    pictureRuns.set(lang, run)
+    return run
+  }
+
+  async function stopPictures(lang, { removed = false } = {}) {
+    const controller = pictureAborts.get(lang)
+    if (controller) {
+      controller.removed = removed
+      controller.abort()
+    }
+    await pictureRuns.get(lang)?.catch(() => {})
+  }
+
   async function removePictures(lang) {
-    pictureAborts.get(lang)?.abort()
+    await stopPictures(lang, { removed: true })
     await deleteCache(pictureCacheName(lang))
+    pictureRecord(lang).clear()
     savePrefs({ ...snapshot.prefs, pictures: { ...snapshot.prefs.pictures, [lang]: false } })
-    setPicture(lang, { status: 'none', done: 0, total: 0, error: null })
+    setPicture(lang, { status: 'none', reason: null, doneSets: 0, totalSets: 0, bytes: 0, speed: null, etaSeconds: null, error: null })
   }
 
   return {
@@ -229,19 +313,29 @@ export function createCardDbController({
     startPictures,
     resumePictures: startPictures,
     pausePictures: lang => pictureAborts.get(lang)?.abort(),
-    cancelPictures: async lang => {
-      const controller = pictureAborts.get(lang)
-      if (controller) controller.cancelled = true
-      await removePictures(lang)
-    },
+    cancelPictures: removePictures,
     removePictures,
-    /** How many pictures a language needs and how many are cached already (for the idle state). */
+    /** Resumes the downloads that stopped because the connection was lost or stalled (on "online"). */
+    resumeStalledPictures() {
+      for (const [lang, info] of Object.entries(snapshot.languages)) {
+        const { status, reason } = info?.pictures ?? {}
+        if (snapshot.prefs.pictures[lang] && status === 'paused' && ['offline', 'network', 'timeout', 'server'].includes(reason)) startPictures(lang)
+      }
+    },
+    /** What a language's pictures look like now: sets done of total, from the saved progress (idle state). */
     async inspectPictures(lang) {
+      if (pictureRuns.has(lang)) return
       const cache = await openCache(pictureCacheName(lang))
-      const urls = pictureUrlsFor(await store.getAllSets(lang))
-      const done = cache ? await countCachedPictures(urls, cache) : 0
-      const status = urls.length > 0 && done === urls.length ? 'complete' : done > 0 ? 'paused' : 'none'
-      if (!pictureAborts.has(lang)) setPicture(lang, { status, done, total: urls.length, estimateBytes: estimatePictureBytes(urls.length - done) })
+      const sets = await store.getAllSets(lang)
+      const record = pictureRecord(lang)
+      const { doneSets, totalSets, remainingUrls } = await inspectPictureSets({ sets, cache, record })
+      const status = totalSets > 0 && doneSets === totalSets ? 'complete' : doneSets > 0 ? 'paused' : 'none'
+      if (!pictureRuns.has(lang)) {
+        setPicture(lang, {
+          status, reason: null, doneSets, totalSets, bytes: record.bytes(), skipped: record.skipped(),
+          estimateBytes: estimatePictureBytes(remainingUrls),
+        })
+      }
     },
     setEnabled: async value => {
       savePrefs({ ...snapshot.prefs, enabled: value })
@@ -266,11 +360,14 @@ export function createCardDbController({
 
   async function removeAll() {
     syncAbort?.abort()
-    for (const controller of pictureAborts.values()) controller.abort()
+    const langs = new Set([...snapshot.available, ...Object.keys(snapshot.languages), ...Object.keys(snapshot.prefs.pictures)])
+    await Promise.all([...pictureRuns.keys()].map(lang => stopPictures(lang, { removed: true })))
     await store.clearAll()
     for (const name of await listCaches()) {
       if (name.startsWith(PICTURE_CACHE_PREFIX)) await deleteCache(name)
     }
+    for (const lang of langs) pictureRecord(lang).clear()
+    savePrefs({ ...snapshot.prefs, pictures: {} })
     emit({ languages: {}, progress: null, status: 'idle' })
   }
 }
