@@ -186,7 +186,10 @@ class ScannerGlobalConfigTests(unittest.TestCase):
         audit = self.db.query(AuditLog).filter(AuditLog.action == "scanner.config.updated").one()
         self.assertEqual(audit.actor_user_id, self.admin.id)
         self.assertNotIn("sk-secret", audit.details)
-        self.assertIn('"provider": "openai"', audit.details)
+        changes = json.loads(audit.details)["changes"]
+        self.assertEqual(changes["provider"], {"from": None, "to": "openai"})
+        self.assertEqual(changes["model"], {"from": None, "to": "vision-fast"})
+        self.assertEqual(changes["api_key"], {"openai": {"action": "added", "to": "••1234"}})
 
     def test_per_user_mode_does_not_audit_or_use_global_rows(self):
         with patch.dict(os.environ, {"OPENAI_SCANNER_ENABLED": "true", "OPENAI_API_KEY_REQUIRED": "true", "OPENAI_ALLOWED_MODELS": "vision-fast"}):
@@ -217,7 +220,12 @@ class ScannerGlobalConfigTests(unittest.TestCase):
         self.assertNotIn("scanner_gemini_fallback", member)
         self.assertEqual(admin["scanner_gemini_fallback"], "true")
         for key in member:
-            self.assertFalse(key.startswith("scanner_") or key.endswith("_api_key"), key)
+            self.assertFalse(
+                (key.startswith("scanner_") and key != "scanner_managed_by_admin") or key.endswith("_api_key"),
+                key,
+            )
+        self.assertEqual(member["scanner_managed_by_admin"], "true")
+        self.assertNotIn("scanner_managed_by_admin", admin)
 
     def test_a_member_cannot_read_or_write_any_scanner_key_in_global_mode(self):
         with patch.dict(os.environ, GLOBAL):
@@ -298,6 +306,75 @@ class ScannerGlobalConfigTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as error:
                 get_provider(self.db, self.member.id)
         self.assertIn("no longer enabled", error.exception.detail)
+
+    # ---- the audit entry says what changed ---------------------------------------------------------
+
+    def _audit_entries(self):
+        return [
+            json.loads(row.details)
+            for row in self.db.query(AuditLog).filter(AuditLog.action == "scanner.config.updated")
+        ]
+
+    def test_audit_records_before_and_after_for_each_field_and_hints_for_keys(self):
+        env = {**GLOBAL, "OPENAI_API_KEY_REQUIRED": "true", "OPENAI_ALLOWED_MODELS": "vision-fast,vision-accurate"}
+        with patch.dict(os.environ, env):
+            self._save_global_openai()
+            request = ScannerConfigurationUpdate(
+                provider="openai", model="vision-accurate", api_key="sk-other-9876",
+                request_timeout_seconds=120, save_on_success=True,
+            )
+            with patch.object(
+                ScanProvider, "generate_text", new=AsyncMock(return_value=("MAGENTA-GREEN", None))
+            ):
+                asyncio.run(run_scanner_configuration_test(request, self.db, self.admin))
+            update_settings({"scanner_gemini_fallback": "true"}, self.db, self.admin)
+        entries = self._audit_entries()
+        self.assertEqual(len(entries), 3)
+        second = entries[1]["changes"]
+        self.assertEqual(second["model"], {"from": "vision-fast", "to": "vision-accurate"})
+        self.assertEqual(second["request_timeout"], {"from": 30, "to": 120})
+        self.assertEqual(second["api_key"], {"openai": {"action": "replaced", "from": "••1234", "to": "••9876"}})
+        self.assertNotIn("provider", second)
+        self.assertNotIn("capability", second)
+        self.assertEqual(entries[2]["changes"], {"gemini_fallback": {"from": False, "to": True}})
+        serialised = json.dumps(entries)
+        for secret in ("sk-secret-1234", "sk-other-9876"):
+            self.assertNotIn(secret, serialised)
+
+    def test_audit_records_a_key_removal_and_skips_a_save_that_changes_nothing(self):
+        env = {**GLOBAL, "OPENAI_API_KEY_REQUIRED": "false", "OPENAI_ALLOWED_MODELS": "vision-fast"}
+        with patch.dict(os.environ, env):
+            self._save_global_openai()
+            self._save_global_openai()
+            removal = ScannerConfigurationUpdate(
+                provider="openai", model="vision-fast", clear_api_key=True,
+            )
+            update_scanner_configuration(removal, self.db, self.admin)
+        entries = self._audit_entries()
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[1]["changes"], {"api_key": {"openai": {"action": "removed", "from": "••1234"}}})
+
+    def test_audit_stores_the_request_ip_and_user_agent(self):
+        class Req:
+            headers = {"user-agent": "UnitTest/1.0"}
+            client = type("C", (), {"host": "203.0.113.9"})()
+            scope = {"client": ("203.0.113.9", 1)}
+        with patch.dict(os.environ, GLOBAL):
+            update_settings({"scanner_gemini_fallback": "true"}, self.db, self.admin, Req())
+        row = self.db.query(AuditLog).filter(AuditLog.action == "scanner.config.updated").one()
+        self.assertEqual(row.user_agent, "UnitTest/1.0")
+        self.assertTrue(row.ip)
+
+    def test_adopt_audit_records_whose_settings_were_copied(self):
+        for key, value in {"scanner_provider": "openai", "scanner_model_openai": "vision-fast", "openai_api_key": "sk-copy-9999"}.items():
+            self._user_row(self.admin, key, value)
+        with patch.dict(os.environ, {**GLOBAL, "OPENAI_API_KEY_REQUIRED": "true"}):
+            adopt_scanner_settings_for_everyone(self.db, self.admin)
+        details = self._audit_entries()[0]
+        self.assertEqual(details["source"], "admin_settings_copied")
+        self.assertEqual(details["copied_from"], {"user_id": self.admin.id, "username": "admin"})
+        self.assertEqual(details["changes"]["api_key"], {"openai": {"action": "added", "to": "••9999"}})
+        self.assertNotIn("sk-copy-9999", json.dumps(details))
 
     # ---- copy my settings -------------------------------------------------------------------
 

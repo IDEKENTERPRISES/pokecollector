@@ -45,12 +45,12 @@ import SplashCacheSection from '../components/splash/SplashCacheSection'
 const GENERAL_SECTIONS = ['account', 'appearance', 'scanner', 'about', 'users']
 
 /** /settings: the root list of sections with coloured icons. Hidden sections are left out, never disabled. */
-function SettingsRoot({ t, isAdmin }) {
+function SettingsRoot({ t, isAdmin, scannerManaged }) {
   return (
     <div className="space-y-4 py-4">
       <h1 className="px-1 text-2xl font-black tracking-tight text-text-primary">{t('settings.title')}</h1>
       <ListSection className="!mx-0">
-        {visibleSettingsSections({ isAdmin }).map(item => (
+        {visibleSettingsSections({ isAdmin, scannerManaged }).map(item => (
           <ListRow
             key={item.key}
             to={`/settings/${item.key}`}
@@ -486,7 +486,9 @@ export default function Settings() {
   const { theme, setTheme, themes } = useTheme()
   const { section } = useParams()
   const isAdmin = user?.role === 'admin'
-  const activeSection = visibleSettingsSections({ isAdmin }).some(item => item.key === section) ? section : null
+  // Global scanner mode, and this user is not an administrator: no Scanner section at all.
+  const scannerManaged = settings.scanner_managed_by_admin === 'true'
+  const activeSection = visibleSettingsSections({ isAdmin, scannerManaged }).some(item => item.key === section) ? section : null
   const showGeneral = GENERAL_SECTIONS.includes(activeSection)
   const { view: setsView, setView: setSetsView } = useSetsView()
   const setsInSeries = setsView !== 'sets'
@@ -982,6 +984,36 @@ export default function Settings() {
   const scanDiagnosticsEnabled = settings.scan_diagnostics_enabled === 'true'
   const scanDiagnosticsAvailable = settings.scan_diagnostics_available === 'true'
   const scanDiagnosticsDeletionAvailable = settings.scan_diagnostics_deletion_available === 'true'
+  // The user's own diagnostics consent and data: in the Scanner section, or under Appearance next to
+  // the card photo rows when an administrator manages the scanner and there is no Scanner section.
+  const scanDiagnosticsRow = (
+    <SettingsRow
+      label={t('settings.scanDiagnostics')}
+      description={scanDiagnosticsAvailable
+        ? t('settings.scanDiagnosticsDesc')
+        : t('settings.scanDiagnosticsUnavailable')}
+    >
+      <div className="flex items-center gap-2">
+        <Toggle
+          value={scanDiagnosticsEnabled}
+          label={t('settings.scanDiagnostics')}
+          onChange={handleScanDiagnosticsToggle}
+          disabled={!scanDiagnosticsAvailable || scanDiagnosticsSaving}
+        />
+        <button
+          type="button"
+          onClick={handleDeleteScanDiagnostics}
+          disabled={!scanDiagnosticsDeletionAvailable || scanDiagnosticsDeleting}
+          className={rowButton('danger')}
+        >
+          <Trash2 size={13} />
+          {scanDiagnosticsDeleting
+            ? t('settings.scanDiagnosticsDeleting')
+            : t('settings.scanDiagnosticsDelete')}
+        </button>
+      </div>
+    </SettingsRow>
+  )
   const geminiFallbackEnabled = settings.scanner_gemini_fallback === 'true'
   // The fallback row exists only while Gemini is enabled, and in global mode only admins change it.
   const showGeminiFallback = scannerConfiguration
@@ -1013,7 +1045,7 @@ export default function Settings() {
     : lastFullSyncText
 
   // No section: the root list. An unknown or hidden section (and the old "general") goes back to it.
-  if (!section) return <SettingsRoot t={t} isAdmin={isAdmin} />
+  if (!section) return <SettingsRoot t={t} isAdmin={isAdmin} scannerManaged={scannerManaged} />
   if (!activeSection) return <Navigate to="/settings" replace />
 
   return (
@@ -1309,6 +1341,7 @@ export default function Settings() {
                   onChange={handlePhotoPreferenceToggle}
                 />
               </SettingsRow>
+              {scannerManaged && scanDiagnosticsAvailable && scanDiagnosticsRow}
               <SettingsRow
                 label={t('settings.deleteCardPhotos')}
                 description={t('settings.deleteCardPhotosDesc')}
@@ -1346,32 +1379,7 @@ export default function Settings() {
                   />
                 </SettingsRow>
               )}
-              <SettingsRow
-                label={t('settings.scanDiagnostics')}
-                description={scanDiagnosticsAvailable
-                  ? t('settings.scanDiagnosticsDesc')
-                  : t('settings.scanDiagnosticsUnavailable')}
-              >
-                <div className="flex items-center gap-2">
-                  <Toggle
-                    value={scanDiagnosticsEnabled}
-                    label={t('settings.scanDiagnostics')}
-                    onChange={handleScanDiagnosticsToggle}
-                    disabled={!scanDiagnosticsAvailable || scanDiagnosticsSaving}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleDeleteScanDiagnostics}
-                    disabled={!scanDiagnosticsDeletionAvailable || scanDiagnosticsDeleting}
-                    className={rowButton('danger')}
-                  >
-                    <Trash2 size={13} />
-                    {scanDiagnosticsDeleting
-                      ? t('settings.scanDiagnosticsDeleting')
-                      : t('settings.scanDiagnosticsDelete')}
-                  </button>
-                </div>
-              </SettingsRow>
+              {scanDiagnosticsRow}
             </SettingsCard>
           </section>}
 

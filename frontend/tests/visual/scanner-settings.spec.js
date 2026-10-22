@@ -62,7 +62,7 @@ const scannerConfiguration = {
   },
 }
 
-async function installApi(page, user = USER, initialConfiguration = scannerConfiguration) {
+async function installApi(page, user = USER, initialConfiguration = scannerConfiguration, extraSettings = {}) {
   await page.addInitScript(user => {
     localStorage.setItem('token', 'scanner-settings-token')
     localStorage.setItem('user', JSON.stringify(user))
@@ -77,6 +77,7 @@ async function installApi(page, user = USER, initialConfiguration = scannerConfi
     price_display: '["trend"]', scan_diagnostics_available: 'false',
     scan_diagnostics_deletion_available: 'false',
     scanner_gemini_fallback: 'false',
+    ...extraSettings,
   }
   let currentConfiguration = structuredClone(initialConfiguration)
   await page.route('**/api/**', async route => {
@@ -693,4 +694,50 @@ test('no provider enabled: users are told scanning is not set up', async ({ page
   await page.goto('/settings/scanner')
   await expect(page.getByText("Scanning isn't set up")).toBeVisible()
   await expect(page.getByText('Ask an administrator to enable a scanner provider.')).toBeVisible()
+})
+
+const trainerInGlobalMode = {
+  scope: 'global', editable: false, scanning_available: true, visual_verification: 'automatic',
+}
+const trainer = { ...USER, id: 2, username: 'trainer', role: 'user' }
+
+test('global mode: a trainer has no Scanner row, still scans, and keeps their diagnostics under Appearance', async ({ page }) => {
+  await installApi(page, trainer, trainerInGlobalMode, {
+    scanner_managed_by_admin: 'true',
+    scan_diagnostics_available: 'true',
+    scan_diagnostics_deletion_available: 'true',
+  })
+  await page.goto('/settings')
+  await expect(page.getByTestId('settings-section-appearance')).toBeVisible()
+  await expect(page.getByTestId('settings-section-scanner')).toHaveCount(0)
+
+  // A deep link to the hidden section falls back to the list instead of showing an error.
+  await page.goto('/settings/scanner')
+  await expect(page).toHaveURL(/[/]settings$/)
+  await expect(page.getByText('Something went wrong')).toHaveCount(0)
+
+  await page.goto('/settings/appearance')
+  await expect(page.getByText('Share scanner diagnostics')).toBeVisible()
+  await expect(page.getByText('Prefer my card photos', { exact: false })).toBeVisible()
+
+  // Scanning itself is still offered.
+  await page.goto('/search')
+  await page.locator('[data-testid="scan-button"], [data-testid="sidebar-nav"] button:has-text("Scan cards")').filter({ visible: true }).first().click()
+  await expect(page.getByRole('dialog', { name: 'Scan card' })).toBeVisible()
+})
+
+test('global mode: a trainer without diagnostics available sees no diagnostics rows', async ({ page }) => {
+  await installApi(page, trainer, trainerInGlobalMode, {
+    scanner_managed_by_admin: 'true',
+    scan_diagnostics_available: 'false',
+  })
+  await page.goto('/settings/appearance')
+  await expect(page.getByText('Prefer my card photos', { exact: false })).toBeVisible()
+  await expect(page.getByText('Share scanner diagnostics')).toHaveCount(0)
+})
+
+test('per-user mode and administrators keep the Scanner row', async ({ page }) => {
+  await installApi(page)
+  await page.goto('/settings')
+  await expect(page.getByTestId('settings-section-scanner')).toBeVisible()
 })
