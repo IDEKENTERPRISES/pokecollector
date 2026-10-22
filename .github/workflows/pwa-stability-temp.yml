@@ -37,5 +37,5 @@ jobs:
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: Basic ${auth_header}" fetch --force origin "${GITHUB_REF}"
           git checkout --detach FETCH_HEAD
       - run: npm ci --prefer-offline --no-audit --no-fund
-      # Whole suite, 4 workers, no retries: any flake from shared state fails the run.
-      - run: npx playwright test --config=playwright.pwa.config.js --workers=4 --retries=0
+      # Whole suite, 2 workers (as shipped), no retries: any flake from shared state fails the run.
+      - run: npx playwright test --config=playwright.pwa.config.js --workers=2 --retries=0
