@@ -11,6 +11,7 @@ from api.auth import get_current_user
 from sqlalchemy.orm import Session
 from database import get_db
 from models import CollectionCardPhoto, Setting, UserSetting, User
+from services.audit import record_audit
 from services.debug_logging import configure_debug_logging, get_debug_log_path
 from services.digital_sets import DIGITAL_SETS_SETTING_KEY, refresh_digital_catalogue_flags
 from services.exchange_rates import (
@@ -39,6 +40,7 @@ from services.scan_trace import (
 
 from services.scan_providers import (
     DEFAULT_OPENAI_BASE_URL,
+    DEFAULT_SCANNER_REQUEST_TIMEOUT_SECONDS,
     GEMINI,
     OPENAI,
     MODEL_PATTERN,
@@ -54,6 +56,10 @@ from services.scan_providers import (
     allowed_models,
     configured_provider_name,
     enabled_providers,
+    gemini_enabled,
+    global_scanner_config_enabled,
+    global_scanner_config_exists,
+    global_scanner_key,
     image_part,
     installation_model,
     openai_base_url,
@@ -67,6 +73,9 @@ from services.scan_providers import (
     resolve_scanner_request_timeout,
     scanner_capability_mode,
     scanner_capability_proof,
+    scanner_setting_row,
+    scanner_setting_value,
+    upsert_scanner_setting,
     SCANNER_GEMINI_FALLBACK_SETTING_KEY,
     SCANNER_PROVIDER_SETTING,
     SCANNER_PROVIDER_GUIDE_URL,
@@ -260,6 +269,12 @@ def _get_user_settings(db: Session, user_id: int) -> dict:
 
     for key, value in DEFAULT_SETTINGS.items():
         result.setdefault(key, value)
+    if global_scanner_config_enabled():
+        result[SCANNER_GEMINI_FALLBACK_SETTING_KEY] = (
+            scanner_setting_value(db, user_id, SCANNER_GEMINI_FALLBACK_SETTING_KEY) or "false"
+        )
+    if not gemini_enabled():
+        result[SCANNER_GEMINI_FALLBACK_SETTING_KEY] = "false"
     result["scan_diagnostics_available"] = "true" if trace_available() else "false"
     result["scan_diagnostics_deletion_available"] = (
         "true" if trace_deletion_available() else "false"
@@ -281,10 +296,60 @@ def _scanner_requires_key(provider: str) -> bool:
     return provider == GEMINI or openai_requires_key()
 
 
-def _user_setting(db: Session, user_id: int, key: str) -> UserSetting | None:
-    return db.query(UserSetting).filter(
-        UserSetting.user_id == user_id, UserSetting.key == key
+def _user_setting(db: Session, user_id: int, key: str):
+    """A scanner setting row: the global one when administrators configure everyone's scanner."""
+    return scanner_setting_row(db, user_id, key)
+
+
+def _require_scanner_writer(current_user: User) -> None:
+    if global_scanner_config_enabled() and current_user.role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="The scanner is configured by an administrator for everyone.",
+        )
+
+
+def _key_hint(value: str) -> str:
+    """Never the key itself: only that one is set and how it ends."""
+    value = (value or "").strip()
+    return f"••{value[-4:]}" if len(value) >= 4 else "••"
+
+
+def _audit_scanner_change(db: Session, current_user: User, **details) -> None:
+    """Global scanner changes affect everyone, so they are audited (no secrets in the details)."""
+    if global_scanner_config_enabled():
+        record_audit(
+            db,
+            "scanner.config.updated",
+            actor=current_user,
+            target_type="scanner",
+            details=details,
+        )
+
+
+def _store_gemini_fallback(db: Session, current_user: User, value: str) -> None:
+    """The Gemini fallback opt-in: personal normally, shared (admin only) in global mode."""
+    if not gemini_enabled():
+        value = "false"
+    if global_scanner_config_enabled():
+        if current_user.role != "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="The scanner is configured by an administrator for everyone.",
+            )
+        upsert_scanner_setting(db, current_user.id, SCANNER_GEMINI_FALLBACK_SETTING_KEY, value)
+        _audit_scanner_change(db, current_user, gemini_fallback=value == "true")
+        return
+    row = db.query(UserSetting).filter(
+        UserSetting.user_id == current_user.id,
+        UserSetting.key == SCANNER_GEMINI_FALLBACK_SETTING_KEY,
     ).first()
+    if row:
+        row.value = value
+    else:
+        db.add(UserSetting(
+            user_id=current_user.id, key=SCANNER_GEMINI_FALLBACK_SETTING_KEY, value=value
+        ))
 
 
 def _safe_endpoint_summary(url: str) -> str:
@@ -310,7 +375,7 @@ def _administrator_scanner_summary() -> dict:
             {
                 "id": GEMINI,
                 "label": provider_label(GEMINI),
-                "enabled": True,
+                "enabled": gemini_enabled(),
                 "endpoint_type": "hosted",
                 "endpoint": "Google Gemini API",
                 "models": allowed_models(GEMINI),
@@ -336,6 +401,7 @@ def _scanner_configuration(db: Session, user_id: int, *, is_admin: bool = False)
         and configured_provider not in enabled_providers()
     )
     selected = resolve_provider_name(db, user_id)
+    is_global = global_scanner_config_enabled()
     providers = []
     for provider in enabled_providers():
         key_row = _user_setting(db, user_id, _scanner_key_name(provider))
@@ -360,6 +426,8 @@ def _scanner_configuration(db: Session, user_id: int, *, is_admin: bool = False)
             "key_help_url": provider_key_help_url(provider),
             "setup_help_url": SCANNER_PROVIDER_GUIDE_URL,
         }
+        if is_admin and is_global and key_configured:
+            provider_data["api_key_hint"] = _key_hint(key_row.value)
         if is_admin:
             custom_row = _user_setting(
                 db, user_id, SCANNER_CUSTOM_MODEL_SETTINGS[provider]
@@ -370,7 +438,29 @@ def _scanner_configuration(db: Session, user_id: int, *, is_admin: bool = False)
                 custom_model if MODEL_PATTERN.fullmatch(custom_model) else ""
             )
         providers.append(provider_data)
-    active = next(item for item in providers if item["id"] == selected)
+    scope = {
+        "scope": "global" if is_global else "user",
+        "editable": is_admin or not is_global,
+        "gemini_enabled": gemini_enabled(),
+        "global_configured": global_scanner_config_exists(db) if is_global else None,
+        "request_timeout_options": list(SCANNER_REQUEST_TIMEOUT_OPTIONS),
+    }
+    active = next((item for item in providers if item["id"] == selected), None)
+    if active is None:
+        # No provider is enabled on this installation (for example Gemini is off and the
+        # OpenAI-compatible provider is not enabled).
+        result = {
+            **scope,
+            "provider": "",
+            "model": "",
+            "request_timeout_seconds": DEFAULT_SCANNER_REQUEST_TIMEOUT_SECONDS,
+            "providers": [],
+            "status": "unavailable",
+            "visual_verification": "unverified",
+        }
+        if is_admin:
+            result["administrator"] = _administrator_scanner_summary()
+        return result
     ready = not active["requires_api_key"] or active["api_key_configured"]
     capability_mode = scanner_capability_mode(
         db, user_id, selected, active["selected_model"]
@@ -389,6 +479,7 @@ def _scanner_configuration(db: Session, user_id: int, *, is_admin: bool = False)
         )
     )
     result = {
+        **scope,
         "provider": selected,
         "model": active["selected_model"],
         "request_timeout_seconds": active["request_timeout_seconds"],
@@ -459,11 +550,7 @@ def _validated_scanner_draft(
 
 
 def _upsert_user_setting(db: Session, user_id: int, key: str, value: str) -> None:
-    row = _user_setting(db, user_id, key)
-    if row:
-        row.value = value
-    else:
-        db.add(UserSetting(user_id=user_id, key=key, value=value))
+    upsert_scanner_setting(db, user_id, key, value)
 
 
 def _persist_scanner_draft(
@@ -530,6 +617,7 @@ def update_scanner_configuration(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _require_scanner_writer(current_user)
     provider, model, credential, custom_model, request_timeout_seconds = _validated_scanner_draft(
         data, db, current_user
     )
@@ -555,8 +643,54 @@ def update_scanner_configuration(
         custom_model,
         request_timeout_seconds,
     )
+    _audit_scanner_change(
+        db, current_user, provider=provider, model=model, api_key_cleared=data.clear_api_key
+    )
     db.commit()
     return _scanner_configuration(db, current_user.id, is_admin=current_user.role == "admin")
+
+
+@router.post("/scanner/global/adopt")
+def adopt_scanner_settings_for_everyone(
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+):
+    """Copy the calling administrator's own scanner settings (key included) into the global
+    configuration, once, when global mode is on and nothing has been saved yet."""
+    if not global_scanner_config_enabled():
+        raise HTTPException(status_code=409, detail="The scanner is not configured globally.")
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    if global_scanner_config_exists(db):
+        raise HTTPException(status_code=409, detail="A global scanner configuration already exists.")
+    keys = [
+        "gemini_api_key",
+        "openai_api_key",
+        SCANNER_PROVIDER_SETTING,
+        SCANNER_GEMINI_FALLBACK_SETTING_KEY,
+        *SCANNER_MODEL_SETTINGS.values(),
+        *SCANNER_REQUEST_TIMEOUT_SETTINGS.values(),
+        *SCANNER_CUSTOM_MODEL_SETTINGS.values(),
+        *SCANNER_CAPABILITY_SETTINGS.values(),
+    ]
+    own = {
+        row.key: row.value
+        for row in db.query(UserSetting).filter(
+            UserSetting.user_id == current_user.id, UserSetting.key.in_(keys)
+        )
+    }
+    provider = (own.get(SCANNER_PROVIDER_SETTING) or "").strip().lower()
+    if provider not in enabled_providers():
+        raise HTTPException(
+            status_code=409,
+            detail="Choose, test and save an available scanner provider in your own settings first.",
+        )
+    if not gemini_enabled():
+        own.pop(SCANNER_GEMINI_FALLBACK_SETTING_KEY, None)
+    for key, value in own.items():
+        db.add(Setting(key=global_scanner_key(key), value=value))
+    _audit_scanner_change(db, current_user, source="admin_settings_copied", provider=provider)
+    db.commit()
+    return _scanner_configuration(db, current_user.id, is_admin=True)
 
 
 @router.post("/scanner/test")
@@ -565,6 +699,7 @@ async def test_scanner_configuration(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _require_scanner_writer(current_user)
     if data.accept_degraded_visual_verification and current_user.role != "admin":
         raise HTTPException(
             status_code=403,
@@ -670,6 +805,14 @@ async def test_scanner_configuration(
             model,
             capability_mode,
         )
+        _audit_scanner_change(
+            db,
+            current_user,
+            provider=provider,
+            model=model,
+            capability=capability_mode,
+            api_key_changed=data.api_key is not None or data.clear_api_key,
+        )
         db.commit()
     return {
         "status": "ready" if capability_mode == SCANNER_CAPABILITY_FULL else "degraded",
@@ -720,6 +863,8 @@ def update_settings(data: dict, db: Session = Depends(get_db), current_user: Use
             else:
                 db.add(Setting(key=key, value=coerced_value))
             pending_side_effects.append((key, coerced_value))
+        elif key == SCANNER_GEMINI_FALLBACK_SETTING_KEY:
+            _store_gemini_fallback(db, current_user, coerced_value)
         else:
             row = db.query(UserSetting).filter(
                 UserSetting.user_id == current_user.id, UserSetting.key == key
@@ -871,6 +1016,9 @@ def set_setting(key: str, body: dict, db: Session = Depends(get_db), current_use
         else:
             db.add(Setting(key=key, value=value))
         pending_side_effect = (key, value)
+    elif key == SCANNER_GEMINI_FALLBACK_SETTING_KEY:
+        _store_gemini_fallback(db, current_user, value)
+        value = scanner_setting_value(db, current_user.id, key) or "false"
     else:
         row = db.query(UserSetting).filter(
             UserSetting.user_id == current_user.id, UserSetting.key == key

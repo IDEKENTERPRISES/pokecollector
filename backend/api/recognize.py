@@ -452,15 +452,11 @@ def gemini_rate_limit_reason(resp: httpx.Response) -> str:
 
 
 def get_gemini_key(db: Session, user_id: int = None) -> str:
-    """Read Gemini API key from user settings only. No cross-user fallback."""
-    if user_id is not None:
-        row = db.query(UserSetting).filter(
-            UserSetting.user_id == user_id, UserSetting.key == "gemini_api_key"
-        ).first()
-        if row and row.value:
-            return row.value.strip()
-    # No global/env fallback — each user must configure their own key
-    return ""
+    """Read the Gemini API key: the user's own, or the administrators' when the installation
+    uses one global scanner configuration. No other cross-user fallback."""
+    from services.scan_providers import scanner_setting_value
+
+    return scanner_setting_value(db, user_id, "gemini_api_key").strip()
 
 
 def _requested_gemini_model(gemini_url: str) -> str:
