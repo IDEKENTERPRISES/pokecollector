@@ -1,3 +1,4 @@
+import functools
 import logging
 import datetime
 import math
@@ -1240,3 +1241,31 @@ from services import offline_carddb as _offline_carddb  # noqa: E402
 perform_full_sync = _offline_carddb.with_invalidation(static=True, prices=True)(perform_full_sync)
 perform_price_sync = _offline_carddb.with_invalidation(static=False, prices=True)(perform_price_sync)
 perform_sync = _offline_carddb.with_invalidation(static=True, prices=True)(perform_sync)
+
+
+def _prewarm_card_pictures_after(fn):
+    """After a card sync, fetch the pictures of any new cards in the background (F14b)."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        result = fn(*args, **kwargs)
+        from services import card_picture_packs
+        card_picture_packs.schedule_after_sync()
+        return result
+    return wrapper
+
+
+perform_full_sync = _prewarm_card_pictures_after(perform_full_sync)
+
+
+def _prewarm_card_pictures_after(fn):
+    """After a card sync, fetch the pictures of any new cards in the background (F14b)."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        result = fn(*args, **kwargs)
+        from services import card_picture_packs
+        card_picture_packs.schedule_after_sync()
+        return result
+    return wrapper
+
+
+perform_full_sync = _prewarm_card_pictures_after(perform_full_sync)
