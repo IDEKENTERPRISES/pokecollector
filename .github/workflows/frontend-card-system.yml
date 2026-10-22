@@ -181,7 +181,7 @@ jobs:
 
       # The test harness builds the app and serves it on port 4175.
       - name: Run PWA service-worker tests (Chromium)
-        run: npx playwright test --config=playwright.pwa.config.js 
+        run: npx playwright test --config=playwright.pwa.config.js
 
   backend:
     name: Backend tests
