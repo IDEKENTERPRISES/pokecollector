@@ -53,6 +53,9 @@ async function mockApi(context, state) {
     if (path === '/api/offline/carddb/prices/en') {
       return route.fulfill({ json: { v: 1, fields: ['price_market', 'price_low'], rows: [['pbl-117_en', 4.5, 3.2]] } })
     }
+    if (path === '/api/collection/') {
+      return route.fulfill({ json: state.collection ?? [] })
+    }
     if (path.startsWith('/api/images/') || path.startsWith('/api/pokedex/')) return route.fulfill({ status: 404, json: {} })
     return route.fulfill({ json: [] })
   })
@@ -123,6 +126,26 @@ test.describe('offline pages read the card database', () => {
     await expect(page.getByTestId('prices-from-note')).toContainText('Prices from')
     await expect(page.getByTestId('not-saved-note')).toHaveCount(0)
     await expect(page.getByTestId('offline-unavailable')).toHaveCount(0)
+    // The collection was never loaded on this device: owned figures are unknown, not "0 of 3".
+    await expect(page.getByTestId('owned-unavailable')).toContainText('Owned cards unavailable offline')
+    await expect(page.getByTestId('set-stat-cards')).toHaveCount(0)
+  })
+
+  test('with the collection saved, the owned state of a never-opened set comes from it', async ({ page, context }) => {
+    const state = {
+      offline: false,
+      collection: [{ id: 1, card_id: 'pbl-117_en', quantity: 2, variant: 'normal', condition: 'NM', lang: 'en', card: { id: 'pbl-117_en', set_id: 'pbl', lang: 'en', name: 'Morpeko' } }],
+    }
+    await downloadDatabase(page, context, state)
+    await open(page, '/collection')
+    await expect(page.getByTestId('nav-title')).toHaveText('Collection')
+    await page.waitForTimeout(7000) // the read cache saves its record 5 s after a fetch
+    state.offline = true
+
+    await open(page, '/sets/pbl_en')
+    await expect(page.getByTestId('offline-banner')).toBeVisible({ timeout: 20000 })
+    await expect(page.getByTestId('set-stat-cards')).toContainText('1 of 3', { timeout: 15000 })
+    await expect(page.getByTestId('owned-unavailable')).toHaveCount(0)
   })
 
   test('Search finds "Morpeko 117" and corrects "Morbeko" offline', async ({ page, context }) => {

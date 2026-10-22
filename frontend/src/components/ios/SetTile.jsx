@@ -11,7 +11,7 @@ import { TileArtwork } from './SeriesTile'
  *
  * set: { id, name, logo, abbreviation, releaseLabel }; `upcoming` is true for unreleased sets.
  */
-export default function SetTile({ set, owned = 0, total = 0, upcoming = false, complete = false, to, className = '' }) {
+export default function SetTile({ set, owned = 0, ownedUnknown = false, total = 0, upcoming = false, complete = false, to, className = '' }) {
   const { t } = useSettings()
   const classes = clsx(
     'no-callout block overflow-hidden rounded-[18px] bg-card text-left',
@@ -36,9 +36,9 @@ export default function SetTile({ set, owned = 0, total = 0, upcoming = false, c
           )}
         </div>
         {set.abbreviation && <p className="truncate text-caption-1 text-text-secondary">{set.abbreviation}</p>}
-        <HpBar value={owned} max={total} label={set.name} />
+        {!ownedUnknown && <HpBar value={owned} max={total} label={set.name} />}
         <p className="text-caption-1 tabular-nums text-text-secondary">
-          {t('ios.ownedOfTotal').replace('{owned}', owned).replace('{total}', total)}
+          {ownedUnknown ? `${total} ${t('sets.cards')}` : t('ios.ownedOfTotal').replace('{owned}', owned).replace('{total}', total)}
         </p>
       </div>
     </>

@@ -41,6 +41,7 @@ import EnergyIcon from '../components/ios/EnergyIcon'
 import { tileTextFor, typeKeyFor } from '../components/ios/pokemon'
 import { useNavBar } from '../navigation/useNavBar'
 import { useOffline } from '../offline/useOffline'
+import { ownedFromQueryClient } from '../offline/carddb/owned.js'
 import { PricesFromNote, useCatalogQuery } from '../offline/carddb/useCatalogQuery.jsx'
 import { groupSetsBySeries } from '../utils/setSeries'
 import { getPokedexFormFamily } from '../utils/pokedexUrlState'
@@ -230,7 +231,7 @@ export default function CardSearch() {
   const { data: allSets = [] } = useCatalogQuery({
     queryKey: ['sets', settings.language || 'en'],
     queryFn: () => getSets().then(r => r.data),
-    offlineFn: cardDb => cardDb.sets({ lang: settings.language || 'en' }),
+    offlineFn: cardDb => cardDb.sets({ lang: settings.language || 'en', ownedCounts: ownedFromQueryClient(queryClient).ownedCounts }),
     staleTime: 5 * 60 * 1000,
   })
 

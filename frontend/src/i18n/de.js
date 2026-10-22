@@ -78,6 +78,7 @@ const de = {
     updated: 'Aktualisiert {date} · {cards} Karten · {size}',
     notDownloaded: 'Noch nicht geladen',
     pricesFrom: 'Preise vom',
+    ownedUnavailable: 'Besitz offline nicht verfügbar',
     pictures: 'Kartenbilder',
     picturesDownload: 'Kartenbilder laden (etwa {size})',
     picturesProgress: '{done} von {total}',

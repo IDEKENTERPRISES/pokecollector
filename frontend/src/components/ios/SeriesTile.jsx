@@ -54,7 +54,7 @@ export function TileArtwork({ logo, logoSources, name, colourKey, className = ''
  *
  * series: { key, name, logo, years, setCount }; owned and total are card counts.
  */
-export default function SeriesTile({ series, owned = 0, total = 0, complete = false, to, className = '' }) {
+export default function SeriesTile({ series, owned = 0, ownedUnknown = false, total = 0, complete = false, to, className = '' }) {
   const { t } = useSettings()
   const classes = clsx(
     'no-callout block overflow-hidden rounded-[18px] bg-card text-left',
@@ -72,9 +72,9 @@ export default function SeriesTile({ series, owned = 0, total = 0, complete = fa
         <p className="truncate text-caption-1 text-text-secondary">
           {[series.years, series.setCount != null ? t('ios.setsCount').replace('{count}', series.setCount) : null].filter(Boolean).join(' · ')}
         </p>
-        <HpBar value={owned} max={total} label={series.name} />
+        {!ownedUnknown && <HpBar value={owned} max={total} label={series.name} />}
         <p className="text-caption-1 tabular-nums text-text-secondary">
-          {t('ios.ownedOfTotal').replace('{owned}', owned).replace('{total}', total)}
+          {ownedUnknown ? `${total} ${t('sets.cards')}` : t('ios.ownedOfTotal').replace('{owned}', owned).replace('{total}', total)}
         </p>
       </div>
     </>

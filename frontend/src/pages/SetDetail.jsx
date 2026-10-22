@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { ownedFromQueryClient } from '../offline/carddb/owned.js'
 import { PricesFromNote, useCatalogQuery } from '../offline/carddb/useCatalogQuery.jsx'
 import { Plus, X, BookMarked, HelpCircle, ArrowUpDown, ListFilter, Layers } from 'lucide-react'
 import { getSetChecklist, getBinders, addOwnedSetToBinder, addOwnedSetToAutoBinder } from '../api/client'
@@ -132,7 +133,7 @@ export default function SetDetail() {
   const { data, isLoading, error, source: dataSource, pricesUpdatedAt } = useCatalogQuery({
     queryKey: ['set-checklist', setId],
     queryFn: () => getSetChecklist(setId).then(r => r.data),
-    offlineFn: cardDb => cardDb.setChecklist(setId),
+    offlineFn: cardDb => cardDb.setChecklist(setId, ownedFromQueryClient(queryClient)),
   })
 
   const setLang = data?.set?.lang || 'en'
@@ -204,8 +205,8 @@ export default function SetDetail() {
   const filteredCards = useMemo(() => {
     const needle = query.trim().toLowerCase()
     const matching = cards.filter(card => {
-      if (filter === 'owned' && !card.owned) return false
-      if (filter === 'missing' && card.owned) return false
+      if (!data?.owned_unknown && filter === 'owned' && !card.owned) return false
+      if (!data?.owned_unknown && filter === 'missing' && card.owned) return false
       if (rarityFilter !== 'all' && card.rarity !== rarityFilter) return false
       if (needle && !(String(card.name || '').toLowerCase().includes(needle) || String(card.number || '').toLowerCase().includes(needle))) return false
       return true
@@ -241,7 +242,7 @@ export default function SetDetail() {
     )
   }
 
-  const { set, owned_count, total_count, progress } = data || {}
+  const { set, owned_count, total_count, progress, owned_unknown: ownedUnknown } = data || {}
   const numericProgress = Number(progress)
   const safeProgress = Number.isFinite(numericProgress)
     ? Math.min(100, Math.max(0, numericProgress))
@@ -255,7 +256,7 @@ export default function SetDetail() {
     })()
     : null
 
-  const filterOptions = [
+  const filterOptions = ownedUnknown ? [{ key: 'all', label: `${t('setDetail.all')} (${cards.length})` }] : [
     { key: 'all', label: `${t('setDetail.all')} (${cards.length})` },
     { key: 'owned', label: `${t('setDetail.owned')} (${owned_count})` },
     { key: 'missing', label: `${t('setDetail.missing')} (${total_count - owned_count})` },
@@ -287,8 +288,12 @@ export default function SetDetail() {
 
       <PricesFromNote source={dataSource} pricesUpdatedAt={pricesUpdatedAt} className="px-1" />
 
+      {ownedUnknown && (
+        <p data-testid="owned-unavailable" className="px-1 text-footnote text-text-secondary">{t('offlineDb.ownedUnavailable')}</p>
+      )}
+
       {/* Swipeable stat cards */}
-      <div
+      {!ownedUnknown && <div
         data-testid="set-stat-cards"
         className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
@@ -311,7 +316,7 @@ export default function SetDetail() {
             <p className="text-footnote tabular-nums text-text-secondary">{t('setDetail.ownedValue')} {formatPrice(master.value)}</p>
           </div>
         </section>
-      </div>
+      </div>}
 
       {/* Search, sort and filter */}
       <div className="flex items-center gap-2">
@@ -436,7 +441,7 @@ export default function SetDetail() {
                 </button>
               </div>
 
-              {owned_count === 0 ? (
+              {!owned_count ? (
                 <p className="text-sm text-text-secondary">{t('setDetail.addOwnedToBinderEmpty')}</p>
               ) : (
                 <>

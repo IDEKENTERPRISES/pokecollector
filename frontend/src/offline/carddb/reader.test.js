@@ -18,10 +18,19 @@ describe('card database reader', () => {
     expect(sets[1].owned_count).toBe(0)
   })
 
+  it('reports owned figures as unknown, not zero, when the collection is not available', async () => {
+    const sets = await reader.sets()
+    expect(sets.every(set => set.owned_count === null)).toBe(true)
+    const list = await reader.setChecklist('pbl_en')
+    expect(list).toMatchObject({ owned_unknown: true, owned_count: null })
+    const known = await reader.setChecklist('pbl_en', { ownedByCard: new Map() })
+    expect(known).toMatchObject({ owned_unknown: false, owned_count: 0, progress: 0 })
+  })
+
   it('returns a checklist in the online shape, in natural number order, with prices', async () => {
     const list = await reader.setChecklist('pbl_en')
     expect(list.cards.map(card => card.number)).toEqual(['9', '117', '118', '120'])
-    expect(list).toMatchObject({ total_count: 4, owned_count: 0, progress: 0, pricesUpdatedAt: '2026-10-21' })
+    expect(list).toMatchObject({ total_count: 4, pricesUpdatedAt: '2026-10-21' })
     expect(list.set).toMatchObject({ id: 'pbl_en', name: 'Perilous Bloom', lang: 'en' })
     expect(list.cards.find(card => card.number === '117')).toMatchObject({ price_market: 4.5, price_low: 3.2, owned: false, set_ref: { abbreviation: 'PBL' } })
   })

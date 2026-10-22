@@ -121,7 +121,8 @@ export function createCardDbReader({ store = createCardDbStore(), isEnabled = ()
       return sets
         .map(set => ({
           ...set,
-          owned_count: ownedCounts?.get(`${set.tcg_set_id || set.id}|${set.lang}`) ?? 0,
+          // null = unknown (the collection was never loaded): a wrong zero would read as "you own none"
+          owned_count: ownedCounts ? (ownedCounts.get(`${set.tcg_set_id || set.id}|${set.lang}`) ?? 0) : null,
         }))
         .sort((a, b) => {
           if (!a.release_date && !b.release_date) return 0
@@ -190,6 +191,7 @@ export function createCardDbReader({ store = createCardDbStore(), isEnabled = ()
         }
       })
       const ownedCount = checklist.filter(card => card.owned).length
+      const ownedUnknown = !ownedByCard
       return {
         set: {
           id: set.id,
@@ -201,9 +203,10 @@ export function createCardDbReader({ store = createCardDbStore(), isEnabled = ()
           lang: set.lang || 'en',
         },
         cards: checklist,
-        owned_count: ownedCount,
+        owned_count: ownedUnknown ? null : ownedCount,
         total_count: checklist.length,
         progress: checklist.length ? Math.round((ownedCount / checklist.length) * 1000) / 10 : 0,
+        owned_unknown: ownedUnknown,
         pricesUpdatedAt,
       }
     },
