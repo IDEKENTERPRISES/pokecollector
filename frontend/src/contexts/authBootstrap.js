@@ -9,6 +9,19 @@ export const AUTH_STARTUP_TIMEOUT_MS = 5_000
 // that is up answers in well under this. A slow answer only means a short stay in the degraded state.
 export const AUTH_SNAPSHOT_TIMEOUT_MS = 1_500
 
+/**
+ * Runs `load()` but gives up after `ms` whatever the request does: the request's own timeout is
+ * not trusted to fire (a hung connection on a phone, an intercepted request), and nothing at start-up
+ * may wait for ever. A give-up is a plain network error, like the request's own timeout.
+ */
+export function withStartupDeadline(load, ms) {
+  let timer = null
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error('Startup check timed out'), { code: 'ECONNABORTED' })), ms)
+  })
+  return Promise.race([load(), deadline]).finally(() => clearTimeout(timer))
+}
+
 export function authRetryDelay(attempt) {
   const safeAttempt = Number.isInteger(attempt) && attempt > 0 ? attempt : 0
   return Math.min(1_000 * (2 ** safeAttempt), MAX_RETRY_DELAY_MS)

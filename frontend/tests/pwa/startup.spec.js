@@ -92,11 +92,17 @@ test.describe('offline cold start with large saved data', () => {
       cdp = await context.newCDPSession(page)
       await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 })
     }
+    const manifestRequests = []
+    page.on('request', request => { if (request.url().includes('/api/offline/carddb/manifest')) manifestRequests.push(request.url()) })
     await page.goto('about:blank')
     await page.goto('/')
-    await page.waitForFunction(() => window.__startup?.marks.interactive !== undefined, null, { timeout: 60000 })
+    await page.waitForFunction(() => window.__startup?.marks.interactive !== undefined, null, { timeout: 60000 }).catch(async error => {
+      const seen = await page.evaluate(() => ({ marks: window.__startup?.marks, root: document.getElementById('root')?.innerHTML.slice(0, 600) }))
+      console.log(`STARTUP-DEBUG ${JSON.stringify(seen)}`)
+      throw error
+    })
     // Let the splash finish its reveal frames; the early frames are what matter.
-    await page.waitForTimeout(1500)
+    await page.waitForTimeout(5000)
     const result = await page.evaluate(() => window.__startup)
     if (cdp) await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 })
 
@@ -114,5 +120,12 @@ test.describe('offline cold start with large saved data', () => {
     const visibleAt = result.marks.splash ?? Infinity
     expect(visibleAt, 'the splash (or its black cover) is on screen').toBeLessThan(SPLASH_BUDGET_MS)
     expect(result.whiteFrames, 'no frame has a white background').toEqual([])
+    // The splash never goes away and comes back (the whole tree used to unmount while the saved data loaded).
+    const firstCovered = result.frames.findIndex(frame => frame.covered)
+    const gap = result.frames.filter((frame, index) => index > firstCovered && frame.t <= result.marks.interactive && !frame.covered)
+    expect(gap, 'the splash stays up from its first frame until the app is interactive').toEqual([])
+    expect(result.marks.interactive, 'the app is interactive with the splash still running').toBeLessThan(browserName === 'chromium' ? 3000 : 5000)
+    // Offline, the card database does not try to sync: its manifest request would only hang.
+    expect(manifestRequests).toEqual([])
   })
 })

@@ -108,11 +108,11 @@ export function whenLaunchSplashClosed(maxMs = 6000) {
   if (closed || !launchSplashMode()) return Promise.resolve()
   return new Promise(resolve => {
     const done = () => {
-      window.clearTimeout(timer)
+      clearTimeout(timer)
       closeWaiters.delete(done)
       resolve()
     }
-    const timer = window.setTimeout(done, maxMs)
+    const timer = setTimeout(done, maxMs)
     closeWaiters.add(done)
   })
 }

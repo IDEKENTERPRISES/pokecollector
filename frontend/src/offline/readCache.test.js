@@ -7,14 +7,20 @@ import {
   READ_CACHE_DENY,
   READ_CACHE_MAX_AGE_MS,
   READ_CACHE_MAX_QUERY_BYTES,
+  READ_CACHE_HEAD_QUERY_BYTES,
+  READ_CACHE_HEAD_TOTAL_BYTES,
   READ_CACHE_MAX_TOTAL_BYTES,
   applyCaps,
+  applyFirst,
+  buildRecords,
+  headKey,
   holdsSecret,
   isSavableKey,
   persist,
   purge,
   purgeAll,
   purgeOthers,
+  readFirst,
   recordKey,
   restore,
   restoreMissing,
@@ -295,9 +301,9 @@ describe('read cache', () => {
     await save(2)
     await save(3)
     await purge({ origin, userId: 1, indexedDB })
-    expect(await keysOf()).toEqual([recordKey(origin, 2), recordKey(origin, 3)])
+    expect(await keysOf()).toEqual([recordKey(origin, 2), headKey(origin, 2), recordKey(origin, 3), headKey(origin, 3)].sort())
     await purgeOthers({ origin, keepUserId: 3, indexedDB })
-    expect(await keysOf()).toEqual([recordKey(origin, 3)])
+    expect(await keysOf()).toEqual([recordKey(origin, 3), headKey(origin, 3)].sort())
     await purgeAll({ indexedDB })
     expect(await keysOf()).toEqual([])
   })
@@ -334,5 +340,67 @@ describe('read cache', () => {
     await expect(purge({ origin, userId: 1, indexedDB: null })).resolves.toBeUndefined()
     await expect(purgeOthers({ origin, keepUserId: 1, indexedDB: null })).resolves.toBeUndefined()
     await expect(purgeAll({ indexedDB: null })).resolves.toBeUndefined()
+  })
+})
+
+describe('cold-start restore (head record)', () => {
+  const big = () => 'x'.repeat(READ_CACHE_HEAD_QUERY_BYTES + 10)
+
+  it('writes the small queries to a head record next to the full one', async () => {
+    seed(['dashboard'], { a: 1 })
+    seed(['collection', { page: 1 }], [big()])
+    await save()
+    const head = await getRecord(headKey(origin, 1))
+    const full = await getRecord(recordKey(origin, 1))
+    expect(head.state.queries.map(query => query.queryKey[0])).toEqual(['dashboard'])
+    expect(full.state.queries.map(query => query.queryKey[0]).sort()).toEqual(['collection', 'dashboard'])
+  })
+
+  it('keeps the head within its total size, newest first', () => {
+    const now = Date.now()
+    for (let i = 0; i < 40; i += 1) {
+      client.setQueryData(['page', i], ['y'.repeat(200 * 1024)], { updatedAt: now + i })
+    }
+    const { head, record } = buildRecords(client, null)
+    expect(record.state.queries).toHaveLength(40)
+    expect(head.state.queries.length).toBeLessThan(40)
+    expect(head.state.queries.length * 200 * 1024).toBeLessThanOrEqual(READ_CACHE_HEAD_TOTAL_BYTES)
+    expect(head.state.queries[0].queryKey).toEqual(['page', 39])
+  })
+
+  it('readFirst reads only the head, applyFirst hydrates it and says the rest is missing', async () => {
+    seed(['dashboard'], { a: 1 })
+    seed(['collection'], [big()])
+    await save()
+    const other = newClient()
+    const first = await readFirst({ origin, userId: 1, indexedDB })
+    expect(first.complete).toBe(false)
+    const { savedAt, complete } = applyFirst(other, first)
+    expect(typeof savedAt).toBe('number')
+    expect(complete).toBe(false)
+    expect(other.getQueryData(['dashboard'])).toEqual({ a: 1 })
+    expect(other.getQueryData(['collection'])).toBeUndefined()
+    // The rest follows by merge.
+    const rest = await restoreMissing(other, { origin, userId: 1, indexedDB })
+    expect(rest.restored).toBe(1)
+    expect(other.getQueryData(['collection'])).toEqual([big()])
+  })
+
+  it('falls back to the whole record when no head was written yet', async () => {
+    seed(['collection'], [{ id: 1 }])
+    await save()
+    const { record } = buildRecords(client, null)
+    await putRaw(recordKey(origin, 7), record)
+    const first = await readFirst({ origin, userId: 7, indexedDB })
+    expect(first.complete).toBe(true)
+    const other = newClient()
+    expect(applyFirst(other, first).complete).toBe(true)
+    expect(other.getQueryData(['collection'])).toEqual([{ id: 1 }])
+  })
+
+  it('returns nothing usable for no record, a stale version or a missing database', async () => {
+    expect(await readFirst({ origin, userId: 1, indexedDB })).toEqual({ record: null, complete: true })
+    expect(applyFirst(newClient(), { record: null, complete: true })).toEqual({ savedAt: null, complete: true })
+    expect(await readFirst({ origin, userId: 1, indexedDB: undefined })).toEqual({ record: null, complete: true })
   })
 })
