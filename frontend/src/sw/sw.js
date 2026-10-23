@@ -11,6 +11,14 @@ const IMAGE_CAP = 800
 // Pictures downloaded on purpose from Settings (offline card database), one cache per language.
 const CARDDB_IMAGES_PREFIX = 'pc-carddb-images-v1-'
 const NAV_TIMEOUT_MS = 2500
+// After a navigation had to fall back to the shell, the next ones wait only this long for a while.
+const NAV_FAST_TIMEOUT_MS = 600
+const NAV_RECENT_FAILURE_MS = 5 * 60 * 1000
+const PICTURE_CACHE_REFRESH_MS = 5 * 1000
+// Tiny cache holding what the page last told the worker about reachability; the worker is stopped
+// and restarted often, so the flag must survive a cold start (an offline launch).
+const STATE_NAME = 'pc-sw-state-v1'
+const STATE_KEY = '/__pc_sw_state'
 const LARGE_IMAGE_TIMEOUT_MS = 4000
 // A picture nobody has cached: offline on an iPhone the request hangs instead of failing, so give
 // the network this long, then answer with an error and let the tile show its placeholder.
@@ -25,6 +33,59 @@ const OFFLINE_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8"
   + '</body></html>'
 
 const precacheUrls = new Set(PRECACHE.map(entry => entry.url))
+
+// Reachability as the page last reported it (OfflineProvider's banner), and the names of the downloaded
+// picture caches. Neither needs a search of any cache entries: the shell and every image answer from
+// these without opening the ~22k-entry picture caches.
+let pageOffline = false
+let stateLoaded = null
+let navFailedAt = 0
+let pictureCacheNames = []
+let pictureNamesLoaded = null
+let pictureNamesAt = 0
+
+function loadState() {
+  if (!stateLoaded) {
+    stateLoaded = (async () => {
+      try {
+        if (!(await caches.has(STATE_NAME))) return
+        const hit = await (await caches.open(STATE_NAME)).match(STATE_KEY)
+        if (hit) pageOffline = Boolean((await hit.json()).offline)
+      } catch {
+        // No saved state: treat as unknown (online).
+      }
+    })()
+  }
+  return stateLoaded
+}
+
+async function saveState(offline) {
+  pageOffline = offline
+  stateLoaded = stateLoaded || Promise.resolve()
+  try {
+    const cache = await caches.open(STATE_NAME)
+    await cache.put(STATE_KEY, new Response(JSON.stringify({ offline }), { headers: { 'Content-Type': 'application/json' } }))
+  } catch {
+    // Not persisted: the in-memory flag still works for this worker's lifetime.
+  }
+}
+
+function deviceOffline() {
+  return Boolean(self.navigator) && self.navigator.onLine === false
+}
+
+async function knownOffline() {
+  await loadState()
+  return pageOffline || deviceOffline()
+}
+
+function refreshPictureCaches() {
+  pictureNamesAt = Date.now()
+  pictureNamesLoaded = caches.keys().then(names => {
+    pictureCacheNames = names.filter(name => name.startsWith(CARDDB_IMAGES_PREFIX))
+  }).catch(() => {})
+  return pictureNamesLoaded
+}
 
 function hasExtension(pathname) {
   const last = pathname.split('/').pop() || ''
@@ -84,9 +145,19 @@ async function trimCache(cache, max) {
   for (let i = 0; i < keys.length - max; i += 1) await cache.delete(keys[i])
 }
 
+// A file from an older build's precache (each cache searched by name, never the picture caches).
+async function matchOlderPrecache(url) {
+  for (const name of (await caches.keys()).reverse()) {
+    if (!name.startsWith('pc-precache-') || name === PRECACHE_NAME) continue
+    const hit = await caches.match(url, { cacheName: name })
+    if (hit) return hit
+  }
+  return null
+}
+
 async function precacheOne(cache, entry) {
   if (entry.url.startsWith('/assets/')) {
-    const old = await caches.match(entry.url)
+    const old = await matchOlderPrecache(entry.url)
     if (old && validatePrecache(entry, old)) {
       await cache.put(entry.url, old.clone())
       return
@@ -121,23 +192,35 @@ async function maybeStoreShell(res) {
 }
 
 async function offlineShell() {
-  const shell = await caches.match(SHELL_KEY)
+  const shell = await caches.match(SHELL_KEY, { cacheName: SHELL_NAME })
   return shell || new Response(OFFLINE_HTML, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
 }
 
 function handleNavigate(event) {
-  const network = fetch(event.request)
-  const timer = new Promise(resolve => setTimeout(() => resolve(null), NAV_TIMEOUT_MS))
-  const respond = Promise.race([network, timer]).then(async res => {
-    if (res) {
-      if (res.ok) event.waitUntil(maybeStoreShell(res.clone()).catch(() => {}))
-      return res
+  event.respondWith((async () => {
+    if (await knownOffline()) {
+      // The app knows it is offline: the shell at once, with a quiet refresh attempt for later.
+      event.waitUntil(fetch(event.request).then(res => (res.ok ? maybeStoreShell(res.clone()) : null)).catch(() => {}))
+      return offlineShell()
     }
-    // Timer won: keep the network request alive so the shell can refresh later.
-    event.waitUntil(network.then(late => (late.ok ? maybeStoreShell(late.clone()) : null)).catch(() => {}))
+    const network = fetch(event.request)
+    const recentFailure = Date.now() - navFailedAt < NAV_RECENT_FAILURE_MS
+    const timer = new Promise(resolve => setTimeout(() => resolve(null), recentFailure ? NAV_FAST_TIMEOUT_MS : NAV_TIMEOUT_MS))
+    try {
+      const res = await Promise.race([network, timer])
+      if (res) {
+        navFailedAt = 0
+        if (res.ok) event.waitUntil(maybeStoreShell(res.clone()).catch(() => {}))
+        return res
+      }
+      // Timer won: keep the network request alive so the shell can refresh later.
+      navFailedAt = Date.now()
+      event.waitUntil(network.then(late => (late.ok ? maybeStoreShell(late.clone()) : null)).catch(() => {}))
+    } catch {
+      navFailedAt = Date.now()
+    }
     return offlineShell()
-  }).catch(() => offlineShell())
-  event.respondWith(respond)
+  })())
 }
 
 // '/api/images/card/{id}/large' -> '/api/images/card/{id}/small', or null for any other path.
@@ -154,55 +237,67 @@ async function storeImage(cache, request, res) {
 
 // Offline (or on a hung connection) the detail view's large image falls back to the small copy
 // the collection grid already cached. A late network answer is still stored for the next view.
-async function fetchLargeImage(event, cache, smallPath) {
-  const network = fetch(event.request)
-  const store = res => storeImage(cache, event.request, res).catch(() => {})
+async function fetchLargeImage(event, cache, smallPath, offline) {
   const smallCopy = async () => {
     const url = new URL(smallPath, self.location.origin).href
     return (await cache.match(url, { ignoreSearch: true })) || matchDownloadedPicture(new Request(url))
   }
+  if (offline) return (await smallCopy()) || Response.error()
+  const network = fetch(event.request)
+  const store = res => storeImage(cache, event.request, res).catch(() => {})
   const timer = new Promise(resolve => setTimeout(() => resolve(null), LARGE_IMAGE_TIMEOUT_MS))
   let res
   try {
     res = await Promise.race([network, timer])
-  } catch (err) {
-    const small = await smallCopy()
-    if (small) return small
-    throw err
+  } catch {
+    return (await smallCopy()) || Response.error()
   }
   if (res) {
     event.waitUntil(store(res))
     return res
   }
   const small = await smallCopy()
-  if (!small) {
-    const late = await network
-    event.waitUntil(store(late))
-    return late
-  }
+  // No small copy to fall back on: fail now (the tile shows its placeholder) rather than hang
+  // on the connection; a late answer is still stored for the next view.
   event.waitUntil(network.then(store, () => {}))
-  return small
+  return small || Response.error()
 }
 
-// Looks for a picture in the downloaded-pictures caches; null when there is none.
-async function matchDownloadedPicture(request) {
-  for (const name of await caches.keys()) {
-    if (!name.startsWith(CARDDB_IMAGES_PREFIX)) continue
-    const hit = await (await caches.open(name)).match(request, { ignoreSearch: true })
+async function matchPictureCaches(request) {
+  for (const cacheName of pictureCacheNames) {
+    const hit = await caches.match(request, { cacheName, ignoreSearch: true })
     if (hit) return hit
+  }
+  return null
+}
+
+// Looks for a card picture in the downloaded-pictures caches, each searched by name; null when there
+// is none. Only card pictures are downloaded, so set logos and Pokémon sprites never get this far.
+async function matchDownloadedPicture(request) {
+  if (!new URL(request.url).pathname.startsWith('/api/images/card/')) return null
+  await (pictureNamesLoaded || refreshPictureCaches())
+  const hit = await matchPictureCaches(request)
+  if (hit) return hit
+  // A download may have finished since the names were listed: look again, at most every few seconds.
+  if (Date.now() - pictureNamesAt > PICTURE_CACHE_REFRESH_MS) {
+    await refreshPictureCaches()
+    return matchPictureCaches(request)
   }
   return null
 }
 
 function handleImage(event) {
   event.respondWith((async () => {
-    const downloaded = await matchDownloadedPicture(event.request)
-    if (downloaded) return downloaded
     const cache = await caches.open(IMAGES_NAME)
     const hit = await cache.match(event.request)
     if (hit) return hit
+    const downloaded = await matchDownloadedPicture(event.request)
+    if (downloaded) return downloaded
+    const offline = await knownOffline()
     const smallPath = smallImagePath(new URL(event.request.url).pathname)
-    if (smallPath) return fetchLargeImage(event, cache, smallPath)
+    if (smallPath) return fetchLargeImage(event, cache, smallPath, offline)
+    // Known offline and nothing cached: fail at once so the tile shows its placeholder.
+    if (offline) return Response.error()
     const network = fetch(event.request)
     const store = res => storeImage(cache, event.request, res).catch(() => {})
     const timer = new Promise(resolve => setTimeout(() => resolve(null), IMAGE_NETWORK_TIMEOUT_MS))
@@ -228,6 +323,7 @@ self.addEventListener('activate', event => {
         || (name.startsWith('pc-shell-') && name !== SHELL_NAME)
       if (stale) await caches.delete(name)
     }
+    await refreshPictureCaches()
   })())
 })
 
@@ -248,6 +344,10 @@ self.addEventListener('message', event => {
   const data = event.data || {}
   if (data.type === 'SKIP_WAITING') {
     self.skipWaiting()
+  } else if (data.type === 'REACHABILITY') {
+    event.waitUntil(saveState(Boolean(data.offline)))
+  } else if (data.type === 'PICTURE_CACHES_CHANGED') {
+    event.waitUntil(refreshPictureCaches())
   } else if (data.type === 'GET_VERSION' && event.source) {
     event.source.postMessage({ type: 'VERSION', buildId: BUILD_ID, appVersion: self.__PC_APP_VERSION__ || null })
   }

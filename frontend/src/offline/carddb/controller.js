@@ -5,6 +5,7 @@
 import { PictureError, statusError, timed } from './net.js'
 import {
   PICTURE_CACHE_PREFIX,
+  STALL_MS,
   createPictureRecord,
   downloadPictures,
   estimatePictureBytes,
@@ -20,6 +21,13 @@ export const VIEWED_IMAGES_CACHE = 'pc-images-v1'
 export const JSON_TIMEOUT_MS = 45 * 1000
 const RETRY_STATUSES = new Set([429, 502, 503, 504])
 const SPEED_WINDOW_MS = 15 * 1000
+const WATCHDOG_TICK_MS = 5 * 1000
+// A download that paused because of the connection tries again by itself, later each time.
+const AUTO_RESUME_BASE_MS = 20 * 1000
+const AUTO_RESUME_MAX_MS = 2 * 60 * 1000
+const CONNECTION_REASONS = ['offline', 'network', 'timeout', 'server']
+/** How long "Up to date" stays visible after a check that found nothing new. */
+export const UP_TO_DATE_SHOWN_MS = 4 * 1000
 
 /** Card data is on by default (design: F13 decision 5); languages are on unless switched off; pictures are off. */
 export function readPrefs(storage = globalThis.localStorage) {
@@ -86,7 +94,7 @@ export function createFetchJson({ fetchImpl = globalThis.fetch?.bind(globalThis)
 /** A picture pack fetch (the body is read here, so the caller's deadline covers it). Rejects with a
  *  statusError for 5xx, 429 and 401; 404 and 403 resolve as `{ status }` (packs are off or unknown). */
 export function createFetchPack({ fetchImpl = globalThis.fetch?.bind(globalThis), getToken = () => globalThis.localStorage?.getItem('token') } = {}) {
-  return async function fetchPack(path, signal) {
+  return async function fetchPack(path, signal, onChunk) {
     const token = getToken()
     const response = await fetchImpl(path, {
       signal,
@@ -95,8 +103,31 @@ export function createFetchPack({ fetchImpl = globalThis.fetch?.bind(globalThis)
     })
     if (response.status === 404 || response.status === 403) return { status: response.status }
     if (!response.ok) throw statusError(response.status)
-    return { status: 200, buffer: await response.arrayBuffer() }
+    return { status: 200, buffer: await readBody(response, onChunk) }
   }
+}
+
+/** The body as one buffer, read chunk by chunk so every chunk counts as a sign of life (a stalled
+ *  stream stops reporting and the download's watchdog pauses it). */
+async function readBody(response, onChunk) {
+  const reader = response.body?.getReader?.()
+  if (!reader) return response.arrayBuffer()
+  const chunks = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+    total += value.length
+    onChunk?.()
+  }
+  const merged = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    merged.set(chunk, offset)
+    offset += chunk.length
+  }
+  return merged.buffer
 }
 
 const initialSnapshot = () => ({
@@ -123,6 +154,8 @@ export function createCardDbController({
   isOnline = () => globalThis.navigator?.onLine !== false,
   requestPersist = () => globalThis.navigator?.storage?.persist?.(),
   now = Date.now,
+  stallMs = STALL_MS,
+  autoResumeBaseMs = AUTO_RESUME_BASE_MS,
 } = {}) {
   let snapshot = { ...initialSnapshot(), prefs: readPrefs(storage) }
   const listeners = new Set()
@@ -132,6 +165,8 @@ export function createCardDbController({
   let syncAbort = null
   const pictureAborts = new Map()
   const pictureRuns = new Map()
+  const resumeTimers = new Map()
+  const resumeAttempts = new Map()
 
   const emit = patch => {
     snapshot = { ...snapshot, ...patch }
@@ -168,7 +203,7 @@ export function createCardDbController({
     running = (async () => {
       lastRunAt = now()
       syncAbort = new AbortController()
-      emit({ status: 'checking', error: null, progress: null })
+      emit({ status: 'checking', error: null, progress: null, upToDateAt: null })
       try {
         if (!(await store.available())) {
           emit({ status: 'error', storageOk: false, error: 'storage' })
@@ -194,7 +229,11 @@ export function createCardDbController({
             // best effort
           }
         }
-        emit({ serverEnabled: true, available: result.available, status: 'idle', progress: null })
+        const changed = result.languages.some(item => !item.upToDate)
+        emit({
+          serverEnabled: true, available: result.available, status: 'idle', progress: null,
+          checkedAt: now(), upToDateAt: changed ? null : now(),
+        })
         await refreshLanguages()
       } catch (error) {
         if (error instanceof AbortedError) emit({ status: 'idle', progress: null })
@@ -229,9 +268,42 @@ export function createCardDbController({
     }
   }
 
+  const clearResume = lang => {
+    globalThis.clearTimeout(resumeTimers.get(lang))
+    resumeTimers.delete(lang)
+  }
+
+  /** Tries a connection-paused download again after a while (later each time), if it is still paused. */
+  function scheduleResume(lang) {
+    clearResume(lang)
+    const attempt = resumeAttempts.get(lang) ?? 0
+    resumeAttempts.set(lang, attempt + 1)
+    resumeTimers.set(lang, globalThis.setTimeout(() => {
+      resumeTimers.delete(lang)
+      const { status, reason } = snapshot.languages[lang]?.pictures ?? {}
+      if (snapshot.prefs.pictures[lang] && status === 'paused' && CONNECTION_REASONS.includes(reason) && isOnline()) startPictures(lang)
+      else if (snapshot.prefs.pictures[lang] && status === 'paused' && CONNECTION_REASONS.includes(reason)) scheduleResume(lang)
+    }, Math.min(autoResumeBaseMs * 2 ** attempt, AUTO_RESUME_MAX_MS)))
+  }
+
   async function runPictures(lang) {
     const controller = new AbortController()
     pictureAborts.set(lang, controller)
+    clearResume(lang)
+    // Watchdog: no sign of life for `stallMs` (hanging requests, a body that stops mid-way) pauses the
+    // download, whatever the retries underneath are still doing. navigator.onLine is not trusted here.
+    let lastActivity = now()
+    let stalled = false
+    const touch = () => {
+      lastActivity = now()
+      resumeAttempts.delete(lang)
+    }
+    const watchdog = globalThis.setInterval(() => {
+      if (now() - lastActivity >= stallMs) {
+        stalled = true
+        controller.abort()
+      }
+    }, Math.min(WATCHDOG_TICK_MS, Math.max(50, stallMs / 4)))
     try {
       savePrefs({ ...snapshot.prefs, pictures: { ...snapshot.prefs.pictures, [lang]: true } })
       const cache = await openCache(pictureCacheName(lang))
@@ -258,6 +330,7 @@ export function createCardDbController({
           record,
           signal: controller.signal,
           sleep,
+          onActivity: touch,
           onProgress: progress => setPicture(lang, {
             status: 'downloading', doneSets: progress.doneSets, totalSets: progress.totalSets, ...pictureStats(context, progress),
           }),
@@ -266,14 +339,16 @@ export function createCardDbController({
       } catch (error) {
         if (controller.removed) return
         const stopped = { speed: null, etaSeconds: null, bytes: record.bytes(), doneSets: record.doneCount() }
-        if (error instanceof AbortedError) setPicture(lang, { status: 'paused', reason: 'user', ...stopped })
+        if (error instanceof AbortedError && !stalled) setPicture(lang, { status: 'paused', reason: 'user', ...stopped })
         else {
           // A request that hangs while the phone is offline times out; say "offline" then, not "stalled".
-          const reason = !isOnline() ? 'offline' : error instanceof PictureError ? error.reason : 'error'
+          const reason = !isOnline() ? 'offline' : stalled ? 'timeout' : error instanceof PictureError ? error.reason : 'error'
           setPicture(lang, { status: 'paused', reason, error: error?.message || 'error', ...stopped })
+          if (CONNECTION_REASONS.includes(reason)) scheduleResume(lang)
         }
       }
     } finally {
+      globalThis.clearInterval(watchdog)
       pictureAborts.delete(lang)
     }
   }
@@ -287,6 +362,7 @@ export function createCardDbController({
   }
 
   async function stopPictures(lang, { removed = false } = {}) {
+    clearResume(lang)
     const controller = pictureAborts.get(lang)
     if (controller) {
       controller.removed = removed
@@ -368,8 +444,13 @@ export function createCardDbController({
     for (const name of await listCaches()) {
       if (name.startsWith(PICTURE_CACHE_PREFIX) || name === VIEWED_IMAGES_CACHE) await deleteCache(name)
     }
-    for (const lang of langs) pictureRecord(lang).clear()
-    savePrefs({ ...snapshot.prefs, pictures: {} })
-    emit({ languages: {}, progress: null, status: 'idle' })
+    for (const lang of langs) {
+      pictureRecord(lang).clear()
+      clearResume(lang)
+    }
+    // Off, so nothing downloads again behind the person's back; the Settings section stays with
+    // a Download button. The server's answer is kept: the section must not depend on local data.
+    savePrefs({ ...snapshot.prefs, enabled: false, pictures: {} })
+    emit({ languages: {}, progress: null, status: 'idle', serverEnabled: snapshot.serverEnabled ?? true, upToDateAt: null })
   }
 }

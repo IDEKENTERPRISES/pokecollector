@@ -4,6 +4,8 @@
 // page's own error toast shows. Requests the outbox queues are not affected: the outbox replays with
 // `fetch`, and its own queue is what keeps those actions working offline.
 
+import { reportReachability } from '../pwa/swReachability'
+
 export const DEFAULT_OFFLINE_MESSAGE = "Needs a connection. Try again when you're back online."
 
 let serverOffline = false
@@ -12,6 +14,7 @@ let message = DEFAULT_OFFLINE_MESSAGE
 /** OfflineProvider tells the client whether the offline banner is up (the shared reachability). */
 export function setOfflineStatus(next) {
   serverOffline = Boolean(next)
+  reportReachability(serverOffline)
 }
 
 export function setOfflineMessage(next) {

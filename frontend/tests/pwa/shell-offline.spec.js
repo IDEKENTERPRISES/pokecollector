@@ -30,7 +30,7 @@ async function mockApi(context, state) {
   })
 }
 
-test('offline: the tab bar stays, the status line shows, Profile keeps its numbers, Analytics is unavailable', async ({ page, context }) => {
+test('offline: the tab bar stays, the status line shows, Profile keeps its numbers, Analytics opens from its saved copy', async ({ page, context }) => {
   const state = { offline: false }
   await mockApi(context, state)
   await page.setViewportSize({ width: 390, height: 844 })
@@ -78,7 +78,7 @@ test('offline: the tab bar stays, the status line shows, Profile keeps its numbe
 
   await page.getByTestId('profile-tiles').getByRole('link', { name: /Analytics/ }).click()
   await expect(page).toHaveURL(/\/analytics$/)
-  await expect(page.getByTestId('not-saved-note')).toBeVisible()
+  // The sign-in prefetch saved Analytics too, so it opens like any other page (no "not saved yet" note).
   await expect(page.getByTestId('offline-unavailable')).toHaveCount(0)
   await expect(tabBar).toBeVisible()
   await expect(page.getByTestId('offline-banner')).toBeVisible()

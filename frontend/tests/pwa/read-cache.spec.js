@@ -121,10 +121,10 @@ test.describe('read cache', () => {
     // Open the page while the file server still answers: its code is loaded on demand, and a
     // failed chunk load makes the app reload itself once, which would destroy the page under test.
     await page.evaluate(() => {
-      history.pushState({}, '', '/trades')
+      history.pushState({}, '', '/pokedex')
       dispatchEvent(new PopStateEvent('popstate'))
     })
-    await expect(page).toHaveURL(/trades$/)
+    await expect(page).toHaveURL(/pokedex$/)
     await expect(page.getByRole('heading').first()).toBeVisible()
     await context.setOffline(true)
     // The device event shows the banner at once; both checks wait for that state, not for a delay.

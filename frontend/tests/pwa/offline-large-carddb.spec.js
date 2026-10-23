@@ -36,6 +36,8 @@ async function mockApi(context, state) {
       return body ? route.fulfill({ ...json(body), headers: { ETag: '"x"' } }) : route.fulfill({ status: 404, json: {} })
     }
     if (path === '/api/offline/carddb/prices/en') return route.fulfill(json(bodies.prices))
+    // The sign-in prefetch would save an (empty) sets list, and a saved copy wins over the card database.
+    if (path === '/api/sets/') return route.fulfill({ status: 404, json: {} })
     if (path === '/api/collection/') return route.fulfill({ json: [] })
     if (path.startsWith('/api/images/') || path.startsWith('/api/pokedex/')) return route.fulfill({ status: 404, json: {} })
     return route.fulfill({ json: [] })

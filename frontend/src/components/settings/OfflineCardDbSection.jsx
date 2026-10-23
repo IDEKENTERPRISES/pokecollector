@@ -1,9 +1,10 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import api from '../../api/client'
 import { useAuth } from '../../contexts/AuthContext'
 import { useSettings } from '../../contexts/SettingsContext'
+import { UP_TO_DATE_SHOWN_MS } from '../../offline/carddb/controller'
 import { useCardDb } from '../../offline/carddb/useCardDb'
 import HpBar from '../ios/HpBar'
 import ListRow from '../ios/ListRow'
@@ -16,6 +17,14 @@ export function formatBytes(bytes) {
   if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`
   if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(value < 10 * 1024 * 1024 ? 1 : 0)} MB`
   return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
+/** "Today 01:58", or a short date and time for an older update. */
+export function formatUpdated(timestamp, t, now = Date.now()) {
+  const date = new Date(timestamp)
+  const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  if (date.toDateString() === new Date(now).toDateString()) return `${t('offlineDb.today')} ${time}`
+  return `${date.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${time}`
 }
 
 const fill = (template, values) => Object.entries(values).reduce((text, [key, value]) => text.replace(`{${key}}`, value), template)
@@ -88,7 +97,8 @@ function PicturesRow({ lang, info, actions, t }) {
 
 const WARMUP_KEY = ['offline-carddb-picture-warmup']
 
-/** Admins: have the server fetch every card picture from TCGdex ahead of time (about 5 a second). */
+/** Admins: have the server fetch every card picture from TCGdex ahead of time (about 5 a second).
+ *  This describes the server's own picture store, never this phone. */
 function PrepareRow({ t }) {
   const queryClient = useQueryClient()
   const { data } = useQuery({
@@ -102,19 +112,23 @@ function PrepareRow({ t }) {
     onSuccess: state => queryClient.setQueryData(WARMUP_KEY, state),
   })
   if (!data) return null
-  const values = { cached: (data.cached ?? 0).toLocaleString(), total: (data.total ?? 0).toLocaleString(), error: data.error ?? '' }
+  const missing = Math.max(0, (data.total ?? 0) - (data.cached ?? 0))
+  const values = {
+    cached: (data.cached ?? 0).toLocaleString(), total: (data.total ?? 0).toLocaleString(), error: data.error ?? '', missing: missing.toLocaleString(),
+  }
   const running = Boolean(data.running)
-  const complete = !running && data.total > 0 && data.cached >= data.total
-  let text = fill(t('offlineDb.prepareDesc'), values)
+  const nothingMissing = !running && missing === 0
+  let text = fill(t(missing > 0 && !data.error ? 'offlineDb.prepareMissing' : 'offlineDb.prepareDesc'), values)
   if (running) text = fill(t('offlineDb.prepareRunning'), values)
   else if (data.error) text = fill(t('offlineDb.prepareStopped'), values)
+  const retry = !running && missing > 0 && (data.cached ?? 0) > 0
   return (
     <ListRow
       title={t('offlineDb.prepareTitle')}
       subtitle={text}
-      trailing={(
-        <button type="button" className={clsx(pill, 'bg-accent/20 text-tint')} disabled={running || complete || start.isPending} onClick={() => start.mutate()} data-testid="carddb-prepare">
-          {complete ? t('offlineDb.prepareDone') : t('offlineDb.prepareStart')}
+      trailing={nothingMissing ? undefined : (
+        <button type="button" className={clsx(pill, 'bg-accent/20 text-tint')} disabled={running || start.isPending} onClick={() => start.mutate()} data-testid="carddb-prepare">
+          {retry ? fill(t('offlineDb.prepareRetry'), values) : t('offlineDb.prepareStart')}
         </button>
       )}
       testId="carddb-prepare-row"
@@ -151,8 +165,18 @@ export default function OfflineCardDbSection() {
     return () => window.removeEventListener('online', resume)
   }, [actions])
 
+  // "Up to date" shows briefly after a check that found nothing new.
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (!db.upToDateAt) return undefined
+    const timer = window.setTimeout(() => tick(n => n + 1), Math.max(0, db.upToDateAt + UP_TO_DATE_SHOWN_MS - Date.now()) + 50)
+    return () => window.clearTimeout(timer)
+  }, [db.upToDateAt])
+  const showUpToDate = Boolean(db.upToDateAt) && Date.now() - db.upToDateAt < UP_TO_DATE_SHOWN_MS
+  const updating = db.status === 'checking' || db.status === 'downloading'
+
   const hasLocalData = Object.values(db.languages).some(info => info?.meta)
-  if (!db.supported || db.serverEnabled === false || (db.serverEnabled === null && !hasLocalData)) return null
+  if (!db.supported || db.serverEnabled === false || (db.serverEnabled === null && !hasLocalData && db.prefs.enabled)) return null
 
   const languages = [...new Set([...db.available, ...Object.keys(db.languages)])]
   const progress = db.progress
@@ -189,12 +213,23 @@ export default function OfflineCardDbSection() {
         {db.status === 'downloading' && progress && (
           <div className="px-4 pb-3"><HpBar value={progress.doneBytes} max={progress.totalBytes || 1} label={t('offlineDb.title')} /></div>
         )}
+        {!db.prefs.enabled && !hasLocalData && (
+          <ListRow
+            title={t('offlineDb.notOnDevice')}
+            trailing={<button type="button" className={clsx(pill, 'bg-accent/20 text-tint')} onClick={() => actions.setEnabled(true)} data-testid="carddb-download">{t('offlineDb.downloadAll')}</button>}
+            testId="carddb-empty"
+          />
+        )}
         {db.prefs.enabled && languages.map(lang => {
           const info = db.languages[lang]
           const meta = info?.meta
+          const updatedAt = Math.max(meta?.syncedAt ?? 0, db.checkedAt ?? 0)
+          let when = meta ? formatUpdated(updatedAt, t) : null
+          if (meta && updating) when = t('offlineDb.updating')
+          else if (meta && showUpToDate) when = t('offlineDb.upToDate')
           const subtitle = meta
             ? fill(t('offlineDb.updated'), {
-              date: new Date(meta.syncedAt).toLocaleDateString(),
+              date: when,
               size: formatBytes(info.bytes),
               cards: (meta.cards ?? 0).toLocaleString(),
             })
@@ -220,11 +255,15 @@ export default function OfflineCardDbSection() {
             <PicturesRow lang={lang} info={db.languages[lang]} actions={actions} t={t} />
           </div>
         ))}
-        {user?.role === 'admin' && <PrepareRow t={t} />}
         {hasLocalData && (
           <ListRow title={t('offlineDb.removeAll')} destructive onClick={() => actions.removeAll()} testId="carddb-remove" />
         )}
       </ListSection>
+      {user?.role === 'admin' && (
+        <ListSection header={t('offlineDb.serverHeader')} footer={t('offlineDb.serverFooter')}>
+          <PrepareRow t={t} />
+        </ListSection>
+      )}
     </div>
   )
 }
