@@ -20,11 +20,17 @@ def start(kind: str) -> None:
         _state = {"kind": kind, "stage": "starting", "done": 0, "total": 0}
 
 
-def update(stage: str, done: int = 0, total: int = 0) -> None:
-    """Set the stage and its counters. total 0 means the size is not known."""
+def update(stage: str, done: int = 0, total: int = 0, overall_total: int | None = None) -> None:
+    """Set the stage and its counters. total 0 means the size is not known.
+
+    overall_total is the full amount of work when this sync only does `total` of it (the rest follows in later syncs).
+    """
     with _lock:
         if _state is not None:
             _state.update(stage=stage, done=max(0, int(done)), total=max(0, int(total)))
+            _state.pop("overall_total", None)
+            if overall_total is not None:
+                _state["overall_total"] = max(0, int(overall_total))
 
 
 def advance(done: int, total: int | None = None) -> None:

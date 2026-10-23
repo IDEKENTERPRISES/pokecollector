@@ -165,8 +165,13 @@ class CardVisibilityTests(unittest.TestCase):
         }
         self.assertEqual(fr_card_ids, {"sv2-1_fr", "sv2-2_fr"})
 
-    def test_background_sync_keeps_app_wide_pinned_sets(self):
+    def test_background_sync_skips_pinned_sets_of_deselected_languages(self):
         sync_set_ids = {row.id for row in self.db.query(Set).filter(sync_set_filter(self.db)).all()}
+        self.assertEqual(sync_set_ids, {"sv1_en", "sv1_de"})
+
+    def test_background_sync_keeps_pinned_sets_when_switch_is_on(self):
+        with patch.dict("os.environ", {"SYNC_DESELECTED_LANGUAGES": "1"}):
+            sync_set_ids = {row.id for row in self.db.query(Set).filter(sync_set_filter(self.db)).all()}
         self.assertIn("sv1_en", sync_set_ids)
         self.assertIn("sv1_de", sync_set_ids)
         self.assertIn("sv2_fr", sync_set_ids)
@@ -333,8 +338,15 @@ class CardVisibilityTests(unittest.TestCase):
         self.assertTrue(best["has_custom_image_fallback"])
         self.assertNotIn("custom_image_url", best)
 
-    def test_full_sync_price_plan_includes_all_cards_in_pinned_set(self):
+    def test_full_sync_price_plan_skips_cards_of_deselected_languages(self):
         plan = _price_sync_plan(self.db, force=True, include_pinned_sets=True)
+
+        for card_id in ("sv2-1_fr", "sv2-2_fr", "sv3-1_ja", "sv4-1_nl"):
+            self.assertNotIn(card_id, plan["ids"])
+
+    def test_full_sync_price_plan_includes_all_cards_in_pinned_set_when_switch_is_on(self):
+        with patch.dict("os.environ", {"SYNC_DESELECTED_LANGUAGES": "1"}):
+            plan = _price_sync_plan(self.db, force=True, include_pinned_sets=True)
 
         self.assertIn("sv2-1_fr", plan["ids"])
         self.assertIn("sv2-2_fr", plan["ids"])

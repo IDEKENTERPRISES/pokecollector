@@ -1187,6 +1187,7 @@ const de = {
     syncStagePrices: 'Preise werden aktualisiert',
     syncStageRetrying: 'Fehlgeschlagene Abfragen werden wiederholt',
     syncProgressOf: '{done} von {total}',
+    syncProgressOfOverall: '{done} von {total} in diesem Sync, {overall} insgesamt; der Rest folgt in späteren Syncs',
     syncStillFailing: '{count} Abfragen sind weiterhin fehlgeschlagen. Sie werden beim nächsten Sync erneut versucht.',
     syncStillFailingOne: '1 Abfrage ist weiterhin fehlgeschlagen. Sie wird beim nächsten Sync erneut versucht.',
     syncRetriedOk: '{count} fehlgeschlagene Abfragen wurden wiederholt und waren erfolgreich.',

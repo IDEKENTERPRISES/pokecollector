@@ -2,6 +2,7 @@ import functools
 import logging
 import datetime
 import math
+import os
 from contextlib import contextmanager
 from typing import Any, Iterable, Mapping
 
@@ -13,10 +14,10 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from models import Card, Set, CollectionItem, WishlistItem, BinderCard, PriceHistory, SyncLog, PortfolioSnapshot, CustomCardMatch, User, UserSetting
 from services import pokemon_api, push, telegram
 from services.card_fallbacks import apply_cross_language_fallbacks, build_missing_language_cards_for_set
-from services.card_metadata import enrich_cards_metadata, enrich_missing_card_metadata
+from services.card_metadata import count_cards_missing_metadata, enrich_cards_metadata, enrich_missing_card_metadata
 from services.card_numbers import candidate_card_ids, number_matches_candidate
 from services.card_upsert import upsert_card
-from services.card_visibility import card_pair_filter, get_configured_sync_languages, get_pinned_set_language_pairs, sync_set_filter
+from services.card_visibility import card_pair_filter, get_configured_sync_languages, get_sync_pinned_set_language_pairs, language_is_syncable, sync_set_filter
 from services.digital_sets import digital_sets_enabled, refresh_digital_catalogue_flags
 from services.card_values import effective_market_price, normalize_price_field
 from services.portfolio_valuation import calculate_portfolio_valuation, portfolio_snapshot_fields
@@ -92,7 +93,28 @@ def _price_sync_limit(db: Session) -> int:
     return min(MAX_PRICE_CARDS_PER_SYNC, max(MIN_PRICE_CARDS_PER_SYNC, scaled_limit))
 
 
+MAX_CARD_DETAILS_PER_SYNC_SETTING = 50000
+
+
+def _card_details_per_sync_setting() -> int | None:
+    """CARD_DETAILS_PER_SYNC overrides the card-details cap of a full sync; unset/invalid keeps the default."""
+    raw = os.environ.get("CARD_DETAILS_PER_SYNC", "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return min(value, MAX_CARD_DETAILS_PER_SYNC_SETTING) if value > 0 else None
+
+
 def _metadata_enrichment_limit(db: Session) -> int:
+    """Card details fetched per full sync, one request each.
+
+    Default: min(2000, max(1000, 0.75 x collection size)), capped by the price limit. Set
+    CARD_DETAILS_PER_SYNC (e.g. 5000) to raise or lower it; requests stay sequential.
+    """
+    configured = _card_details_per_sync_setting()
+    if configured is not None:
+        return configured
     return min(MAX_METADATA_CARDS_PER_FULL_SYNC, _price_sync_limit(db))
 
 
@@ -160,7 +182,7 @@ def _price_sync_plan(
             latest_activity[card_id] = normalized_seen_at
 
     if include_pinned_sets:
-        pinned_pairs = get_pinned_set_language_pairs(db)
+        pinned_pairs = get_sync_pinned_set_language_pairs(db)
         if pinned_pairs:
             pinned_card_query = db.query(Card.id).filter(
                 card_pair_filter(pinned_pairs),
@@ -176,6 +198,7 @@ def _price_sync_plan(
         return _empty_price_sync_plan(_price_sync_limit(db))
 
     syncable_cards = []
+    selected_languages = set(get_configured_sync_languages(db))
     price_columns = [getattr(Card, field) for field in PRICE_FIELDS]
     for card_id_chunk in _chunks(latest_activity.keys(), PRICE_SYNC_DB_CHUNK_SIZE):
         cards = db.query(Card).options(
@@ -187,6 +210,7 @@ def _price_sync_plan(
                 Card.is_custom,
                 Card.is_digital,
                 Card.tcg_card_id,
+                Card.lang,
                 *price_columns,
             )
         ).filter(Card.id.in_(card_id_chunk)).all()
@@ -194,6 +218,8 @@ def _price_sync_plan(
             card for card in cards
             if not getattr(card, "is_custom", False) and getattr(card, "tcg_card_id", None)
             and (include_digital or not getattr(card, "is_digital", False))
+            # Owned cards of a deselected language keep their stored prices; nothing is requested for them.
+            and language_is_syncable(db, getattr(card, "lang", None), selected_languages)
         )
 
     sync_limit = _price_sync_limit(db)
@@ -289,6 +315,10 @@ def _fetch_and_store_price_card(db: Session, card_id: str, label: str):
     """
     attempted_at = datetime.datetime.utcnow()
     tcg_id, card_lang = pokemon_api.strip_lang_suffix(card_id)
+    if not language_is_syncable(db, card_lang):
+        # Also stops queued retries for a language deselected since the lookup was queued.
+        logger.debug("%s card skipped, language not selected: card_id=%s lang=%s", label, card_id, card_lang)
+        return None
     existing_card = db.query(Card).filter(Card.id == card_id).first()
     logger.debug(
         "%s card start: card_id=%s tcg_id=%s lang=%s existing_prices=%s existing_price_source_lang=%s",
@@ -307,6 +337,7 @@ def _fetch_and_store_price_card(db: Session, card_id: str, label: str):
         return None
 
     parsed = pokemon_api.parse_card_for_db(card_data, lang=card_lang)
+    parsed = pokemon_api.keep_row_identity(parsed, card_id, tcg_id)
     parsed = apply_cross_language_fallbacks(db, parsed)
     parsed = _mark_price_sync_attempt(parsed, attempted_at)
     # Ensure set exists (check by tcg_set_id since set IDs are now composite)
@@ -918,7 +949,7 @@ def _perform_full_sync_locked(db: Session) -> dict:
                 flag_result["sets_marked"],
                 flag_result["cards_marked"],
             )
-        pinned_set_pairs = get_pinned_set_language_pairs(db)
+        pinned_set_pairs = get_sync_pinned_set_language_pairs(db)
         logger.info("Syncing sets for languages: %s", ", ".join(sync_languages))
         sync_progress.update("sets")
         sets_data = pokemon_api.get_all_sets(languages=sync_languages, include_digital=include_digital)
@@ -985,7 +1016,7 @@ def _perform_full_sync_locked(db: Session) -> dict:
         # entire disabled language visible again.
         sets_to_sync = _sets_for_card_catalogue_sync(db)
         logger.info(
-            "Syncing full card catalogue for %s sets (%s pinned set-language pairs)...",
+            "Syncing full card catalogue for %s sets (%s extra pinned set-language pairs)...",
             len(sets_to_sync),
             len(pinned_set_pairs),
         )
@@ -1008,11 +1039,22 @@ def _perform_full_sync_locked(db: Session) -> dict:
         # batch with full card detail so global search filters can work on
         # unowned catalogue cards without making every full sync unbounded.
         metadata_limit = _metadata_enrichment_limit(db)
-        sync_progress.update("metadata", 0, metadata_limit)
+        metadata_backlog = count_cards_missing_metadata(db)
+        # Progress shows this sync's share of the whole backlog, e.g. "1,000 of 28,412 this sync".
+        metadata_overall = metadata_backlog["due"] if metadata_backlog["due"] > metadata_limit else None
+        logger.info(
+            "Card details: %s cards still lack full details (%s due now, %s on cooldown); "
+            "fetching up to %s this sync, the rest follow in later syncs",
+            metadata_backlog["missing"],
+            metadata_backlog["due"],
+            metadata_backlog["missing"] - metadata_backlog["due"],
+            metadata_limit,
+        )
+        sync_progress.update("metadata", 0, min(metadata_limit, metadata_backlog["due"]), overall_total=metadata_overall)
         metadata_result = enrich_missing_card_metadata(
             db,
             limit=metadata_limit,
-            on_progress=lambda done, total: sync_progress.update("metadata", done, total),
+            on_progress=lambda done, total: sync_progress.update("metadata", done, total, overall_total=metadata_overall),
         )
         for transient_card_id, transient_exc in metadata_result.get("transient", []):
             retry_queue.add(

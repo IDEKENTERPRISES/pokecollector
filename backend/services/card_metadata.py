@@ -6,13 +6,14 @@ import datetime
 import logging
 from typing import Iterable
 
-from sqlalchemy import JSON, and_, case, func, or_
+from sqlalchemy import JSON, and_, case, func, or_, true
 from sqlalchemy.orm import Session
 
 from models import Card, Set
 from services import pokemon_api
 from services.card_fallbacks import apply_cross_language_fallbacks
 from services.card_upsert import upsert_card
+from services.card_visibility import get_configured_sync_languages, language_is_syncable, sync_deselected_languages_enabled
 from services.sync_retry import is_transient_error
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,7 @@ def enrich_card_metadata(db: Session, card: Card) -> Card | None:
         return None
 
     parsed = pokemon_api.parse_card_for_db(card_data, lang=card_lang)
+    parsed = pokemon_api.keep_row_identity(parsed, card.id, detail_id)
     parsed = apply_cross_language_fallbacks(db, parsed)
     _clear_missing_set_reference(db, parsed)
     return upsert_card(db, parsed)
@@ -178,10 +180,13 @@ def enrich_cards_metadata(
         "transient": [],
     }
     selected: list[tuple[str, datetime.datetime | None]] = []
+    selected_languages = set(get_configured_sync_languages(db))
     for card in cards:
         if len(selected) >= limit:
             break
         if not card or card.is_custom or not (card.tcg_card_id or card.id):
+            continue
+        if not language_is_syncable(db, card.lang, selected_languages):
             continue
         if not ignore_cooldown and not _metadata_enrichment_attempt_is_due(card):
             continue
@@ -288,6 +293,52 @@ def enrich_card_metadata_ids_in_background(card_ids: Iterable[str]) -> None:
         db.close()
 
 
+def _missing_metadata_filter():
+    """Catalogue rows that still only have brief set-list data (no cooldown applied)."""
+    return and_(
+        Card.is_custom == False,
+        Card.tcg_card_id.isnot(None),
+        or_(
+            Card.rarity.is_(None),
+            Card.supertype.is_(None),
+            Card.subtypes.is_(None),
+            and_(Card.types.is_(None), func.lower(Card.supertype).in_(ELEMENTAL_SUPERTYPE_VALUES)),
+            and_(
+                or_(_json_value_missing(Card.dex_ids), _json_value_missing(Card.cardmarket_products)),
+                func.lower(Card.supertype).in_(POKEMON_SUPERTYPE_VALUES),
+            ),
+        ),
+    )
+
+
+def _syncable_language_filter(db: Session):
+    """Only cards in selected languages are enriched (unless SYNC_DESELECTED_LANGUAGES is on)."""
+    if sync_deselected_languages_enabled():
+        return true()
+    return Card.lang.in_(get_configured_sync_languages(db))
+
+
+def count_cards_missing_metadata(db: Session) -> dict:
+    """How many selected-language catalogue cards still lack full details, and per language.
+
+    ``due`` excludes cards attempted inside the 7-day cooldown.
+    """
+    cooldown_cutoff = datetime.datetime.utcnow() - METADATA_ENRICHMENT_COOLDOWN
+    base = db.query(Card.lang, func.count(Card.id)).filter(
+        _missing_metadata_filter(), _syncable_language_filter(db)
+    )
+    per_language = {lang or "en": count for lang, count in base.group_by(Card.lang).all()}
+    due = db.query(func.count(Card.id)).filter(
+        _missing_metadata_filter(),
+        _syncable_language_filter(db),
+        or_(
+            Card.last_metadata_enrichment_attempt_at.is_(None),
+            Card.last_metadata_enrichment_attempt_at <= cooldown_cutoff,
+        ),
+    ).scalar() or 0
+    return {"missing": sum(per_language.values()), "due": int(due), "per_language": per_language}
+
+
 def enrich_missing_card_metadata(
     db: Session,
     *,
@@ -299,21 +350,11 @@ def enrich_missing_card_metadata(
     candidates = (
         db.query(Card)
         .filter(
-            Card.is_custom == False,
-            Card.tcg_card_id.isnot(None),
+            _missing_metadata_filter(),
+            _syncable_language_filter(db),
             or_(
                 Card.last_metadata_enrichment_attempt_at.is_(None),
                 Card.last_metadata_enrichment_attempt_at <= cooldown_cutoff,
-            ),
-            or_(
-                Card.rarity.is_(None),
-                Card.supertype.is_(None),
-                Card.subtypes.is_(None),
-                and_(Card.types.is_(None), func.lower(Card.supertype).in_(ELEMENTAL_SUPERTYPE_VALUES)),
-                and_(
-                    or_(_json_value_missing(Card.dex_ids), _json_value_missing(Card.cardmarket_products)),
-                    func.lower(Card.supertype).in_(POKEMON_SUPERTYPE_VALUES),
-                ),
             ),
         )
         .order_by(

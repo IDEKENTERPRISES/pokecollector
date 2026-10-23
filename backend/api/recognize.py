@@ -8,6 +8,7 @@ import os
 import json
 import re
 import warnings
+from urllib.parse import quote
 from collections.abc import Callable
 from email.utils import parsedate_to_datetime
 from functools import lru_cache
@@ -1052,7 +1053,7 @@ async def _fill_candidate_details(
                 return
             try:
                 response = await client.get(
-                    f"https://api.tcgdex.net/v2/{language}/cards/{tcg_id}"
+                    f"https://api.tcgdex.net/v2/{language}/cards/{quote(str(tcg_id), safe='')}"
                 )
                 if response.status_code != 200:
                     return

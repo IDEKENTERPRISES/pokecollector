@@ -140,7 +140,7 @@ class FullSyncGuardTests(unittest.TestCase):
              patch("services.sync_service._get_tcgdex_sync_languages", return_value=["en"]), \
              patch("services.sync_service.digital_sets_enabled", return_value=False), \
              patch("services.sync_service.refresh_digital_catalogue_flags", return_value={"sets_marked": 0, "cards_marked": 0}), \
-             patch("services.sync_service.get_pinned_set_language_pairs", return_value=set()), \
+             patch("services.sync_service.get_sync_pinned_set_language_pairs", return_value=set()), \
              patch("services.sync_service.pokemon_api.get_all_sets", side_effect=RuntimeError("catalogue failed")):
             with self.assertRaises(RuntimeError):
                 perform_full_sync(db)
