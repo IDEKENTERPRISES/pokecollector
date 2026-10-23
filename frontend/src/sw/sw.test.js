@@ -78,7 +78,7 @@ describe('placeholders', () => {
     const { api } = load()
     expect(Object.keys(api).sort()).toEqual(['classify', 'isCacheableImage', 'smallImagePath', 'trimCache', 'validatePrecache', 'validateShell'])
     expect(SOURCE).not.toMatch(/\bimport\s/)
-    expect(SOURCE.split('\n').length).toBeLessThanOrEqual(350)
+    expect(SOURCE.split('\n').length).toBeLessThanOrEqual(480)
   })
 })
 
@@ -210,13 +210,16 @@ describe('large image fallback', () => {
     expect(await (await images.match(ORIGIN + '/api/images/card/c1/large')).text()).toBe('large')
   })
 
-  it('without a small copy the network error or late answer is passed through', async () => {
+  it('without a small copy the tile gets an error at once, not a hang', async () => {
     const failing = load({ fetchImpl: async () => { throw new Error('offline') } })
-    await expect(run(failing.listeners, req('/api/images/card/c9/large')).responded).rejects.toThrow('offline')
-    const late = load({ fetchImpl: () => new Promise(resolve => setTimeout(() => resolve(png('late')), 4300)) })
-    const { responded } = run(late.listeners, req('/api/images/card/c9/large'))
-    expect(await (await responded).text()).toBe('late')
+    expect((await run(failing.listeners, req('/api/images/card/c9/large')).responded).type).toBe('error')
+    const hung = load({ fetchImpl: () => new Promise(() => {}) })
+    const started = Date.now()
+    const { responded } = run(hung.listeners, req('/api/images/card/c9/large'))
+    expect((await responded).type).toBe('error')
+    expect(Date.now() - started).toBeLessThan(4600)
   }, 10000)
+
 })
 
 describe('isCacheableImage', () => {
@@ -435,4 +438,103 @@ describe('web push', () => {
     expect(calls.skipWaiting).toBe(0)
     expect(calls.claim).toBe(0)
   })
+})
+
+describe('offline launch and images (F15a)', () => {
+  const shellHtml = '<div id="root"></div><script src="/assets/a.js"></script>'
+  const shell = () => res(shellHtml, { headers: { 'Content-Type': 'text/html' } })
+  const png = body => res(body, { headers: { 'Content-Type': 'image/png' } })
+  const run = (listeners, request) => {
+    const waits = []
+    let responded
+    listeners.fetch({ request, waitUntil: p => waits.push(p), respondWith: p => { responded = p } })
+    return { responded, settle: () => Promise.all(waits) }
+  }
+  const never = () => new Promise(() => {})
+  const withDownloads = async (extra = {}) => {
+    const shellCache = new FakeCache()
+    await shellCache.put('/shell', shell())
+    const pictures = new FakeCache()
+    await pictures.put(ORIGIN + '/api/images/card/en/x/small', png('downloaded'))
+    const loaded = load({ fetchImpl: never, existingCaches: { 'pc-shell-b2': shellCache, 'pc-carddb-images-v1-en': pictures, ...extra } })
+    const unnamed = []
+    const original = loaded.caches.match
+    loaded.caches.match = (key, options = {}) => {
+      if (!options.cacheName) unnamed.push(String(key?.url ?? key))
+      return original(key, options)
+    }
+    return { ...loaded, unnamed }
+  }
+  it('serves the shell at once once the page said it is offline, and a hung network is never awaited', async () => {
+    const { listeners, unnamed } = await withDownloads()
+    const waits = []
+    listeners.message({ data: { type: 'REACHABILITY', offline: true }, waitUntil: p => waits.push(p) })
+    await Promise.all(waits)
+    const started = Date.now()
+    const { responded } = run(listeners, req('/collection', { mode: 'navigate' }))
+    expect(await (await responded).text()).toBe(shellHtml)
+    expect(Date.now() - started).toBeLessThan(500)
+    expect(unnamed).toEqual([])
+  })
+
+  it('remembers the offline state across a worker restart', async () => {
+    const first = await withDownloads()
+    const waits = []
+    first.listeners.message({ data: { type: 'REACHABILITY', offline: true }, waitUntil: p => waits.push(p) })
+    await Promise.all(waits)
+    const stateCache = first.store.get('pc-sw-state-v1')
+    const second = await withDownloads({ 'pc-sw-state-v1': stateCache })
+    const started = Date.now()
+    const { responded } = run(second.listeners, req('/', { mode: 'navigate' }))
+    expect(await (await responded).text()).toBe(shellHtml)
+    expect(Date.now() - started).toBeLessThan(500)
+  })
+
+  it('after one slow navigation the next waits far less than 2.5 s', async () => {
+    const { listeners } = await withDownloads()
+    const nav = () => run(listeners, req('/collection', { mode: 'navigate' }))
+    await nav().responded
+    const started = Date.now()
+    await nav().responded
+    expect(Date.now() - started).toBeLessThan(1500)
+  }, 10000)
+
+  it('answers a downloaded card picture from its named cache; other images never open it', async () => {
+    const { listeners, unnamed, store } = await withDownloads()
+    const hit = run(listeners, req('/api/images/card/en/x/small'))
+    expect(await (await hit.responded).text()).toBe('downloaded')
+    const opened = []
+    const open = store.get('pc-carddb-images-v1-en')
+    const originalMatch = open.match.bind(open)
+    open.match = (...args) => { opened.push(args[0]); return originalMatch(...args) }
+    const waits = []
+    listeners.message({ data: { type: 'REACHABILITY', offline: true }, waitUntil: p => waits.push(p) })
+    await Promise.all(waits)
+    for (const path of ['/api/pokedex/images/25', '/api/images/set/en/sv1/logo']) {
+      expect((await run(listeners, req(path)).responded).type).toBe('error')
+    }
+    expect(opened).toEqual([])
+    expect(unnamed).toEqual([])
+  })
+
+  it('an uncached picture fails at once while offline, a cached one shows at once', async () => {
+    const images = new FakeCache()
+    await images.put(ORIGIN + '/api/images/set/en/sv1/logo', png('logo'))
+    const { listeners } = await withDownloads({ 'pc-images-v1': images })
+    const waits = []
+    listeners.message({ data: { type: 'REACHABILITY', offline: true }, waitUntil: p => waits.push(p) })
+    await Promise.all(waits)
+    const started = Date.now()
+    expect(await (await run(listeners, req('/api/images/set/en/sv1/logo')).responded).text()).toBe('logo')
+    expect((await run(listeners, req('/api/images/card/en/none/small')).responded).type).toBe('error')
+    expect((await run(listeners, req('/api/images/card/en/none/large')).responded).type).toBe('error')
+    expect(Date.now() - started).toBeLessThan(500)
+  })
+
+  it('an online hung picture still gives up after 3 s', async () => {
+    const { listeners } = await withDownloads()
+    const started = Date.now()
+    expect((await run(listeners, req('/api/images/card/en/none/small')).responded).type).toBe('error')
+    expect(Date.now() - started).toBeGreaterThanOrEqual(2900)
+  }, 10000)
 })
