@@ -1,17 +1,18 @@
-// Optional small card pictures per language, kept in their own Cache Storage cache (not the
-// service worker's 800-image one). The worker's image route also looks in these caches, so the
-// pictures show offline everywhere.
+// Optional small card pictures per language, kept in the picture store (pictureStore.js, F16a): one
+// IndexedDB Blob per set plus an index, which the service worker's image route slices, so the
+// pictures show offline everywhere. (Until F16a they were one Cache Storage entry each, in
+// PICTURE_CACHE_PREFIX caches; those are only migrated away now, see pictureMigration.js.)
 //
-// One request per set (F14b): the server sends a set's pictures as one "pack" that is unpacked into
-// one Cache Storage entry per picture, under the URL the worker looks up. Pictures the server could
-// not include are fetched singly. Progress is saved per set, so a stopped download continues with
-// the next unfinished set, also after an app restart.
+// One request per set (F14b): the server sends a set's pictures as one "pack" that is stored as it
+// is. Pictures the server could not include are fetched singly. Progress is saved per set, so a
+// stopped download continues with the next unfinished set, also after an app restart.
 
 import { PictureError, retrying, sleepMs, statusError, timed } from './net.js'
 import { AbortedError } from './sync.js'
 
 export const PICTURE_CACHE_PREFIX = 'pc-carddb-images-v1-'
 export const RECORD_PREFIX = 'pc-carddb-pictures-v1-'
+/** The pre-F16a Cache Storage cache of a language (only migrated away). */
 export const pictureCacheName = lang => `${PICTURE_CACHE_PREFIX}${lang}`
 /** A rough average for the size estimate shown before downloading (a small card is about 20 KB). */
 export const AVERAGE_PICTURE_BYTES = 20 * 1024
@@ -71,13 +72,13 @@ export function createPictureRecord(storage, lang) {
     const parsed = JSON.parse(storage?.getItem(key) || 'null')
     if (parsed && typeof parsed.sets === 'object') data = parsed
   } catch {
-    // unreadable: start over, the cache check below finds what is already saved
+    // unreadable: start over, the store check below finds what is already saved
   }
   const save = () => {
     try {
       storage?.setItem(key, JSON.stringify(data))
     } catch {
-      // a full storage only means the next resume re-checks the cache
+      // a full storage only means the next resume re-checks the store
     }
   }
   return {
@@ -110,22 +111,21 @@ const isStorableImage = response => Boolean(response)
   && !response.redirected
   && contentTypeOf(response).startsWith('image/')
 
-async function allCached(urls, cache) {
-  for (const url of urls) if (!(await cache.match(url))) return false
-  return true
-}
+const allKnown = (urls, known) => urls.every(url => known.has(url))
 
-async function putSafely(cache, url, body) {
+async function storing(work) {
   try {
-    await cache.put(url, body)
+    return await work()
   } catch (error) {
     // Quota exceeded or similar: stop, what was saved stays.
     throw new PictureError('storage', error?.message || 'storage')
   }
 }
 
+const pathOfCard = id => cardPictureUrl(id)
+
 /** Fetches one picture the pack did not carry. Returns the bytes stored, or null when the server refused this picture. */
-async function downloadSingle({ url, cache, fetchImage, signal, timeoutMs, retries, sleep, touch }) {
+async function downloadSingle({ url, lang, store, known, fetchImage, signal, timeoutMs, retries, sleep, touch }) {
   return retrying(() => timed(async inner => {
     let response
     try {
@@ -139,8 +139,10 @@ async function downloadSingle({ url, cache, fetchImage, signal, timeoutMs, retri
     if (!isStorableImage(response)) return null // a refusal for this one picture: skip it
     const blob = typeof response.blob === 'function' ? await response.blob() : null
     touch()
-    await putSafely(cache, url, blob ? new Response(blob, { headers: { 'Content-Type': contentTypeOf(response) } }) : response)
-    return blob?.size ?? 0
+    if (!blob) return null
+    await storing(() => store.putLoose({ lang, path: url, blob, type: contentTypeOf(response) }))
+    known.add(url)
+    return blob.size
   }, timeoutMs, signal), { attempts: retries, signal, sleep })
 }
 
@@ -182,7 +184,7 @@ async function runPool(items, concurrency, signal, worker) {
  * failing after its retries or the device cannot store more; finished sets stay saved.
  */
 export async function downloadPictures({
-  lang, sets, cache, fetchPack, fetchImage, record, signal, onProgress = () => {}, sleep = sleepMs,
+  lang, sets, store, fetchPack, fetchImage, record, signal, onProgress = () => {}, sleep = sleepMs,
   concurrency = PACK_CONCURRENCY, singleConcurrency = SINGLE_CONCURRENCY,
   packTimeoutMs = PACK_TIMEOUT_MS, singleTimeoutMs = SINGLE_TIMEOUT_MS, retries = 3, onActivity = () => {},
 }) {
@@ -192,13 +194,14 @@ export async function downloadPictures({
   let bytes = 0
   onProgress({ doneSets, totalSets, bytes })
   const todo = sets.filter(payload => payload?.set?.id && !record.isDone(payload.set.id))
+  const known = todo.length ? await storing(() => store.knownPaths(pathOfCard)) : new Set()
 
   await runPool(todo, concurrency, signal, async (payload, laneSignal) => {
     const setId = payload.set.id
     const urls = pictureUrlsFor([payload])
     let setBytes = 0
     let skipped = 0
-    if (!(await allCached(urls, cache))) {
+    if (!allKnown(urls, known)) {
       let wanted = urls
       const pack = await retrying(() => timed(async inner => {
         let response
@@ -213,20 +216,20 @@ export async function downloadPictures({
       touch()
       if (pack.status === 200 && pack.buffer) {
         const parsed = parsePack(pack.buffer)
-        for (const item of parsed.items) {
-          await putSafely(cache, cardPictureUrl(item.id), new Response(item.bytes, { headers: { 'Content-Type': item.type } }))
-          touch()
-        }
+        // The whole pack is the Blob; each picture is a slice of it, found through the index.
+        const items = parsed.items.map(item => ({ id: item.id, offset: item.bytes.byteOffset, length: item.bytes.byteLength, type: item.type }))
+        await storing(() => store.putPack({ lang, setId, blob: new Blob([pack.buffer]), items }))
+        for (const item of items) known.add(cardPictureUrl(item.id))
+        touch()
         setBytes += pack.buffer.byteLength
         bytes += pack.buffer.byteLength
         const have = new Set(parsed.items.map(item => cardPictureUrl(item.id)))
         wanted = urls.filter(url => !have.has(url))
       }
       // The pictures the pack did not carry (and the set's logo and symbol) one by one.
-      const singles = []
-      for (const url of wanted) if (!(await cache.match(url))) singles.push(url)
+      const singles = wanted.filter(url => !known.has(url))
       await runPool(singles, singleConcurrency, laneSignal, async url => {
-        const stored = await downloadSingle({ url, cache, fetchImage, signal: laneSignal, timeoutMs: singleTimeoutMs, retries, sleep, touch })
+        const stored = await downloadSingle({ url, lang, store, known, fetchImage, signal: laneSignal, timeoutMs: singleTimeoutMs, retries, sleep, touch })
         if (stored === null) skipped += 1
         setBytes += stored ?? 0
         bytes += stored ?? 0
@@ -241,18 +244,20 @@ export async function downloadPictures({
 }
 
 /**
- * Marks sets whose pictures are all cached already (an earlier download, or one from before progress was
+ * Marks sets whose pictures are all stored already (an earlier download, or one from before progress was
  * saved) and returns `{ doneSets, totalSets, remainingUrls }` without downloading anything.
  */
-export async function inspectPictureSets({ sets, cache, record }) {
+export async function inspectPictureSets({ sets, store, record }) {
   let doneSets = 0
   let remainingUrls = 0
+  // A store that cannot be opened (no IndexedDB) reads as "nothing downloaded".
+  const known = store ? await store.knownPaths(pathOfCard).catch(() => null) : null
   for (const payload of sets) {
     const setId = payload?.set?.id
     if (!setId) continue
     const urls = pictureUrlsFor([payload])
     if (record.isDone(setId)) doneSets += 1
-    else if (cache && urls.length && (await allCached(urls, cache))) {
+    else if (known && urls.length && allKnown(urls, known)) {
       record.markDone(setId, { bytes: 0, skipped: 0 })
       doneSets += 1
     } else remainingUrls += urls.length

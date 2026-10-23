@@ -17,7 +17,7 @@ export function getCardDbController() {
 
 const NOOP_SNAPSHOT = Object.freeze({
   serverEnabled: false, available: [], status: 'idle', progress: null, languages: {}, storageOk: false, error: null,
-  prefs: { enabled: false, languages: {}, pictures: {} },
+  prefs: { enabled: false, languages: {}, pictures: {} }, picturesMigrated: [],
 })
 const noopSubscribe = () => () => {}
 
@@ -49,6 +49,10 @@ export function CardDbAutoSync() {
     const timer = window.setTimeout(() => {
       whenLaunchSplashClosed(3000).then(run)
     }, 3000)
+    // The old picture caches (pre-F16a) are removed well after the first screen, in the background.
+    const migrateTimer = window.setTimeout(() => {
+      instance.migrateLegacyPictures().catch(() => {})
+    }, 8000)
     const onVisible = () => {
       if (document.visibilityState === 'visible') run()
     }
@@ -56,6 +60,7 @@ export function CardDbAutoSync() {
     document.addEventListener('visibilitychange', onVisible)
     return () => {
       window.clearTimeout(timer)
+      window.clearTimeout(migrateTimer)
       window.removeEventListener('online', run)
       document.removeEventListener('visibilitychange', onVisible)
     }

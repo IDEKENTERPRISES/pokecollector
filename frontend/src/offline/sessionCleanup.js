@@ -10,6 +10,7 @@ import { purgeAll } from './readCache.js'
 import { clearSettingsCache } from './settingsCache.js'
 import { clearAuthSnapshot } from './authSnapshot.js'
 import { openOutboxDb, promisify, txDone } from './outbox/db.js'
+import { createPictureStore } from './carddb/pictureStore.js'
 
 // The service worker's cache of pictures seen while browsing. It can hold the user's own card photos.
 export const VIEWED_IMAGES_CACHE = 'pc-images-v1'
@@ -58,8 +59,11 @@ export function clearUserStorageKeys({ localStorage = storageOf('localStorage'),
 }
 
 /** Deletes the viewed-image cache (and the card pictures when `keepPictures` is false). → names deleted. */
-export async function clearImageCaches({ cacheStorage = globalThis.caches, keepPictures = KEEP_CARD_PICTURES_ON_SIGN_OUT } = {}) {
+export async function clearImageCaches({
+  cacheStorage = globalThis.caches, keepPictures = KEEP_CARD_PICTURES_ON_SIGN_OUT, pictureStore = createPictureStore(),
+} = {}) {
   const deleted = []
+  if (!keepPictures) await pictureStore.clearAll().catch(() => {}) // the downloaded pictures live in IndexedDB since F16a
   if (!cacheStorage) return deleted
   try {
     const names = await cacheStorage.keys()
@@ -144,7 +148,7 @@ export async function clearAllUserData({
 } = {}) {
   const steps = [
     purgeAll({ indexedDB }),
-    clearImageCaches({ cacheStorage, keepPictures }),
+    clearImageCaches({ cacheStorage, keepPictures, pictureStore: createPictureStore({ indexedDB }) }),
     Promise.resolve().then(() => {
       clearSettingsCache()
       clearAuthSnapshot()
