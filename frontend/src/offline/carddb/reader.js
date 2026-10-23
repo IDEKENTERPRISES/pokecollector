@@ -10,6 +10,18 @@
 
 import { createCardDbStore } from './store.js'
 import { createCardDbEngine, setRef } from './engine.js'
+import { cardImageUrl } from '../../utils/imageUrl.js'
+
+/**
+ * Card pictures go through the app's own /api/images route (the service worker answers it from the
+ * downloaded pictures), never straight from the catalogue's address: that one cannot load offline and
+ * would only hang until the tile gives up. A card without a catalogue picture keeps its empty fields
+ * (the card back shows).
+ */
+export function withPictureUrls(card) {
+  if (!card?.id || !(card.images_small || card.images_large)) return card
+  return { ...card, images_small: cardImageUrl(card.id, 'small'), images_large: cardImageUrl(card.id, 'large') }
+}
 
 /** Owned counts per (tcg set id|lang) and the exact items per card, built from a cached collection. */
 export function ownedIndexFromCollection(items) {
@@ -21,6 +33,11 @@ export function ownedIndexFromCollection(items) {
     byCard.get(cardId).push(item)
   }
   return byCard
+}
+
+const pictureFields = card => {
+  const { images_small, images_large } = withPictureUrls(card)
+  return { images_small, images_large }
 }
 
 export function createCardDbReader({ store = createCardDbStore(), isEnabled = () => true, engine = null } = {}) {
@@ -84,8 +101,7 @@ export function createCardDbReader({ store = createCardDbStore(), isEnabled = ()
           set_ref: setRef(set),
           number: card.number,
           rarity: card.rarity,
-          images_small: card.images_small,
-          images_large: card.images_large,
+          ...pictureFields(card),
           image_source_lang: card.image_source_lang,
           data_source_lang: card.data_source_lang,
           owned: quantity > 0,
@@ -139,12 +155,13 @@ export function createCardDbReader({ store = createCardDbStore(), isEnabled = ()
 
     /** Card detail (GET /cards/:id), or null when the card is not in the downloaded data. */
     async card(cardId) {
-      return db.card(await languages('all'), cardId)
+      return withPictureUrls(await db.card(await languages('all'), cardId))
     },
 
     /** The smart search; same params and envelope as GET /cards/search. */
     async search(params = {}) {
-      return db.search(await languages(params.lang && params.lang !== 'all' ? params.lang : 'all'), params)
+      const result = await db.search(await languages(params.lang && params.lang !== 'all' ? params.lang : 'all'), params)
+      return result?.data ? { ...result, data: result.data.map(withPictureUrls) } : result
     },
   }
 }

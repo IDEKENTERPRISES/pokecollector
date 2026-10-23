@@ -122,11 +122,12 @@ def _require_admin(user: User) -> None:
 
 
 @router.get("/pictures-prepare")
-def get_picture_warmup(current_user: User = Depends(get_current_user)):
-    """Progress of the server's card picture warm-up (admins)."""
+def get_picture_warmup(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """The server's card pictures (admins): real counts from the database (total, cached, missing),
+    plus the warm-up's run state while one is going."""
     _require_admin(current_user)
     _require_enabled()
-    return card_picture_packs.card_picture_warmer.status()
+    return card_picture_packs.card_picture_warmer.status(db)
 
 
 @router.post("/pictures-prepare")
