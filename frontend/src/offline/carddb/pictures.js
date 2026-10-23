@@ -19,6 +19,8 @@ export const PACK_CONCURRENCY = 3
 export const SINGLE_CONCURRENCY = 4
 export const PACK_TIMEOUT_MS = 60 * 1000
 export const SINGLE_TIMEOUT_MS = 15 * 1000
+/** A download with no sign of life (bytes, a picture saved, a set finished) for this long is stalled. */
+export const STALL_MS = 35 * 1000
 
 export const cardPictureUrl = cardId => `/api/images/card/${encodeURIComponent(cardId)}/small`
 export const setPictureUrl = (setId, type) => `/api/images/set/${encodeURIComponent(setId)}/${type}`
@@ -123,7 +125,7 @@ async function putSafely(cache, url, body) {
 }
 
 /** Fetches one picture the pack did not carry. Returns the bytes stored, or null when the server refused this picture. */
-async function downloadSingle({ url, cache, fetchImage, signal, timeoutMs, retries, sleep }) {
+async function downloadSingle({ url, cache, fetchImage, signal, timeoutMs, retries, sleep, touch }) {
   return retrying(() => timed(async inner => {
     let response
     try {
@@ -132,9 +134,11 @@ async function downloadSingle({ url, cache, fetchImage, signal, timeoutMs, retri
       if (inner.aborted) throw error
       throw new PictureError('network', error?.message || 'network')
     }
+    touch()
     if (response?.status >= 500 || response?.status === 429) throw statusError(response.status)
     if (!isStorableImage(response)) return null // a refusal for this one picture: skip it
     const blob = typeof response.blob === 'function' ? await response.blob() : null
+    touch()
     await putSafely(cache, url, blob ? new Response(blob, { headers: { 'Content-Type': contentTypeOf(response) } }) : response)
     return blob?.size ?? 0
   }, timeoutMs, signal), { attempts: retries, signal, sleep })
@@ -180,8 +184,9 @@ async function runPool(items, concurrency, signal, worker) {
 export async function downloadPictures({
   lang, sets, cache, fetchPack, fetchImage, record, signal, onProgress = () => {}, sleep = sleepMs,
   concurrency = PACK_CONCURRENCY, singleConcurrency = SINGLE_CONCURRENCY,
-  packTimeoutMs = PACK_TIMEOUT_MS, singleTimeoutMs = SINGLE_TIMEOUT_MS, retries = 3,
+  packTimeoutMs = PACK_TIMEOUT_MS, singleTimeoutMs = SINGLE_TIMEOUT_MS, retries = 3, onActivity = () => {},
 }) {
+  const touch = () => onActivity()
   const totalSets = sets.length
   let doneSets = sets.filter(payload => record.isDone(payload?.set?.id)).length
   let bytes = 0
@@ -198,17 +203,19 @@ export async function downloadPictures({
       const pack = await retrying(() => timed(async inner => {
         let response
         try {
-          response = await fetchPack(packPath(lang, setId), inner)
+          response = await fetchPack(packPath(lang, setId), inner, touch)
         } catch (error) {
           if (inner.aborted || error?.status) throw error
           throw new PictureError('network', error?.message || 'network')
         }
         return response
       }, packTimeoutMs, laneSignal), { attempts: retries, signal: laneSignal, sleep })
+      touch()
       if (pack.status === 200 && pack.buffer) {
         const parsed = parsePack(pack.buffer)
         for (const item of parsed.items) {
           await putSafely(cache, cardPictureUrl(item.id), new Response(item.bytes, { headers: { 'Content-Type': item.type } }))
+          touch()
         }
         setBytes += pack.buffer.byteLength
         bytes += pack.buffer.byteLength
@@ -219,7 +226,7 @@ export async function downloadPictures({
       const singles = []
       for (const url of wanted) if (!(await cache.match(url))) singles.push(url)
       await runPool(singles, singleConcurrency, laneSignal, async url => {
-        const stored = await downloadSingle({ url, cache, fetchImage, signal: laneSignal, timeoutMs: singleTimeoutMs, retries, sleep })
+        const stored = await downloadSingle({ url, cache, fetchImage, signal: laneSignal, timeoutMs: singleTimeoutMs, retries, sleep, touch })
         if (stored === null) skipped += 1
         setBytes += stored ?? 0
         bytes += stored ?? 0
@@ -227,6 +234,7 @@ export async function downloadPictures({
     }
     record.markDone(setId, { bytes: setBytes, skipped })
     doneSets += 1
+    touch()
     onProgress({ doneSets, totalSets, bytes })
   })
   return { doneSets, totalSets, bytes }
