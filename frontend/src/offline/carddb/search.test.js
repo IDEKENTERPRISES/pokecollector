@@ -113,3 +113,20 @@ describe('card numbers', () => {
     expect(['10', '2', '1', '74a', '74'].sort(compareNumbers)).toEqual(['1', '2', '10', '74', '74a'])
   })
 })
+
+describe('sets that exist in two languages (F18)', () => {
+  const twoLanguages = [
+    ...cards,
+    { id: 'pbl-117_ja', name: 'モルペコ', set_id: 'pbl', number: '117', lang: 'ja', supertype: 'Pokémon' },
+    { id: 'pbl-9_ja', name: 'ピカチュウ', set_id: 'pbl', number: '9', lang: 'ja', supertype: 'Pokémon' },
+  ]
+  const twoSets = [...sets, { id: 'pbl_ja', tcg_set_id: 'pbl', name: 'ペリロウスブルーム', abbreviation: 'PBL', lang: 'ja' }]
+  const run = params => searchCardsOffline({ cards: twoLanguages, sets: twoSets, params }).data.map(card => card.id).sort()
+  it('limits a composite set id to that language\'s cards', () => {
+    expect(run({ set_id: 'pbl_ja' })).toEqual(['pbl-117_ja', 'pbl-9_ja'])
+    expect(run({ set_id: 'pbl_en' })).toEqual(['pbl-117_en', 'pbl-118_en', 'pbl-120_en', 'pbl-9_en'])
+  })
+  it('lets the bare catalogue id match every language', () => {
+    expect(run({ set_id: 'pbl' })).toHaveLength(6)
+  })
+})

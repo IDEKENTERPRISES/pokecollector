@@ -105,6 +105,8 @@ export default function Sets() {
   const [showHiddenSets, setShowHiddenSets] = useState(DEFAULT_SET_FILTERS.showHiddenSets)
   const [hiddenSetIds, setHiddenSetIds] = useState([])
   const savedFilterStateRef = useRef('')
+  // The URL the hydration just asked for, until the router has applied it (see the URL sync effect).
+  const pendingUrlRef = useRef(null)
   const savedHiddenSetIdsRef = useRef('')
   const filterSaveTimeoutRef = useRef(null)
   const queryClient = useQueryClient()
@@ -218,6 +220,7 @@ export default function Sets() {
     savedHiddenSetIdsRef.current = JSON.stringify(savedHiddenIds)
     const normalizedParams = writeFilterUrlState(searchParams, filterDefinitions, activePanelFilters)
     if (normalizedParams.toString() !== searchParams.toString()) {
+      pendingUrlRef.current = { from: searchParams.toString() }
       setSearchParams(normalizedParams, { replace: true })
     }
     setFiltersHydrated(true)
@@ -226,6 +229,12 @@ export default function Sets() {
   const filterUrlKey = searchParams.toString()
   useEffect(() => {
     if (!filtersHydrated || visibleLanguages.isLoading) return
+    // Hydration has just written the filters into the URL; until the router applies that, searchParams
+    // is still the old URL, and reading it would reset the language to the default (and back again).
+    if (pendingUrlRef.current) {
+      if (searchParams.toString() === pendingUrlRef.current.from) return
+      pendingUrlRef.current = null
+    }
     const urlFilters = readFilterUrlState(searchParams, filterDefinitions)
     const nextFilters = {
       ...urlFilters,
@@ -360,6 +369,8 @@ export default function Sets() {
   }
   const groups = useMemo(() => groupSetsBySeries(filtered), [filtered])
   const activeGroup = seriesKey ? groups.find(group => group.key === seriesKey) : null
+  // With several languages in the list a series appears once per language: say which.
+  const groupTitle = group => (group.lang ? `${group.name} · ${tcgdexLanguageLabel(group.lang)}` : group.name)
   const showSeriesView = !seriesKey && view === 'series'
   const gridSets = activeGroup ? activeGroup.sets : filtered
   const activeFilterCount = [
@@ -370,7 +381,7 @@ export default function Sets() {
   ].filter(Boolean).length
 
   const navBar = useMemo(() => ({
-    title: seriesKey ? (activeGroup?.name ?? t('nav.sets')) : t('nav.sets'),
+    title: seriesKey ? (activeGroup ? groupTitle(activeGroup) : t('nav.sets')) : t('nav.sets'),
     trailing: (
       <Menu
         label={t('ios.more')}
@@ -390,7 +401,7 @@ export default function Sets() {
         ]}
       />
     ),
-  }), [activeFilterCount, activeGroup?.name, seriesKey, sortBy, sortOrder, t])
+  }), [activeFilterCount, activeGroup?.name, activeGroup?.lang, seriesKey, sortBy, sortOrder, t])
   useNavBar(navBar)
 
   const releaseLabelFor = (set) => {
@@ -456,14 +467,14 @@ export default function Sets() {
           <div className="grid h-20 w-28 flex-shrink-0 place-items-center rounded-2xl bg-black/30 p-2">
             <FallbackImage
               sources={activeGroup.logoCandidates ?? []}
-              fallback={activeGroup.name}
-              alt={activeGroup.name}
+              fallback={groupTitle(activeGroup)}
+              alt={groupTitle(activeGroup)}
               className="max-h-full max-w-full object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]"
               fallbackClassName="text-title-3 font-display text-center"
             />
           </div>
           <div className="min-w-0 flex-1 space-y-1.5">
-            <h1 className="truncate text-title-2 font-display">{activeGroup.name}</h1>
+            <h1 className="truncate text-title-2 font-display">{groupTitle(activeGroup)}</h1>
             <p className="text-footnote text-text-secondary">
               {[activeGroup.years, t('ios.setsCount').replace('{count}', activeGroup.setCount)].filter(Boolean).join(' · ')}
             </p>
@@ -524,12 +535,12 @@ export default function Sets() {
           {groups.map(group => (
             <SeriesTile
               key={group.key}
-              series={{ key: group.key, name: group.name, logo: group.logo, logoCandidates: group.logoCandidates, years: group.years, setCount: group.setCount }}
+              series={{ key: group.key, name: groupTitle(group), logo: group.logo, logoCandidates: group.logoCandidates, years: group.years, setCount: group.setCount }}
               owned={group.owned}
               ownedUnknown={ownedUnknown}
               total={group.total}
               complete={group.complete}
-              to={`/sets/series/${encodeURIComponent(group.key)}`}
+              to={`/sets/series/${encodeURIComponent(group.key)}${location.search}`}
             />
           ))}
         </div>

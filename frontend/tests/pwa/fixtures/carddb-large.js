@@ -40,11 +40,15 @@ function seeded(seed) {
 
 const capital = text => text.charAt(0).toUpperCase() + text.slice(1)
 
-export function buildLargeCarddb({ lang = 'en', setCount = 200, cardsPerSet = 150, seed = 7 } = {}) {
+// `tcgPrefix` names the sets' catalogue ids (fx1, fx2 ...): two languages built with the same prefix
+// share tcg_set_id values (fx1_en / fx1_ja) the way the real catalogue does. `namePrefix` makes the
+// set and card names recognisably native to the language. The last `emptySets` sets carry no cards
+// (a set that exists as metadata before its native card data does).
+export function buildLargeCarddb({ lang = 'en', setCount = 200, cardsPerSet = 150, seed = 7, tcgPrefix = 'fx', namePrefix = '', emptySets = 0 } = {}) {
   const random = seeded(seed)
   const pick = list => list[Math.floor(random() * list.length)]
   const makeName = () => capital(Array.from({ length: 2 + Math.floor(random() * 2) }, () => pick(SYLLABLES)).join(''))
-  const names = Array.from({ length: 900 }, makeName)
+  const names = Array.from({ length: 900 }, makeName).map(name => `${namePrefix}${name}`)
 
   const sets = {}
   const setList = []
@@ -52,14 +56,14 @@ export function buildLargeCarddb({ lang = 'en', setCount = 200, cardsPerSet = 15
   let landmark = null
 
   for (let s = 0; s < setCount; s += 1) {
-    const tcgId = `fx${s + 1}`
+    const tcgId = `${tcgPrefix}${s + 1}`
     const id = `${tcgId}_${lang}`
     const series = SERIES[s % SERIES.length]
     const month = String((s % 12) + 1).padStart(2, '0')
     const set = {
       id,
       tcg_set_id: tcgId,
-      name: `Fixture ${capital(pick(SYLLABLES))}${pick(SYLLABLES)} ${s + 1}`,
+      name: `${namePrefix}Fixture ${capital(pick(SYLLABLES))}${pick(SYLLABLES)} ${s + 1}`,
       series,
       series_id: series.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
       abbreviation: `F${String(s + 1).padStart(2, '0')}`,
@@ -70,13 +74,13 @@ export function buildLargeCarddb({ lang = 'en', setCount = 200, cardsPerSet = 15
       is_digital: false,
       lang,
     }
-    const count = Math.max(10, cardsPerSet + Math.floor(random() * 21) - 10)
+    const count = s >= setCount - emptySets ? 0 : Math.max(10, cardsPerSet + Math.floor(random() * 21) - 10)
     const cards = []
     for (let n = 1; n <= count; n += 1) {
       const number = String(n)
       const cardId = `${tcgId}-${number}_${lang}`
       const trainer = random() < 0.15
-      const name = trainer ? `${pick(['Great', 'Ultra', 'Quick', 'Nest'])} ${pick(['Ball', 'Potion', 'Switch', 'Research'])}` : pick(names)
+      const name = trainer ? `${namePrefix}${pick(['Great', 'Ultra', 'Quick', 'Nest'])} ${pick(['Ball', 'Potion', 'Switch', 'Research'])}` : pick(names)
       const type = pick(TYPES)
       const attack = {
         name: capital(pick(SYLLABLES) + pick(SYLLABLES)),
@@ -99,10 +103,10 @@ export function buildLargeCarddb({ lang = 'en', setCount = 200, cardsPerSet = 15
         lang, lang, false, lang, true, random() < 0.7, random() < 0.5, false,
       ])
       priceRows.push([cardId, ...PRICE_FIELDS.map(() => Math.round(random() * 5000) / 100)])
-      if (!landmark && s === Math.floor(setCount / 2) && n === 7) {
+      if (!landmark && s === Math.floor((setCount - emptySets) / 2) && n === 7) {
         // Rename one card to something unique so a test can search for it by name, number and set code.
-        cards[cards.length - 1][2] = 'Zorblax'
-        landmark = { setId: id, tcgId, name: 'Zorblax', number, abbreviation: set.abbreviation, setName: set.name, series }
+        cards[cards.length - 1][2] = `${namePrefix}Zorblax`
+        landmark = { setId: id, tcgId, name: `${namePrefix}Zorblax`, number, abbreviation: set.abbreviation, setName: set.name, series }
       }
     }
     sets[id] = { v: 1, set, fields: CARD_FIELDS, cards }
