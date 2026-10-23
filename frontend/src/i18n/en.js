@@ -723,6 +723,9 @@ const en = {
 
   // Sets
   sets: {
+    chooseLanguage: 'Choose a language',
+    chooseLanguageDesc: 'Pick the card language you want to browse.',
+    languageSwitch: 'Card language',
     title: 'Sets',
     setsTotal: 'sets total',
     newSets: 'new',
@@ -1376,6 +1379,9 @@ const en = {
     },
     title: 'Settings',
     subtitle: 'Configuration and utilities',
+    setsOpenIn: 'Sets open in',
+    setsOpenInDesc: 'The card language the catalogue under Search opens in. You can switch language from any series or set list.',
+    setsOpenInAsk: 'Choose each time',
     showSetsInSeries: 'Show sets in series',
     showSetsInSeriesDesc: 'Group sets by series. Turn off to show all sets in one grid.',
     updatePrices: 'Update prices',

@@ -17,6 +17,9 @@ import { useAuth } from '../contexts/AuthContext'
 import { useTheme } from '../hooks/useTheme'
 import { useSettings } from '../contexts/SettingsContext'
 import { useSetsView } from '../hooks/useSetsView'
+import { useSetsDefaultLanguage } from '../hooks/useSetsDefaultLanguage'
+import { useVisibleTcgdexLanguages } from '../hooks/useVisibleTcgdexLanguages'
+import { resolveDefaultSetsLanguage } from '../utils/setsLanguage'
 import { useConfirmDialog } from '../contexts/ConfirmDialogContext'
 import Modal from '../components/ui/Modal'
 import PasswordPromptDialog from '../components/ui/PasswordPromptDialog'
@@ -493,6 +496,9 @@ export default function Settings() {
   const showGeneral = GENERAL_SECTIONS.includes(activeSection)
   const { view: setsView, setView: setSetsView } = useSetsView()
   const setsInSeries = setsView !== 'sets'
+  const { language: setsDefaultLanguage, setLanguage: setSetsDefaultLanguage } = useSetsDefaultLanguage()
+  const visibleSetsLanguages = useVisibleTcgdexLanguages()
+  const setsOpenInValue = resolveDefaultSetsLanguage(setsDefaultLanguage, visibleSetsLanguages.map(language => language.code)) ?? ''
   // The launch splash: per device, read synchronously at boot (components/splash/launch.js).
   const [splashEnabled, setSplashEnabled] = useState(() => readSplashEnabled())
 
@@ -774,6 +780,15 @@ export default function Settings() {
 
   const handleAlertThresholdBlur = async () => {
     await saveSetting('price_alert_threshold', alertThreshold)
+  }
+
+  const handleSetsOpenInChange = async (value) => {
+    try {
+      await setSetsDefaultLanguage(value)
+      toast.success(t('settings.saved'))
+    } catch {
+      toast.error(t('settings.saveFailed'))
+    }
   }
 
   const handleSetsViewChange = async (inSeries) => {
@@ -1304,6 +1319,18 @@ export default function Settings() {
                   }}
                 />
               </SettingsRow>
+              {visibleSetsLanguages.length > 1 && (
+                <SettingsRow label={t('settings.setsOpenIn')} description={t('settings.setsOpenInDesc')}>
+                  <SelectControl
+                    value={setsOpenInValue}
+                    options={[
+                      { value: '', label: t('settings.setsOpenInAsk') },
+                      ...visibleSetsLanguages.map(language => ({ value: language.code, label: tcgdexLanguageLabel(language.code, { full: true }) })),
+                    ]}
+                    onChange={handleSetsOpenInChange}
+                  />
+                </SettingsRow>
+              )}
               <SettingsRow label={t('settings.language')} description={t('settings.languageDesc')}>
                 <SelectControl
                   value={currentAppLang}
