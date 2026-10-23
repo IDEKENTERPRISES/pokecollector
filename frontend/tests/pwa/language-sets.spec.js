@@ -59,10 +59,10 @@ function checklistOf(setId) {
 
 async function mockApi(context, state) {
   await context.route(url => url.pathname.startsWith('/api/'), async route => {
-    // Airplane Mode on an iPhone: the request is neither answered nor refused.
-    if (state.offline) return undefined
     const url = new URL(route.request().url())
     const path = url.pathname
+    // Airplane Mode on an iPhone: the request is neither answered nor refused.
+    if (state.offline && path !== '/api/settings/tcgdex-filter-languages') return undefined
     if (path === '/api/health') return route.fulfill({ json: HEALTH_OK })
     if (path === '/api/auth/mode') return route.fulfill({ json: { multi_user: false, locked: false } })
     if (path === '/api/auth/me') return route.fulfill({ json: ada })
@@ -216,19 +216,16 @@ for (const mode of ['online', 'offline']) {
         await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 })
       }
       const tabBar = page.getByTestId('tab-bar')
-      await tabBar.getByRole('link', { name: 'Search' }).click()
-      await expect(page.getByTestId('search-browse')).toBeVisible({ timeout: 20000 })
-      await page.getByTestId('browse-sets').click()
       if (mode === 'offline') {
-        // The person has opened Sets while online before (the language list is saved for offline use);
-        // then Airplane Mode: requests hang, the device still says it is online.
-        await expect(page.getByRole('button', { name: /Filters/ }).first()).toBeVisible({ timeout: 20000 })
-        await page.waitForTimeout(7000)
+        // Airplane Mode: requests hang, the device still says it is online. (The language list stays
+        // answered: a person who opened Sets before has it saved for offline use.)
         state.offline = true
         expect(await page.evaluate(() => navigator.onLine)).toBe(true)
-        await tabBar.getByRole('link', { name: 'Home' }).click()
-        await tabBar.getByRole('link', { name: 'Search' }).click()
       }
+      await tabBar.getByRole('link', { name: 'Search' }).click()
+      await expect(page.getByTestId('search-browse')).toBeVisible({ timeout: 20000 })
+      if (mode === 'offline') await expect(page.getByTestId('offline-banner')).toBeVisible({ timeout: 40000 })
+      await page.getByTestId('browse-sets').click()
       await expect(page.getByTestId('series-grid').getByRole('link').first()).toBeVisible({ timeout: 40000 })
     }
 

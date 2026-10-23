@@ -68,15 +68,21 @@ export function seriesLogoCandidates(name, sets) {
 }
 
 /**
- * Group sets by series. Returns [{ key, name, years, setCount, owned, total, complete, logo,
+ * Group sets by series. Returns [{ key, lang, name, years, setCount, owned, total, complete, logo,
  * logoSetId, sets }] with the newest series first (by its newest release date, then name).
  * `sets` inside a group are newest first.
+ *
+ * A series id is shared by every language of the same series ("sv" in en and ja), so a list that
+ * holds several languages gets one group per language, keyed `<key>~<lang>`, with `lang` set. A
+ * single-language list keeps the plain key and a null `lang`.
  */
 export function groupSetsBySeries(sets = []) {
   const groups = new Map()
+  const mixed = new Set(sets.map(set => set.lang || 'en')).size > 1
   for (const set of sets) {
-    const key = seriesKeyOf(set)
-    if (!groups.has(key)) groups.set(key, { key, name: set.series || 'Other', sets: [] })
+    const lang = mixed ? (set.lang || 'en') : null
+    const key = lang ? `${seriesKeyOf(set)}~${lang}` : seriesKeyOf(set)
+    if (!groups.has(key)) groups.set(key, { key, lang, name: set.series || 'Other', sets: [] })
     groups.get(key).sets.push(set)
   }
   return [...groups.values()]
@@ -87,6 +93,7 @@ export function groupSetsBySeries(sets = []) {
       const logoSet = group.sets.find(set => set.series_id) ?? seriesLogoSet(group.name, inSeries)
       return {
         key: group.key,
+        lang: group.lang,
         name: group.name,
         years: yearsLabel(inSeries),
         setCount: inSeries.length,

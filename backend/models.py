@@ -33,12 +33,13 @@ class Set(Base):
     lang = Column(String, default="en")      # TCGdex language code, NEVER "both"
     updated_at = Column(DateTime, default=func.now())
 
-    # Relationship to cards via tcg_set_id (no DB-level FK, joined in Python)
+    # Relationship to cards via tcg_set_id and lang (no DB-level FK, joined in Python): the same
+    # tcg_set_id exists once per language, so joining on it alone would mix the languages.
     # Use explicit primaryjoin so SQLAlchemy can resolve the join
     cards = relationship(
         "Card",
-        primaryjoin="Set.tcg_set_id == foreign(Card.set_id)",
-        foreign_keys="[Card.set_id]",
+        primaryjoin="and_(Set.tcg_set_id == foreign(Card.set_id), Set.lang == foreign(Card.lang))",
+        foreign_keys="[Card.set_id, Card.lang]",
         lazy="dynamic",
         viewonly=True,
         overlaps="set_ref",

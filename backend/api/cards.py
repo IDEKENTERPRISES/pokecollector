@@ -677,6 +677,9 @@ def search_cards(
                 ).first()
                 if set_obj:
                     query = query.filter(Card.set_id == (set_obj.tcg_set_id or set_obj.id))
+                    # The composite key names one language's set; en and ja share the tcg id.
+                    if set_obj.id == set_id and set_obj.lang:
+                        query = query.filter(Card.lang == set_obj.lang)
                 elif has_lang_suffix(set_id):
                     query = query.filter(False)
                 else:
