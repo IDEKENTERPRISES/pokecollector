@@ -129,20 +129,28 @@ test.describe('offline cold start with large saved data', () => {
     // Offline, the card database does not try to sync: its manifest request would only hang.
     expect(manifestRequests).toEqual([])
 
-    // The seeded card database is the version 1 one deployed phones have: the app upgraded it on this
-    // offline cold start, and the offline Sets page reads the seeded series from it (the read cache only
-    // knows the series "Fixture").
-    await page.goto('/sets')
-    await expect(page.getByText('Series 3').first()).toBeVisible({ timeout: 30000 })
-    expect(await page.evaluate(async () => {
+    // The seeded card database is the version 1 one deployed phones have. The app opens it when a page first
+    // needs it: offline Search finds a card that only the seeded database knows (the upgrade to the current
+    // version and the rebuild of the derived stores worked), and the database is then at the current version.
+    await page.goto('/search?q=Fixture%20card%203-1')
+    await expect(page.getByText('Fixture card 3-1').first()).toBeVisible({ timeout: 60000 })
+    await expect.poll(() => page.evaluate(async () => {
       const db = await new Promise((resolve, reject) => {
         const request = indexedDB.open('pokecollector-carddb')
         request.onsuccess = () => resolve(request.result)
         request.onerror = () => reject(request.error)
       })
-      const version = db.version
-      db.close()
-      return version
-    })).toBeGreaterThanOrEqual(2)
+      try {
+        if (!db.objectStoreNames.contains('setRows')) return { version: db.version, setRows: -1 }
+        const setRows = await new Promise((resolve, reject) => {
+          const request = db.transaction('setRows').objectStore('setRows').count()
+          request.onsuccess = () => resolve(request.result)
+          request.onerror = () => reject(request.error)
+        })
+        return { version: db.version, setRows }
+      } finally {
+        db.close()
+      }
+    }), { timeout: 30000 }).toEqual({ version: 2, setRows: 200 })
   })
 })
