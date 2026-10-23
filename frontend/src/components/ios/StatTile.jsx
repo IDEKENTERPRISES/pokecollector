@@ -52,7 +52,7 @@ export default function StatTile({ type, icon, label, value, detail, to, sparkli
       <span aria-hidden="true" className="pointer-events-none absolute -bottom-3 -right-3 opacity-20">
         <EnergyIcon type={key} size={84} />
       </span>
-      <span className="relative flex items-center gap-1.5 text-footnote font-semibold opacity-90">
+      <span className="relative flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-footnote font-semibold opacity-90">
         {iconNode}
         <span className="break-words">{label}</span>
       </span>
