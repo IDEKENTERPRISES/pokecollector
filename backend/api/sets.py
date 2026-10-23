@@ -18,7 +18,7 @@ from services.card_fallbacks import (
 )
 from services.card_numbers import natural_card_number_key
 from services.card_upsert import upsert_card
-from services.card_visibility import get_configured_sync_languages, visible_set_filter
+from services.card_visibility import get_configured_sync_languages, language_is_syncable, visible_set_filter
 from services.digital_sets import digital_sets_enabled
 from services.display_language import get_tcgdex_display_language
 from services.tcgdex_languages import DEFAULT_TCGDEX_SYNC_LANGUAGES, has_lang_suffix, is_supported_tcgdex_language, normalize_tcgdex_language
@@ -215,8 +215,9 @@ def get_set_checklist(
             db.commit()
             cards = repairable_cards
 
-    # If still no cards, fetch native cards from TCGdex and cache them.
-    if not cards:
+    # If still no cards, fetch native cards from TCGdex and cache them. A set of a
+    # deselected language is only shown from what is stored; nothing is requested.
+    if not cards and language_is_syncable(db, set_lang):
         try:
             set_data = pokemon_api.get_set_cards(tcg_id, lang=set_lang)
             for card_data in set_data.get("cards", []):

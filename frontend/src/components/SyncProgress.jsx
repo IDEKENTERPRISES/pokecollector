@@ -26,8 +26,17 @@ export function progressFraction(progress) {
 export function progressCounts(progress, t) {
   const total = Number(progress?.total) || 0
   if (!progress || total <= 0) return ''
+  const done = Math.min(Number(progress.done) || 0, total).toLocaleString()
+  // A stage that only does part of its work this sync (card details) says how much is left overall.
+  const overall = Number(progress.overall_total) || 0
+  if (overall > total) {
+    return t('settings.syncProgressOfOverall')
+      .replace('{done}', done)
+      .replace('{total}', total.toLocaleString())
+      .replace('{overall}', overall.toLocaleString())
+  }
   return t('settings.syncProgressOf')
-    .replace('{done}', Math.min(Number(progress.done) || 0, total).toLocaleString())
+    .replace('{done}', done)
     .replace('{total}', total.toLocaleString())
 }
 

@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from models import Card, Set, Setting
 from services import pokemon_api
+from services.card_visibility import language_is_syncable
 from services.price_utils import PRICE_FIELDS, has_valid_price, is_valid_price
 from services.tcgdex_languages import (
     SUPPORTED_TCGDEX_LANGUAGES,
@@ -170,7 +171,7 @@ def _load_sibling_data(db: Session, tcg_card_id: str, lang: str, tcg_set_id: Opt
     if sibling:
         return _card_to_data(sibling)
 
-    if not _fallback_set_exists(db, tcg_set_id, lang):
+    if not language_is_syncable(db, lang) or not _fallback_set_exists(db, tcg_set_id, lang):
         logger.debug(
             "Skipping %s fallback fetch for %s because set %s is not synced in that language",
             lang,
@@ -295,7 +296,7 @@ def build_missing_language_card(
             image_enabled=image_enabled,
         )
 
-    if not _fallback_set_exists(db, default_set_id, fallback_lang):
+    if not language_is_syncable(db, fallback_lang) or not _fallback_set_exists(db, default_set_id, fallback_lang):
         logger.debug(
             "Skipping missing-language fallback fetch for %s in %s because set %s is not synced in that language",
             tcg_card_id,
@@ -361,7 +362,7 @@ def build_missing_language_cards_for_set(
 
     sources: list[Card | dict] = source_cards
     if not sources or (expected_total and len(sources) < expected_total):
-        if not _fallback_set_exists(db, tcg_set_id, fallback_lang):
+        if not language_is_syncable(db, fallback_lang) or not _fallback_set_exists(db, tcg_set_id, fallback_lang):
             logger.debug(
                 "Skipping missing-language fallback fetch for set %s in %s because it is not synced in that language",
                 tcg_set_id,
