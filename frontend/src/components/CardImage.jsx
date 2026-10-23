@@ -8,7 +8,10 @@ import { AlertTriangle, RefreshCw } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useSettings } from '../contexts/SettingsContext'
 
+import { isOffline } from '../offline/offlineStatus'
+
 const CARD_BACK = '/cardback.jpg'
+const OFFLINE_IMAGE_GIVE_UP_MS = 4000
 const VIEWPORT_MARGIN = 300
 const webkitViewportFallbacks = new Map()
 let webkitViewportFrame = null
@@ -173,6 +176,18 @@ export default function CardImage({
       }
     })
   }, [displaySrc, shouldLoad, src])
+
+  // Offline, a picture nobody saved can only hang on a phone: after a short wait show the
+  // placeholder (with its retry button) instead of an endless skeleton.
+  useEffect(() => {
+    if (!src || !shouldLoad || loaded || failed || !isOffline()) return undefined
+    const timer = window.setTimeout(() => {
+      setStatus(previous => (previous.source === src && !previous.loaded
+        ? { ...previous, failed: true, loaded: true }
+        : previous))
+    }, OFFLINE_IMAGE_GIVE_UP_MS)
+    return () => window.clearTimeout(timer)
+  }, [src, shouldLoad, loaded, failed, attempt])
 
   const handleError = () => {
     setStatus(previous => ({
