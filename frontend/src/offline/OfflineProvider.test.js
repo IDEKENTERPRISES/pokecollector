@@ -12,7 +12,7 @@ function fakeOutbox({ items = [{ id: 'a' }], syncNow = vi.fn(), discardAllForUse
   }
 }
 
-function guardWith(outbox, choices, clearCache) {
+function guardWith(outbox, choices, clearCache = undefined) {
   const queue = [...choices]
   const calls = { busy: [], closed: 0 }
   const promise = runLogoutGuard({
@@ -20,6 +20,7 @@ function guardWith(outbox, choices, clearCache) {
     ask: async () => queue.shift(),
     setBusy: busy => calls.busy.push(busy),
     close: () => { calls.closed += 1 },
+    clearCache,
   })
   return { promise, calls }
 }
@@ -60,6 +61,21 @@ describe('runLogoutGuard', () => {
 
     const cancel = fakeOutbox()
     await expect(guardWith(cancel, ['cancel']).promise).resolves.toBe(false)
+  })
+
+  it('tells clearCache whether the user chose to keep unsynced changes', async () => {
+    const kept = vi.fn()
+    await guardWith(fakeOutbox(), ['keep'], kept).promise
+    expect(kept).toHaveBeenCalledWith({ kept: true })
+    const discarded = vi.fn()
+    await guardWith(fakeOutbox(), ['discard'], discarded).promise
+    expect(discarded).toHaveBeenCalledWith({ kept: false })
+    const nothing = vi.fn()
+    await guardWith(fakeOutbox({ items: [] }), [], nothing).promise
+    expect(nothing).toHaveBeenCalledWith({ kept: false })
+    const cancelled = vi.fn()
+    await guardWith(fakeOutbox(), ['cancel'], cancelled).promise
+    expect(cancelled).not.toHaveBeenCalled()
   })
 
   it('does not log out when discarding fails', async () => {
