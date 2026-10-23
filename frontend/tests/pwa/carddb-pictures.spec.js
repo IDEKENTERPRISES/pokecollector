@@ -86,14 +86,15 @@ async function mockApi(context, state) {
   })
 }
 
-async function openDataSettings(page, context, state) {
+// The phone's card-database controls live on Sync & offline (/offline); the server row stays in Settings.
+async function openDataSettings(page, context, state, path = '/offline') {
   await mockApi(context, state)
   await page.setViewportSize({ width: 390, height: 844 })
   await page.addInitScript(user => {
     localStorage.setItem('token', 'test-token')
     localStorage.setItem('user', JSON.stringify(user))
   }, state.user)
-  await page.goto('/settings/data')
+  await page.goto(path)
 }
 
 const row = page => page.getByTestId('carddb-pictures-row-en')
@@ -228,22 +229,45 @@ test.describe('card picture download by set pack', () => {
 
   test('the server picture row says it is about the server, with a retry for the missing ones', async ({ page, context }) => {
     const state = newState()
-    await openDataSettings(page, context, state)
+    await openDataSettings(page, context, state, '/settings/data')
     const serverRow = page.getByTestId('carddb-prepare-row')
     await expect(serverRow).toContainText("On the server: 100 of 160 pictures ready · 60 couldn't be fetched", { timeout: 30000 })
     await expect(page.getByTestId('carddb-prepare')).toHaveText('Retry the 60 missing')
     // It sits apart from the phone's own picture rows.
-    await expect(page.getByTestId('carddb-section').getByText('On the server (admins)')).toBeVisible()
-    await expect(row(page)).not.toContainText('On the server')
+    await expect(page.getByTestId('carddb-server-section').getByText('On the server (admins)')).toBeVisible()
+    await expect(page.getByTestId('carddb-section')).toHaveCount(0) // the phone's controls are on /offline
   })
 
   test('an administrator can ask the server to prepare the card pictures', async ({ page, context }) => {
     const state = newState()
-    await openDataSettings(page, context, state)
+    await openDataSettings(page, context, state, '/settings/data')
     const prepare = page.getByTestId('carddb-prepare')
     await expect(prepare).toBeVisible({ timeout: 30000 })
     await expect(page.getByTestId('carddb-prepare-row')).toContainText('100 of 160')
     await prepare.click()
     await expect.poll(() => state.prepareStarted).toBe(true)
+  })
+})
+
+test.describe('Sync & offline for a trainer', () => {
+  test.setTimeout(180000)
+
+  test('shows the card database controls; Download pictures and Remove work; no server row', async ({ page, context }) => {
+    const state = newState(ada)
+    await openDataSettings(page, context, state)
+    await expect(page.getByTestId('carddb-section')).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('carddb-enabled')).toBeVisible()
+    await expect(page.getByTestId('carddb-language-en')).toContainText(/Updated Today [0-9]{2}:[0-9]{2}/, { timeout: 30000 })
+    await expect(page.getByTestId('carddb-prepare-row')).toHaveCount(0)
+    await expect(page.getByText('On the server (admins)')).toHaveCount(0)
+
+    await startDownload(page)
+    await expect(row(page)).toContainText('Downloaded', { timeout: 60000 })
+    expect((await savedSets(page)).length).toBe(SET_COUNT)
+
+    await page.getByTestId('carddb-remove').click()
+    await expect(page.getByTestId('carddb-remove')).toHaveCount(0, { timeout: 15000 })
+    expect(await savedSets(page)).toEqual([])
+    await expect(page.getByTestId('carddb-download')).toBeVisible()
   })
 })

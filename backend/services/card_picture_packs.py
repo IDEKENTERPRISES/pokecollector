@@ -173,9 +173,21 @@ class CardPictureWarmer:
             "started_at": None, "finished_at": None,
         }
 
-    def status(self) -> dict:
+    def status(self, db: Session | None = None) -> dict:
+        """The run state; with ``db`` also the real counts, so a restart does not reset them to 0 of 0."""
         with self._lock:
-            return dict(self._state)
+            state = dict(self._state)
+        if db is None:
+            return state
+        counts = picture_counts(db)
+        if state["running"]:
+            # The run's own numbers are fresher than the cached counts while it fills the cache.
+            state["total"] = max(state["total"], counts["total"])
+            state["cached"] = max(state["cached"], min(counts["cached"], state["total"]))
+        else:
+            state["total"], state["cached"] = counts["total"], counts["cached"]
+        state["missing"] = max(0, state["total"] - state["cached"])
+        return state
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -259,6 +271,40 @@ def _language_cards(db: Session, lang: str) -> list[tuple[str, str]]:
         .order_by(Card.id.asc())
         .all()
     )
+
+
+COUNTS_TTL_SECONDS = 5
+_counts_lock = threading.Lock()
+_counts_cache: dict = {"at": 0.0, "value": None}
+
+
+def picture_counts(db: Session, *, now: Callable[[], float] = time.monotonic) -> dict:
+    """``{"total", "cached"}`` read from the database: synced cards with a small picture, and how many
+    of those are in ``image_cache``. Kept for a few seconds so polling stays cheap."""
+    with _counts_lock:
+        if _counts_cache["value"] is not None and now() - _counts_cache["at"] < COUNTS_TTL_SECONDS:
+            return dict(_counts_cache["value"])
+    keys: list[str] = []
+    if offline_carddb.offline_carddb_enabled():
+        for lang in offline_carddb.languages(db):
+            keys += [card_image_key(card_id, url) for card_id, url in _language_cards(db, lang)]
+    cached = 0
+    for start in range(0, len(keys), _KEY_CHUNK):
+        cached += (
+            db.query(func.count(ImageCache.id))
+            .filter(ImageCache.image_key.in_(keys[start:start + _KEY_CHUNK]))
+            .scalar()
+            or 0
+        )
+    value = {"total": len(keys), "cached": cached}
+    with _counts_lock:
+        _counts_cache.update(at=now(), value=value)
+    return dict(value)
+
+
+def reset_counts_cache() -> None:
+    with _counts_lock:
+        _counts_cache.update(at=0.0, value=None)
 
 
 card_picture_warmer = CardPictureWarmer()
