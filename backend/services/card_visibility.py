@@ -8,6 +8,8 @@ global catalogue setting.
 
 from __future__ import annotations
 
+import os
+
 from sqlalchemy import and_, false, or_
 from sqlalchemy.orm import Session
 
@@ -18,11 +20,28 @@ from services.tcgdex_languages import SUPPORTED_TCGDEX_LANGUAGES, normalize_tcgd
 SetLangPair = tuple[str, str]
 
 
+def sync_deselected_languages_enabled() -> bool:
+    """One-line switch: SYNC_DESELECTED_LANGUAGES=1 restores syncing of pinned deselected-language sets.
+
+    Off by default: a sync only talks to TCGdex for the languages the admin selected.
+    Cards already stored in other languages keep what they have and stay visible.
+    """
+    return os.environ.get("SYNC_DESELECTED_LANGUAGES", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def get_configured_sync_languages(db: Session) -> list[str]:
     """Return globally enabled TCGdex catalogue languages in stable order."""
     row = db.query(Setting).filter(Setting.key == "tcgdex_sync_languages").first()
     normalized = normalize_tcgdex_sync_languages(row.value if row else "en,de")
     return normalized.split(",") if normalized else ["en", "de"]
+
+
+def language_is_syncable(db: Session, lang: str | None, languages: set[str] | None = None) -> bool:
+    """Whether a sync may request data from TCGdex for ``lang``."""
+    if sync_deselected_languages_enabled():
+        return True
+    selected = languages if languages is not None else set(get_configured_sync_languages(db))
+    return normalize_tcgdex_language(lang or "en") in selected
 
 
 def _normalize_pair(set_id: str | None, lang: str | None) -> SetLangPair | None:
@@ -78,6 +97,13 @@ def get_pinned_set_language_pairs(db: Session, user_id: int | None = None) -> se
     _add_pairs(binder_query.distinct().all(), pairs)
 
     return pairs
+
+
+def get_sync_pinned_set_language_pairs(db: Session) -> set[SetLangPair]:
+    """Pinned set pairs a sync may fetch: none unless SYNC_DESELECTED_LANGUAGES is on."""
+    if not sync_deselected_languages_enabled():
+        return set()
+    return get_pinned_set_language_pairs(db, user_id=None)
 
 
 def get_visible_filter_languages(db: Session, user_id: int) -> list[str]:
@@ -169,6 +195,6 @@ def visible_any_card_filter(db: Session, user_id: int, requested_lang: str | Non
 def sync_set_filter(db: Session):
     """Predicate for localized sets that full sync should maintain app-wide."""
     active_languages = set(get_configured_sync_languages(db))
-    pinned_pairs = get_pinned_set_language_pairs(db, user_id=None)
+    pinned_pairs = get_sync_pinned_set_language_pairs(db)
     digital_clause = True if digital_sets_enabled(db) else Set.is_digital == False
     return and_(or_(Set.lang.in_(active_languages), set_pair_filter(pinned_pairs)), digital_clause)

@@ -1419,6 +1419,7 @@ const en = {
     syncStagePrices: 'Updating prices',
     syncStageRetrying: 'Retrying failed lookups',
     syncProgressOf: '{done} of {total}',
+    syncProgressOfOverall: '{done} of {total} this sync, {overall} in all; the rest follow in later syncs',
     syncStillFailing: '{count} lookups still failed. They will be retried on the next sync.',
     syncStillFailingOne: '1 lookup still failed. It will be retried on the next sync.',
     syncRetriedOk: '{count} failed lookups were retried and went through.',

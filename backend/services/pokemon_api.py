@@ -1,6 +1,7 @@
 import httpx
 import math
 import re
+from urllib.parse import quote
 from functools import lru_cache
 from typing import Optional, Dict, Any, List
 from services.card_gameplay import playable_fingerprint
@@ -46,6 +47,35 @@ def _sort_number(val) -> tuple:
         prefix = s
         digits = ""
     return (0 if not prefix else 1, _safe_int(digits), prefix)
+
+
+def tcgdex_segment(value) -> str:
+    """Percent-encode one id for use as a TCGdex URL path segment ("SM1+" -> "SM1%2B")."""
+    return quote(str(value), safe="")
+
+
+def unpadded_card_id(card_id: str) -> Optional[str]:
+    """The TCGdex id with leading zeros stripped from a numeric local id, or None if unchanged.
+
+    TCGdex's own ids are unpadded for many sets ("neo4-1"); ids stored with the
+    padded number ("neo4-001") 404 upstream.
+    """
+    set_part, sep, local = str(card_id).rpartition("-")
+    if not sep or not set_part or not local.isdigit() or len(local) < 2 or not local.startswith("0"):
+        return None
+    stripped = local.lstrip("0") or "0"
+    return f"{set_part}-{stripped}" if stripped != local else None
+
+
+def keep_row_identity(parsed: Dict, db_id: str, requested_tcg_id: str) -> Dict:
+    """Store data fetched under a corrected TCGdex id on the row that asked for it.
+
+    A legacy row such as ``neo4-001_en`` must keep its id (collections point at
+    it), but its ``tcg_card_id`` becomes TCGdex's real id so later lookups hit.
+    """
+    if db_id and parsed.get("tcg_card_id") != requested_tcg_id and parsed.get("id") != db_id:
+        parsed["id"] = db_id
+    return parsed
 
 
 def get_base_url(lang: str = "en") -> str:
@@ -221,9 +251,14 @@ def get_card(card_id: str, lang: str = "en") -> Optional[Dict]:
     """Get a single card by ID from TCGdex."""
     base_url = get_base_url(lang)
     with httpx.Client(timeout=30.0) as client:
-        response = client.get(f"{base_url}/cards/{card_id}")
+        response = client.get(f"{base_url}/cards/{tcgdex_segment(card_id)}")
         if response.status_code == 404:
-            return None
+            alternative = unpadded_card_id(card_id)
+            if not alternative:
+                return None
+            response = client.get(f"{base_url}/cards/{tcgdex_segment(alternative)}")
+            if response.status_code == 404:
+                return None
         response.raise_for_status()
         return response.json()
 
@@ -262,7 +297,7 @@ def get_all_sets(languages: Optional[List[str]] = None, *, include_digital: bool
                     all_series = series_response.json() if series_response.status_code == 200 else []
                     for serie in all_series:
                         try:
-                            sr = client.get(f"{url}/series/{serie['id']}", timeout=30.0)
+                            sr = client.get(f"{url}/series/{tcgdex_segment(serie['id'])}", timeout=30.0)
                             if sr.status_code == 200:
                                 serie_data = sr.json()
                                 serie_name = serie_data.get("name") or serie.get("name") or serie["id"]
@@ -288,7 +323,7 @@ def get_all_sets(languages: Optional[List[str]] = None, *, include_digital: bool
                         continue
                     # Fetch full detail to populate abbreviation and other fields
                     try:
-                        detail = client.get(f"{url}/sets/{sid}", timeout=30.0)
+                        detail = client.get(f"{url}/sets/{tcgdex_segment(sid)}", timeout=30.0)
                         entry = detail.json() if detail.status_code == 200 else dict(s)
                     except Exception:
                         entry = dict(s)
@@ -317,7 +352,7 @@ def get_set_detail(set_id: str, lang: str = "en") -> Optional[Dict]:
     """
     base_url = get_base_url(lang)
     with httpx.Client(timeout=30.0) as client:
-        response = client.get(f"{base_url}/sets/{set_id}")
+        response = client.get(f"{base_url}/sets/{tcgdex_segment(set_id)}")
         if response.status_code == 404:
             return None
         response.raise_for_status()
@@ -332,7 +367,7 @@ def get_set_cards(set_id: str, lang: str = "en") -> Dict:
     """
     base_url = get_base_url(lang)
     with httpx.Client(timeout=60.0) as client:
-        response = client.get(f"{base_url}/sets/{set_id}")
+        response = client.get(f"{base_url}/sets/{tcgdex_segment(set_id)}")
         response.raise_for_status()
         return response.json()
 

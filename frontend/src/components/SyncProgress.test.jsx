@@ -34,6 +34,15 @@ describe('sync progress helpers', () => {
     expect(progressCounts({ done: 3, total: 0 }, t)).toBe('')
   })
 
+  it('says how much is left overall when a stage only does part of its work this sync', () => {
+    const withOverall = key => (key === 'settings.syncProgressOfOverall'
+      ? '{done} of {total} this sync, {overall} in all; the rest follow in later syncs'
+      : t(key))
+    expect(progressCounts({ done: 1000, total: 1000, overall_total: 28412 }, withOverall))
+      .toBe('1,000 of 1,000 this sync, 28,412 in all; the rest follow in later syncs')
+    expect(progressCounts({ done: 5, total: 20, overall_total: 20 }, withOverall)).toBe('5 of 20')
+  })
+
   it('words the retry result: still failing wins, then recovered, else nothing', () => {
     expect(retryNote({ retry: { retried: 5, recovered: 3, still_failing: 2 } }, t)).toContain('2 lookups still failed')
     expect(retryNote({ retry: { retried: 5, recovered: 5, still_failing: 0 } }, t)).toContain('5 failed lookups')
