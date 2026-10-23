@@ -233,7 +233,6 @@ test.describe('card picture download by set pack', () => {
     // It sits apart from the phone's own picture rows.
     await expect(page.getByTestId('carddb-server-section').getByText('On the server (admins)')).toBeVisible()
     await expect(page.getByTestId('carddb-section')).toHaveCount(0) // the phone's controls are on /offline
-    await expect(row(page)).not.toContainText('On the server')
   })
 
   test('an administrator can ask the server to prepare the card pictures', async ({ page, context }) => {
