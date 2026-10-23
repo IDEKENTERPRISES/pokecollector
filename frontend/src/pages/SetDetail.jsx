@@ -23,6 +23,8 @@ import SearchField from '../components/ios/SearchField'
 import { colourFor } from '../components/ios/pokemon'
 import { useNavBar } from '../navigation/useNavBar'
 import { masterSetStats, splitVariantCards } from '../utils/setDetailStats'
+import { tcgdexLanguageLabel } from '../utils/tcgdexLanguages'
+import { setBackPath } from '../utils/setsLanguage'
 
 
 const SET_SORT_OPTIONS = [
@@ -117,7 +119,7 @@ function ProgressRing({ fraction, size = 84 }) {
 
 export default function SetDetail() {
   const { setId } = useParams()
-  const goBack = useDetailBackNavigation('sets', '/sets')
+  const goBack = useDetailBackNavigation('sets', setBackPath(setId))
   useScrollToTopOnPush()
   const { t, pricePrimaryField, formatPrice } = useSettings()
   const queryClient = useQueryClient()
@@ -250,6 +252,10 @@ export default function SetDetail() {
   const safeProgress = Number.isFinite(numericProgress)
     ? Math.min(100, Math.max(0, numericProgress))
     : 0
+  // A set whose own-language cards are not available yet is filled with another language's cards
+  // (the server's missing-language fallback); say so instead of passing them off as the set's own.
+  const borrowed = cards.filter(card => card.data_source_lang && card.data_source_lang !== set?.lang)
+  const borrowedFrom = borrowed.length * 2 >= cards.length && borrowed.length > 0 ? borrowed[0].data_source_lang : null
   const ownedValue = cards.reduce((sum, card) => (card.owned ? sum + setSortPrice(card, pricePrimaryField) : sum), 0)
   const master = masterSetStats(cards, card => setSortPrice(card, pricePrimaryField))
   const releaseLabel = releaseDate
@@ -282,7 +288,7 @@ export default function SetDetail() {
         </div>
         <div className="min-w-0 flex-1 text-white">
           <h1 className="truncate text-title-2 font-display">{set?.name}</h1>
-          <p className="truncate text-footnote opacity-90">{set?.series}</p>
+          <p className="truncate text-footnote opacity-90">{[set?.series, set?.lang ? tcgdexLanguageLabel(set.lang) : null].filter(Boolean).join(' · ')}</p>
           <p className="text-footnote opacity-90">
             {[releaseLabel, `${total_count} ${t('setDetail.cards')}`].filter(Boolean).join(' · ')}
           </p>
@@ -290,6 +296,12 @@ export default function SetDetail() {
       </div>
 
       <PricesFromNote source={dataSource} pricesUpdatedAt={pricesUpdatedAt} className="px-1" />
+
+      {borrowedFrom && (
+        <p data-testid="fallback-language-note" className="px-1 text-footnote text-text-secondary">
+          {t('setDetail.borrowedCards').replace('{lang}', tcgdexLanguageLabel(set?.lang)).replace('{source}', tcgdexLanguageLabel(borrowedFrom))}
+        </p>
+      )}
 
       {ownedUnknown && (
         <p data-testid="owned-unavailable" className="px-1 text-footnote text-text-secondary">{t('offlineDb.ownedUnavailable')}</p>

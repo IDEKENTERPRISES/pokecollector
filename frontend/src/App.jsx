@@ -23,6 +23,8 @@ const Collection = lazy(() => import('./pages/Collection'))
 const Pokedex = lazy(() => import('./pages/Pokedex'))
 const PokedexSpecies = lazy(() => import('./pages/PokedexSpecies'))
 const Sets = lazy(() => import('./pages/Sets'))
+const SetsLanguages = lazy(() => import('./pages/SetsLanguages'))
+const LegacySeriesRedirect = lazy(() => import('./pages/SetsLanguages').then(module => ({ default: module.LegacySeriesRedirect })))
 const SetDetail = lazy(() => import('./pages/SetDetail'))
 const Wishlist = lazy(() => import('./pages/Wishlist'))
 const Binders = lazy(() => import('./pages/Binders'))
@@ -215,8 +217,10 @@ function ProtectedRoutes() {
         <Route path="pokedex" element={lazyRoute(<Pokedex />)} />
         <Route path="pokedex/:dexId" element={lazyRoute(<PokedexSpecies />)} />
         <Route path="collection/user/:userId" element={lazyRoute(<UserCollection />)} />
-        <Route path="sets" element={lazyRoute(<Sets />)} />
-        <Route path="sets/series/:seriesKey" element={lazyRoute(<Sets />)} />
+        <Route path="sets" element={lazyRoute(<SetsLanguages />)} />
+        <Route path="sets/language/:lang" element={lazyRoute(<Sets />)} />
+        <Route path="sets/language/:lang/series/:seriesKey" element={lazyRoute(<Sets />)} />
+        <Route path="sets/series/:seriesKey" element={lazyRoute(<LegacySeriesRedirect />)} />
         <Route path="sets/:setId" element={lazyRoute(<SetDetail />)} />
         <Route path="wishlist" element={lazyRoute(<Wishlist />)} />
         <Route path="binders" element={lazyRoute(<Binders />)} />

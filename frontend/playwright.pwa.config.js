@@ -34,7 +34,13 @@ export default defineConfig({
     {
       name: 'webkit-page',
       use: { ...devices['Desktop Safari'], serviceWorkers: 'block' },
-      testIgnore: /(service-worker|push|large-image|launch-pictures|picture-store)\.spec\.js/,
+      testIgnore: /(service-worker|push|large-image|launch-pictures|picture-store|language-(first-)?sets)\.spec\.js/,
+    },
+    {
+      // The language flows on an iPhone-shaped WebKit (the phone is where they failed).
+      name: 'webkit-iphone',
+      use: { ...devices['iPhone 13'], browserName: 'webkit', serviceWorkers: 'block' },
+      testMatch: /language-(first-)?sets\.spec\.js/,
     },
   ],
 })

@@ -144,9 +144,9 @@ test.describe('the offline card database at full size', () => {
 
     // Back out of the set, twice, then switch tabs: every tap must work.
     await page.getByTestId('nav-back').click()
-    await expect(page).toHaveURL(/\/sets\/series\//)
+    await expect(page).toHaveURL(/\/sets\/language\/en\/series\//)
     await page.getByTestId('nav-back').click()
-    await expect(page).toHaveURL(/\/sets$/)
+    await expect(page).toHaveURL(/\/sets\/language\/en$/)
     await tabBar.getByRole('link', { name: 'Collection' }).click()
     await expect(page).toHaveURL(/\/collection/)
     await tabBar.getByRole('link', { name: 'Home' }).click()

@@ -21,6 +21,10 @@ const COMMIT_TIMEOUT_MS = 800
 // While a view transition runs the page ignores taps. A slow phone (a busy main thread) can stretch one
 // out, so after this long it is skipped and the page is live again: taps on Back or the tab bar never get lost.
 const MAX_TRANSITION_MS = 1500
+// The transition captures the whole page as a picture. A page many screens tall (a set of hundreds of
+// cards, a long sets list) makes that picture huge, which freezes an iPhone's WebKit or kills the tab, so
+// leaving such a page is instant instead.
+export const MAX_PAGE_SCREENS = 4
 const waiters = new Set()
 
 export function viewTransitionsSupported(doc = globalThis.document) {
@@ -35,6 +39,12 @@ export function viewTransitionsEnabled({ doc = globalThis.document, win = global
   return SLIDE_TRANSITIONS && viewTransitionsSupported(doc) && !prefersReducedMotion(win)
 }
 
+export function pageTooTall(doc = globalThis.document, win = globalThis.window) {
+  const height = doc?.documentElement?.scrollHeight
+  const screen = win?.innerHeight
+  return Number.isFinite(height) && Number.isFinite(screen) && screen > 0 && height > screen * MAX_PAGE_SCREENS
+}
+
 /** Called by Layout after each location commit; lets a waiting transition capture its new state. */
 export function notifyLocationCommitted() {
   waiters.forEach(resolve => resolve())
@@ -47,7 +57,7 @@ export function notifyLocationCommitted() {
  * reduced motion, or with the switch off, `update` simply runs.
  */
 export function runViewTransition(update, { direction = 'push', doc = globalThis.document, win = globalThis.window } = {}) {
-  if (!viewTransitionsEnabled({ doc, win })) {
+  if (!viewTransitionsEnabled({ doc, win }) || pageTooTall(doc, win)) {
     update()
     return null
   }

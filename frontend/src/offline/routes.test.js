@@ -13,7 +13,7 @@ describe('isOfflineRoute (every page of the shell opens offline)', () => {
     for (const path of [
       '/decks/12', '/decks/compare', '/pokedex', '/pokedex/25', '/analytics', '/products', '/trades',
       '/leaderboard', '/achievements', '/settings', '/settings/appearance', '/scans', '/scans/3', '/migration',
-      '/sets/base1_en', '/sets/series/sv', '/binders/42', '/collection/user/3',
+      '/sets/base1_en', '/sets/series/sv', '/sets/language/ja', '/sets/language/ja/series/sv', '/binders/42', '/collection/user/3',
     ]) {
       expect({ path, offline: isOfflineRoute(path) }).toEqual({ path, offline: true })
     }
