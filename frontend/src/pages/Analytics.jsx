@@ -551,7 +551,7 @@ export default function Analytics() {
                     <div key={r.rarity} className="flex items-center gap-3 py-2 border-b border-border/30">
                       <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: RARITY_COLORS[i % RARITY_COLORS.length] }} />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-text-primary truncate">{r.rarity}</p>
+                        <p className="text-sm font-medium text-text-primary break-words">{r.rarity}</p>
                         <p className="text-xs text-text-secondary">{r.count} · {r.percentage}%</p>
                       </div>
                       <p className="text-green font-medium text-sm flex-shrink-0">{formatPrice(r.total_value)}</p>

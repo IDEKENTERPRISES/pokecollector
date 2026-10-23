@@ -55,6 +55,7 @@ async function installApi(page, { onLogout, queue = false, counts } = {}) {
     if (path === '/api/sync/status') return route.fulfill({ json: { is_running: false, is_price_sync_running: false } })
     if (path.startsWith('/api/images/') || path.startsWith('/api/pokedex/images/')) return route.fulfill({ status: 404, json: {} })
     if (path === '/api/pokedex' || path === '/api/pokedex/') return route.fulfill({ json: { entries: [], summary: { total: 1025, owned: 10, missing: 1015 } } })
+    if (path === '/api/pokedex/summary') return route.fulfill({ json: { total: 1025, owned: 10, missing: 1015 } })
     if (path.startsWith('/api/social/achievements/')) return route.fulfill({ json: { achievements: [], earned: 0, total: 20 } })
     return route.fulfill({ json: [] })
   })
@@ -440,6 +441,7 @@ test.describe('shell on a phone', () => {
     await installApi(page)
     await page.goto('/profile')
     await expect(page.getByTestId('profile-tiles')).toBeVisible()
+    await expect(page.getByText('10/1025')).toBeVisible() // the Pokédex count loads after the tiles
     await expect(page.locator('main')).toHaveScreenshot('profile-shell.png', { maxDiffPixelRatio: 0.05 })
   })
 })

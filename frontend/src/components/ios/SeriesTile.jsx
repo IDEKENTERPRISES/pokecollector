@@ -66,10 +66,10 @@ export default function SeriesTile({ series, owned = 0, ownedUnknown = false, to
       <TileArtwork logo={series.logo} logoSources={series.logoCandidates} name={series.name} colourKey={series.key} />
       <div className="space-y-1.5 p-3">
         <div className="flex items-start justify-between gap-2">
-          <p className="min-w-0 truncate text-headline text-text-primary">{series.name}</p>
+          <p className="min-w-0 break-words text-headline text-text-primary">{series.name}</p>
           {complete && <CompleteBadge label={t('ios.complete')} />}
         </div>
-        <p className="truncate text-caption-1 text-text-secondary">
+        <p className="break-words text-caption-1 text-text-secondary">
           {[series.years, series.setCount != null ? t('ios.setsCount').replace('{count}', series.setCount) : null].filter(Boolean).join(' · ')}
         </p>
         {!ownedUnknown && <HpBar value={owned} max={total} label={series.name} />}

@@ -110,7 +110,7 @@ export default function PageSheet({
             <div className="flex justify-start">
               <HeaderButton spec={leading} fallbackLabel={t('common.cancel')} onDefault={requestClose} />
             </div>
-            <h2 id={titleId} className="max-w-[60vw] truncate text-headline text-text-primary">{title}</h2>
+            <h2 id={titleId} className="max-w-[60vw] break-words text-center text-headline text-text-primary">{title}</h2>
             <div className="flex justify-end">
               <HeaderButton spec={trailing} strong />
             </div>

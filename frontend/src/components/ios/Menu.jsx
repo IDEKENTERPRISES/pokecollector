@@ -184,7 +184,7 @@ export default function Menu({ label, trigger, sections = [], align = 'end', con
                       item.destructive ? 'text-red' : 'text-text-primary',
                     )}
                   >
-                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    <span className="min-w-0 flex-1 break-words">{item.label}</span>
                     {item.checked
                       ? <Check size={18} strokeWidth={2.5} className="flex-shrink-0 text-tint" aria-hidden="true" />
                       : item.icon && (isValidElement(item.icon)

@@ -108,7 +108,7 @@ export default function Leaderboard() {
                 </span>
                 <TrainerAvatar avatarId={trainer.avatar_id} size={48} />
                 <span className="min-w-0 flex-1 text-left">
-                  <span className="block truncate text-headline text-text-primary">{trainer.username}</span>
+                  <span className="block break-words text-headline text-text-primary">{trainer.username}</span>
                   <span className="block text-footnote text-text-secondary">{trainer.role}</span>
                 </span>
                 <span className="flex-shrink-0 text-body font-semibold text-yellow tabular-nums">{value}</span>
