@@ -37,7 +37,13 @@ export function resolveDefaultSetsLanguage(value, visibleCodes) {
  */
 export function resolveSetsLanding({ loading, codes, fallbackCode, defaultSetting }) {
   if (loading) return { kind: 'loading' }
-  const available = codes.length ? codes : [fallbackCode]
+  // An empty list means "unknown" (request failed, offline with no saved copy), not "one language":
+  // keep the language step and trust the saved default, since no real list can contradict it.
+  if (!codes.length) {
+    const saved = parseSetsLanguage(defaultSetting)
+    return saved ? { kind: 'redirect', lang: saved } : { kind: 'select', codes: [fallbackCode] }
+  }
+  const available = codes
   if (available.length === 1) return { kind: 'redirect', lang: available[0] }
   const preferred = resolveDefaultSetsLanguage(defaultSetting, available)
   if (preferred) return { kind: 'redirect', lang: preferred }

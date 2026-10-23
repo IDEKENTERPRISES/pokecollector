@@ -36,8 +36,9 @@ describe('resolveSetsLanding', () => {
   it('skips the choice with one language', () => {
     expect(resolveSetsLanding({ ...base, codes: ['ja'] })).toEqual({ kind: 'redirect', lang: 'ja' })
   })
-  it('uses the own language when the list is unavailable', () => {
-    expect(resolveSetsLanding({ ...base, codes: [], fallbackCode: 'de' })).toEqual({ kind: 'redirect', lang: 'de' })
+  it('keeps the language step when the list is unavailable', () => {
+    expect(resolveSetsLanding({ ...base, codes: [], fallbackCode: 'de' })).toEqual({ kind: 'select', codes: ['de'] })
+    expect(resolveSetsLanding({ ...base, codes: [], defaultSetting: 'ja' })).toEqual({ kind: 'redirect', lang: 'ja' })
   })
   it('opens the default language when it is visible', () => {
     expect(resolveSetsLanding({ ...base, defaultSetting: 'ja' })).toEqual({ kind: 'redirect', lang: 'ja' })
