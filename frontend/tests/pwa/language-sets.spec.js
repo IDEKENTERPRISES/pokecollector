@@ -1,8 +1,11 @@
 import { expect, test } from '@playwright/test'
 import { tcgdexLanguageLabel } from '../../src/utils/tcgdexLanguages.js'
-import { JA_PREFIX, buildBilingualCarddb } from './fixtures/carddb-bilingual.js'
+import { JA_PREFIX } from './fixtures/carddb-bilingual.js'
+import {
+  HEARTBEAT, ada, at, carddbState, data, escape, mockApi, readStall, resetStall, setPageCards, tapBack,
+} from './fixtures/language-sets-harness.js'
 
-// F18: choosing Japanese in the Sets language filter, opening a series and a Japanese set must show
+// F18 (F19: re-pointed at the language-first flow): choosing Japanese on the Sets language list, opening a series and a Japanese set must show
 // that Japanese set's own cards (never an English set's), and Back to the series list must stay
 // responsive. Driven like a person on an iPhone-sized screen (taps and the Back button, no URL typing)
 // with about 30,000 cards and 300 sets in two languages (see fixtures/carddb-bilingual.js): the same
@@ -11,181 +14,15 @@ import { JA_PREFIX, buildBilingualCarddb } from './fixtures/carddb-bilingual.js'
 // (card database downloaded, requests hang, navigator.onLine stays true). Chromium also runs with the
 // CPU throttled 4x; the main thread's longest stall is measured in both browsers.
 
-const ada = { id: 1, username: 'ada', role: 'user', avatar_id: null, must_change_password: false }
-const HEALTH_OK = {
-  status: 'ok', service: 'pokemon-tcg-collection', version: '1.51.6', api_level: 1, features: ['idempotency-v1'],
-}
-const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64')
-
-const data = buildBilingualCarddb()
-const { dbs, bodies, fields } = data
-const at = Object.fromEntries(fields.map((field, index) => [field, index]))
-const langOfSetId = id => id.slice(id.lastIndexOf('_') + 1)
-const escape = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
-/** GET /api/sets/{id}/checklist the way the real backend answers: the set's own rows in its language. */
-function checklistOf(setId) {
-  const lang = langOfSetId(setId)
-  const payload = dbs[lang]?.sets[setId]
-  if (!payload) return null
-  const set = payload.set
-  const cards = payload.cards.map(row => {
-    const card = Object.fromEntries(fields.map((field, index) => [field, row[index]]))
-    return {
-      id: card.id,
-      name: card.name,
-      tcg_card_id: card.tcg_card_id,
-      set_id: card.set_id,
-      set_ref: { id: set.id, tcg_set_id: set.tcg_set_id, name: set.name, abbreviation: set.abbreviation, lang },
-      number: card.number,
-      rarity: card.rarity,
-      images_small: card.images_small,
-      images_large: card.images_large,
-      image_source_lang: card.image_source_lang === card.lang ? null : card.image_source_lang,
-      data_source_lang: card.data_source_lang === card.lang ? null : card.data_source_lang,
-      owned: false, owned_quantity: 0, owned_variants: [], wishlisted: false, quantity: 0, owned_items: [],
-      price_market: null, price_low: null,
-      dex_ids: card.dex_ids,
-      variants_normal: card.variants_normal, variants_reverse: card.variants_reverse,
-      variants_holo: card.variants_holo, variants_first_edition: card.variants_first_edition,
-      lang: card.lang,
-    }
-  })
-  return {
-    set: { id: set.id, name: set.name, series: set.series, total: set.total, images_symbol: null, images_logo: null, lang },
-    cards, owned_count: 0, total_count: cards.length, progress: 0,
-  }
-}
-
-async function mockApi(context, state) {
-  await context.route(url => url.pathname.startsWith('/api/'), async route => {
-    const url = new URL(route.request().url())
-    const path = url.pathname
-    // Airplane Mode on an iPhone: the request is neither answered nor refused.
-    if (state.offline && path !== '/api/settings/tcgdex-filter-languages') return undefined
-    if (path === '/api/health') return route.fulfill({ json: HEALTH_OK })
-    if (path === '/api/auth/mode') return route.fulfill({ json: { multi_user: false, locked: false } })
-    if (path === '/api/auth/me') return route.fulfill({ json: ada })
-    if (path === '/api/settings/' && route.request().method() === 'PUT') {
-      Object.assign(state.settings, JSON.parse(route.request().postData() || '{}'))
-      return route.fulfill({ json: state.settings })
-    }
-    if (path === '/api/settings/') return route.fulfill({ json: state.settings })
-    if (path === '/api/settings/exchange-rate') return route.fulfill({ json: { rate: 1 } })
-    if (path === '/api/settings/tcgdex-filter-languages') {
-      return route.fulfill({ json: { languages: [{ code: 'en', name: 'English' }, { code: 'ja', name: 'Japanese' }] } })
-    }
-    if (path === '/api/offline/carddb/manifest') return route.fulfill({ status: 200, contentType: 'application/json', body: bodies.manifest })
-    const downloaded = /^\/api\/offline\/carddb\/sets\/(en|ja)\/(.+)$/.exec(path)
-    if (downloaded) {
-      const body = bodies.sets[downloaded[1]][downloaded[2]]
-      return body ? route.fulfill({ status: 200, contentType: 'application/json', body, headers: { ETag: '"x"' } }) : route.fulfill({ status: 404, json: {} })
-    }
-    const prices = /^\/api\/offline\/carddb\/prices\/(en|ja)$/.exec(path)
-    if (prices) return route.fulfill({ status: 200, contentType: 'application/json', body: bodies.prices[prices[1]] })
-    // The offline runs must be answered by the card database, so the server's sets are not saved for them.
-    if (path === '/api/sets/') {
-      if (state.cardDbOnly) return route.fulfill({ status: 404, json: {} })
-      const lang = url.searchParams.get('lang') || 'en'
-      const langs = lang === 'all' ? ['en', 'ja'] : [lang]
-      return route.fulfill({ json: langs.flatMap(code => dbs[code].setList.map(set => ({ ...set, owned_count: 0, is_new: false }))) })
-    }
-    const checklist = /^\/api\/sets\/([^/]+)\/checklist$/.exec(path)
-    if (checklist) {
-      if (state.cardDbOnly) return route.fulfill({ status: 404, json: {} })
-      const body = checklistOf(decodeURIComponent(checklist[1]))
-      return body ? route.fulfill({ json: body }) : route.fulfill({ status: 404, json: { detail: 'Set not found' } })
-    }
-    if (path === '/api/collection/') return route.fulfill({ json: [] })
-    if (path.startsWith('/api/images/card/')) return route.fulfill({ status: 200, contentType: 'image/png', body: PIXEL })
-    if (path.startsWith('/api/images/') || path.startsWith('/api/pokedex/')) return route.fulfill({ status: 404, json: {} })
-    return route.fulfill({ json: [] })
-  })
-}
-
-const carddbState = page => page.evaluate(async () => {
-  const database = await new Promise((resolve, reject) => {
-    const request = indexedDB.open('pokecollector-carddb')
-    request.onupgradeneeded = () => request.transaction.abort()
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
-  }).catch(() => null)
-  if (!database) return { sets: 0, meta: [] }
-  const read = (store, method) => new Promise((resolve, reject) => {
-    const request = database.transaction(store).objectStore(store)[method]()
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
-  })
-  const result = { sets: (await read('setIndex', 'getAllKeys')).length, meta: await read('meta', 'getAllKeys') }
-  database.close()
-  return result
-})
-
-// How long the main thread stopped answering: a 20 ms heartbeat records its largest gap (it works in
-// WebKit, which has no long-task observer), plus long tasks where the browser reports them.
-const HEARTBEAT = () => {
-  window.__gap = 0
-  window.__longTasks = []
-  let last = performance.now()
-  setInterval(() => {
-    const now = performance.now()
-    window.__gap = Math.max(window.__gap, now - last - 20)
-    last = now
-  }, 20)
-  try {
-    new PerformanceObserver(list => {
-      for (const entry of list.getEntries()) window.__longTasks.push(Math.round(entry.duration))
-    }).observe({ type: 'longtask', buffered: true })
-  } catch {
-    // not supported (WebKit)
-  }
-}
-const resetStall = page => page.evaluate(() => { window.__gap = 0; window.__longTasks = [] })
-const readStall = page => page.evaluate(() => Math.round(Math.max(window.__gap, ...window.__longTasks, 0)))
-
+/** The language list is the first screen of Sets: tap a language to open its series. */
 async function chooseLanguage(page, code) {
-  await page.getByRole('button', { name: /Filters/ }).first().click()
-  await page.locator('#sets-filter-language').selectOption(code)
-  await page.getByRole('button', { name: 'Done' }).click()
+  await page.getByTestId(`sets-language-${code}`).click()
+  await expect(page.getByTestId('series-grid').getByRole('link').first()).toBeVisible({ timeout: 40000 })
 }
 
-/** The series tile of a set's series in the language the person is looking at (with "All" there is one per language). */
-function seriesTile(page, set, wanted) {
-  const links = page.getByTestId('series-grid').getByRole('link', { name: new RegExp(escape(set.series)) })
-  return wanted === 'all' ? links.filter({ hasText: tcgdexLanguageLabel('ja') }).first() : links.first()
-}
-
-/**
- * Taps Back and returns how long the page took, inside the page, from the tap to the target page being
- * painted (two frames after it is in the DOM). Playwright's own click and polling time is not in it.
- */
-async function tapBack(page, targetTestId) {
-  const measured = page.evaluate(testId => new Promise(resolve => {
-    document.querySelector('[data-testid="nav-back"]').addEventListener('click', () => {
-      const started = performance.now()
-      const check = () => {
-        if (document.querySelector(`[data-testid="${testId}"]`)) {
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve(Math.round(performance.now() - started))))
-        } else {
-          requestAnimationFrame(check)
-        }
-      }
-      check()
-    }, { once: true, capture: true })
-  }), targetTestId)
-  await page.getByTestId('nav-back').click()
-  return measured
-}
-
-/** What the set page shows: the card names and the pictures they ask for. */
-async function setPageCards(page) {
-  await expect(page.getByRole('button', { name: /^Add / }).first()).toBeVisible({ timeout: 30000 })
-  // Online the pictures load a moment after the cards; offline their requests hang and none arrive.
-  await page.waitForFunction(() => document.querySelector('img[src*="/api/images/card/"]'), null, { timeout: 5000 }).catch(() => {})
-  return page.evaluate(() => ({
-    names: [...document.querySelectorAll('button[aria-label^="Add "]')].map(node => node.getAttribute('aria-label').slice(4)),
-    pictures: [...document.querySelectorAll('img')].map(img => img.getAttribute('src') || '').filter(src => src.includes('/api/images/card/')),
-  }))
+/** The series tile of a set's series (a language shows each series once). */
+function seriesTile(page, set) {
+  return page.getByTestId('series-grid').getByRole('link', { name: new RegExp(escape(set.series)) }).first()
 }
 
 for (const mode of ['online', 'offline']) {
@@ -226,10 +63,10 @@ for (const mode of ['online', 'offline']) {
       await expect(page.getByTestId('search-browse')).toBeVisible({ timeout: 20000 })
       if (mode === 'offline') await expect(page.getByTestId('offline-banner')).toBeVisible({ timeout: 40000 })
       await page.getByTestId('browse-sets').click()
-      await expect(page.getByTestId('series-grid').getByRole('link').first()).toBeVisible({ timeout: 40000 })
+      await expect(page.getByTestId('sets-languages')).toBeVisible({ timeout: 40000 })
     }
 
-    for (const wanted of ['ja', 'all']) {
+    for (const wanted of ['ja']) {
       test(`${wanted}: a Japanese set shows its own cards and Back to the series stays responsive`, async ({ page, context, browserName }) => {
         await start({ page, context, browserName })
         const timings = {}
@@ -239,11 +76,9 @@ for (const mode of ['online', 'offline']) {
         await chooseLanguage(page, wanted)
         await expect(page.getByTestId('series-grid')).toBeVisible()
         await page.waitForTimeout(1500) // a person looks at the list before tapping
-        if (wanted === 'all') {
-          // The same series exists in both languages: each has its own tile.
-          await expect(page.getByTestId('series-grid').getByRole('link', { name: new RegExp(escape(landmark.series)) })).toHaveCount(2)
-        }
-        await seriesTile(page, landmarkSet, wanted).click()
+        // The same series exists in both languages, but this language lists it once.
+        await expect(page.getByTestId('series-grid').getByRole('link', { name: new RegExp(escape(landmark.series)) })).toHaveCount(1)
+        await seriesTile(page, landmarkSet).click()
         await expect(page.getByTestId('sets-grid')).toBeVisible({ timeout: 20000 })
 
         // The language the person chose survives into the series page: only Japanese sets are listed.
@@ -309,7 +144,7 @@ for (const mode of ['online', 'offline']) {
       await chooseLanguage(page, 'ja')
       await page.waitForTimeout(1500)
       const landmark = data.ja.landmark
-      await seriesTile(page, data.ja.setList.find(set => set.id === landmark.setId), 'ja').click()
+      await seriesTile(page, data.ja.setList.find(set => set.id === landmark.setId)).click()
       await page.getByRole('button', { name: landmark.setName, exact: true }).click()
       await setPageCards(page)
 
@@ -332,7 +167,7 @@ for (const mode of ['online', 'offline']) {
       await page.waitForTimeout(1500)
 
       const openSet = async set => {
-        await seriesTile(page, set, 'ja').click()
+        await seriesTile(page, set).click()
         await page.getByRole('button', { name: set.name, exact: true }).click()
         await expect(page).toHaveURL(new RegExp(`/sets/${escape(set.id)}$`))
         return setPageCards(page)

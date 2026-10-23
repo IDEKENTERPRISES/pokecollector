@@ -24,6 +24,7 @@ import { colourFor } from '../components/ios/pokemon'
 import { useNavBar } from '../navigation/useNavBar'
 import { masterSetStats, splitVariantCards } from '../utils/setDetailStats'
 import { tcgdexLanguageLabel } from '../utils/tcgdexLanguages'
+import { setBackPath } from '../utils/setsLanguage'
 
 
 const SET_SORT_OPTIONS = [
@@ -118,7 +119,7 @@ function ProgressRing({ fraction, size = 84 }) {
 
 export default function SetDetail() {
   const { setId } = useParams()
-  const goBack = useDetailBackNavigation('sets', '/sets')
+  const goBack = useDetailBackNavigation('sets', setBackPath(setId))
   useScrollToTopOnPush()
   const { t, pricePrimaryField, formatPrice } = useSettings()
   const queryClient = useQueryClient()

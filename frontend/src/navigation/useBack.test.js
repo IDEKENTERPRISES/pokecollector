@@ -33,6 +33,7 @@ describe('decideBack', () => {
   it('goes to the parent on a cold start (a deep link)', () => {
     expect(decideBack(start('a', '/settings/appearance'), '/settings/appearance')).toEqual({ type: 'replace', to: '/settings' })
     expect(decideBack(start('a', '/sets/base1'), '/sets/base1')).toEqual({ type: 'replace', to: '/sets' })
+    expect(decideBack(start('a', '/sets/sv1_ja'), '/sets/sv1_ja')).toEqual({ type: 'replace', to: '/sets/language/ja' })
     expect(decideBack(start('a', '/collection/user/3'), '/collection/user/3')).toEqual({ type: 'replace', to: '/leaderboard' })
   })
 

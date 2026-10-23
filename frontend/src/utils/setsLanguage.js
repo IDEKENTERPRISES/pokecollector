@@ -78,7 +78,13 @@ export function legacySetsRedirect({ pathname, search, storedLang, visibleCodes 
   const suffix = rest ? `?${rest}` : ''
   const series = /^\/sets\/series\/([^/]+)\/?$/.exec(pathname)
   if (series) {
-    return lang ? `${setsSeriesPath(lang, decodeURIComponent(series[1]))}${suffix}` : `/sets${suffix}`
+    // F18 keys carry the language: "sv~ja".
+    const raw = decodeURIComponent(series[1])
+    const tilde = raw.lastIndexOf('~')
+    const keyLang = tilde > 0 ? parseSetsLanguage(raw.slice(tilde + 1)) : null
+    const key = keyLang ? raw.slice(0, tilde) : raw
+    const target = keyLang && visibleCodes.includes(keyLang) ? keyLang : lang
+    return target ? `${setsSeriesPath(target, key)}${suffix}` : `/sets${suffix}`
   }
   if (pathname.replace(/\/$/, '') === '/sets' && wanted && lang) return `${setsLanguagePath(lang)}${suffix}`
   return null
@@ -91,4 +97,22 @@ export function storedFilterLanguage(value) {
     try { parsed = JSON.parse(value) } catch { return null }
   }
   return parseSetsLanguage(parsed?.langFilter)
+}
+
+/** The language a set id ends in ("sv1_en" -> "en", "x_zh-tw" -> "zh-tw"), or null. */
+export function languageOfSetId(setId) {
+  const id = String(setId ?? '')
+  const index = id.lastIndexOf('_')
+  return index > 0 ? parseSetsLanguage(id.slice(index + 1)) : null
+}
+
+/** Where Back goes from a set when there is no history to return to: its language's set list. */
+export function setBackPath(setId) {
+  const lang = languageOfSetId(setId)
+  return lang ? setsLanguagePath(lang) : '/sets'
+}
+
+/** A set's own page. The id is encoded: it is data, not a path. */
+export function setPath(setId) {
+  return `/sets/${encodeURIComponent(setId)}`
 }

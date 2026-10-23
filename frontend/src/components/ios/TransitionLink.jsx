@@ -1,6 +1,6 @@
 import { forwardRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { isPushedPath } from '../../navigation/navConfig'
+import { isInstantPath, isPushedPath } from '../../navigation/navConfig'
 import { isPlainClick, runViewTransition, viewTransitionsEnabled } from '../../navigation/viewTransition'
 
 function pathnameOf(to) {
@@ -20,7 +20,7 @@ const TransitionLink = forwardRef(function TransitionLink({ to, replace, state, 
   const handleClick = event => {
     onClick?.(event)
     if (event.defaultPrevented || reloadDocument || (target && target !== '_self')) return
-    if (!isPlainClick(event) || !isPushedPath(pathnameOf(to)) || !viewTransitionsEnabled()) return
+    if (!isPlainClick(event) || !isPushedPath(pathnameOf(to)) || isInstantPath(pathnameOf(to)) || !viewTransitionsEnabled()) return
     event.preventDefault()
     runViewTransition(() => navigate(to, { replace, state }), { direction: 'push' })
   }

@@ -27,7 +27,7 @@ async function installApi(page, { settings = {}, images = () => ({ status: 404, 
     if (path === '/api/auth/me') return route.fulfill({ json: USER })
     if (path === '/api/settings/') return route.fulfill({ json: { language: 'en', currency: 'EUR', tcgdex_sync_languages: 'en', ...settings } })
     if (path === '/api/settings/exchange-rate') return route.fulfill({ json: { rate: 1 } })
-    if (path === '/api/settings/tcgdex-filter-languages') return route.fulfill({ json: ['en'] })
+    if (path === '/api/settings/tcgdex-filter-languages') return route.fulfill({ json: { languages: [{ code: 'en', name: 'English' }] } })
     if (path === '/api/sets/') return route.fulfill({ json: SETS })
     if (path === '/api/cards/recognize/jobs') return route.fulfill({ json: { jobs: [] } })
     if (path === '/api/cards/custom') return route.fulfill({ json: [] })
@@ -55,7 +55,7 @@ test.describe('sets by series', () => {
     await expect(grid.getByRole('link').nth(1)).toContainText('Complete')
 
     await grid.getByRole('link').first().click()
-    await expect(page).toHaveURL(/\/sets\/series\/sv$/)
+    await expect(page).toHaveURL(/\/sets\/language\/en\/series\/sv$/)
     await expect(page.getByTestId('nav-title')).toHaveText('Scarlet & Violet')
     await expect(page.getByTestId('series-header')).toContainText('10 of 30')
     const tiles = page.getByTestId('set-tile')

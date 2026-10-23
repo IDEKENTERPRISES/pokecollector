@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  languageOfSetId,
   legacySetsRedirect,
+  setBackPath,
+  setPath,
   parseSetsLanguage,
   resolveDefaultSetsLanguage,
   resolveSetsLanding,
@@ -80,8 +83,29 @@ describe('legacySetsRedirect', () => {
     expect(legacySetsRedirect({ pathname: '/sets/series/sv', search: '', storedLang: 'ja', visibleCodes }))
       .toBe('/sets/language/ja/series/sv')
   })
+  it('moves F18 series keys that carry the language', () => {
+    expect(legacySetsRedirect({ pathname: '/sets/series/sv~ja', search: '', visibleCodes }))
+      .toBe('/sets/language/ja/series/sv')
+    expect(legacySetsRedirect({ pathname: '/sets/series/sv~en', search: '?lang=ja', visibleCodes }))
+      .toBe('/sets/language/en/series/sv')
+  })
   it('falls back to the landing when no language is usable', () => {
     expect(legacySetsRedirect({ pathname: '/sets/series/sv', search: '?lang=ko', visibleCodes })).toBe('/sets')
+  })
+})
+
+describe('set ids', () => {
+  it('finds the language and the back path', () => {
+    expect(languageOfSetId('sv1_en')).toBe('en')
+    expect(languageOfSetId('SV1S_ja')).toBe('ja')
+    expect(languageOfSetId('x_zh-tw')).toBe('zh-tw')
+    expect(languageOfSetId('base1')).toBeNull()
+    expect(setBackPath('sv1_ja')).toBe('/sets/language/ja')
+    expect(setBackPath('base1')).toBe('/sets')
+  })
+  it('encodes the id in the path', () => {
+    expect(setPath('sv1_en')).toBe('/sets/sv1_en')
+    expect(setPath('a/b#c')).toBe('/sets/a%2Fb%23c')
   })
 })
 

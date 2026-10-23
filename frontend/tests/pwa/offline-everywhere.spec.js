@@ -42,7 +42,7 @@ async function mockApi(context, state) {
     if (path === '/api/auth/me') return route.fulfill({ json: ada })
     if (path === '/api/settings/') return route.fulfill({ json: { language: 'en', currency: 'EUR' } })
     if (path === '/api/settings/exchange-rate') return route.fulfill({ json: { rate: 1 } })
-    if (path === '/api/settings/tcgdex-filter-languages') return route.fulfill({ json: ['en'] })
+    if (path === '/api/settings/tcgdex-filter-languages') return route.fulfill({ json: { languages: [{ code: 'en', name: 'English' }] } })
     if (path === '/api/dashboard/') return route.fulfill({ json: { total_cards: 4242, owned_sets: 17, recent_additions: [], top_cards: [] } })
     if (path === '/api/sets/') return route.fulfill({ json: SETS })
     if (path === '/api/sets/base1_en/checklist') return route.fulfill({ json: CHECKLIST })
@@ -75,7 +75,7 @@ const savedQueries = (page, userId) => page.evaluate(async id => {
 // Every page of this list is opened online first; `marker` is something only its saved data shows.
 const PAGES = [
   { path: '/sets', title: 'Sets', marker: 'Scarlet & Violet' },
-  { path: '/sets/series/base', title: 'Sets', marker: 'Base Set Marker' },
+  { path: '/sets/language/en/series/base', title: 'Sets', marker: 'Base Set Marker' },
   { path: '/sets/base1_en', title: 'Base Set Marker', marker: 'Checklist Marker Card' },
   { path: '/decks/1', title: 'Card Lists', marker: 'Visual Practice Deck' },
   { path: '/analytics', title: 'Analytics' },
