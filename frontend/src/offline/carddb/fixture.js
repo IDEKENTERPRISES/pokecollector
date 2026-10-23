@@ -34,3 +34,37 @@ export async function seedStore(indexedDB, { lang = 'en', sets = FIXTURE_SETS, p
   await store.setMeta(lang, { hash: 'L1', pricesHash: prices.hash, pricesUpdatedAt: prices.updatedAt, sets: Object.keys(sets).length, cards: 0, syncedAt: 1 })
   return store
 }
+
+// The Japanese side of a two-language database (F18). pbl_ja shares its catalogue id (pbl) with pbl_en
+// and its series with it, jpo_ja exists in Japanese only, and fbk_ja has no native cards: the server
+// fills it with the English cards under Japanese ids, marked with the language they come from.
+const JA_FIELDS = [...FIELDS, 'data_source_lang', 'image_source_lang']
+const jaCard = (tcg, number, name, source = null) => [
+  `${tcg}-${number}_ja`, `${tcg}-${number}`, name, tcg, number, 'Common', 'Pokémon', '70', ['Lightning'], [877], `/api/images/card/${tcg}-${number}_ja/small`, 'ja', source, source,
+]
+
+export const FIXTURE_SETS_JA = {
+  pbl_ja: { v: 1, set: setRow('pbl_ja', 'pbl', 'ペリロウスブルーム', 'PBL', 'Scarlet & Violet', '2026-08-01', 'ja'), fields: JA_FIELDS, cards: [
+    jaCard('pbl', '117', 'モルペコ'), jaCard('pbl', '118', 'モルペコ'), jaCard('pbl', '9', 'ピカチュウ'),
+  ] },
+  jpo_ja: { v: 1, set: setRow('jpo_ja', 'jpo', 'ジャパンオンリー', 'JPO', 'Scarlet & Violet', '2026-09-01', 'ja'), fields: JA_FIELDS, cards: [
+    jaCard('jpo', '1', 'ミュウ'),
+  ] },
+  fbk_ja: { v: 1, set: setRow('fbk_ja', 'fbk', 'フォールバック', 'FBK', 'Scarlet & Violet', '2026-10-01', 'ja'), fields: JA_FIELDS, cards: [
+    jaCard('fbk', '1', 'Fallback Mon', 'en'), jaCard('fbk', '2', 'Fallback Two', 'en'),
+  ] },
+}
+
+export const FIXTURE_PRICES_JA = {
+  hash: 'P1J',
+  updatedAt: '2026-10-21',
+  fields: ['price_market', 'price_low'],
+  rows: [['pbl-117_ja', 9, 8]],
+}
+
+/** English and Japanese in one store, the way a device that downloaded both has it. */
+export async function seedBilingualStore(indexedDB) {
+  const store = await seedStore(indexedDB)
+  await seedStore(indexedDB, { lang: 'ja', sets: FIXTURE_SETS_JA, prices: FIXTURE_PRICES_JA })
+  return store
+}
