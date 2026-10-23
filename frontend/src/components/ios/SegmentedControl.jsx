@@ -49,7 +49,7 @@ export default function SegmentedControl({ options, value, onChange, ariaLabel, 
       onKeyDown={handleKeyDown}
       className={clsx(
         'relative flex w-full rounded-full p-0.5 bg-fill-tertiary',
-        size === 'md' ? 'h-9' : 'h-8',
+        size === 'md' ? 'min-h-9' : 'min-h-8',
         className,
       )}
     >
@@ -76,7 +76,7 @@ export default function SegmentedControl({ options, value, onChange, ariaLabel, 
             tabIndex={selected ? 0 : -1}
             onClick={() => onChange?.(option.value)}
             className={clsx(
-              'relative z-10 flex-1 truncate rounded-full px-2 text-footnote font-semibold ios-press',
+              'relative z-10 flex-1 break-words rounded-full px-2 py-1 leading-tight text-footnote font-semibold ios-press',
               'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-tint',
               selected ? 'text-on-accent' : 'text-text-primary',
             )}

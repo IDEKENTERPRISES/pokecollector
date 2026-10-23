@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import api from '../../api/client'
@@ -6,18 +6,13 @@ import { useAuth } from '../../contexts/AuthContext'
 import { useSettings } from '../../contexts/SettingsContext'
 import { UP_TO_DATE_SHOWN_MS } from '../../offline/carddb/controller'
 import { useCardDb } from '../../offline/carddb/useCardDb'
+import { formatSize } from '../../offline/storageBreakdown'
 import HpBar from '../ios/HpBar'
 import ListRow from '../ios/ListRow'
 import ListSection from '../ios/ListSection'
-import Switch from '../ios/Switch'
 import { tcgdexLanguageLabel } from '../../utils/tcgdexLanguages'
 
-export function formatBytes(bytes) {
-  const value = Number(bytes) || 0
-  if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`
-  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(value < 10 * 1024 * 1024 ? 1 : 0)} MB`
-  return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`
-}
+export const formatBytes = bytes => formatSize(Number(bytes) || 0)
 
 /** "Today 01:58", or a short date and time for an older update. */
 export function formatUpdated(timestamp, t, now = Date.now()) {
@@ -29,7 +24,52 @@ export function formatUpdated(timestamp, t, now = Date.now()) {
 
 const fill = (template, values) => Object.entries(values).reduce((text, [key, value]) => text.replace(`{${key}}`, value), template)
 
-const pill = 'inline-flex min-h-[32px] items-center rounded-full px-3.5 text-subheadline font-semibold ios-press disabled:opacity-40'
+// The look of Sync & offline (pages/OfflineCenter.jsx): a bordered card with a small heading, rows divided by lines,
+// 14 px titles, 12 px notes and the ghost buttons of the sync controls.
+const pill = 'btn-ghost-sm whitespace-normal text-center'
+const tone = { neutral: '', accent: 'text-tint', danger: 'text-red' }
+
+function Card({ title, footer, testId, children }) {
+  return (
+    <section className="space-y-3 rounded-xl border border-border bg-card p-4" data-testid={testId}>
+      <h2 className="text-sm font-semibold text-text-primary">{title}</h2>
+      {children}
+      {footer && <p className="text-xs text-text-secondary">{footer}</p>}
+    </section>
+  )
+}
+
+function Row({ title, subtitle, trailing, testId, destructive = false, onPress }) {
+  const body = (
+    <>
+      <span className="min-w-0 flex-1">
+        <span className={clsx('block break-words text-sm', destructive ? 'text-red' : 'text-text-primary')}>{title}</span>
+        {subtitle && <span className="block break-words text-xs text-text-muted">{subtitle}</span>}
+      </span>
+      {trailing}
+    </>
+  )
+  const classes = 'flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-2 py-3 text-left'
+  return (
+    <li data-testid={testId} className="list-none">
+      {onPress ? <button type="button" className={classes} onClick={onPress}>{body}</button> : <div className={classes}>{body}</div>}
+    </li>
+  )
+}
+
+function SwitchBox({ checked, onChange, label }) {
+  return (
+    <input
+      type="checkbox"
+      role="switch"
+      aria-label={label}
+      checked={checked}
+      onChange={event => onChange(event.target.checked)}
+      className="h-4 w-4 flex-shrink-0 accent-brand-red"
+    />
+  )
+}
+
 
 const PAUSE_REASONS = {
   user: 'offlineDb.picturesPausedUser',
@@ -62,34 +102,34 @@ function PicturesRow({ lang, info, actions, t }) {
     subtitle = [sets, ...extras].join(' · ')
     trailing = (
       <span className="flex gap-2">
-        <button type="button" className={clsx(pill, 'bg-fill-tertiary')} onClick={() => actions.pausePictures(lang)}>{t('offlineDb.pause')}</button>
-        <button type="button" className={clsx(pill, 'bg-red/15 text-red')} onClick={() => actions.cancelPictures(lang)}>{t('common.cancel')}</button>
+        <button type="button" className={clsx(pill, tone.neutral)} onClick={() => actions.pausePictures(lang)}>{t('offlineDb.pause')}</button>
+        <button type="button" className={clsx(pill, tone.danger)} onClick={() => actions.cancelPictures(lang)}>{t('common.cancel')}</button>
       </span>
     )
   } else if (pictures.status === 'paused') {
     subtitle = `${t(PAUSE_REASONS[pictures.reason] ?? 'offlineDb.picturesPausedError')} · ${sets}`
     trailing = (
       <span className="flex gap-2">
-        <button type="button" className={clsx(pill, 'bg-accent/20 text-tint')} onClick={() => actions.resumePictures(lang)}>{t('offlineDb.resume')}</button>
-        <button type="button" className={clsx(pill, 'bg-red/15 text-red')} onClick={() => actions.removePictures(lang)}>{t('offlineDb.remove')}</button>
+        <button type="button" className={clsx(pill, tone.accent)} onClick={() => actions.resumePictures(lang)}>{t('offlineDb.resume')}</button>
+        <button type="button" className={clsx(pill, tone.danger)} onClick={() => actions.removePictures(lang)}>{t('offlineDb.remove')}</button>
       </span>
     )
   } else if (pictures.status === 'complete') {
     subtitle = fill(t('offlineDb.picturesDoneSize'), { size: formatBytes(pictures.bytes ?? 0) })
-    trailing = <button type="button" className={clsx(pill, 'bg-red/15 text-red')} onClick={() => actions.removePictures(lang)}>{t('offlineDb.remove')}</button>
+    trailing = <button type="button" className={clsx(pill, tone.danger)} onClick={() => actions.removePictures(lang)}>{t('offlineDb.remove')}</button>
   } else {
     subtitle = fill(t('offlineDb.picturesDownload'), { size: formatBytes(pictures.estimateBytes ?? 0) })
     trailing = (
-      <button type="button" className={clsx(pill, 'bg-accent/20 text-tint')} onClick={() => actions.startPictures(lang)} data-testid={`carddb-pictures-${lang}`}>
+      <button type="button" className={clsx(pill, tone.accent)} onClick={() => actions.startPictures(lang)} data-testid={`carddb-pictures-${lang}`}>
         {t('offlineDb.download')}
       </button>
     )
   }
   return (
     <>
-      <ListRow title={label} subtitle={subtitle} trailing={trailing} testId={`carddb-pictures-row-${lang}`} />
+      <Row title={label} subtitle={subtitle} trailing={trailing} testId={`carddb-pictures-row-${lang}`} />
       {pictures.status === 'downloading' && (
-        <div className="px-4 pb-3"><HpBar value={pictures.doneSets ?? 0} max={pictures.totalSets || 1} label={label} /></div>
+        <li className="list-none pb-3"><HpBar value={pictures.doneSets ?? 0} max={pictures.totalSets || 1} label={label} /></li>
       )}
     </>
   )
@@ -128,7 +168,7 @@ function PrepareRow({ t }) {
       title={t('offlineDb.prepareTitle')}
       subtitle={text}
       trailing={nothingMissing ? undefined : (
-        <button type="button" className={clsx(pill, 'bg-accent/20 text-tint')} disabled={running || start.isPending} onClick={() => start.mutate()} data-testid="carddb-prepare">
+        <button type="button" className={clsx(pill, tone.accent)} disabled={running || start.isPending} onClick={() => start.mutate()} data-testid="carddb-prepare">
           {retry ? fill(t('offlineDb.prepareRetry'), values) : t('offlineDb.prepareStart')}
         </button>
       )}
@@ -194,33 +234,33 @@ export default function OfflineCardDbSection() {
   else if (db.status === 'error') status = t('offlineDb.failed')
 
   return (
-    <div className="space-y-4" data-testid="carddb-section">
-      <ListSection header={t('offlineDb.title')} footer={t('offlineDb.description')}>
-        <ListRow
+    <Card title={t('offlineDb.title')} footer={t('offlineDb.description')} testId="carddb-section">
+      <ul className="divide-y divide-border">
+        <Row
           title={t('offlineDb.keep')}
-          trailing={<Switch checked={db.prefs.enabled} onChange={value => actions.setEnabled(value)} label={t('offlineDb.keep')} />}
+          trailing={<SwitchBox checked={db.prefs.enabled} onChange={value => actions.setEnabled(value)} label={t('offlineDb.keep')} />}
           testId="carddb-enabled"
         />
         {/* F16a: shown when the pictures moved to the faster store and must be downloaded again. */}
         {db.picturesNeedRedownload && (
-          <ListRow title={t('offlineDb.redownloadNotice')} testId="carddb-redownload-notice" />
+          <Row title={t('offlineDb.redownloadNotice')} testId="carddb-redownload-notice" />
         )}
         {status && (
-          <ListRow
+          <Row
             title={status}
             trailing={db.status === 'error' || db.status === 'offline'
-              ? <button type="button" className={clsx(pill, 'bg-accent/20 text-tint')} onClick={() => actions.sync({ force: true })}>{t('offlineDb.retry')}</button>
+              ? <button type="button" className={clsx(pill, tone.accent)} onClick={() => actions.sync({ force: true })}>{t('offlineDb.retry')}</button>
               : undefined}
             testId="carddb-status"
           />
         )}
         {db.status === 'downloading' && progress && (
-          <div className="px-4 pb-3"><HpBar value={progress.doneBytes} max={progress.totalBytes || 1} label={t('offlineDb.title')} /></div>
+          <li className="list-none pb-3"><HpBar value={progress.doneBytes} max={progress.totalBytes || 1} label={t('offlineDb.title')} /></li>
         )}
         {!db.prefs.enabled && !hasLocalData && (
-          <ListRow
+          <Row
             title={t('offlineDb.notOnDevice')}
-            trailing={<button type="button" className={clsx(pill, 'bg-accent/20 text-tint')} onClick={() => actions.setEnabled(true)} data-testid="carddb-download">{t('offlineDb.downloadAll')}</button>}
+            trailing={<button type="button" className={clsx(pill, tone.accent)} onClick={() => actions.setEnabled(true)} data-testid="carddb-download">{t('offlineDb.downloadAll')}</button>}
             testId="carddb-empty"
           />
         )}
@@ -239,31 +279,31 @@ export default function OfflineCardDbSection() {
             })
             : t('offlineDb.notDownloaded')
           return (
-            <ListRow
+            <Row
               key={lang}
               title={tcgdexLanguageLabel(lang, { full: true })}
               subtitle={subtitle}
-              trailing={<Switch checked={db.prefs.languages[lang] !== false} onChange={value => actions.setLanguage(lang, value)} label={tcgdexLanguageLabel(lang, { full: true })} />}
+              trailing={<SwitchBox checked={db.prefs.languages[lang] !== false} onChange={value => actions.setLanguage(lang, value)} label={tcgdexLanguageLabel(lang, { full: true })} />}
               testId={`carddb-language-${lang}`}
             />
           )
         })}
         {db.prefs.enabled && languages.filter(lang => db.languages[lang]?.meta).map(lang => (
-          <div key={`prices-${lang}`}>
+          <Fragment key={`prices-${lang}`}>
             {db.languages[lang].meta.pricesUpdatedAt && (
-              <ListRow
+              <Row
                 title={`${t('offlineDb.pricesFrom')} ${new Date(db.languages[lang].meta.pricesUpdatedAt).toLocaleDateString()}`}
                 subtitle={tcgdexLanguageLabel(lang, { full: true })}
               />
             )}
             <PicturesRow lang={lang} info={db.languages[lang]} actions={actions} t={t} />
-          </div>
+          </Fragment>
         ))}
         {hasLocalData && (
-          <ListRow title={t('offlineDb.removeAll')} destructive onClick={() => actions.removeAll()} testId="carddb-remove" />
+          <Row title={t('offlineDb.removeAll')} destructive onPress={() => actions.removeAll()} testId="carddb-remove" />
         )}
-      </ListSection>
-    </div>
+      </ul>
+    </Card>
   )
 }
 

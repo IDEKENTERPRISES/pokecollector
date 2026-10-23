@@ -63,11 +63,11 @@ export default function ListRow({
       )}
       {leading}
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-body">{title}</span>
+        <span className="block break-words text-body">{title}</span>
         {subtitle && <span className="block text-footnote text-text-secondary">{subtitle}</span>}
       </span>
       {badge ? <Badge count={badge} tone="red" /> : null}
-      {value != null && <span className="max-w-[45%] flex-shrink-0 truncate text-body text-text-secondary tabular-nums">{value}</span>}
+      {value != null && <span className="max-w-[45%] flex-shrink-0 break-words text-body text-text-secondary tabular-nums">{value}</span>}
       {trailing}
       {showChevron && <ChevronRight size={18} strokeWidth={2.25} className="flex-shrink-0 text-text-tertiary" aria-hidden="true" />}
     </>

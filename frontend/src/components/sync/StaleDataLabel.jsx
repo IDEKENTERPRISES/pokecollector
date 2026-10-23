@@ -26,7 +26,7 @@ export default function StaleDataLabel() {
   return (
     <span data-testid="stale-data-label" className="flex min-w-0 items-center gap-1 text-text-secondary">
       <Clock size={13} className="flex-shrink-0" aria-hidden />
-      <span className="truncate">{text}</span>
+      <span className="break-words">{text}</span>
     </span>
   )
 }

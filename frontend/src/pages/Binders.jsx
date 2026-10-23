@@ -352,15 +352,15 @@ export default function Binders() {
                       )}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <h3 className="truncate text-body font-medium text-text-primary">{binder.name}</h3>
+                      <h3 className="break-words text-body font-medium text-text-primary">{binder.name}</h3>
                       <span className={`flex items-center gap-1 text-footnote ${typeTone}`}>
                         <TypeIcon size={11} aria-hidden="true" /><span>{typeLabel}</span>
                       </span>
                       {isDeck && (
-                        <span className="block truncate text-footnote text-text-secondary">{t(`decks.format${binder.format || 'Casual'}`)} · {binder.target_size || 60} {t('binders.cards')}</span>
+                        <span className="block break-words text-footnote text-text-secondary">{t(`decks.format${binder.format || 'Casual'}`)} · {binder.target_size || 60} {t('binders.cards')}</span>
                       )}
                       {binder.description && (
-                        <span className="block truncate text-footnote text-text-secondary">{binder.description}</span>
+                        <span className="block break-words text-footnote text-text-secondary">{binder.description}</span>
                       )}
                       <span className="block text-footnote text-text-secondary">
                         {totalCount} {totalCount === 1 ? t('binders.card') : t('binders.cards')}

@@ -128,7 +128,7 @@ function QuickAction({ to, icon: Icon, label, type }) {
       >
         <Icon size={24} />
       </span>
-      <span className="max-w-full truncate text-footnote text-text-primary">{label}</span>
+      <span className="max-w-full break-words text-footnote text-text-primary">{label}</span>
     </Link>
   )
 }
@@ -261,7 +261,7 @@ export default function HomeScreen() {
           </span>
           <div className="min-w-0">
             <p className="text-subheadline text-text-secondary">{t('home.hello')},</p>
-            <p className="truncate text-title-1 font-display text-text-primary">{trainerName}</p>
+            <p className="break-words text-title-1 font-display text-text-primary">{trainerName}</p>
           </div>
         </div>
       </LargeTitle>
@@ -320,7 +320,7 @@ export default function HomeScreen() {
                 type="button"
                 onClick={toggleDisplayMode}
                 aria-label={`${headlineLabel}. ${t('home.switchValueMode')}`}
-                className="ios-press relative z-10 -my-1 min-h-[44px] max-w-full truncate rounded-full bg-black/15 px-2.5 text-footnote font-semibold"
+                className="ios-press relative z-10 -my-1 min-h-[44px] max-w-full break-words rounded-full bg-black/15 px-2.5 text-footnote font-semibold"
               >
                 {headlineLabel}
               </button>

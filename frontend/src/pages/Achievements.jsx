@@ -42,7 +42,7 @@ export default function Achievements() {
               <Award size={22} className="flex-shrink-0 text-yellow" aria-hidden="true" />
               {t('achievements.title')}
             </h1>
-            <p className="truncate text-footnote text-text-secondary">{data?.username || user?.username}</p>
+            <p className="break-words text-footnote text-text-secondary">{data?.username || user?.username}</p>
           </div>
         </div>
         {data && (

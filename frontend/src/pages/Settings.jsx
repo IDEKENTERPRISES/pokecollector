@@ -335,7 +335,7 @@ function SupporterCard({ supporter, t }) {
         />
       )}
       <div className="min-w-0">
-        <p className="text-xs font-semibold text-text-primary truncate">{supporter.name}</p>
+        <p className="text-xs font-semibold text-text-primary break-words">{supporter.name}</p>
         {support && (
           <p className="text-[11px] text-text-secondary">
             {formatSupporterAmount(support.total_amount_cents, support.currency)} · {support.donation_count} {support.donation_count === 1 ? t('settings.supporterDonation') : t('settings.supporterDonations')}
@@ -1141,11 +1141,11 @@ export default function Settings() {
               )}
               {publicProfilesEnabled && <SettingsRow label={t('settings.publicTrainerName')} description={t('settings.publicTrainerNameDesc')}>
                 <div className="flex w-full flex-col items-end gap-1">
-                  <span className="w-full truncate text-right text-body text-text-secondary">
+                  <span className="w-full break-words text-right text-body text-text-secondary">
                     {profileData?.trainer_name || user?.username || t('settings.username')}
                   </span>
                   {publicProfileUrl && (
-                    <span className="w-full truncate text-right font-mono text-caption-2 text-text-secondary">
+                    <span className="w-full break-all text-right font-mono text-caption-2 text-text-secondary">
                       {publicProfileUrl}
                     </span>
                   )}
