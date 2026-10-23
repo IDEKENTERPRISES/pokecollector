@@ -17,6 +17,8 @@ import { cancelHungQueries, createOfflineEpisodes, refreshAfterReconnect } from 
 import { setOfflineMessage, setOfflineStatus } from './offlineStatus'
 import { whenLaunchSplashClosed } from '../components/splash/launch'
 import { applyFirst, persist, purge, purgeOthers, readFirst, restoreMissing } from './readCache'
+import { buildPrefetchPlan, runPrefetch } from './prefetch'
+import { clearAllUserData, clearOtherUsersData } from './sessionCleanup'
 import { createSyncReporter } from './syncToasts'
 import { OutboxContext } from './useOutbox'
 
@@ -25,6 +27,8 @@ const RESTORE_WAIT_MS = 1500
 // The rest of the saved data (the large queries) follows the first screen, once the launch splash
 // is gone (or after this long), so reading it never competes with the first frames.
 const RESTORE_REST_MAX_WAIT_MS = 6000
+// The prefetch (F15c) waits this long after the splash closes, so the settings (price field, language) have arrived.
+const PREFETCH_DELAY_MS = 2000
 
 const RestoreGateContext = createContext(false)
 
@@ -36,14 +40,15 @@ export function useRestoreGate() {
 /**
  * The logout guard's decision loop (D7, A6). `ask()` resolves with 'sync' | 'keep' | 'discard' |
  * 'cancel'; `setBusy(true)` shows the progress label while a sync runs; `close()` hides the dialog.
- * Resolves true when logging out may proceed. `clearCache()` (the read cache, P8) runs on every
- * path that proceeds, including "nothing unsynced", and never blocks the logout.
+ * Resolves true when logging out may proceed. `clearCache({ kept })` (everything about the user, F15c;
+ * `kept` is true when the user chose to keep unsynced changes) runs on every path that proceeds,
+ * including "nothing unsynced", and never blocks the logout.
  */
 export async function runLogoutGuard({ outbox, ask, setBusy, close, clearCache = ignore }) {
-  const proceed = await decideLogout({ outbox, ask, setBusy, close })
+  const { proceed, kept } = await decideLogout({ outbox, ask, setBusy, close })
   if (proceed) {
     try {
-      await clearCache()
+      await clearCache({ kept })
     } catch {
       // best effort: a failed purge must not trap the user in the app
     }
@@ -55,31 +60,31 @@ async function decideLogout({ outbox, ask, setBusy, close }) {
   try {
     await outbox.start()
   } catch {
-    return true
+    return { proceed: true, kept: false }
   }
   for (;;) {
     if (outbox.getSnapshot().items.length === 0) {
       close()
-      return true
+      return { proceed: true, kept: false }
     }
     const choice = await ask()
     if (choice === 'cancel') {
       close()
-      return false
+      return { proceed: false, kept: false }
     }
     if (choice === 'keep') {
       close()
-      return true
+      return { proceed: true, kept: true }
     }
     if (choice === 'discard') {
       try {
         await outbox.discardAllForUser()
       } catch {
         close()
-        return false
+        return { proceed: false, kept: false }
       }
       close()
-      return true
+      return { proceed: true, kept: false }
     }
     // 'sync': keep the dialog open with a progress label, then look again. The user asked for
     // it, so it runs as `manual` and also works when Automatic sync is switched off.
@@ -97,11 +102,13 @@ async function decideLogout({ outbox, ask, setBusy, close }) {
  * and IndexedDB exists: then children render untouched and no logout guard is registered.
  */
 export function OfflineProvider({ children }) {
-  const { user, status, setLogoutGuard } = useAuth()
+  const { user, status, setLogoutGuard, multiUser } = useAuth()
   const queryClient = useQueryClient()
-  const { t } = useSettings()
+  const { t, pricePrimaryField, settings } = useSettings()
   const tRef = useRef(t)
   tRef.current = t
+  const prefetchInputRef = useRef({})
+  prefetchInputRef.current = { pricePrimaryField, language: settings?.language, multiUser }
   const enabled = useMemo(() => readPwaFlags().queue && getCapabilities().indexedDB, [])
   const [outbox, setOutbox] = useState(null)
   const [dialog, setDialog] = useState(null)
@@ -156,9 +163,56 @@ export function OfflineProvider({ children }) {
   }, [outbox, active, userId, status])
 
   // Read cache (P8): other users' saved data goes as soon as the signed-in user is known.
+  // A different user signing in also clears the previous user's queued items and viewed pictures (F15c).
   useEffect(() => {
-    if (enabled && userId !== null) purgeOthers({ origin: window.location.origin, keepUserId: userId }).catch(ignore)
+    if (!enabled || userId === null) return
+    purgeOthers({ origin: window.location.origin, keepUserId: userId })
+      .then(removed => clearOtherUsersData({ keepUserId: userId, readCacheRemoved: removed }))
+      .catch(ignore)
   }, [enabled, userId])
+
+  // Prefetch (F15c): once the launch splash has closed, every page's data of the signed-in user is fetched
+  // in the background (two at a time, never while offline) so the read cache saves it for pages never opened.
+  const outboxRef = useRef(null)
+  const signingOutRef = useRef(false)
+  outboxRef.current = outbox
+  useEffect(() => {
+    if (!enabled || status !== 'ready' || userId === null) return undefined
+    let cancelled = false
+    let running = false
+    let timer = null
+    const isOnline = () => (
+      onlineManager.isOnline()
+      && globalThis.navigator?.onLine !== false
+      && !outboxRef.current?.getSnapshot().reachability.bannerVisible
+    )
+    const run = async () => {
+      if (running || cancelled || !isOnline()) return
+      running = true
+      try {
+        const plan = buildPrefetchPlan({ ...prefetchInputRef.current, userId })
+        await runPrefetch(queryClient, plan, { isOnline, shouldStop: () => cancelled || signingOutRef.current })
+      } catch {
+        // background work: a failure is just a page that was not saved ahead
+      } finally {
+        running = false
+      }
+    }
+    whenLaunchSplashClosed().then(() => {
+      if (!cancelled) timer = window.setTimeout(run, PREFETCH_DELAY_MS)
+    })
+    // Back online after an offline start: fetch what was missed.
+    const onOnline = () => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(run, PREFETCH_DELAY_MS)
+    }
+    window.addEventListener('online', onOnline)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+      window.removeEventListener('online', onOnline)
+    }
+  }, [enabled, status, userId, queryClient])
 
   // Cold start (F14c): the small saved queries are read while the sign-in check is still waiting, so
   // a degraded start only has to put them back. Only reads here; nothing is hydrated unless degraded.
@@ -321,10 +375,15 @@ export function OfflineProvider({ children }) {
       setDialog(null)
     }
     // Stop the writer first so a pending save cannot bring the data back after the purge.
-    const clearCache = async () => {
+    // Then everything about the user goes, bar the card database (F15c); AuthContext reloads the page.
+    const clearCache = async ({ kept = false } = {}) => {
       if (userIdRef.current === null) return
+      signingOutRef.current = true
       await persisterRef.current?.stop()
       await purge({ origin: window.location.origin, userId: userIdRef.current })
+      queryClient.cancelQueries()
+      if (!kept) outbox.stop() // closes its database so it can be deleted
+      await clearAllUserData({ keepOutbox: kept })
     }
     const guard = () => runLogoutGuard({ outbox, ask, setBusy: busy => setDialog({ busy }), close, clearCache })
     setLogoutGuard(guard)

@@ -78,7 +78,6 @@ const PAGES = [
   { path: '/sets/series/base', title: 'Sets', marker: 'Base Set Marker' },
   { path: '/sets/base1_en', title: 'Base Set Marker', marker: 'Checklist Marker Card' },
   { path: '/decks/1', title: 'Card Lists', marker: 'Visual Practice Deck' },
-  { path: '/pokedex', title: 'Pokédex', marker: 'Pikachu Marker' },
   { path: '/analytics', title: 'Analytics' },
   { path: '/settings', title: 'Settings' },
 ]
@@ -113,7 +112,7 @@ async function openEverythingOnline(page, context, state) {
   // The record is written 5 s after the first successful fetch, and again after the later ones.
   await expect(async () => {
     const saved = await savedQueries(page, ada.id)
-    for (const key of ['sets', 'set-checklist', 'deck', 'pokedex']) expect(saved).toContain(key)
+    for (const key of ['sets', 'set-checklist', 'deck']) expect(saved).toContain(key)
   }).toPass({ timeout: 25000 })
   await page.waitForTimeout(6000)
 }
@@ -133,12 +132,13 @@ test.describe('every page opens offline', () => {
       await expect(page.getByTestId('stale-data-label')).toContainText('Showing saved data from')
     }
 
-    // Trades was never opened: its normal page plus one short line, not "This page isn't available offline".
-    await page.goto('/trades')
+    // The Pokédex was never opened (the sign-in prefetch does not cover it): its normal page plus one short line,
+    // not "This page isn't available offline".
+    await page.goto('/pokedex')
     await expect(page.getByTestId('offline-banner')).toBeVisible({ timeout: 20000 })
     await expect(page.getByTestId('not-saved-note')).toContainText('Not saved for offline yet. Open it once while online.')
     await expect(page.getByTestId('offline-unavailable')).toHaveCount(0)
-    await expect(page.getByTestId('nav-title')).toHaveText('Trades')
+    await expect(page.getByTestId('nav-title')).toHaveText('Pokédex')
   })
 
   test('mid-session with requests that hang: each saved page opens from its copy, a never-opened one shows its note', async ({ page, context }) => {
@@ -158,7 +158,7 @@ test.describe('every page opens offline', () => {
       await expectSavedPage(page, entry)
     }
 
-    await navigateInApp(page, '/trades')
+    await navigateInApp(page, '/pokedex')
     await expect(page.getByTestId('not-saved-note')).toBeVisible({ timeout: 10000 })
     await expect(page.getByTestId('offline-unavailable')).toHaveCount(0)
     await expect(page.locator('.skeleton')).toHaveCount(0)

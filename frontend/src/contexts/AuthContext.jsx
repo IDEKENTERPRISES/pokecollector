@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { getAuthMode, getMe, logoutSession } from '../api/client'
 import { AUTH_SNAPSHOT_TIMEOUT_MS, AUTH_STARTUP_TIMEOUT_MS, authRetryDelay, loadAuthState, withStartupDeadline } from './authBootstrap'
 import { clearSettingsCache } from '../offline/settingsCache'
+import { clearUserStorageKeys } from '../offline/sessionCleanup'
 import { clearAuthSnapshot, readAuthSnapshot, writeAuthSnapshot } from '../offline/authSnapshot'
 import { readPwaFlags } from '../pwa/flags'
 
@@ -121,9 +122,11 @@ export function AuthProvider({ children }) {
       localStorage.removeItem('user')
       clearAuthSnapshot()
       clearSettingsCache()
+      clearUserStorageKeys()
       setUser(null)
       // Force full page reload to clear all cached data (React Query, etc.)
-      // Prevents settings/data from previous user session leaking
+      // Prevents settings/data from previous user session leaking. The saved data (read cache, outbox,
+      // viewed pictures) was removed by the logout guard before this.
       window.location.href = '/login'
     }
     // Revoke the session on the server first so a copied token is useless; if the
