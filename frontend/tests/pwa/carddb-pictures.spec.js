@@ -139,6 +139,13 @@ test.describe('card picture download by set pack', () => {
     await expect.poll(() => page.evaluate(async () => (await caches.keys()).filter(name => name.startsWith('pc-')))).toEqual([])
     expect(await savedSets(page)).toEqual([])
     await expect(page.getByTestId('carddb-remove')).toHaveCount(0, { timeout: 15000 })
+    // The section stays (no restart needed) and offers Download again; nothing downloads by itself.
+    await expect(page.getByTestId('carddb-section')).toBeVisible()
+    await expect(page.getByTestId('carddb-download')).toBeVisible()
+    await page.waitForTimeout(1500)
+    expect(await page.evaluate(async () => (await caches.keys()).filter(name => name.startsWith('pc-')))).toEqual([])
+    await page.getByTestId('carddb-download').click()
+    await expect(page.getByTestId('carddb-language-en')).toContainText('cards', { timeout: 30000 })
   })
 
   test('reloading midway then resuming does not fetch the finished sets again', async ({ page, context }) => {
@@ -178,6 +185,7 @@ test.describe('card picture download by set pack', () => {
       return row(page).innerText()
     }, { timeout: 60000 }).toContain('Paused: the connection stalled')
     await expect(row(page).getByRole('button', { name: 'Resume' })).toBeVisible()
+    await expect(row(page)).not.toContainText('Downloading')
     const doneWhenPaused = (await savedSets(page)).length
     expect(doneWhenPaused).toBeLessThan(SET_COUNT)
 
@@ -186,6 +194,44 @@ test.describe('card picture download by set pack', () => {
     await row(page).getByRole('button', { name: 'Resume' }).click()
     await expect(row(page)).toContainText('Downloaded', { timeout: 60000 })
     expect((await savedSets(page)).length).toBe(SET_COUNT)
+  })
+
+  test('a download paused by a lost connection continues by itself when the connection is back', async ({ page, context }) => {
+    const state = newState()
+    state.delayMs = 150
+    await page.clock.install()
+    await openDataSettings(page, context, state)
+    await startDownload(page)
+    await expect.poll(async () => (await savedSets(page)).length, { timeout: 30000 }).toBeGreaterThanOrEqual(3)
+    state.hang = true
+    await expect.poll(async () => {
+      await page.clock.fastForward(10000)
+      return row(page).innerText()
+    }, { timeout: 60000 }).toContain('Paused')
+    state.hang = false
+    state.delayMs = 0
+    await expect.poll(async () => {
+      await page.clock.fastForward(20000)
+      return row(page).innerText()
+    }, { timeout: 60000 }).toContain('Downloaded')
+    expect((await savedSets(page)).length).toBe(SET_COUNT)
+  })
+
+  test('Last updated shows the time of day', async ({ page, context }) => {
+    const state = newState()
+    await openDataSettings(page, context, state)
+    await expect(page.getByTestId('carddb-language-en')).toContainText(/Updated Today [0-9]{2}:[0-9]{2}/, { timeout: 30000 })
+  })
+
+  test('the server picture row says it is about the server, with a retry for the missing ones', async ({ page, context }) => {
+    const state = newState()
+    await openDataSettings(page, context, state)
+    const serverRow = page.getByTestId('carddb-prepare-row')
+    await expect(serverRow).toContainText("On the server: 100 of 160 pictures ready · 60 couldn't be fetched", { timeout: 30000 })
+    await expect(page.getByTestId('carddb-prepare')).toHaveText('Retry the 60 missing')
+    // It sits apart from the phone's own picture rows.
+    await expect(page.getByTestId('carddb-section').getByText('On the server (admins)')).toBeVisible()
+    await expect(row(page)).not.toContainText('On the server')
   })
 
   test('an administrator can ask the server to prepare the card pictures', async ({ page, context }) => {
