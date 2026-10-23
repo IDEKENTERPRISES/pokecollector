@@ -102,7 +102,7 @@ async function installFilterApi(page) {
         set_overview_filters: '',
         hidden_set_ids: '[]',
       },
-      '/api/settings/tcgdex-filter-languages': ['en'],
+      '/api/settings/tcgdex-filter-languages': { languages: [{ code: 'en', name: 'English' }] },
       '/api/wishlist/': [{
         id: 1,
         card_id: CARD.id,

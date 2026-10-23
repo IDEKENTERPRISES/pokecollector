@@ -3,15 +3,15 @@ import clsx from 'clsx'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ownedFromQueryClient } from '../offline/carddb/owned.js'
 import { useCatalogQuery } from '../offline/carddb/useCatalogQuery.jsx'
-import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Bell, BellOff, Filter, ChevronUp, ChevronDown, Eye, EyeOff } from 'lucide-react'
 import { getSets, markSetsSeen } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import toast from 'react-hot-toast'
 import { resolveSetImageUrl } from '../utils/imageUrl'
-import TcgdexLanguageSelect from '../components/TcgdexLanguageSelect'
 import { useVisibleTcgdexLanguages } from '../hooks/useVisibleTcgdexLanguages'
-import { normalizeTcgdexLanguage, tcgdexLanguageBadgeClass, tcgdexLanguageLabel } from '../utils/tcgdexLanguages'
+import { useSetsLanguageChoices } from './SetsLanguages'
+import { normalizeTcgdexLanguage } from '../utils/tcgdexLanguages'
 import SeriesTile, { FallbackImage } from '../components/ios/SeriesTile'
 import SetTile from '../components/ios/SetTile'
 import HpBar from '../components/ios/HpBar'
@@ -20,25 +20,28 @@ import SearchField from '../components/ios/SearchField'
 import SegmentedControl from '../components/ios/SegmentedControl'
 import PageSheet from '../components/ios/PageSheet'
 import Menu from '../components/ios/Menu'
+import SetsLanguageSwitch from '../components/ios/SetsLanguageSwitch'
 import { colourFor } from '../components/ios/pokemon'
 import { useNavBar } from '../navigation/useNavBar'
 import { useSetsView } from '../hooks/useSetsView'
 import { groupSetsBySeries } from '../utils/setSeries'
+import { parseSetsLanguage, setPath, setsLanguagePath, setsSeriesPath } from '../utils/setsLanguage'
 import { setMatchesSearch } from '../utils/textSearch'
 import { getSavedListScrollPosition, isSavedPositionForLocation, useListScrollRestoration } from '../hooks/useListScrollRestoration'
 import {
-  hasFilterUrlState,
   readFilterUrlState,
   writeFilterUrlState,
 } from '../utils/filterUrlState'
 
+// Search, sort and the hidden sets are saved per user; the panel filters (series, progress, hidden) live
+// in the URL only. The card language is the route (/sets/language/:lang): it is never state, and
+// nothing here copies the URL into state, so Back, reload and offline cannot disagree about it.
 const DEFAULT_SET_FILTERS = {
   search: '',
   series: '',
   sortBy: 'release_date',
   sortOrder: 'desc',
   progressFilter: 'all',
-  langFilter: 'all',
   showHiddenSets: false,
 }
 
@@ -46,6 +49,12 @@ const SET_FILTER_OPTIONS = {
   sortBy: new Set(['release_date', 'name', 'total', 'progress']),
   sortOrder: new Set(['asc', 'desc']),
   progressFilter: new Set(['all', 'started', 'complete']),
+}
+
+const PANEL_FILTER_DEFINITIONS = {
+  series: { param: 'series', default: DEFAULT_SET_FILTERS.series },
+  progressFilter: { param: 'progress', default: DEFAULT_SET_FILTERS.progressFilter },
+  showHiddenSets: { param: 'show_hidden', type: 'boolean', default: false },
 }
 
 const SORT_OPTIONS = ['release_date', 'name', 'total', 'progress']
@@ -66,16 +75,13 @@ const parseJsonSetting = (value, fallback) => {
   }
 }
 
-const normalizeSetFilters = (value, defaultLangFilter = DEFAULT_SET_FILTERS.langFilter) => {
+/** Saved search and sort. A saved `langFilter` (or other old panel keys) is ignored: the route decides. */
+const normalizeSavedFilters = (value) => {
   const parsed = parseJsonSetting(value, {})
   return {
     search: typeof parsed.search === 'string' ? parsed.search : DEFAULT_SET_FILTERS.search,
-    series: typeof parsed.series === 'string' ? parsed.series : DEFAULT_SET_FILTERS.series,
     sortBy: SET_FILTER_OPTIONS.sortBy.has(parsed.sortBy) ? parsed.sortBy : DEFAULT_SET_FILTERS.sortBy,
     sortOrder: SET_FILTER_OPTIONS.sortOrder.has(parsed.sortOrder) ? parsed.sortOrder : DEFAULT_SET_FILTERS.sortOrder,
-    progressFilter: SET_FILTER_OPTIONS.progressFilter.has(parsed.progressFilter) ? parsed.progressFilter : DEFAULT_SET_FILTERS.progressFilter,
-    langFilter: typeof parsed.langFilter === 'string' && parsed.langFilter ? parsed.langFilter : defaultLangFilter,
-    showHiddenSets: parsed.showHiddenSets === true,
   }
 }
 
@@ -85,7 +91,21 @@ const normalizeHiddenSetIds = (value) => {
   return [...new Set(parsed.filter(Boolean).map(String))].sort()
 }
 
+/** `/sets/language/:lang[/series/:seriesKey]`: the language comes from the route. */
 export default function Sets() {
+  const { lang: rawLang } = useParams()
+  const lang = parseSetsLanguage(rawLang)
+  const visibleLanguages = useVisibleTcgdexLanguages()
+  const { codes: choiceCodes } = useSetsLanguageChoices()
+  if (!lang) return <Navigate to="/sets" replace />
+  // Only a real, non-empty list can say the language is not available; an empty or failed one means "unknown".
+  if (!visibleLanguages.isLoading && visibleLanguages.length > 0 && !visibleLanguages.some(language => language.code === lang)) {
+    return <Navigate to="/sets" replace />
+  }
+  return <SetsInLanguage key={lang} lang={lang} choiceCodes={choiceCodes} />
+}
+
+function SetsInLanguage({ lang, choiceCodes }) {
   const navigate = useNavigate()
   const { seriesKey: rawSeriesKey } = useParams()
   const seriesKey = rawSeriesKey ? decodeURIComponent(rawSeriesKey) : null
@@ -94,31 +114,27 @@ export default function Sets() {
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const { t, settings, updateSettings, loaded: settingsLoaded } = useSettings()
-  const visibleLanguages = useVisibleTcgdexLanguages()
   const [filtersHydrated, setFiltersHydrated] = useState(false)
   const [search, setSearch] = useState(DEFAULT_SET_FILTERS.search)
-  const [series, setSeries] = useState(DEFAULT_SET_FILTERS.series)
   const [sortBy, setSortBy] = useState(DEFAULT_SET_FILTERS.sortBy)
   const [sortOrder, setSortOrder] = useState(DEFAULT_SET_FILTERS.sortOrder)
-  const [progressFilter, setProgressFilter] = useState(DEFAULT_SET_FILTERS.progressFilter)
-  const [langFilter, setLangFilter] = useState(DEFAULT_SET_FILTERS.langFilter)
-  const [showHiddenSets, setShowHiddenSets] = useState(DEFAULT_SET_FILTERS.showHiddenSets)
   const [hiddenSetIds, setHiddenSetIds] = useState([])
   const savedFilterStateRef = useRef('')
-  // The URL the hydration just asked for, until the router has applied it (see the URL sync effect).
-  const pendingUrlRef = useRef(null)
   const savedHiddenSetIdsRef = useRef('')
   const filterSaveTimeoutRef = useRef(null)
   const queryClient = useQueryClient()
-  const filterState = useMemo(() => ({
-    search,
-    series,
-    sortBy,
-    sortOrder,
-    progressFilter,
-    langFilter,
-    showHiddenSets,
-  }), [langFilter, progressFilter, search, series, showHiddenSets, sortBy, sortOrder])
+
+  // The panel filters are read from the URL on every render; there is no copy of them in state.
+  const panel = useMemo(() => {
+    const read = readFilterUrlState(searchParams, PANEL_FILTER_DEFINITIONS)
+    return {
+      ...read,
+      progressFilter: SET_FILTER_OPTIONS.progressFilter.has(read.progressFilter) ? read.progressFilter : DEFAULT_SET_FILTERS.progressFilter,
+    }
+  }, [searchParams])
+  const { series, progressFilter, showHiddenSets } = panel
+
+  const filterState = useMemo(() => ({ search, sortBy, sortOrder }), [search, sortBy, sortOrder])
   const serializedFilterState = useMemo(() => JSON.stringify(filterState), [filterState])
   const persistFilterState = useCallback((serializedFilters) => {
     savedFilterStateRef.current = serializedFilters
@@ -129,12 +145,17 @@ export default function Sets() {
       })
   }, [t, updateSettings])
 
-  const { data: sets = [], isLoading } = useCatalogQuery({
-    queryKey: ['sets', langFilter],
-    queryFn: () => getSets({ lang: langFilter }).then(r => r.data),
-    offlineFn: cardDb => cardDb.sets({ lang: langFilter, ownedCounts: ownedFromQueryClient(queryClient).ownedCounts }),
+  const { data: loadedSets = [], isLoading } = useCatalogQuery({
+    queryKey: ['sets', lang],
+    queryFn: () => getSets({ lang }).then(r => r.data),
+    offlineFn: cardDb => cardDb.sets({ lang, ownedCounts: ownedFromQueryClient(queryClient).ownedCounts }),
     enabled: filtersHydrated,
   })
+  // A language screen only ever lists that language's sets.
+  const sets = useMemo(
+    () => loadedSets.filter(set => !set.lang || normalizeTcgdexLanguage(set.lang, '') === lang),
+    [loadedSets, lang],
+  )
   // Offline sets from the card database with no collection list saved: owned figures are unknown, not zero.
   const ownedUnknown = sets.length > 0 && sets.every(set => set.owned_count == null)
   const { saveScrollPosition, createDetailNavigationState } = useListScrollRestoration({
@@ -151,7 +172,7 @@ export default function Sets() {
       filterSaveTimeoutRef.current = null
       persistFilterState(serializedFilterState)
     }
-    navigate(`/sets/${set.id}`, { state: createDetailNavigationState(anchorId) })
+    navigate(setPath(set.id), { state: createDetailNavigationState(anchorId) })
   }
 
   const markSeenMutation = useMutation({
@@ -163,98 +184,24 @@ export default function Sets() {
     },
   })
 
-  const visibleLanguageCodes = useMemo(() => visibleLanguages.map(language => language.code), [visibleLanguages])
-  const preferredCatalogueLanguage = normalizeTcgdexLanguage(settings.language || 'en', 'en')
-  const defaultLangFilter = visibleLanguageCodes.includes(preferredCatalogueLanguage)
-    ? preferredCatalogueLanguage
-    : DEFAULT_SET_FILTERS.langFilter
-  const filterDefinitions = useMemo(() => ({
-    series: { param: 'series', default: DEFAULT_SET_FILTERS.series },
-    progressFilter: { param: 'progress', default: DEFAULT_SET_FILTERS.progressFilter },
-    langFilter: { param: 'lang', default: defaultLangFilter },
-    showHiddenSets: { param: 'show_hidden', type: 'boolean', default: false },
-  }), [defaultLangFilter])
-
+  // Hydrate search, sort and the hidden sets once, when the settings arrive. This never runs again
+  // (a settings refetch must not put old values over what the person is looking at).
   useEffect(() => {
-    if (!settingsLoaded) setFiltersHydrated(false)
-  }, [settingsLoaded])
-
-  useEffect(() => {
-    if (!settingsLoaded || visibleLanguages.isLoading || filtersHydrated) return
+    if (!settingsLoaded || filtersHydrated) return
     const savedPosition = getSavedListScrollPosition('sets')
-    const storedFilters = normalizeSetFilters(settings.set_overview_filters, defaultLangFilter)
-    const activeFilters = normalizeSetFilters(
-      isSavedPositionForLocation(savedPosition, location)
-        ? savedPosition.listState
-        : storedFilters,
-      defaultLangFilter,
-    )
-    const storedPanelFilters = {
-      series: activeFilters.series,
-      progressFilter: activeFilters.progressFilter,
-      langFilter: activeFilters.langFilter,
-      showHiddenSets: activeFilters.showHiddenSets,
-    }
-    const urlPanelFilters = hasFilterUrlState(searchParams, filterDefinitions)
-      ? readFilterUrlState(searchParams, filterDefinitions)
-      : storedPanelFilters
-    const activePanelFilters = {
-      ...urlPanelFilters,
-      progressFilter: SET_FILTER_OPTIONS.progressFilter.has(urlPanelFilters.progressFilter)
-        ? urlPanelFilters.progressFilter
-        : DEFAULT_SET_FILTERS.progressFilter,
-      langFilter: urlPanelFilters.langFilter === 'all' || visibleLanguageCodes.includes(urlPanelFilters.langFilter)
-        ? urlPanelFilters.langFilter
-        : defaultLangFilter,
-    }
+    const storedFilters = normalizeSavedFilters(settings.set_overview_filters)
+    const activeFilters = isSavedPositionForLocation(savedPosition, location)
+      ? normalizeSavedFilters(savedPosition.listState)
+      : storedFilters
     const savedHiddenIds = normalizeHiddenSetIds(settings.hidden_set_ids)
     setSearch(activeFilters.search)
-    setSeries(activePanelFilters.series)
     setSortBy(activeFilters.sortBy)
     setSortOrder(activeFilters.sortOrder)
-    setProgressFilter(activePanelFilters.progressFilter)
-    setLangFilter(activePanelFilters.langFilter)
-    setShowHiddenSets(activePanelFilters.showHiddenSets)
     setHiddenSetIds(savedHiddenIds)
     savedFilterStateRef.current = JSON.stringify(storedFilters)
     savedHiddenSetIdsRef.current = JSON.stringify(savedHiddenIds)
-    const normalizedParams = writeFilterUrlState(searchParams, filterDefinitions, activePanelFilters)
-    if (normalizedParams.toString() !== searchParams.toString()) {
-      pendingUrlRef.current = { from: searchParams.toString() }
-      setSearchParams(normalizedParams, { replace: true })
-    }
     setFiltersHydrated(true)
-  }, [defaultLangFilter, filterDefinitions, filtersHydrated, location, searchParams, setSearchParams, settings, settingsLoaded, visibleLanguageCodes, visibleLanguages.isLoading])
-
-  const filterUrlKey = searchParams.toString()
-  useEffect(() => {
-    if (!filtersHydrated || visibleLanguages.isLoading) return
-    // Hydration has just written the filters into the URL; until the router applies that, searchParams
-    // is still the old URL, and reading it would reset the language to the default (and back again).
-    if (pendingUrlRef.current) {
-      if (searchParams.toString() === pendingUrlRef.current.from) return
-      pendingUrlRef.current = null
-    }
-    const urlFilters = readFilterUrlState(searchParams, filterDefinitions)
-    const nextFilters = {
-      ...urlFilters,
-      progressFilter: SET_FILTER_OPTIONS.progressFilter.has(urlFilters.progressFilter)
-        ? urlFilters.progressFilter
-        : DEFAULT_SET_FILTERS.progressFilter,
-      langFilter: urlFilters.langFilter === 'all' || visibleLanguageCodes.includes(urlFilters.langFilter)
-        ? urlFilters.langFilter
-        : defaultLangFilter,
-    }
-    setSeries(nextFilters.series)
-    setProgressFilter(nextFilters.progressFilter)
-    setLangFilter(nextFilters.langFilter)
-    setShowHiddenSets(nextFilters.showHiddenSets)
-
-    const normalizedParams = writeFilterUrlState(searchParams, filterDefinitions, nextFilters)
-    if (normalizedParams.toString() !== searchParams.toString()) {
-      setSearchParams(normalizedParams, { replace: true })
-    }
-  }, [defaultLangFilter, filterDefinitions, filterUrlKey, filtersHydrated, searchParams, setSearchParams, visibleLanguageCodes, visibleLanguages.isLoading])
+  }, [filtersHydrated, location, settings, settingsLoaded])
 
   useEffect(() => {
     if (!settingsLoaded || !filtersHydrated || savedFilterStateRef.current === serializedFilterState) return
@@ -320,45 +267,16 @@ export default function Sets() {
   }, [hiddenSetIdSet, progressFilter, search, series, sets, showHiddenSets, sortBy, sortOrder])
 
   const toggleOrder = () => setSortOrder(o => o === 'asc' ? 'desc' : 'asc')
-  const appliedPanelFilters = useMemo(() => ({
-    series,
-    progressFilter,
-    langFilter,
-    showHiddenSets,
-  }), [langFilter, progressFilter, series, showHiddenSets])
-  const replacePanelFilters = (nextOrUpdater) => {
-    const requestedFilters = typeof nextOrUpdater === 'function'
-      ? nextOrUpdater(appliedPanelFilters)
-      : nextOrUpdater
-    const nextFilters = {
-      ...requestedFilters,
-      progressFilter: SET_FILTER_OPTIONS.progressFilter.has(requestedFilters.progressFilter)
-        ? requestedFilters.progressFilter
-        : DEFAULT_SET_FILTERS.progressFilter,
-      langFilter: requestedFilters.langFilter === 'all' || visibleLanguageCodes.includes(requestedFilters.langFilter)
-        ? requestedFilters.langFilter
-        : defaultLangFilter,
-    }
-    setSeries(nextFilters.series)
-    setProgressFilter(nextFilters.progressFilter)
-    setLangFilter(nextFilters.langFilter)
-    setShowHiddenSets(nextFilters.showHiddenSets)
-    const currentParams = new URLSearchParams(window.location.search)
-    const nextParams = writeFilterUrlState(currentParams, filterDefinitions, nextFilters)
-    if (nextParams.toString() !== currentParams.toString()) setSearchParams(nextParams, { replace: true })
+  const replacePanelFilters = (nextPanel) => {
+    const nextParams = writeFilterUrlState(new URLSearchParams(searchParams), PANEL_FILTER_DEFINITIONS, nextPanel)
+    if (nextParams.toString() !== searchParams.toString()) setSearchParams(nextParams, { replace: true })
   }
-  const updatePanelFilter = (key, value) => {
-    replacePanelFilters(current => ({ ...current, [key]: value }))
-  }
-  const clearPanelFilters = () => {
-    const clearedFilters = {
-      series: DEFAULT_SET_FILTERS.series,
-      progressFilter: DEFAULT_SET_FILTERS.progressFilter,
-      langFilter: defaultLangFilter,
-      showHiddenSets: DEFAULT_SET_FILTERS.showHiddenSets,
-    }
-    replacePanelFilters(clearedFilters)
-  }
+  const updatePanelFilter = (key, value) => replacePanelFilters({ ...panel, [key]: value })
+  const clearPanelFilters = () => replacePanelFilters({
+    series: DEFAULT_SET_FILTERS.series,
+    progressFilter: DEFAULT_SET_FILTERS.progressFilter,
+    showHiddenSets: DEFAULT_SET_FILTERS.showHiddenSets,
+  })
   const toggleHiddenSet = (setId) => {
     const normalizedId = String(setId)
     setHiddenSetIds(current => (
@@ -369,39 +287,52 @@ export default function Sets() {
   }
   const groups = useMemo(() => groupSetsBySeries(filtered), [filtered])
   const activeGroup = seriesKey ? groups.find(group => group.key === seriesKey) : null
-  // With several languages in the list a series appears once per language: say which.
-  const groupTitle = group => (group.lang ? `${group.name} · ${tcgdexLanguageLabel(group.lang)}` : group.name)
   const showSeriesView = !seriesKey && view === 'series'
   const gridSets = activeGroup ? activeGroup.sets : filtered
   const activeFilterCount = [
     series !== DEFAULT_SET_FILTERS.series,
     progressFilter !== DEFAULT_SET_FILTERS.progressFilter,
-    langFilter !== defaultLangFilter,
     showHiddenSets,
   ].filter(Boolean).length
 
+  // The languages the switch offers. An empty or failed list means "unknown": offer this one and the
+  // ones we know the person uses, never hide the switch or reset the language because of it.
+  const switchLanguages = useMemo(() => {
+    const codes = [...new Set([...choiceCodes, lang])]
+    return codes.map(code => ({ code }))
+  }, [choiceCodes, lang])
+  const switchLanguage = useCallback(
+    (code) => navigate(setsLanguagePath(code), { replace: true }),
+    [navigate],
+  )
+
   const navBar = useMemo(() => ({
-    title: seriesKey ? (activeGroup ? groupTitle(activeGroup) : t('nav.sets')) : t('nav.sets'),
+    title: seriesKey ? (activeGroup ? activeGroup.name : t('nav.sets')) : t('nav.sets'),
     trailing: (
-      <Menu
-        label={t('ios.more')}
-        sections={[
-          [
-            { id: 'filters', label: activeFilterCount ? `${t('cardSearch.filters')} (${activeFilterCount})` : t('cardSearch.filters'), icon: Filter, onSelect: () => setFiltersOpen(true) },
-          ],
-          SORT_OPTIONS.map(option => ({
-            id: `sort-${option}`,
-            label: t(SORT_LABEL_KEYS[option]),
-            checked: sortBy === option,
-            onSelect: () => setSortBy(option),
-          })),
-          [
-            { id: 'order', label: sortOrder === 'asc' ? t('common.sortDescending') : t('common.sortAscending'), icon: sortOrder === 'asc' ? ChevronDown : ChevronUp, onSelect: toggleOrder },
-          ],
-        ]}
-      />
+      <div className="flex items-center gap-2">
+        {switchLanguages.length > 1 && (
+          <SetsLanguageSwitch current={lang} languages={switchLanguages} onSelect={switchLanguage} />
+        )}
+        <Menu
+          label={t('ios.more')}
+          sections={[
+            [
+              { id: 'filters', label: activeFilterCount ? `${t('cardSearch.filters')} (${activeFilterCount})` : t('cardSearch.filters'), icon: Filter, onSelect: () => setFiltersOpen(true) },
+            ],
+            SORT_OPTIONS.map(option => ({
+              id: `sort-${option}`,
+              label: t(SORT_LABEL_KEYS[option]),
+              checked: sortBy === option,
+              onSelect: () => setSortBy(option),
+            })),
+            [
+              { id: 'order', label: sortOrder === 'asc' ? t('common.sortDescending') : t('common.sortAscending'), icon: sortOrder === 'asc' ? ChevronDown : ChevronUp, onSelect: toggleOrder },
+            ],
+          ]}
+        />
+      </div>
     ),
-  }), [activeFilterCount, activeGroup?.name, activeGroup?.lang, seriesKey, sortBy, sortOrder, t])
+  }), [activeFilterCount, activeGroup?.name, lang, seriesKey, sortBy, sortOrder, switchLanguage, switchLanguages, t])
   useNavBar(navBar)
 
   const releaseLabelFor = (set) => {
@@ -467,14 +398,14 @@ export default function Sets() {
           <div className="grid h-20 w-28 flex-shrink-0 place-items-center rounded-2xl bg-black/30 p-2">
             <FallbackImage
               sources={activeGroup.logoCandidates ?? []}
-              fallback={groupTitle(activeGroup)}
-              alt={groupTitle(activeGroup)}
+              fallback={activeGroup.name}
+              alt={activeGroup.name}
               className="max-h-full max-w-full object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]"
               fallbackClassName="text-title-3 font-display text-center"
             />
           </div>
           <div className="min-w-0 flex-1 space-y-1.5">
-            <h1 className="truncate text-title-2 font-display">{groupTitle(activeGroup)}</h1>
+            <h1 className="truncate text-title-2 font-display">{activeGroup.name}</h1>
             <p className="text-footnote text-text-secondary">
               {[activeGroup.years, t('ios.setsCount').replace('{count}', activeGroup.setCount)].filter(Boolean).join(' · ')}
             </p>
@@ -535,12 +466,12 @@ export default function Sets() {
           {groups.map(group => (
             <SeriesTile
               key={group.key}
-              series={{ key: group.key, name: groupTitle(group), logo: group.logo, logoCandidates: group.logoCandidates, years: group.years, setCount: group.setCount }}
+              series={{ key: group.key, name: group.name, logo: group.logo, logoCandidates: group.logoCandidates, years: group.years, setCount: group.setCount }}
               owned={group.owned}
               ownedUnknown={ownedUnknown}
               total={group.total}
               complete={group.complete}
-              to={`/sets/series/${encodeURIComponent(group.key)}${location.search}`}
+              to={`${setsSeriesPath(lang, group.key)}${location.search}`}
             />
           ))}
         </div>
@@ -562,19 +493,6 @@ export default function Sets() {
         trailing={{ label: t('ios.done'), onPress: () => setFiltersOpen(false) }}
       >
         <div className="space-y-5 px-4 pb-6">
-          <div className="space-y-1.5">
-            <label htmlFor="sets-filter-language" className="text-footnote text-text-secondary">{t('lang.filter')}</label>
-            <TcgdexLanguageSelect
-              id="sets-filter-language"
-              value={langFilter}
-              includeAll
-              allLabel={t('lang.all')}
-              compact
-              languages={visibleLanguages}
-              onChange={(value) => updatePanelFilter('langFilter', value)}
-              className="select w-full"
-            />
-          </div>
           <div className="space-y-1.5">
             <label htmlFor="sets-filter-series" className="text-footnote text-text-secondary">{t('common.allSeries')}</label>
             <select id="sets-filter-series" aria-label={t('common.allSeries')} className="select w-full" value={series} onChange={(e) => updatePanelFilter('series', e.target.value)}>

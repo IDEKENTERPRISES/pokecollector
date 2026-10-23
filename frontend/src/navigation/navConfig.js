@@ -1,3 +1,5 @@
+import { setBackPath } from '../utils/setsLanguage.js'
+
 // Single source for the shell (design doc §2, §4): the tab bar, the desktop sidebar, the highlighted
 // tab of each route, the Profile rows and the back targets all read this file. Routes are mapped
 // explicitly by pattern, never by prefix: `/collection/user/:userId` belongs to Profile even though
@@ -27,7 +29,12 @@ export const ROUTES = Object.freeze([
   { path: '/decks/compare', section: 'collection', kind: 'pushed', parent: '/binders', titleKey: 'nav.binders' },
   { path: '/decks/:deckId', section: 'collection', kind: 'pushed', parent: '/binders', titleKey: 'nav.binders' },
   { path: '/search', section: 'search', kind: 'root', titleKey: 'nav.search' },
-  { path: '/sets', section: 'search', kind: 'pushed', parent: '/search', titleKey: 'nav.sets' },
+  // `instant`: a push into it never slides. These open a long list of a language's series (or redirect to
+  // it), and WebKit crashes capturing a page that tall as a transition picture.
+  { path: '/sets', section: 'search', kind: 'pushed', parent: '/search', titleKey: 'nav.sets', instant: true },
+  { path: '/sets/language/:lang', section: 'search', kind: 'pushed', parent: '/sets', titleKey: 'nav.sets', instant: true },
+  { path: '/sets/language/:lang/series/:seriesKey', section: 'search', kind: 'pushed', parent: '/sets/language/:lang', titleKey: 'nav.sets' },
+  // Old series links (redirected into their language); kept so the shell treats them as Sets meanwhile.
   { path: '/sets/series/:seriesKey', section: 'search', kind: 'pushed', parent: '/sets', titleKey: 'nav.sets' },
   { path: '/sets/:setId', section: 'search', kind: 'pushed', parent: '/sets', titleKey: 'nav.sets' },
   { path: '/pokedex', section: 'search', kind: 'pushed', parent: '/search', titleKey: 'nav.pokedex' },
@@ -163,6 +170,11 @@ export function isPushedPath(pathname) {
   return routeFor(pathname)?.route.kind === 'pushed'
 }
 
+/** A pushed route that opens without the slide (see `instant` in ROUTES). */
+export function isInstantPath(pathname) {
+  return Boolean(routeFor(pathname)?.route.instant)
+}
+
 export function isRootPath(pathname) {
   return routeFor(pathname)?.route.kind === 'root'
 }
@@ -171,6 +183,8 @@ export function isRootPath(pathname) {
 export function parentForPath(pathname) {
   const match = routeFor(pathname)
   if (!match?.route.parent) return null
+  // A set goes back to its language's set list (the id ends in the language: sv1_ja).
+  if (match.route.path === '/sets/:setId') return setBackPath(match.params.setId)
   return fillPattern(match.route.parent, match.params)
 }
 

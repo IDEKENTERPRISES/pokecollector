@@ -523,6 +523,9 @@ const de = {
 
   // Sets
   sets: {
+    chooseLanguage: 'Sprache wählen',
+    chooseLanguageDesc: 'Wähle die Kartensprache, die du durchsuchen möchtest.',
+    languageSwitch: 'Kartensprache',
     title: 'Sets',
     setsTotal: 'Sets gesamt',
     newSets: 'neu',

@@ -56,6 +56,8 @@ describe('navConfig against App.jsx', () => {
 
   it('finds the routes it expects in App.jsx', () => {
     expect(declared.has('/collection')).toBe(true)
+    expect(declared.has('/sets/language/:lang')).toBe(true)
+    expect(declared.has('/sets/language/:lang/series/:seriesKey')).toBe(true)
     expect(declared.has('/sets/series/:seriesKey')).toBe(true)
     expect(declared.has('/settings/:section')).toBe(true)
     expect(declared.has('/u/:handle')).toBe(true)
@@ -94,6 +96,10 @@ describe('navConfig table (design doc §4.2)', () => {
     ['/search', 'search', 'root', null, 'nav.search'],
     ['/sets', 'search', 'pushed', '/search', 'nav.sets'],
     ['/sets/series/base', 'search', 'pushed', '/sets', 'nav.sets'],
+    ['/sets/language/ja', 'search', 'pushed', '/sets', 'nav.sets'],
+    ['/sets/language/ja/series/sv', 'search', 'pushed', '/sets/language/ja', 'nav.sets'],
+    ['/sets/sv1_ja', 'search', 'pushed', '/sets/language/ja', 'nav.sets'],
+    ['/sets/x_zh-tw', 'search', 'pushed', '/sets/language/zh-tw', 'nav.sets'],
     ['/sets/base1', 'search', 'pushed', '/sets', 'nav.sets'],
     ['/pokedex', 'search', 'pushed', '/search', 'nav.pokedex'],
     ['/pokedex/25', 'search', 'pushed', '/pokedex', 'nav.pokedex'],

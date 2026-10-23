@@ -65,6 +65,8 @@ async function installApi(page, { onLogout, queue = false, counts } = {}) {
 const SAMPLE = {
   '/binders/:binderId': '/binders/1',
   '/decks/:deckId': '/decks/1',
+  '/sets/language/:lang': '/sets/language/en',
+  '/sets/language/:lang/series/:seriesKey': '/sets/language/en/series/sv',
   '/sets/series/:seriesKey': '/sets/series/sv',
   '/sets/:setId': '/sets/base1_en',
   '/pokedex/:dexId': '/pokedex/25',
