@@ -3,6 +3,7 @@
 // pictures. Everything is generated inside the page, so no large payload crosses the test runner.
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { seedPictureStore } from './picture-store.js'
 
 const appVersion = () => {
   try {
@@ -123,14 +124,7 @@ export function seedCardDb(page, { sets = STARTUP_SIZES.sets, cardsPerSet = STAR
   }, { sets, cardsPerSet })
 }
 
-/** Puts some small pictures in the picture cache (Cache Storage). */
+/** Puts some small pictures in the picture store (IndexedDB packs, F16a). */
 export function seedPictures(page, { count = STARTUP_SIZES.pictures } = {}) {
-  return page.evaluate(async total => {
-    const cache = await caches.open('pc-carddb-images-v1-en')
-    const body = new Uint8Array(20 * 1024)
-    for (let i = 0; i < total; i += 1) {
-      await cache.put(`/api/images/card/startup-set-0-${i}_en/small`, new Response(body, { headers: { 'Content-Type': 'image/webp' } }))
-    }
-    return total
-  }, count)
+  return seedPictureStore(page, { count, kb: 20, prefix: 'startup-set-0-' })
 }

@@ -8,13 +8,14 @@ const SHELL_NAME = 'pc-shell-' + BUILD_ID
 const IMAGES_NAME = 'pc-images-v1'
 const SHELL_KEY = '/shell'
 const IMAGE_CAP = 800
-// Pictures downloaded on purpose from Settings (offline card database), one cache per language.
-const CARDDB_IMAGES_PREFIX = 'pc-carddb-images-v1-'
+// Pictures downloaded on purpose from Settings (offline card database) live in IndexedDB, one Blob per
+// set plus an index (offline/carddb/pictureStore.js: same names). Never in Cache Storage: thousands of
+// entries there made WebKit's first Cache Storage access of every launch take seconds.
+const PICTURE_DB = 'pokecollector-pictures'
 const NAV_TIMEOUT_MS = 2500
 // After a navigation had to fall back to the shell, the next ones wait only this long for a while.
 const NAV_FAST_TIMEOUT_MS = 600
 const NAV_RECENT_FAILURE_MS = 5 * 60 * 1000
-const PICTURE_CACHE_REFRESH_MS = 5 * 1000
 // Tiny cache holding what the page last told the worker about reachability; the worker is stopped
 // and restarted often, so the flag must survive a cold start (an offline launch).
 const STATE_NAME = 'pc-sw-state-v1'
@@ -34,15 +35,12 @@ const OFFLINE_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8"
 
 const precacheUrls = new Set(PRECACHE.map(entry => entry.url))
 
-// Reachability as the page last reported it (OfflineProvider's banner), and the names of the downloaded
-// picture caches. Neither needs a search of any cache entries: the shell and every image answer from
-// these without opening the ~22k-entry picture caches.
+// Reachability as the page last reported it (OfflineProvider's banner): the shell and every image
+// answer from it without waiting on the network.
 let pageOffline = false
 let stateLoaded = null
 let navFailedAt = 0
-let pictureCacheNames = []
-let pictureNamesLoaded = null
-let pictureNamesAt = 0
+let pictureDb = null
 
 function loadState() {
   if (!stateLoaded) {
@@ -79,12 +77,42 @@ async function knownOffline() {
   return pageOffline || deviceOffline()
 }
 
-function refreshPictureCaches() {
-  pictureNamesAt = Date.now()
-  pictureNamesLoaded = caches.keys().then(names => {
-    pictureCacheNames = names.filter(name => name.startsWith(CARDDB_IMAGES_PREFIX))
-  }).catch(() => {})
-  return pictureNamesLoaded
+// The picture database, opened once per worker run. Null when it does not exist (nothing downloaded):
+// the open is cancelled from its upgrade so the worker never creates an empty database for the page.
+function openPictureDb() {
+  if (!pictureDb) {
+    pictureDb = new Promise(resolve => {
+      try {
+        const request = indexedDB.open(PICTURE_DB)
+        request.onupgradeneeded = () => request.transaction.abort()
+        request.onsuccess = () => {
+          const db = request.result
+          db.onversionchange = () => { db.close(); pictureDb = null }
+          resolve(db)
+        }
+        request.onerror = event => { event.preventDefault(); resolve(null) }
+        request.onblocked = () => resolve(null)
+      } catch {
+        resolve(null)
+      }
+    }).then(db => {
+      if (!db) pictureDb = null // look again next time (a download may have created it since)
+      return db
+    })
+  }
+  return pictureDb
+}
+
+function idbGet(db, storeName, key) {
+  return new Promise(resolve => {
+    try {
+      const request = db.transaction(storeName, 'readonly').objectStore(storeName).get(key)
+      request.onsuccess = () => resolve(request.result || null)
+      request.onerror = () => resolve(null)
+    } catch {
+      resolve(null)
+    }
+  })
 }
 
 function hasExtension(pathname) {
@@ -263,27 +291,55 @@ async function fetchLargeImage(event, cache, smallPath, offline) {
   return small || Response.error()
 }
 
-async function matchPictureCaches(request) {
-  for (const cacheName of pictureCacheNames) {
-    const hit = await caches.match(request, { cacheName, ignoreSearch: true })
-    if (hit) return hit
+// A pack is a Blob, or an ArrayBuffer where the browser cannot keep Blobs in IndexedDB.
+const sliceOf = (value, start, end, type) => (typeof value.size === 'number'
+  ? value.slice(start, end, type)
+  : new Blob([value.slice(start, end)], { type }))
+
+// Packs kept as ArrayBuffers (no Blobs in IndexedDB) are read whole: keep the last few, so a set's
+// pictures cost one read. Blob packs are sliced without reading and need no cache.
+const PACK_CACHE_MAX = 3
+const packCache = new Map()
+async function packOf(db, key) {
+  if (packCache.has(key)) {
+    const hit = packCache.get(key)
+    packCache.delete(key)
+    packCache.set(key, hit)
+    return hit
   }
-  return null
+  const pack = await idbGet(db, 'packs', key)
+  if (pack && typeof pack.size !== 'number') {
+    packCache.set(key, pack)
+    if (packCache.size > PACK_CACHE_MAX) packCache.delete(packCache.keys().next().value)
+  }
+  return pack
 }
 
-// Looks for a card picture in the downloaded-pictures caches, each searched by name; null when there
-// is none. Only card pictures are downloaded, so set logos and Pokémon sprites never get this far.
+const pictureResponse = (blob, type) => new Response(blob, {
+  headers: { 'Content-Type': type || blob.type || 'image/webp', 'Cache-Control': 'public, max-age=86400' },
+})
+
+// A card's downloaded small picture (a slice of its set's pack) or a loose downloaded picture (set
+// logo or symbol, a card the pack did not carry) from the picture database; null when there is none.
+// Large requests are answered from the small picture by the caller.
 async function matchDownloadedPicture(request) {
-  if (!new URL(request.url).pathname.startsWith('/api/images/card/')) return null
-  await (pictureNamesLoaded || refreshPictureCaches())
-  const hit = await matchPictureCaches(request)
-  if (hit) return hit
-  // A download may have finished since the names were listed: look again, at most every few seconds.
-  if (Date.now() - pictureNamesAt > PICTURE_CACHE_REFRESH_MS) {
-    await refreshPictureCaches()
-    return matchPictureCaches(request)
+  const { pathname } = new URL(request.url)
+  const card = /^\/api\/images\/card\/(.+)\/small$/.exec(pathname)
+  const db = await openPictureDb()
+  if (!db) return null
+  try {
+    if (card) {
+      const entry = await idbGet(db, 'index', decodeURIComponent(card[1]))
+      if (entry) {
+        const pack = await packOf(db, entry.p)
+        if (pack) return pictureResponse(sliceOf(pack, entry.o, entry.o + entry.l, entry.t), entry.t)
+      }
+    }
+    const loose = await idbGet(db, 'loose', pathname)
+    return loose ? pictureResponse(sliceOf(loose.blob, 0, loose.blob.size ?? loose.blob.byteLength, loose.t), loose.t) : null
+  } catch {
+    return null
   }
-  return null
 }
 
 function handleImage(event) {
@@ -323,7 +379,6 @@ self.addEventListener('activate', event => {
         || (name.startsWith('pc-shell-') && name !== SHELL_NAME)
       if (stale) await caches.delete(name)
     }
-    await refreshPictureCaches()
   })())
 })
 
@@ -346,8 +401,6 @@ self.addEventListener('message', event => {
     self.skipWaiting()
   } else if (data.type === 'REACHABILITY') {
     event.waitUntil(saveState(Boolean(data.offline)))
-  } else if (data.type === 'PICTURE_CACHES_CHANGED') {
-    event.waitUntil(refreshPictureCaches())
   } else if (data.type === 'GET_VERSION' && event.source) {
     event.source.postMessage({ type: 'VERSION', buildId: BUILD_ID, appVersion: self.__PC_APP_VERSION__ || null })
   }

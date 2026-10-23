@@ -1,8 +1,8 @@
 import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { FIXTURE_PRICES, seedStore } from './fixture.js'
-import { createCardDbReader, ownedIndexFromCollection } from './reader.js'
+import { FIXTURE_PRICES, FIXTURE_SETS, seedStore } from './fixture.js'
+import { createCardDbReader, ownedIndexFromCollection, withPictureUrls } from './reader.js'
 import { createCardDbStore } from './store.js'
 
 let reader
@@ -71,5 +71,34 @@ describe('card database reader', () => {
     await store.putPrices('en', { ...FIXTURE_PRICES, hash: 'P2', rows: [['pbl-117_en', 9, 8]] })
     await store.setMeta('en', { hash: 'L1', pricesHash: 'P2', syncedAt: 2 })
     expect((await live.card('pbl-117_en')).price_market).toBe(9)
+  })
+
+  describe('pictures go through the app own image route (F16a)', () => {
+    const withPictures = async () => {
+      const payload = structuredClone(FIXTURE_SETS.pbl_en)
+      const small = payload.fields.indexOf('images_small')
+      payload.cards[0][small] = 'https://assets.tcgdex.net/en/sv/pbl/117' // Morpeko, has a catalogue picture
+      return createCardDbReader({ store: await seedStore(new IDBFactory(), { sets: { pbl_en: payload }, prices: FIXTURE_PRICES }) })
+    }
+
+    it('gives search results, the card and the checklist the same picture URLs as the online app', async () => {
+      const live = await withPictures()
+      const expected = { images_small: '/api/images/card/pbl-117_en/small', images_large: '/api/images/card/pbl-117_en/large' }
+      expect((await live.search({ q: 'Morpeko 117 PBL' })).data[0]).toMatchObject(expected)
+      expect(await live.card('pbl-117_en')).toMatchObject(expected)
+      expect((await live.setChecklist('pbl_en')).cards.find(card => card.id === 'pbl-117_en')).toMatchObject(expected)
+    })
+
+    it('leaves a card without a catalogue picture empty, so the card back shows at once', async () => {
+      const live = await withPictures()
+      expect((await live.card('pbl-9_en')).images_small).toBeNull()
+      expect(withPictureUrls({ id: 'x', images_small: '', images_large: null })).toEqual({ id: 'x', images_small: '', images_large: null })
+    })
+
+    it('encodes the card id like the online app does', () => {
+      expect(withPictureUrls({ id: 'a b#1', images_large: 'https://x/large' })).toMatchObject({
+        images_small: '/api/images/card/a%20b%231/small', images_large: '/api/images/card/a%20b%231/large',
+      })
+    })
   })
 })

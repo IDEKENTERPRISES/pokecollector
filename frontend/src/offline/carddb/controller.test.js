@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PREFS_KEY, SYNC_THROTTLE_MS, createCardDbController, createFetchJson, readPrefs, wantedLanguages } from './controller.js'
 import { statusError } from './net.js'
 import { buildPack } from './packFixture.js'
+import { MIGRATION_NOTICE_KEY } from './pictureMigration.js'
+import { createPictureStore } from './pictureStore.js'
 import { cardPictureUrl, pictureCacheName, pictureUrlsFor, setPictureUrl } from './pictures.js'
 import { createCardDbStore } from './store.js'
 import { MANIFEST_PATH } from './sync.js'
@@ -23,12 +25,13 @@ function fakeCaches() {
   return { caches, open, remove: async name => caches.delete(name), keys: async () => [...caches.keys()] }
 }
 
-const imageResponse = () => ({ status: 200, headers: { get: () => 'image/webp' } })
+const imageResponse = () => ({ status: 200, headers: { get: () => 'image/webp' }, blob: async () => new Blob([new Uint8Array(4)]) })
 
 function setup({ manifest, online = true, ...extra } = {}) {
   const store = createCardDbStore(new IDBFactory())
   const storage = memoryStorage()
   const cacheApi = fakeCaches()
+  const pictureStore = createPictureStore({ indexedDB: new IDBFactory() })
   const state = { manifest, online, requests: [] }
   const fetchJson = async path => {
     state.requests.push(path)
@@ -51,7 +54,7 @@ function setup({ manifest, online = true, ...extra } = {}) {
     fetchImage,
     fetchPack,
     sleep: async () => {},
-    openCache: cacheApi.open,
+    pictureStore,
     deleteCache: cacheApi.remove,
     listCaches: cacheApi.keys,
     storage,
@@ -60,7 +63,7 @@ function setup({ manifest, online = true, ...extra } = {}) {
     now: () => state.now ?? Date.now(),
     ...extra,
   })
-  return { controller, store, storage, state, cacheApi, fetchImage, fetchPack }
+  return { controller, store, storage, state, cacheApi, pictureStore, fetchImage, fetchPack }
 }
 
 const manifest = () => ({
@@ -160,19 +163,19 @@ describe('pictures', () => {
     expect(urls).toEqual([setPictureUrl('a_en', 'logo'), setPictureUrl('a_en', 'symbol'), cardPictureUrl('a-1')])
   })
 
-  it('downloads into a separate cache per language, resumes without refetching, and removes cleanly', async () => {
-    const { controller, cacheApi, fetchPack, storage } = setup({ manifest: manifest() })
+  it('downloads into the picture store per language, resumes without refetching, and removes cleanly', async () => {
+    const { controller, pictureStore, fetchPack, storage } = setup({ manifest: manifest() })
     await controller.sync({ force: true })
     await controller.startPictures('en')
     expect(controller.getSnapshot().languages.en.pictures).toMatchObject({ status: 'complete', doneSets: 2, totalSets: 2 })
     expect(controller.getSnapshot().languages.en.pictures.bytes).toBeGreaterThan(0)
-    expect(cacheApi.caches.has(pictureCacheName('en'))).toBe(true)
+    expect(await pictureStore.count('en')).toBeGreaterThan(0)
     expect(controller.getSnapshot().prefs.pictures.en).toBe(true)
     const calls = fetchPack.mock.calls.length
     await controller.startPictures('en')
     expect(fetchPack.mock.calls.length).toBe(calls) // every set is done already
     await controller.removePictures('en')
-    expect(cacheApi.caches.has(pictureCacheName('en'))).toBe(false)
+    expect(await pictureStore.count('en')).toBe(0)
     expect(controller.getSnapshot().languages.en.pictures.status).toBe('none')
     expect([...storage.keys?.() ?? []]).toEqual([])
     await controller.startPictures('en')
@@ -180,7 +183,7 @@ describe('pictures', () => {
   })
 
   it('pauses when the user pauses and resumes with the sets still to do', async () => {
-    const { controller, fetchPack, cacheApi } = setup({ manifest: manifest() })
+    const { controller, fetchPack, pictureStore } = setup({ manifest: manifest() })
     await controller.sync({ force: true })
     fetchPack.mockImplementationOnce(async path => {
       controller.pausePictures('en')
@@ -195,7 +198,7 @@ describe('pictures', () => {
     await controller.resumePictures('en')
     expect(controller.getSnapshot().languages.en.pictures.status).toBe('complete')
     expect(fetchPack).toHaveBeenCalledTimes(2 - finished)
-    expect(cacheApi.caches.get(pictureCacheName('en')).size).toBeGreaterThan(0)
+    expect(await pictureStore.count('en')).toBeGreaterThan(0)
   })
 
   it('a stalled download pauses with a reason and a later Resume works (no stuck state)', async () => {
@@ -230,22 +233,58 @@ describe('pictures', () => {
     const first = setup({ manifest: manifest() })
     await first.controller.sync({ force: true })
     first.fetchPack.mockImplementation(async path => {
-      if (path.endsWith('/b_en')) throw statusError(503)
+      if (path.endsWith('/b_en')) {
+        await new Promise(resolve => setTimeout(resolve, 100)) // a_en is stored first
+        throw statusError(503)
+      }
       return { status: 200, buffer: buildPack([{ id: 'a_en-1', bytes: new Uint8Array(3) }]) }
     })
     await first.controller.startPictures('en')
-    const second = createCardDbController({ store: first.store, fetchJson: async () => ({ status: 404 }), storage: first.storage, openCache: first.cacheApi.open, deleteCache: first.cacheApi.remove, listCaches: first.cacheApi.keys })
+    const second = createCardDbController({ store: first.store, fetchJson: async () => ({ status: 404 }), storage: first.storage, pictureStore: first.pictureStore, deleteCache: first.cacheApi.remove, listCaches: first.cacheApi.keys })
     await second.hydrate()
     await second.inspectPictures('en')
     expect(second.getSnapshot().languages.en.pictures).toMatchObject({ status: 'paused', doneSets: 1, totalSets: 2 })
   })
 
-  it('removing everything also deletes the picture caches', async () => {
-    const { controller, cacheApi } = setup({ manifest: manifest() })
+  it('removing everything also deletes the pictures and any old picture caches', async () => {
+    const { controller, cacheApi, pictureStore } = setup({ manifest: manifest() })
     await controller.sync({ force: true })
     await controller.startPictures('de')
+    cacheApi.caches.set(pictureCacheName('en'), new Map())
     await controller.removeAll()
     expect(cacheApi.caches.size).toBe(0)
+    expect(await pictureStore.count('de')).toBe(0)
+  })
+
+  it('picturesNeedRedownload is true after the migration and clears by itself once the pictures are downloaded again', async () => {
+    const { controller, cacheApi, storage } = setup({ manifest: manifest() })
+    await controller.sync({ force: true })
+    cacheApi.caches.set(pictureCacheName('en'), new Map())
+    expect(controller.getSnapshot().picturesNeedRedownload).toBe(false)
+    await controller.migrateLegacyPictures()
+    expect(controller.getSnapshot().picturesNeedRedownload).toBe(true)
+    await controller.startPictures('en')
+    expect(controller.getSnapshot()).toMatchObject({ picturesNeedRedownload: false, picturesMigrated: [] })
+    expect(storage.getItem(MIGRATION_NOTICE_KEY)).toBeNull()
+  })
+
+  it('migrates old picture caches in the background: deleted, back to not downloaded, notice kept', async () => {
+    const { controller, cacheApi, storage } = setup({ manifest: manifest() })
+    await controller.sync({ force: true })
+    storage.setItem('pc-carddb-prefs-v1', JSON.stringify({ enabled: true, languages: {}, pictures: { en: true } }))
+    cacheApi.caches.set(pictureCacheName('en'), new Map([['x', 1]]))
+    cacheApi.caches.set('pc-precache-1', new Map())
+    await controller.migrateLegacyPictures()
+    expect([...cacheApi.caches.keys()]).toEqual(['pc-precache-1'])
+    expect(controller.getSnapshot().picturesMigrated).toEqual(['en'])
+    expect(controller.getSnapshot().prefs.pictures.en).toBe(false)
+    expect(JSON.parse(storage.getItem(MIGRATION_NOTICE_KEY))).toEqual(['en'])
+    controller.dismissPicturesMigrationNotice()
+    expect(controller.getSnapshot()).toMatchObject({ picturesMigrated: [], picturesNeedRedownload: false })
+    // done once: a later start does not even list the caches
+    const keys = vi.fn(async () => [])
+    await createCardDbController({ store: controller === null ? null : setup().store, storage, listCaches: keys }).migrateLegacyPictures()
+    expect(keys).not.toHaveBeenCalled()
   })
 })
 

@@ -2,7 +2,9 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import vm from 'node:vm'
+import { IDBFactory } from 'fake-indexeddb'
 import { describe, expect, it } from 'vitest'
+import { createPictureStore } from '../offline/carddb/pictureStore.js'
 
 const SOURCE = readFileSync(resolve(import.meta.dirname, 'sw.js'), 'utf8')
 const ORIGIN = 'https://pc.test'
@@ -27,7 +29,7 @@ class FakeCache {
   async delete(key) { return this.map.delete(String(key?.url ?? key)) }
 }
 
-function load({ precache = [], fetchImpl, existingCaches = {}, windowClients = [] } = {}) {
+function load({ precache = [], fetchImpl, existingCaches = {}, windowClients = [], indexedDB = new IDBFactory() } = {}) {
   const store = new Map(Object.entries(existingCaches))
   const caches = {
     open: async name => { if (!store.has(name)) store.set(name, new FakeCache()); return store.get(name) },
@@ -58,7 +60,7 @@ function load({ precache = [], fetchImpl, existingCaches = {}, windowClients = [
   }
   const code = SOURCE.replace('/*__PRECACHE__*/ []', JSON.stringify(precache)).replace("'__BUILD_ID__'", "'b2'")
   const context = vm.createContext({
-    self, caches, Response, Request, Headers, URL, Promise, Set, Map, Array, JSON, setTimeout, clearTimeout,
+    self, caches, Response, Request, Headers, URL, Promise, Set, Map, Array, JSON, setTimeout, clearTimeout, indexedDB,
     fetch: fetchImpl || (async () => { throw new Error('offline') }),
   })
   vm.runInContext(code, context)
@@ -454,9 +456,13 @@ describe('offline launch and images (F15a)', () => {
   const withDownloads = async (extra = {}) => {
     const shellCache = new FakeCache()
     await shellCache.put('/shell', shell())
-    const pictures = new FakeCache()
-    await pictures.put(ORIGIN + '/api/images/card/en/x/small', png('downloaded'))
-    const loaded = load({ fetchImpl: never, existingCaches: { 'pc-shell-b2': shellCache, 'pc-carddb-images-v1-en': pictures, ...extra } })
+    // The downloaded pictures: one pack Blob with two pictures in the picture database (what F16a stores).
+    const indexedDB = new IDBFactory()
+    await createPictureStore({ indexedDB }).putPack({
+      lang: 'en', setId: 'sv1', blob: new Blob(['xxdownloadedyy']),
+      items: [{ id: 'en/x', offset: 2, length: 10, type: 'image/png' }, { id: 'en/y', offset: 12, length: 2, type: 'image/png' }],
+    })
+    const loaded = load({ fetchImpl: never, indexedDB, existingCaches: { 'pc-shell-b2': shellCache, ...extra } })
     const unnamed = []
     const original = loaded.caches.match
     loaded.caches.match = (key, options = {}) => {
@@ -499,22 +505,53 @@ describe('offline launch and images (F15a)', () => {
     expect(Date.now() - started).toBeLessThan(1500)
   }, 10000)
 
-  it('answers a downloaded card picture from its named cache; other images never open it', async () => {
-    const { listeners, unnamed, store } = await withDownloads()
-    const hit = run(listeners, req('/api/images/card/en/x/small'))
-    expect(await (await hit.responded).text()).toBe('downloaded')
-    const opened = []
-    const open = store.get('pc-carddb-images-v1-en')
-    const originalMatch = open.match.bind(open)
-    open.match = (...args) => { opened.push(args[0]); return originalMatch(...args) }
+  it('answers a downloaded card picture with a slice of its pack; other images fail at once offline', async () => {
+    const { listeners, unnamed } = await withDownloads()
+    const hit = await run(listeners, req('/api/images/card/en%2Fx/small')).responded
+    expect(await hit.text()).toBe('downloaded')
+    expect(hit.headers.get('Content-Type')).toBe('image/png')
     const waits = []
     listeners.message({ data: { type: 'REACHABILITY', offline: true }, waitUntil: p => waits.push(p) })
     await Promise.all(waits)
     for (const path of ['/api/pokedex/images/25', '/api/images/set/en/sv1/logo']) {
       expect((await run(listeners, req(path)).responded).type).toBe('error')
     }
-    expect(opened).toEqual([])
     expect(unnamed).toEqual([])
+  })
+
+  it('answers the large picture from the small one offline, and never searches a Cache Storage cache for pictures', async () => {
+    const { listeners, unnamed, caches } = await withDownloads()
+    const waits = []
+    listeners.message({ data: { type: 'REACHABILITY', offline: true }, waitUntil: p => waits.push(p) })
+    await Promise.all(waits)
+    let listed = 0
+    const keys = caches.keys
+    caches.keys = (...args) => { listed += 1; return keys(...args) }
+    expect(await (await run(listeners, req('/api/images/card/en%2Fy/large')).responded).text()).toBe('yy')
+    expect(await (await run(listeners, req('/api/images/card/en%2Fy/small')).responded).text()).toBe('yy')
+    expect(listed).toBe(0)
+    expect(unnamed).toEqual([])
+  })
+
+  it('serves a loose downloaded picture (set logo) and never creates the picture database itself', async () => {
+    const indexedDB = new IDBFactory()
+    const empty = load({ fetchImpl: never, indexedDB })
+    const waits = []
+    empty.listeners.message({ data: { type: 'REACHABILITY', offline: true }, waitUntil: p => waits.push(p) })
+    await Promise.all(waits)
+    expect((await run(empty.listeners, req('/api/images/card/en%2Fy/small')).responded).type).toBe('error')
+    expect(await indexedDB.databases()).toEqual([]) // the worker cancelled its open instead of creating an empty database
+    await createPictureStore({ indexedDB }).putLoose({ lang: 'en', path: '/api/images/set/sv1/logo', blob: new Blob(['logo']), type: 'image/png' })
+    const next = load({ fetchImpl: never, indexedDB })
+    next.listeners.message({ data: { type: 'REACHABILITY', offline: true }, waitUntil: p => waits.push(p) })
+    await Promise.all(waits)
+    expect(await (await run(next.listeners, req('/api/images/set/sv1/logo')).responded).text()).toBe('logo')
+  })
+
+  it('reads the same database and store names the page writes (pictureStore.js)', async () => {
+    const { PICTURE_DB_NAME, PICTURE_STORES } = await import('../offline/carddb/pictureStore.js')
+    expect(SOURCE).toContain(`const PICTURE_DB = '${PICTURE_DB_NAME}'`)
+    for (const name of Object.values(PICTURE_STORES)) expect(SOURCE).toContain(`'${name}'`)
   })
 
   it('an uncached picture fails at once while offline, a cached one shows at once', async () => {

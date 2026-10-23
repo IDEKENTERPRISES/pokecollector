@@ -10,8 +10,9 @@ import {
   downloadPictures,
   estimatePictureBytes,
   inspectPictureSets,
-  pictureCacheName,
 } from './pictures.js'
+import { createPictureStore } from './pictureStore.js'
+import { dismissPictureMigrationNotice, migrateLegacyPictureCaches, readPictureMigrationNotice, writePictureMigrationNotice } from './pictureMigration.js'
 import { AbortedError, OfflineError, runCardDbSync } from './sync.js'
 
 export const PREFS_KEY = 'pc-carddb-prefs'
@@ -139,6 +140,8 @@ const initialSnapshot = () => ({
   prefs: { enabled: true, languages: {}, pictures: {} },
   storageOk: true,
   error: null,
+  picturesNeedRedownload: false, // true while picturesMigrated is not empty
+  picturesMigrated: [], // languages whose old pictures were removed (F16a): Settings says to download again
 })
 
 export function createCardDbController({
@@ -147,7 +150,7 @@ export function createCardDbController({
   fetchImage = (url, signal) => globalThis.fetch(url, { signal }),
   fetchPack = createFetchPack(),
   sleep = undefined,
-  openCache = name => globalThis.caches?.open(name),
+  pictureStore = createPictureStore(),
   deleteCache = name => globalThis.caches?.delete(name),
   listCaches = () => globalThis.caches?.keys() ?? Promise.resolve([]),
   storage = globalThis.localStorage,
@@ -157,7 +160,8 @@ export function createCardDbController({
   stallMs = STALL_MS,
   autoResumeBaseMs = AUTO_RESUME_BASE_MS,
 } = {}) {
-  let snapshot = { ...initialSnapshot(), prefs: readPrefs(storage) }
+  const initialNotice = readPictureMigrationNotice(storage)
+  let snapshot = { ...initialSnapshot(), prefs: readPrefs(storage), picturesMigrated: initialNotice, picturesNeedRedownload: initialNotice.length > 0 }
   const listeners = new Set()
   let running = null
   let lastRunAt = 0
@@ -170,11 +174,21 @@ export function createCardDbController({
 
   const emit = patch => {
     snapshot = { ...snapshot, ...patch }
+    if ('picturesMigrated' in patch) snapshot.picturesNeedRedownload = snapshot.picturesMigrated.length > 0
     listeners.forEach(listener => listener())
   }
-  const setPicture = (lang, patch) => emit({
-    languages: { ...snapshot.languages, [lang]: { ...snapshot.languages[lang], pictures: { ...snapshot.languages[lang]?.pictures, ...patch } } },
-  })
+  const setPicture = (lang, patch) => {
+    emit({
+      languages: { ...snapshot.languages, [lang]: { ...snapshot.languages[lang], pictures: { ...snapshot.languages[lang]?.pictures, ...patch } } },
+    })
+    // Downloaded again: the "download pictures again" notice for this language is done.
+    if (patch.status === 'complete' && snapshot.picturesMigrated.includes(lang)) {
+      const left = snapshot.picturesMigrated.filter(item => item !== lang)
+      if (left.length) writePictureMigrationNotice(left, storage)
+      else dismissPictureMigrationNotice(storage)
+      emit({ picturesMigrated: left })
+    }
+  }
   const savePrefs = prefs => {
     writePrefs(prefs, storage)
     emit({ prefs })
@@ -306,11 +320,6 @@ export function createCardDbController({
     }, Math.min(WATCHDOG_TICK_MS, Math.max(50, stallMs / 4)))
     try {
       savePrefs({ ...snapshot.prefs, pictures: { ...snapshot.prefs.pictures, [lang]: true } })
-      const cache = await openCache(pictureCacheName(lang))
-      if (!cache) {
-        setPicture(lang, { status: 'paused', reason: 'storage', error: 'storage' })
-        return
-      }
       const sets = await store.getAllSets(lang)
       const record = pictureRecord(lang)
       const startBytes = record.bytes()
@@ -324,7 +333,7 @@ export function createCardDbController({
         await downloadPictures({
           lang,
           sets,
-          cache,
+          store: pictureStore,
           fetchPack,
           fetchImage,
           record,
@@ -373,7 +382,7 @@ export function createCardDbController({
 
   async function removePictures(lang) {
     await stopPictures(lang, { removed: true })
-    await deleteCache(pictureCacheName(lang))
+    await pictureStore.deleteLanguage(lang).catch(() => {})
     pictureRecord(lang).clear()
     savePrefs({ ...snapshot.prefs, pictures: { ...snapshot.prefs.pictures, [lang]: false } })
     setPicture(lang, { status: 'none', reason: null, doneSets: 0, totalSets: 0, bytes: 0, speed: null, etaSeconds: null, error: null })
@@ -403,10 +412,9 @@ export function createCardDbController({
     /** What a language's pictures look like now: sets done of total, from the saved progress (idle state). */
     async inspectPictures(lang) {
       if (pictureRuns.has(lang)) return
-      const cache = await openCache(pictureCacheName(lang))
       const sets = await store.getAllSets(lang)
       const record = pictureRecord(lang)
-      const { doneSets, totalSets, remainingUrls } = await inspectPictureSets({ sets, cache, record })
+      const { doneSets, totalSets, remainingUrls } = await inspectPictureSets({ sets, store: pictureStore, record })
       const status = totalSets > 0 && doneSets === totalSets ? 'complete' : doneSets > 0 ? 'paused' : 'none'
       if (!pictureRuns.has(lang)) {
         setPicture(lang, {
@@ -430,6 +438,26 @@ export function createCardDbController({
       }
     },
     removeAll,
+    /**
+     * Deletes the pre-F16a picture caches (call it after start-up, never on the launch path). Their
+     * languages go back to "not downloaded"; `picturesMigrated` then lists them for a Settings notice.
+     */
+    async migrateLegacyPictures() {
+      const langs = await migrateLegacyPictureCaches({ listCaches, deleteCache, storage })
+      if (!langs.length) return
+      const pictures = { ...snapshot.prefs.pictures }
+      for (const lang of langs) {
+        await stopPictures(lang, { removed: true })
+        pictures[lang] = false
+        setPicture(lang, { status: 'none', reason: null, doneSets: 0, totalSets: 0, bytes: 0, speed: null, etaSeconds: null, error: null })
+      }
+      savePrefs({ ...snapshot.prefs, pictures })
+      emit({ picturesMigrated: readPictureMigrationNotice(storage) })
+    },
+    dismissPicturesMigrationNotice() {
+      dismissPictureMigrationNotice(storage)
+      emit({ picturesMigrated: [] })
+    },
     async hydrate() {
       emit({ languages: snapshot.languages })
       await refreshLanguages().catch(() => {})
@@ -441,6 +469,7 @@ export function createCardDbController({
     const langs = new Set([...snapshot.available, ...Object.keys(snapshot.languages), ...Object.keys(snapshot.prefs.pictures)])
     await Promise.all([...pictureRuns.keys()].map(lang => stopPictures(lang, { removed: true })))
     await store.clearAll()
+    await pictureStore.clearAll().catch(() => {})
     for (const name of await listCaches()) {
       if (name.startsWith(PICTURE_CACHE_PREFIX) || name === VIEWED_IMAGES_CACHE) await deleteCache(name)
     }

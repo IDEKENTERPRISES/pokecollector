@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { storedPictureCount } from './fixtures/picture-store.js'
 
 // F14b: the optional card-picture download fetches one pack per set, saves progress per set, and never
 // stops silently. 20 fixture sets with small pictures. "Offline" is simulated the way an iPhone behaves:
@@ -98,7 +99,7 @@ async function openDataSettings(page, context, state, path = '/offline') {
 
 const row = page => page.getByTestId('carddb-pictures-row-en')
 const savedSets = page => page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('pc-carddb-pictures-v1-en') || '{"sets":{}}').sets))
-const cachedCount = page => page.evaluate(async () => (await (await caches.open('pc-carddb-images-v1-en')).keys()).length)
+const cachedCount = page => storedPictureCount(page)
 const newState = (user = oak) => ({ user, packRequests: [], singleRequests: [], hang: false, delayMs: 0 })
 
 async function startDownload(page) {
@@ -110,20 +111,21 @@ async function startDownload(page) {
 test.describe('card picture download by set pack', () => {
   test.setTimeout(180000)
 
-  test('downloads one pack per set into the picture cache and can be removed', async ({ page, context }) => {
+  test('downloads one pack per set into the picture store and can be removed', async ({ page, context }) => {
     const state = newState()
     await openDataSettings(page, context, state)
     await startDownload(page)
     await expect(row(page)).toContainText('Downloaded', { timeout: 60000 })
     expect([...state.packRequests].sort()).toEqual(Object.keys(SETS).sort())
-    // 8 cards plus the set logo (fetched singly) per set, one cache entry each
-    await expect.poll(() => cachedCount(page)).toBe(SET_COUNT * (CARDS_PER_SET + 1))
+    // 8 cards per set, each an index entry into the set's pack (the set logo, fetched singly, is stored loose)
+    await expect.poll(() => cachedCount(page)).toBe(SET_COUNT * CARDS_PER_SET)
+    expect(await page.evaluate(async () => (await caches.keys()).filter(name => name.startsWith('pc-carddb-images-v1-')))).toEqual([])
     expect((await savedSets(page)).length).toBe(SET_COUNT)
 
     await row(page).getByRole('button', { name: 'Remove', exact: true }).click()
     await expect(page.getByTestId('carddb-pictures-en')).toBeVisible()
     expect(await savedSets(page)).toEqual([])
-    expect(await page.evaluate(async () => (await caches.keys()).filter(name => name.startsWith('pc-carddb-images-v1-')))).toEqual([])
+    expect(await cachedCount(page)).toBe(0)
   })
 
   test('"Remove from this device" leaves no pictures behind, including the pictures seen while browsing', async ({ page, context }) => {
@@ -134,11 +136,12 @@ test.describe('card picture download by set pack', () => {
     await page.evaluate(async () => {
       await (await caches.open('pc-images-v1')).put('/api/images/card/seen/small', new Response('x', { headers: { 'Content-Type': 'image/png' } }))
     })
-    expect(await page.evaluate(async () => (await caches.keys()).sort())).toEqual(['pc-carddb-images-v1-en', 'pc-images-v1'])
+    expect(await page.evaluate(async () => (await caches.keys()).filter(name => !name.startsWith('pc-precache-') && !name.startsWith('pc-shell-')).sort())).toEqual(['pc-images-v1'])
 
     await page.getByTestId('carddb-remove').click()
     await expect.poll(() => page.evaluate(async () => (await caches.keys()).filter(name => name.startsWith('pc-')))).toEqual([])
     expect(await savedSets(page)).toEqual([])
+    expect(await cachedCount(page)).toBe(0)
     await expect(page.getByTestId('carddb-remove')).toHaveCount(0, { timeout: 15000 })
     // The section stays (no restart needed) and offers Download again; nothing downloads by itself.
     await expect(page.getByTestId('carddb-section')).toBeVisible()
