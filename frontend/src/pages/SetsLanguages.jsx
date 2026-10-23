@@ -1,10 +1,11 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import { getSets } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import { useCatalogQuery } from '../offline/carddb/useCatalogQuery.jsx'
 import { ownedFromQueryClient } from '../offline/carddb/owned.js'
 import { useOffline } from '../offline/useOffline'
+import { useCardDb } from '../offline/carddb/useCardDb.jsx'
 import { useQueryClient } from '@tanstack/react-query'
 import ListRow from '../components/ios/ListRow'
 import ListSection from '../components/ios/ListSection'
@@ -23,14 +24,34 @@ import {
   summariseLanguages,
 } from '../utils/setsLanguage'
 
-/** The language codes the user can see, the language to fall back on, and whether they are still loading. */
+// A language list request that never answers (Airplane Mode, requests hanging) must not hold the page.
+const LANGUAGE_LIST_PATIENCE_MS = 3000
+
+/**
+ * The language codes the user can browse, the language to fall back on, and whether they are still
+ * loading. The server's visible list wins. When it can't be had (offline with no saved copy, a failed
+ * request) the languages with a downloaded card database stand in, so the page lists what has offline
+ * data, or goes straight to the series when that is a single language.
+ */
 export function useSetsLanguageChoices() {
   const { settings } = useSettings()
   const visible = useVisibleTcgdexLanguages()
-  const codes = useMemo(() => visible.map(language => language.code), [visible])
+  const { languages: downloaded } = useCardDb()
+  const [gaveUp, setGaveUp] = useState(false)
+  useEffect(() => {
+    if (!visible.isLoading) return undefined
+    const timer = window.setTimeout(() => setGaveUp(true), LANGUAGE_LIST_PATIENCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [visible.isLoading])
+  const visibleCodes = useMemo(() => visible.map(language => language.code), [visible])
+  const downloadedCodes = useMemo(
+    () => Object.entries(downloaded ?? {}).filter(([, state]) => state?.meta).map(([code]) => normalizeTcgdexLanguage(code, '')).filter(Boolean),
+    [downloaded],
+  )
   return {
-    codes,
-    loading: visible.isLoading,
+    codes: visibleCodes.length ? visibleCodes : downloadedCodes,
+    known: visibleCodes.length > 0,
+    loading: visible.isLoading && !gaveUp,
     fallbackCode: normalizeTcgdexLanguage(settings.language || 'en', 'en'),
   }
 }

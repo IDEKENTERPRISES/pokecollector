@@ -14,8 +14,8 @@ import {
 
 const landmarks = { en: data.en.landmark, ja: data.ja.landmark }
 
-async function start({ page, context, browserName }, { offline = false, languages = ['en', 'ja'], settings = {}, waitForDb = true } = {}) {
-  const state = { offline: false, cardDbOnly: offline, languages, settings: { language: 'en', currency: 'EUR', ...settings } }
+async function start({ page, context, browserName }, { offline = false, languages = ['en', 'ja'], settings = {}, waitForDb = true, hideLanguages = false } = {}) {
+  const state = { offline: false, cardDbOnly: offline, hideLanguages, languages, settings: { language: 'en', currency: 'EUR', ...settings } }
   await mockApi(context, state)
   await page.setViewportSize({ width: 390, height: 844 })
   await page.addInitScript(HEARTBEAT)
@@ -181,6 +181,15 @@ test.describe('language-first sets, settings and servers', () => {
     // Back leaves Sets: the language list was replaced, not stacked.
     await back(page)
     await expect(page.getByTestId('search-browse')).toBeVisible({ timeout: 10000 })
+  })
+
+  test('offline with no saved language list, the downloaded languages are offered', async ({ page, context, browserName }) => {
+    await start({ page, context, browserName }, { offline: true, hideLanguages: true })
+    await browseSets(page)
+    await expect(page.getByTestId('sets-languages')).toBeVisible({ timeout: 40000 })
+    await expect(page.getByTestId('sets-language-en')).toBeVisible()
+    await expect(page.getByTestId('sets-language-ja')).toBeVisible()
+    await openLanguage(page, 'ja')
   })
 
   test('a default language that is no longer visible falls back to the language list', async ({ page, context, browserName }) => {

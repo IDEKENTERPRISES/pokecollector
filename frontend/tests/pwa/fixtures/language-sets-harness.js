@@ -55,7 +55,7 @@ export async function mockApi(context, state) {
     const url = new URL(route.request().url())
     const path = url.pathname
     // Airplane Mode on an iPhone: the request is neither answered nor refused.
-    if (state.offline && path !== '/api/settings/tcgdex-filter-languages') return undefined
+    if (state.offline && (state.hideLanguages || path !== '/api/settings/tcgdex-filter-languages')) return undefined
     if (path === '/api/health') return route.fulfill({ json: HEALTH_OK })
     if (path === '/api/auth/mode') return route.fulfill({ json: { multi_user: false, locked: false } })
     if (path === '/api/auth/me') return route.fulfill({ json: ada })

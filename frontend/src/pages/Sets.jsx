@@ -10,6 +10,7 @@ import { useSettings } from '../contexts/SettingsContext'
 import toast from 'react-hot-toast'
 import { resolveSetImageUrl } from '../utils/imageUrl'
 import { useVisibleTcgdexLanguages } from '../hooks/useVisibleTcgdexLanguages'
+import { useSetsLanguageChoices } from './SetsLanguages'
 import { normalizeTcgdexLanguage } from '../utils/tcgdexLanguages'
 import SeriesTile, { FallbackImage } from '../components/ios/SeriesTile'
 import SetTile from '../components/ios/SetTile'
@@ -23,7 +24,6 @@ import SetsLanguageSwitch from '../components/ios/SetsLanguageSwitch'
 import { colourFor } from '../components/ios/pokemon'
 import { useNavBar } from '../navigation/useNavBar'
 import { useSetsView } from '../hooks/useSetsView'
-import { useSetsDefaultLanguage } from '../hooks/useSetsDefaultLanguage'
 import { groupSetsBySeries } from '../utils/setSeries'
 import { parseSetsLanguage, setPath, setsLanguagePath, setsSeriesPath } from '../utils/setsLanguage'
 import { setMatchesSearch } from '../utils/textSearch'
@@ -96,21 +96,20 @@ export default function Sets() {
   const { lang: rawLang } = useParams()
   const lang = parseSetsLanguage(rawLang)
   const visibleLanguages = useVisibleTcgdexLanguages()
-  const { settings } = useSettings()
+  const { codes: choiceCodes } = useSetsLanguageChoices()
   if (!lang) return <Navigate to="/sets" replace />
   // Only a real, non-empty list can say the language is not available; an empty or failed one means "unknown".
   if (!visibleLanguages.isLoading && visibleLanguages.length > 0 && !visibleLanguages.some(language => language.code === lang)) {
     return <Navigate to="/sets" replace />
   }
-  return <SetsInLanguage key={lang} lang={lang} visibleLanguages={visibleLanguages} uiLanguage={normalizeTcgdexLanguage(settings.language || 'en', 'en')} />
+  return <SetsInLanguage key={lang} lang={lang} choiceCodes={choiceCodes} />
 }
 
-function SetsInLanguage({ lang, visibleLanguages, uiLanguage }) {
+function SetsInLanguage({ lang, choiceCodes }) {
   const navigate = useNavigate()
   const { seriesKey: rawSeriesKey } = useParams()
   const seriesKey = rawSeriesKey ? decodeURIComponent(rawSeriesKey) : null
   const { view, setView } = useSetsView()
-  const { language: defaultLanguage } = useSetsDefaultLanguage()
   const [filtersOpen, setFiltersOpen] = useState(false)
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -299,11 +298,9 @@ function SetsInLanguage({ lang, visibleLanguages, uiLanguage }) {
   // The languages the switch offers. An empty or failed list means "unknown": offer this one and the
   // ones we know the person uses, never hide the switch or reset the language because of it.
   const switchLanguages = useMemo(() => {
-    const codes = visibleLanguages.length
-      ? visibleLanguages.map(language => language.code)
-      : [...new Set([lang, uiLanguage, parseSetsLanguage(defaultLanguage)].filter(Boolean))]
+    const codes = [...new Set([...choiceCodes, lang])]
     return codes.map(code => ({ code }))
-  }, [defaultLanguage, lang, uiLanguage, visibleLanguages])
+  }, [choiceCodes, lang])
   const switchLanguage = useCallback(
     (code) => navigate(setsLanguagePath(code), { replace: true }),
     [navigate],
