@@ -1,5 +1,8 @@
 import { useEffect } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
+import api from '../../api/client'
+import { useAuth } from '../../contexts/AuthContext'
 import { useSettings } from '../../contexts/SettingsContext'
 import { useCardDb } from '../../offline/carddb/useCardDb'
 import HpBar from '../ios/HpBar'
@@ -19,14 +22,35 @@ const fill = (template, values) => Object.entries(values).reduce((text, [key, va
 
 const pill = 'inline-flex min-h-[32px] items-center rounded-full px-3.5 text-subheadline font-semibold ios-press disabled:opacity-40'
 
+const PAUSE_REASONS = {
+  user: 'offlineDb.picturesPausedUser',
+  offline: 'offlineDb.picturesPausedOffline',
+  network: 'offlineDb.picturesPausedStalled',
+  timeout: 'offlineDb.picturesPausedStalled',
+  server: 'offlineDb.picturesPausedServer',
+  auth: 'offlineDb.picturesPausedAuth',
+  storage: 'offlineDb.picturesPausedStorage',
+}
+
+export function formatDuration(seconds) {
+  const total = Math.max(1, Math.round(seconds))
+  if (total < 60) return `${total} s`
+  if (total < 3600) return `${Math.round(total / 60)} min`
+  return `${Math.floor(total / 3600)} h ${Math.round((total % 3600) / 60)} min`
+}
+
 function PicturesRow({ lang, info, actions, t }) {
   const pictures = info.pictures ?? { status: 'none' }
   const label = `${t('offlineDb.pictures')} · ${tcgdexLanguageLabel(lang)}`
-  const counts = fill(t('offlineDb.picturesProgress'), { done: pictures.done ?? 0, total: pictures.total ?? 0 })
+  const sets = fill(t('offlineDb.picturesSets'), { done: pictures.doneSets ?? 0, total: pictures.totalSets ?? 0, size: formatBytes(pictures.bytes ?? 0) })
   let subtitle
   let trailing
   if (pictures.status === 'downloading') {
-    subtitle = counts
+    const extras = [
+      pictures.speed ? fill(t('offlineDb.picturesSpeed'), { speed: formatBytes(pictures.speed) }) : null,
+      pictures.etaSeconds ? fill(t('offlineDb.picturesEta'), { time: formatDuration(pictures.etaSeconds) }) : null,
+    ].filter(Boolean)
+    subtitle = [sets, ...extras].join(' · ')
     trailing = (
       <span className="flex gap-2">
         <button type="button" className={clsx(pill, 'bg-fill-tertiary')} onClick={() => actions.pausePictures(lang)}>{t('offlineDb.pause')}</button>
@@ -34,7 +58,7 @@ function PicturesRow({ lang, info, actions, t }) {
       </span>
     )
   } else if (pictures.status === 'paused') {
-    subtitle = `${t('offlineDb.picturesPaused')} · ${counts}`
+    subtitle = `${t(PAUSE_REASONS[pictures.reason] ?? 'offlineDb.picturesPausedError')} · ${sets}`
     trailing = (
       <span className="flex gap-2">
         <button type="button" className={clsx(pill, 'bg-accent/20 text-tint')} onClick={() => actions.resumePictures(lang)}>{t('offlineDb.resume')}</button>
@@ -42,7 +66,7 @@ function PicturesRow({ lang, info, actions, t }) {
       </span>
     )
   } else if (pictures.status === 'complete') {
-    subtitle = t('offlineDb.picturesDone')
+    subtitle = fill(t('offlineDb.picturesDoneSize'), { size: formatBytes(pictures.bytes ?? 0) })
     trailing = <button type="button" className={clsx(pill, 'bg-red/15 text-red')} onClick={() => actions.removePictures(lang)}>{t('offlineDb.remove')}</button>
   } else {
     subtitle = fill(t('offlineDb.picturesDownload'), { size: formatBytes(pictures.estimateBytes ?? 0) })
@@ -56,9 +80,45 @@ function PicturesRow({ lang, info, actions, t }) {
     <>
       <ListRow title={label} subtitle={subtitle} trailing={trailing} testId={`carddb-pictures-row-${lang}`} />
       {pictures.status === 'downloading' && (
-        <div className="px-4 pb-3"><HpBar value={pictures.done ?? 0} max={pictures.total || 1} label={label} /></div>
+        <div className="px-4 pb-3"><HpBar value={pictures.doneSets ?? 0} max={pictures.totalSets || 1} label={label} /></div>
       )}
     </>
+  )
+}
+
+const WARMUP_KEY = ['offline-carddb-picture-warmup']
+
+/** Admins: have the server fetch every card picture from TCGdex ahead of time (about 5 a second). */
+function PrepareRow({ t }) {
+  const queryClient = useQueryClient()
+  const { data } = useQuery({
+    queryKey: WARMUP_KEY,
+    queryFn: () => api.get('/offline/carddb/pictures-prepare').then(response => response.data),
+    refetchInterval: query => (query.state.data?.running ? 3000 : false),
+    retry: false,
+  })
+  const start = useMutation({
+    mutationFn: () => api.post('/offline/carddb/pictures-prepare').then(response => response.data),
+    onSuccess: state => queryClient.setQueryData(WARMUP_KEY, state),
+  })
+  if (!data) return null
+  const values = { cached: (data.cached ?? 0).toLocaleString(), total: (data.total ?? 0).toLocaleString(), error: data.error ?? '' }
+  const running = Boolean(data.running)
+  const complete = !running && data.total > 0 && data.cached >= data.total
+  let text = fill(t('offlineDb.prepareDesc'), values)
+  if (running) text = fill(t('offlineDb.prepareRunning'), values)
+  else if (data.error) text = fill(t('offlineDb.prepareStopped'), values)
+  return (
+    <ListRow
+      title={t('offlineDb.prepareTitle')}
+      subtitle={text}
+      trailing={(
+        <button type="button" className={clsx(pill, 'bg-accent/20 text-tint')} disabled={running || complete || start.isPending} onClick={() => start.mutate()} data-testid="carddb-prepare">
+          {complete ? t('offlineDb.prepareDone') : t('offlineDb.prepareStart')}
+        </button>
+      )}
+      testId="carddb-prepare-row"
+    />
   )
 }
 
@@ -70,17 +130,26 @@ function PicturesRow({ lang, info, actions, t }) {
 export default function OfflineCardDbSection() {
   const { t } = useSettings()
   const db = useCardDb()
+  const { user } = useAuth()
   const { actions } = db
 
   useEffect(() => {
     if (!actions) return
     for (const lang of Object.keys(db.languages)) {
-      if (db.languages[lang]?.meta && db.languages[lang]?.pictures?.total === undefined) {
+      if (db.languages[lang]?.meta && db.languages[lang]?.pictures?.totalSets === undefined) {
         actions.inspectPictures(lang).catch(() => {})
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actions, Object.keys(db.languages).join(',')])
+
+  // A download that stopped because the connection dropped or stalled continues when it is back.
+  useEffect(() => {
+    if (!actions) return undefined
+    const resume = () => actions.resumeStalledPictures()
+    window.addEventListener('online', resume)
+    return () => window.removeEventListener('online', resume)
+  }, [actions])
 
   const hasLocalData = Object.values(db.languages).some(info => info?.meta)
   if (!db.supported || db.serverEnabled === false || (db.serverEnabled === null && !hasLocalData)) return null
@@ -151,6 +220,7 @@ export default function OfflineCardDbSection() {
             <PicturesRow lang={lang} info={db.languages[lang]} actions={actions} t={t} />
           </div>
         ))}
+        {user?.role === 'admin' && <PrepareRow t={t} />}
         {hasLocalData && (
           <ListRow title={t('offlineDb.removeAll')} destructive onClick={() => actions.removeAll()} testId="carddb-remove" />
         )}

@@ -21,7 +21,8 @@ async function mockApi(context, state) {
     if (path === '/api/settings/exchange-rate') return route.fulfill({ json: { rate: 1 } })
     if (path === '/api/dashboard/') return route.fulfill({ json: { recent_additions: [], top_cards: [] } })
     if (path === '/api/sync/status') return route.fulfill({ json: { is_running: false, is_price_sync_running: false } })
-    if (path === '/api/offline/carddb/manifest') return route.fulfill({ json: { enabled: false, languages: {} } })
+    // Never answers: a manifest that says "off" would make the app delete the seeded card database.
+    if (path === '/api/offline/carddb/manifest') return new Promise(() => {})
     if (path.startsWith('/api/images/')) return route.fulfill({ status: 404, json: {} })
     return route.fulfill({ json: [] })
   })
@@ -127,5 +128,29 @@ test.describe('offline cold start with large saved data', () => {
     expect(result.marks.interactive, 'the app is interactive with the splash still running').toBeLessThan(browserName === 'chromium' ? 3000 : 5000)
     // Offline, the card database does not try to sync: its manifest request would only hang.
     expect(manifestRequests).toEqual([])
+
+    // The seeded card database is the version 1 one deployed phones have. The app opens it when a page first
+    // needs it: offline Search finds a card that only the seeded database knows (the upgrade to the current
+    // version and the rebuild of the derived stores worked), and the database is then at the current version.
+    await page.goto('/search?q=Fixture%20card%203-1')
+    await expect(page.getByText('Fixture card 3-1').first()).toBeVisible({ timeout: 60000 })
+    await expect.poll(() => page.evaluate(async () => {
+      const db = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('pokecollector-carddb')
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      try {
+        if (!db.objectStoreNames.contains('setRows')) return { version: db.version, setRows: -1 }
+        const setRows = await new Promise((resolve, reject) => {
+          const request = db.transaction('setRows').objectStore('setRows').count()
+          request.onsuccess = () => resolve(request.result)
+          request.onerror = () => reject(request.error)
+        })
+        return { version: db.version, setRows }
+      } finally {
+        db.close()
+      }
+    }), { timeout: 30000 }).toEqual({ version: 2, setRows: 200 })
   })
 })
