@@ -12,12 +12,12 @@ import { useOutbox } from '../../offline/useOutbox'
 import { isStandalone } from '../../offline/capabilities'
 import { ageWarning } from '../../offline/durability'
 import { readLastSynced } from '../../offline/syncToasts'
+import { useCardDb } from '../../offline/carddb/useCardDb'
+import { formatSize, loadStorageBreakdown } from '../../offline/storageBreakdown'
 
 const MIB = 1024 * 1024
 
 export const megabytes = bytes => ((Number(bytes) || 0) / MIB).toFixed(1)
-
-const formatSize = bytes => (bytes >= 1024 * MIB ? `${(bytes / (1024 * MIB)).toFixed(1)} GB` : `${megabytes(bytes)} MB`)
 
 export function formatAge(timestamp, language, now = Date.now()) {
   const seconds = Math.round((timestamp - now) / 1000)
