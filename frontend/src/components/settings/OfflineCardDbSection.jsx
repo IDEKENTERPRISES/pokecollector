@@ -109,7 +109,8 @@ function PrepareRow({ t }) {
   })
   const start = useMutation({
     mutationFn: () => api.post('/offline/carddb/pictures-prepare').then(response => response.data),
-    onSuccess: state => queryClient.setQueryData(WARMUP_KEY, state),
+    // The start reply carries only the run state; the GET adds the real counts.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: WARMUP_KEY }),
   })
   if (!data) return null
   const missing = Math.max(0, (data.total ?? 0) - (data.cached ?? 0))
@@ -137,14 +138,13 @@ function PrepareRow({ t }) {
 }
 
 /**
- * Settings › Data & sync: the offline card database. A per-device switch (on by default), one switch
+ * Sync & offline (/offline), for every signed-in user: the offline card database. A per-device switch (on by default), one switch
  * per language the server syncs, the last update and size, the progress, optional pictures per
  * language and "Remove from this device". Hidden when the server turned the feature off.
  */
 export default function OfflineCardDbSection() {
   const { t } = useSettings()
   const db = useCardDb()
-  const { user } = useAuth()
   const { actions } = db
 
   useEffect(() => {
@@ -201,6 +201,10 @@ export default function OfflineCardDbSection() {
           trailing={<Switch checked={db.prefs.enabled} onChange={value => actions.setEnabled(value)} label={t('offlineDb.keep')} />}
           testId="carddb-enabled"
         />
+        {/* F16a: shown when the pictures moved to the faster store and must be downloaded again. */}
+        {db.picturesNeedRedownload && (
+          <ListRow title={t('offlineDb.redownloadNotice')} testId="carddb-redownload-notice" />
+        )}
         {status && (
           <ListRow
             title={status}
@@ -259,11 +263,20 @@ export default function OfflineCardDbSection() {
           <ListRow title={t('offlineDb.removeAll')} destructive onClick={() => actions.removeAll()} testId="carddb-remove" />
         )}
       </ListSection>
-      {user?.role === 'admin' && (
-        <ListSection header={t('offlineDb.serverHeader')} footer={t('offlineDb.serverFooter')}>
-          <PrepareRow t={t} />
-        </ListSection>
-      )}
+    </div>
+  )
+}
+
+/** Settings › Data & sync (admins): the server's own picture store. */
+export function ServerPicturesSection() {
+  const { t } = useSettings()
+  const { user } = useAuth()
+  if (user?.role !== 'admin') return null
+  return (
+    <div data-testid="carddb-server-section">
+      <ListSection header={t('offlineDb.serverHeader')} footer={t('offlineDb.serverFooter')}>
+        <PrepareRow t={t} />
+      </ListSection>
     </div>
   )
 }

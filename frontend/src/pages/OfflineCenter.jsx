@@ -3,6 +3,7 @@ import { Navigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { Check, X } from 'lucide-react'
 import InstallHint from '../components/pwa/InstallHint'
+import OfflineCardDbSection from '../components/settings/OfflineCardDbSection'
 import { StorageSummary, SyncControls, SyncItemList } from '../components/sync/SyncSheet'
 import { useSettings } from '../contexts/SettingsContext'
 import { getCapabilities } from '../offline/capabilities'
@@ -130,6 +131,8 @@ export default function OfflineCenter() {
           </>
         )}
       </Section>
+
+      <OfflineCardDbSection />
 
       <Section title={t('sync.storageTitle')}>
         {unavailable ? <p className="text-sm text-text-secondary">{t('sync.storageUnavailable')}</p> : <StorageSummary />}
