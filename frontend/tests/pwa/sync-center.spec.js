@@ -224,7 +224,7 @@ test.describe('sync center', () => {
     await expect(dialog).toHaveCount(0)
   })
 
-  test('items of another account are only counted', async ({ page, context }) => {
+  test('items of another account are removed when this account signs in (F15c)', async ({ page, context }) => {
     await mockApi(context, { health: 'down' })
     await openApp(page)
     await seed(page, [{ state: 'pending' }, { userId: 99, state: 'pending', display: { title: 'Secret card' } }])
@@ -233,7 +233,8 @@ test.describe('sync center', () => {
     const sheet = page.getByTestId('sync-sheet')
     await expect(sheet.getByTestId('sync-item')).toHaveCount(1)
     await expect(sheet).not.toContainText('Secret card')
-    await expect(sheet).toContainText('Items for other accounts are waiting on this device: 1')
+    // The other account's item was deleted from this device at start, so nothing is left to count.
+    await expect(sheet).not.toContainText('Items for other accounts')
   })
 
   test('/offline shows the connection and a reset button', async ({ page, context }) => {
