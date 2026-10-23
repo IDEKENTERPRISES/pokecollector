@@ -339,14 +339,20 @@ export async function purge({ origin, userId, indexedDB = globalThis.indexedDB }
   }, undefined)
 }
 
-/** Deletes every record except the one of `keepUserId`. */
+/** Deletes every record except the one of `keepUserId`. → how many were deleted. */
 export async function purgeOthers({ origin, keepUserId, indexedDB = globalThis.indexedDB } = {}) {
   const keep = recordKey(origin, keepUserId)
   const keepHead = headKey(origin, keepUserId)
   return withStore(indexedDB, 'readwrite', async store => {
     const keys = await promisify(store.getAllKeys())
-    for (const key of keys) if (key !== keep && key !== keepHead) store.delete(key)
-  }, undefined)
+    let removed = 0
+    for (const key of keys) {
+      if (key === keep || key === keepHead) continue
+      store.delete(key)
+      removed += 1
+    }
+    return removed
+  }, 0)
 }
 
 export async function purgeAll({ indexedDB = globalThis.indexedDB } = {}) {

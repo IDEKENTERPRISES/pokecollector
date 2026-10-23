@@ -338,7 +338,7 @@ describe('read cache', () => {
     await expect(restore(client, { origin, userId: 1, indexedDB: null })).resolves.toBeNull()
     await expect(persist(client, { origin, userId: 1, indexedDB: null }).flush()).resolves.toBe(false)
     await expect(purge({ origin, userId: 1, indexedDB: null })).resolves.toBeUndefined()
-    await expect(purgeOthers({ origin, keepUserId: 1, indexedDB: null })).resolves.toBeUndefined()
+    await expect(purgeOthers({ origin, keepUserId: 1, indexedDB: null })).resolves.toBe(0)
     await expect(purgeAll({ indexedDB: null })).resolves.toBeUndefined()
   })
 })
