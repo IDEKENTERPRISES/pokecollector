@@ -179,7 +179,7 @@ class OfflineCardDbTests(unittest.TestCase):
 
     def test_every_endpoint_requires_a_signed_in_user(self):
         routes = [r for r in main.app.routes if getattr(r, "path", "").startswith("/api/offline/carddb")]
-        self.assertEqual(len(routes), 3)
+        self.assertEqual(len(routes), 6)  # + the picture pack and the warm-up (get, post)
         for route in routes:
             calls = {dep.call for dep in route.dependant.dependencies}
             self.assertIn(get_current_user, calls, route.path)

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from api.auth import get_current_user
 from database import get_db
 from models import User
-from services import offline_carddb
+from services import card_picture_packs, offline_carddb
 
 router = APIRouter()
 
@@ -87,3 +87,51 @@ def get_prices(
     with _build_slots:
         payload = offline_carddb.prices_payload(db, lang)
     return _gzip_response(request, payload)
+
+
+@router.get("/pictures/{lang}/{set_id}")
+def get_set_pictures(
+    lang: str,
+    set_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """A set's small card pictures in one response (format: services/card_picture_packs.py).
+    Pictures the server has not cached yet are listed in the header; fetch those one by one."""
+    _require_enabled()
+    _require_language(db, lang)
+    with _build_slots:
+        pack = card_picture_packs.pack_for_set(db, lang, set_id)
+    if pack is None:
+        raise HTTPException(status_code=404, detail="Set not found")
+    headers = {
+        "ETag": f'"{pack["etag"]}"',
+        "Cache-Control": "private, no-cache",
+        "Vary": "Authorization",
+        "X-Pack-Missing": str(len(pack["missing"])),
+    }
+    if _etag_matches(request, pack["etag"]):
+        return Response(status_code=304, headers=headers)
+    return Response(content=pack["data"], media_type="application/octet-stream", headers=headers)
+
+
+def _require_admin(user: User) -> None:
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+
+@router.get("/pictures-prepare")
+def get_picture_warmup(current_user: User = Depends(get_current_user)):
+    """Progress of the server's card picture warm-up (admins)."""
+    _require_admin(current_user)
+    _require_enabled()
+    return card_picture_packs.card_picture_warmer.status()
+
+
+@router.post("/pictures-prepare")
+def start_picture_warmup(current_user: User = Depends(get_current_user)):
+    """Fetch every card's small picture from TCGdex into the server's cache, in the background (admins)."""
+    _require_admin(current_user)
+    _require_enabled()
+    return card_picture_packs.card_picture_warmer.start()

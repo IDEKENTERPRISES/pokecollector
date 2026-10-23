@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   AUTO_CONTINUE_MS,
   CARD_AT,
@@ -10,6 +10,7 @@ import {
   ENABLED_KEY,
   SUPPRESS_KEY,
   consumeSplashSuppression,
+  whenLaunchSplashClosed,
   isSplashPath,
   launchSplashMode,
   markLaunchSplashClosed,
@@ -147,5 +148,34 @@ describe('the timeline', () => {
     // The owner's answer: the app opens by itself 6 s after the reveal (about 9 s in all).
     expect(AUTO_CONTINUE_MS).toBe(6000)
     expect(REVEAL_AT + AUTO_CONTINUE_MS + TIMELINE.fadeOut).toBeLessThan(10000)
+  })
+})
+
+describe('whenLaunchSplashClosed', () => {
+  afterEach(() => resetLaunchForTests())
+
+  it('resolves at once when this launch has no splash', async () => {
+    launchSplashMode({ pathname: '/u/ash' })
+    await expect(whenLaunchSplashClosed(5000)).resolves.toBeUndefined()
+  })
+
+  it('waits for the splash to close, or for the limit', async () => {
+    vi.useFakeTimers()
+    launchSplashMode({ pathname: '/' })
+    let done = false
+    whenLaunchSplashClosed(5000).then(() => { done = true })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(done).toBe(false)
+    markLaunchSplashClosed()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(done).toBe(true)
+
+    resetLaunchForTests()
+    launchSplashMode({ pathname: '/' })
+    done = false
+    whenLaunchSplashClosed(5000).then(() => { done = true })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(done).toBe(true)
+    vi.useRealTimers()
   })
 })

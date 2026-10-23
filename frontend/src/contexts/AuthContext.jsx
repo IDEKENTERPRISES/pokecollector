@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { getAuthMode, getMe, logoutSession } from '../api/client'
-import { authRetryDelay, loadAuthState } from './authBootstrap'
+import { AUTH_SNAPSHOT_TIMEOUT_MS, AUTH_STARTUP_TIMEOUT_MS, authRetryDelay, loadAuthState, withStartupDeadline } from './authBootstrap'
 import { clearSettingsCache } from '../offline/settingsCache'
 import { clearAuthSnapshot, readAuthSnapshot, writeAuthSnapshot } from '../offline/authSnapshot'
 import { readPwaFlags } from '../pwa/flags'
@@ -30,11 +30,12 @@ export function AuthProvider({ children }) {
 
     const bootstrap = async (attempt = 0) => {
       try {
-        const result = await loadAuthState({
-          token: localStorage.getItem('token'),
-          getAuthMode,
-          getMe,
-        })
+        const token = localStorage.getItem('token')
+        // A device that has signed in before (and may be offline) must not wait the full timeout.
+        const remembered = attempt === 0 && readPwaFlags().queue && Boolean(readAuthSnapshot({ token }))
+        const timeout = remembered ? AUTH_SNAPSHOT_TIMEOUT_MS : AUTH_STARTUP_TIMEOUT_MS
+        // Two requests (mode, then the user) each get `timeout`; the deadline covers both, plus a margin.
+        const result = await withStartupDeadline(() => loadAuthState({ token, getAuthMode, getMe, timeout }), timeout * 2 + 500)
         if (cancelled) return
 
         setMultiUser(result.multiUser)

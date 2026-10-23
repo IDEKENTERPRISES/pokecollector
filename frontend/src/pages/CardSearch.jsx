@@ -41,6 +41,7 @@ import EnergyIcon from '../components/ios/EnergyIcon'
 import { tileTextFor, typeKeyFor } from '../components/ios/pokemon'
 import { useNavBar } from '../navigation/useNavBar'
 import { useOffline } from '../offline/useOffline'
+import { useCardDb } from '../offline/carddb/useCardDb.jsx'
 import { ownedFromQueryClient } from '../offline/carddb/owned.js'
 import { PricesFromNote, useCatalogQuery } from '../offline/carddb/useCatalogQuery.jsx'
 import { groupSetsBySeries } from '../utils/setSeries'
@@ -581,6 +582,10 @@ export default function CardSearch() {
   })
 
   const isOffline = useOffline()
+  // Offline search works from the downloaded card database; without one the field stays gated.
+  const { languages: cardDbLanguages } = useCardDb()
+  const hasCardData = Object.values(cardDbLanguages ?? {}).some(state => state?.meta)
+  const searchGated = isOffline && !hasCardData
   const pokedexLanguage = settings.language === 'de' ? 'de' : 'en'
   const defaultFormFamily = getPokedexFormFamily(new URLSearchParams())
   // Same key and request as the Pokédex page, so the count comes from the same cache entry.
@@ -657,8 +662,8 @@ export default function CardSearch() {
           onChange={setSearchInput}
           onSubmit={submitSearch}
           onCancel={cancelSearch}
-          disabled={isOffline}
-          placeholder={isOffline ? t('cardSearch.needsConnection') : t('cardSearch.searchFieldPlaceholder')}
+          disabled={searchGated}
+          placeholder={searchGated ? t('cardSearch.needsCardData') : t('cardSearch.searchFieldPlaceholder')}
         />
         {isCodeNumberSearch && !isOffline && (
           <p className="mt-1 flex items-center gap-1 px-1 text-caption-1 text-yellow">

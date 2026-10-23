@@ -12,6 +12,9 @@ const IMAGE_CAP = 800
 const CARDDB_IMAGES_PREFIX = 'pc-carddb-images-v1-'
 const NAV_TIMEOUT_MS = 2500
 const LARGE_IMAGE_TIMEOUT_MS = 4000
+// A picture nobody has cached: offline on an iPhone the request hangs instead of failing, so give
+// the network this long, then answer with an error and let the tile show its placeholder.
+const IMAGE_NETWORK_TIMEOUT_MS = 3000
 const IMAGE_PREFIXES = ['/api/images/card/', '/api/images/set/', '/api/pokedex/images/']
 
 const OFFLINE_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8">'
@@ -200,8 +203,16 @@ function handleImage(event) {
     if (hit) return hit
     const smallPath = smallImagePath(new URL(event.request.url).pathname)
     if (smallPath) return fetchLargeImage(event, cache, smallPath)
-    const res = await fetch(event.request)
-    event.waitUntil(storeImage(cache, event.request, res).catch(() => {}))
+    const network = fetch(event.request)
+    const store = res => storeImage(cache, event.request, res).catch(() => {})
+    const timer = new Promise(resolve => setTimeout(() => resolve(null), IMAGE_NETWORK_TIMEOUT_MS))
+    const res = await Promise.race([network, timer])
+    if (!res) {
+      // Hung connection: fail fast, but keep the request alive so a late answer is still stored.
+      event.waitUntil(network.then(store, () => {}))
+      return Response.error()
+    }
+    event.waitUntil(store(res))
     return res
   })())
 }

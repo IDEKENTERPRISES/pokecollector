@@ -11,6 +11,8 @@ import { useSettings } from '../../contexts/SettingsContext'
 import { useOffline } from '../useOffline'
 import { readPrefs } from './controller.js'
 import { createCardDbReader } from './reader.js'
+import { createBackgroundEngine } from './engineClient.js'
+import { createCardDbStore } from './store.js'
 import { useCardDb } from './useCardDb.jsx'
 import { useRegisterServing } from './serving.js'
 
@@ -19,7 +21,10 @@ export const CARDDB_QUERY_KEY = 'carddb'
 let reader = null
 /** The one reader of this tab; it answers nothing while card data is switched off on this device. */
 export function getCardDbReader() {
-  if (!reader) reader = createCardDbReader({ isEnabled: () => readPrefs().enabled })
+  if (!reader) {
+    const store = createCardDbStore()
+    reader = createCardDbReader({ store, engine: createBackgroundEngine({ store }), isEnabled: () => readPrefs().enabled })
+  }
   return reader
 }
 
@@ -41,16 +46,29 @@ export function useCatalogQuery({ offlineFn, ...options }) {
   // finishes, and a cancelled query could be left idle (seen in WebKit). Its answers are kept
   // here, never in the query cache, so the read cache can't save them as server data.
   const argsKey = JSON.stringify(options.queryKey)
+  // Build the engine's index in the background once data exists, so the first offline query is quick.
+  useEffect(() => {
+    if (!supported || !version) return undefined
+    const timer = window.setTimeout(() => { getCardDbReader().prepare().catch(() => {}) }, 1500)
+    return () => window.clearTimeout(timer)
+  }, [supported, version])
   const readRef = useRef(offlineFn)
   readRef.current = offlineFn
   const [answer, setAnswer] = useState({ key: null, data: null })
   useEffect(() => {
     if (!reading) return undefined
     let cancelled = false
+    const started = performance.now()
     Promise.resolve()
       .then(() => readRef.current(getCardDbReader()))
       .catch(() => null)
       .then(data => {
+        // Visible in the performance timeline (and to tests): how long the database took to answer.
+        try {
+          performance.measure('carddb-read', { start: started, end: performance.now(), detail: { key: argsKey } })
+        } catch {
+          // no User Timing level 3
+        }
         if (!cancelled) setAnswer({ key: argsKey, data: data ?? null })
       })
     return () => { cancelled = true }

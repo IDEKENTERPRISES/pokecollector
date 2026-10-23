@@ -213,30 +213,46 @@ export function compareNumbers(a, b) {
 }
 
 const hasText = (value, term) => stripDiacritics(typeof value === 'string' ? value : JSON.stringify(value ?? '')).includes(stripDiacritics(term))
+const collator = new Intl.Collator()
+
+/** The "rule text" filter: card effect, attacks or abilities contain the term. */
+export const matchesRuleText = (card, term) => (
+  hasText(card.card_effect, term) || hasText(card.attacks, term) || hasText(card.abilities, term)
+)
 
 /**
  * The whole offline search, mirroring GET /cards/search. `cards` are decoded card objects (with
  * `set_id` = tcg set id and `lang`), `sets` the matching set rows. Returns the same envelope:
  * `{ data, total_count, page, page_size, corrected? }`.
+ *
+ * Cards may carry `nameKey` (their name already normalised) and the caller may pass `prepared`
+ * ({ index, lists, setByKey }, built once) so a search over tens of thousands of cards does not
+ * redo that work each time.
  */
-export function searchCardsOffline({ cards, sets, params = {} }) {
+export function searchCardsOffline({ cards, sets, params = {}, prepared = null }) {
   const {
     q, name, number, set_id: setFilter, type, category, subtype, rarity, artist, rule_text: ruleText,
     hp_min: hpMin, hp_max: hpMax, dex_id: dexId, sort_by: sortBy, sort_order: sortOrder = 'asc',
     page = 1, page_size: pageSize = 20,
   } = params
   const term = String(q ?? '').trim() || String(name ?? '').trim()
-  const index = buildSetIndex(sets)
-  const lists = buildNameLists(cards)
-  const setByKey = new Map()
-  for (const item of sets ?? []) {
-    setByKey.set(item.id, item)
-    if (item.tcg_set_id) setByKey.set(item.tcg_set_id, item)
+  const index = prepared?.index ?? buildSetIndex(sets)
+  const lists = prepared?.lists ?? buildNameLists(cards)
+  const setByKey = prepared?.setByKey ?? new Map()
+  if (!prepared?.setByKey) {
+    for (const item of sets ?? []) {
+      setByKey.set(item.id, item)
+      if (item.tcg_set_id) setByKey.set(item.tcg_set_id, item)
+    }
   }
+  const nameWanted = nameText => stripDiacritics(nameText)
 
   const runSearch = (nameText, smartSetIds, smartNumber) => {
     let result = cards
-    if (nameText) result = result.filter(card => hasText(card.name, nameText))
+    if (nameText) {
+      const wanted = nameWanted(nameText)
+      result = result.filter(card => (card.nameKey ?? stripDiacritics(card.name)).includes(wanted))
+    }
     if (smartSetIds?.size) result = result.filter(card => smartSetIds.has(card.set_id))
     if (smartNumber) {
       const wanted = normalizeCardNumber(smartNumber)
@@ -257,7 +273,7 @@ export function searchCardsOffline({ cards, sets, params = {} }) {
     if (rarity) result = result.filter(card => hasText(card.rarity, rarity))
     if (artist) result = result.filter(card => hasText(card.artist, artist))
     if (ruleText) {
-      result = result.filter(card => hasText(card.card_effect, ruleText) || hasText(card.attacks, ruleText) || hasText(card.abilities, ruleText))
+      result = result.filter(card => matchesRuleText(card, ruleText))
     }
     const hpOf = card => Number.parseInt(card.hp, 10)
     if (hpMin !== undefined && hpMin !== null && hpMin !== '') result = result.filter(card => hpOf(card) >= Number(hpMin))
@@ -274,7 +290,7 @@ export function searchCardsOffline({ cards, sets, params = {} }) {
       if (right === null || right === undefined) return -1
       if (column === 'number') return compareNumbers(left, right) * direction
       if (typeof left === 'number' && typeof right === 'number') return (left - right) * direction
-      return String(left).localeCompare(String(right)) * direction
+      return collator.compare(String(left), String(right)) * direction
     })
     const start = (Number(page) - 1) * Number(pageSize)
     return { total: sorted.length, cards: sorted.slice(start, start + Number(pageSize)) }
