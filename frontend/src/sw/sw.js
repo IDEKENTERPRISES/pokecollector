@@ -14,7 +14,7 @@ const NAV_TIMEOUT_MS = 2500
 // After a navigation had to fall back to the shell, the next ones wait only this long for a while.
 const NAV_FAST_TIMEOUT_MS = 600
 const NAV_RECENT_FAILURE_MS = 5 * 60 * 1000
-const PICTURE_CACHE_REFRESH_MS = 60 * 1000
+const PICTURE_CACHE_REFRESH_MS = 5 * 1000
 // Tiny cache holding what the page last told the worker about reachability; the worker is stopped
 // and restarted often, so the flag must survive a cold start (an offline launch).
 const STATE_NAME = 'pc-sw-state-v1'
@@ -278,7 +278,7 @@ async function matchDownloadedPicture(request) {
   await (pictureNamesLoaded || refreshPictureCaches())
   const hit = await matchPictureCaches(request)
   if (hit) return hit
-  // A download may have finished since the names were listed: look again, at most once a minute.
+  // A download may have finished since the names were listed: look again, at most every few seconds.
   if (Date.now() - pictureNamesAt > PICTURE_CACHE_REFRESH_MS) {
     await refreshPictureCaches()
     return matchPictureCaches(request)
