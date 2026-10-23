@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { seedPictureStore } from './fixtures/picture-store.js'
 
 const ada = { id: 1, username: 'ada', role: 'user', avatar_id: null, must_change_password: false }
 const HEALTH_OK = {
@@ -129,12 +130,8 @@ test('offline, a picture that is not saved fails fast instead of loading forever
   await page.reload()
   await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller))
 
-  // One picture saved by browsing, one downloaded on purpose (the same way F13a stores it).
-  await page.evaluate(async png => {
-    const bytes = Uint8Array.from(atob(png), char => char.charCodeAt(0))
-    const downloaded = await caches.open('pc-carddb-images-v1-en')
-    await downloaded.put('/api/images/card/hang-2_en/small', new Response(bytes, { headers: { 'Content-Type': 'image/png' } }))
-  }, PNG.toString('base64'))
+  // One picture saved by browsing, one downloaded on purpose (a pack in the picture store, F16a).
+  await seedPictureStore(page, { items: [{ id: 'hang-2_en' }] })
   await page.goto('/collection')
   const saved = page.locator('img[src*="/api/images/card/hang-1_en/small"]').first()
   await expect.poll(() => saved.evaluate(img => img.complete && img.naturalWidth)).toBeGreaterThan(0)

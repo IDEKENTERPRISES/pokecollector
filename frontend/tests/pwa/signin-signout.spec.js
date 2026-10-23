@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { card, deck } from './fixtures/pages.js'
+import { seedPictureStore, storedPictureCount } from './fixtures/picture-store.js'
 
 // F15c: right after sign-in every page's data is saved for offline (even for pages never opened), and
 // sign-out removes everything of the user bar the card database and its pictures, then reloads.
@@ -124,9 +125,9 @@ test.describe('sign-in prefetch and sign-out cleanup', () => {
     }).toPass({ timeout: 40000 })
 
     // Things that sign-out must (or must not) remove: viewed pictures, a downloaded picture pack, the card database.
+    await seedPictureStore(page, { items: [{ id: 'y_en' }] })
     await page.evaluate(async () => {
       await (await caches.open('pc-images-v1')).put('/api/images/x', new Response('photo'))
-      await (await caches.open('pc-carddb-images-v1-en')).put('/api/images/y', new Response('pic'))
       await new Promise(resolve => {
         const request = indexedDB.open('pokecollector-carddb')
         request.onsuccess = () => { request.result.close(); resolve() }
@@ -162,7 +163,8 @@ test.describe('sign-in prefetch and sign-out cleanup', () => {
       expect(after.databases).not.toContain('pokecollector-outbox')
       expect(after.databases).toContain('pokecollector-carddb')
       expect(after.caches).not.toContain('pc-images-v1')
-      expect(after.caches).toContain('pc-carddb-images-v1-en')
+      expect(after.databases).toContain('pokecollector-pictures')
+      expect(await storedPictureCount(page)).toBe(1)
       expect(after.local).toEqual(['pc-carddb-prefs'])
       expect(await readCacheRecords(page)).toEqual([])
     }).toPass({ timeout: 15000 })

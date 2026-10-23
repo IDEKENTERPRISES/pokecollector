@@ -1,8 +1,9 @@
 import http from 'node:http'
 import { expect, test } from '@playwright/test'
+import { seedPictureStore } from './fixtures/picture-store.js'
 
-// F15a: an offline cold start with the card pictures downloaded (about 22,000 entries in
-// `pc-carddb-images-v1-en`) must reach the splash as fast as with no pictures, and card images
+// F15a/F16a: an offline cold start with the card pictures downloaded (about 22,000 pictures as set packs in
+// the IndexedDB picture store) must reach the splash as fast as with no pictures, and card images
 // answer at once offline. "Airplane Mode" as iOS does it: API and picture requests hang while
 // navigator.onLine stays true. PICTURES / PICTURE_KB tune the size (default 22,000 x 2 KB).
 
@@ -53,24 +54,7 @@ async function mockApi(context, state) {
   })
 }
 
-async function seedPictures(page, count, kb) {
-  await page.evaluate(async ({ count: total, kb: size }) => {
-    const cache = await caches.open('pc-carddb-images-v1-en')
-    // A real 1x1 PNG padded with trailing bytes, so it decodes and has a realistic size.
-    const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='), c => c.charCodeAt(0))
-    const body = new Uint8Array(Math.max(size * 1024, png.length))
-    body.set(png)
-    for (let start = 0; start < total; start += 500) {
-      await Promise.all(Array.from({ length: Math.min(500, total - start) }, (_, offset) => {
-        const id = start + offset
-        return cache.put(
-          `${location.origin}/api/images/card/en/seed${id}/small`,
-          new Response(body.slice(), { headers: { 'Content-Type': 'image/png' } }),
-        )
-      }))
-    }
-  }, { count, kb })
-}
+const seedPictures = (page, count, kb) => seedPictureStore(page, { count, kb, prefix: 'seed' })
 
 test('an offline cold start with downloaded pictures reaches the splash fast', async ({ page, context, browserName }, testInfo) => {
   test.setTimeout(300000)
@@ -90,7 +74,6 @@ test('an offline cold start with downloaded pictures reaches the splash fast', a
   await expect(page.getByTestId('nav-bar')).toBeVisible({ timeout: 30000 })
 
   await seedPictures(page, PICTURES, PICTURE_KB)
-  await page.evaluate(() => navigator.serviceWorker.controller.postMessage({ type: 'PICTURE_CACHES_CHANGED' }))
 
   state.offline = true
   expect(await page.evaluate(() => navigator.onLine)).toBe(true)
@@ -134,7 +117,7 @@ test('an offline cold start with downloaded pictures reaches the splash fast', a
       img.onerror = () => resolve({ ok: false, ms: Math.round(performance.now() - started) })
       img.src = src
     })
-    return { saved: await load('/api/images/card/en/seed1/small'), unsaved: await load('/api/images/card/en/none/small'), sprite: await load('/api/pokedex/images/25') }
+    return { saved: await load('/api/images/card/seed1/small'), unsaved: await load('/api/images/card/en/none/small'), sprite: await load('/api/pokedex/images/25') }
   })
 
   if (cdp) await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 })
