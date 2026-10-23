@@ -38,7 +38,7 @@ import { NAV_ICONS } from '../navigation/navIcons'
 import { settingsSection, visibleSettingsSections } from '../navigation/navConfig'
 import { readSplashEnabled, writeSplashEnabled } from '../components/splash/launch'
 import SplashCacheSection from '../components/splash/SplashCacheSection'
-import OfflineCardDbSection from '../components/settings/OfflineCardDbSection'
+import { ServerPicturesSection } from '../components/settings/OfflineCardDbSection'
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -1667,7 +1667,16 @@ export default function Settings() {
             </SettingsCard>
           </section>
 
-          <OfflineCardDbSection />
+          <ListSection>
+            <ListRow
+              title={t('offlineDb.settingsLinkTitle')}
+              subtitle={t('offlineDb.settingsLinkDesc')}
+              to="/offline"
+              testId="settings-offline-link"
+            />
+          </ListSection>
+
+          <ServerPicturesSection />
 
           {user?.role === 'admin' && <SplashCacheSection t={t} />}
 

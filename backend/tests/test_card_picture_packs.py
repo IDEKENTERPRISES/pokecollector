@@ -130,6 +130,28 @@ class CardPicturePackTests(unittest.TestCase):
         start.assert_called_once()
         self.assertIn("running", self.client.get("/api/offline/carddb/pictures-prepare").json())
 
+    def test_status_after_a_restart_reports_the_real_counts(self):
+        self._cache("pbl-001")
+        self._cache("pbl-002")
+        card_picture_packs.reset_counts_cache()
+        self.current = self.admin
+        restarted = card_picture_packs.CardPictureWarmer()  # a fresh process: no run state at all
+        with patch.object(card_picture_packs, "card_picture_warmer", restarted):
+            status = self.client.get("/api/offline/carddb/pictures-prepare").json()
+        self.assertFalse(status["running"])
+        self.assertEqual((status["total"], status["cached"], status["missing"]), (3, 2, 1))
+
+    def test_counts_are_kept_for_a_few_seconds(self):
+        self._cache("pbl-001")
+        card_picture_packs.reset_counts_cache()
+        clock = [100.0]
+        first = card_picture_packs.picture_counts(self.db, now=lambda: clock[0])
+        self._cache("pbl-002")
+        clock[0] += 1
+        self.assertEqual(card_picture_packs.picture_counts(self.db, now=lambda: clock[0]), first)
+        clock[0] += card_picture_packs.COUNTS_TTL_SECONDS
+        self.assertEqual(card_picture_packs.picture_counts(self.db, now=lambda: clock[0])["cached"], 2)
+
 
 @unittest.skipUnless(DEPS_AVAILABLE, "FastAPI is not installed")
 class CardPictureWarmerTests(unittest.TestCase):
