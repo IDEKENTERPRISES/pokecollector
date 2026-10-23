@@ -25,7 +25,7 @@ function fakeCaches() {
 
 const imageResponse = () => ({ status: 200, headers: { get: () => 'image/webp' } })
 
-function setup({ manifest, online = true } = {}) {
+function setup({ manifest, online = true, ...extra } = {}) {
   const store = createCardDbStore(new IDBFactory())
   const storage = memoryStorage()
   const cacheApi = fakeCaches()
@@ -58,6 +58,7 @@ function setup({ manifest, online = true } = {}) {
     isOnline: () => state.online,
     requestPersist: vi.fn(async () => true),
     now: () => state.now ?? Date.now(),
+    ...extra,
   })
   return { controller, store, storage, state, cacheApi, fetchImage, fetchPack }
 }
@@ -245,5 +246,80 @@ describe('pictures', () => {
     await controller.startPictures('de')
     await controller.removeAll()
     expect(cacheApi.caches.size).toBe(0)
+  })
+})
+
+describe('stalled connections (hanging requests, navigator.onLine stays true)', () => {
+  const okPack = path => ({ status: 200, buffer: buildPack([{ id: `${decodeURIComponent(path.split('/').pop())}-1`, bytes: new Uint8Array(3) }]) })
+
+  it('pauses by itself when requests hang, and continues by itself when they answer again', async () => {
+    const { controller, fetchPack } = setup({ manifest: manifest(), stallMs: 200, autoResumeBaseMs: 50 })
+    await controller.sync({ force: true })
+    fetchPack.mockImplementation(() => new Promise(() => {})) // never answers, ignores its signal
+    const run = controller.startPictures('en')
+    await run
+    expect(controller.getSnapshot().languages.en.pictures).toMatchObject({ status: 'paused', reason: 'timeout' })
+    fetchPack.mockImplementation(async path => okPack(path))
+    await vi.waitFor(() => expect(controller.getSnapshot().languages.en.pictures.status).toBe('complete'), { timeout: 3000 })
+  })
+
+  it('pauses when the body stops after some bytes arrived', async () => {
+    const { controller, fetchPack } = setup({ manifest: manifest(), stallMs: 200, autoResumeBaseMs: 60000 })
+    await controller.sync({ force: true })
+    fetchPack.mockImplementation(async (_path, _signal, onChunk) => {
+      onChunk()
+      return new Promise(() => {})
+    })
+    await controller.startPictures('en')
+    expect(controller.getSnapshot().languages.en.pictures).toMatchObject({ status: 'paused', reason: 'timeout' })
+    controller.pausePictures('en')
+  })
+
+  it('says no connection when the stall comes with the device offline', async () => {
+    const { controller, fetchPack, state } = setup({ manifest: manifest(), stallMs: 200, autoResumeBaseMs: 60000 })
+    await controller.sync({ force: true })
+    fetchPack.mockImplementation(() => {
+      state.online = false
+      return new Promise(() => {})
+    })
+    await controller.startPictures('en')
+    expect(controller.getSnapshot().languages.en.pictures).toMatchObject({ status: 'paused', reason: 'offline' })
+  })
+
+  it('does not pause a slow download that keeps making progress', async () => {
+    const { controller, fetchPack } = setup({ manifest: manifest(), stallMs: 300 })
+    await controller.sync({ force: true })
+    fetchPack.mockImplementation(async (path, _signal, onChunk) => {
+      for (let i = 0; i < 4; i += 1) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+        onChunk()
+      }
+      return okPack(path)
+    })
+    await controller.startPictures('en')
+    expect(controller.getSnapshot().languages.en.pictures.status).toBe('complete')
+  })
+})
+
+describe('Remove from this device and the update state', () => {
+  it('keeps the section alive: server answer kept, device switch off, nothing downloads again', async () => {
+    const { controller, state } = setup({ manifest: manifest() })
+    await controller.sync({ force: true })
+    await controller.removeAll()
+    const snapshot = controller.getSnapshot()
+    expect(snapshot.serverEnabled).toBe(true)
+    expect(snapshot.prefs.enabled).toBe(false)
+    expect(snapshot.languages).toEqual({})
+    state.requests.length = 0
+    await controller.setEnabled(true)
+    expect(controller.getSnapshot().languages.en.meta).toBeTruthy()
+  })
+
+  it('marks a check that found nothing new as up to date', async () => {
+    const { controller } = setup({ manifest: manifest() })
+    await controller.sync({ force: true })
+    expect(controller.getSnapshot().upToDateAt).toBeNull()
+    await controller.sync({ force: true })
+    expect(controller.getSnapshot().upToDateAt).toBeGreaterThan(0)
   })
 })
