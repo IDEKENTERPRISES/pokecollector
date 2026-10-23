@@ -649,7 +649,9 @@ class ScanQueueTests(unittest.TestCase):
             nonlocal calls
             calls += 1
             try:
-                await asyncio.sleep(0.015 if calls == 1 else 0.07)
+                # Wide margins: on a busy CI runner the work between the two lookups can take
+                # tens of ms, which used to spend the whole budget before the second one started.
+                await asyncio.sleep(0.05 if calls == 1 else 10)
             except asyncio.CancelledError:
                 cancelled.append(calls)
                 raise
@@ -657,7 +659,7 @@ class ScanQueueTests(unittest.TestCase):
 
         fallback = AsyncMock(side_effect=delayed_fallback)
         with patch(
-            "api.recognize.CATALOGUE_FALLBACK_TOTAL_TIMEOUT_SECONDS", 0.08
+            "api.recognize.CATALOGUE_FALLBACK_TOTAL_TIMEOUT_SECONDS", 1.0
         ), patch(
             "services.scan_providers.get_provider", return_value=provider
         ), patch(
