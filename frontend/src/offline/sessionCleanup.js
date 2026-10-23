@@ -28,6 +28,7 @@ export const USER_LOCAL_STORAGE_KEYS = [
   'pc.sync.lastSyncedAt',
 ]
 
+const LIST_SCROLL_PREFIX = 'pokecollector:list-scroll:'
 const DELETE_TIMEOUT_MS = 1500
 
 function storageOf(kind) {
@@ -48,7 +49,9 @@ export function clearUserStorageKeys({ localStorage = storageOf('localStorage'),
     }
   }
   try {
-    sessionStorage?.clear() // list scroll positions and the like
+    for (const key of Object.keys(sessionStorage ?? {})) {
+      if (key.startsWith(LIST_SCROLL_PREFIX)) sessionStorage.removeItem(key) // saved list scroll positions
+    }
   } catch {
     // best effort
   }
