@@ -54,10 +54,10 @@ export default function StatTile({ type, icon, label, value, detail, to, sparkli
       </span>
       <span className="relative flex items-center gap-1.5 text-footnote font-semibold opacity-90">
         {iconNode}
-        <span className="truncate">{label}</span>
+        <span className="break-words">{label}</span>
       </span>
       <span className="relative mt-1 block whitespace-nowrap text-tile-number font-display tabular-nums" style={valueStyle}>{value}</span>
-      {detail && <span className="relative block truncate text-caption-1 opacity-90">{detail}</span>}
+      {detail && <span className="relative block break-words text-caption-1 opacity-90">{detail}</span>}
       {sparkline && <span className="relative block"><Sparkline values={sparkline} colour={text} /></span>}
       {children}
     </>

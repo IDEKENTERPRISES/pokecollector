@@ -20,7 +20,7 @@ function SideLink({ to, active, icon: Icon, children, indent = false }) {
       )}
     >
       {Icon && <Icon size={20} strokeWidth={1.75} aria-hidden="true" className={active ? 'text-tint' : ''} />}
-      <span className="truncate">{children}</span>
+      <span className="break-words">{children}</span>
     </Link>
   )
 }

@@ -28,14 +28,14 @@ export default function SetTile({ set, owned = 0, ownedUnknown = false, total = 
       )}
       <div className="space-y-1.5 p-3">
         <div className="flex items-start justify-between gap-2">
-          <p className="min-w-0 truncate text-headline text-text-primary">{set.name}</p>
+          <p className="min-w-0 break-words text-headline text-text-primary">{set.name}</p>
           {complete && (
             <span className="inline-flex items-center rounded-full bg-green px-2 py-0.5 text-caption-1 font-semibold leading-none text-black">
               {t('ios.complete')}
             </span>
           )}
         </div>
-        {set.abbreviation && <p className="truncate text-caption-1 text-text-secondary">{set.abbreviation}</p>}
+        {set.abbreviation && <p className="break-words text-caption-1 text-text-secondary">{set.abbreviation}</p>}
         {!ownedUnknown && <HpBar value={owned} max={total} label={set.name} />}
         <p className="text-caption-1 tabular-nums text-text-secondary">
           {ownedUnknown ? `${total} ${t('sets.cards')}` : t('ios.ownedOfTotal').replace('{owned}', owned).replace('{total}', total)}

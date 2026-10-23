@@ -39,8 +39,8 @@ export default function TrainerCard({ user = {}, stats = {}, badges, className =
             : <PokeBall size={40} />}
         </span>
         <div className="min-w-0">
-          <p className="truncate text-title-1 font-display">{user.name}</p>
-          {user.handle && <p className="truncate text-subheadline opacity-90">@{user.handle}</p>}
+          <p className="break-words text-title-1 font-display">{user.name}</p>
+          {user.handle && <p className="break-words text-subheadline opacity-90">@{user.handle}</p>}
           {idText && <p className="text-footnote tabular-nums opacity-80">{t('ios.idNo')} {idText}</p>}
         </div>
       </div>

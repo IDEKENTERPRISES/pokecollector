@@ -53,7 +53,7 @@ export default function TodayCard() {
               {text.number}
               {entry.shiny && <span className="ml-2 text-[#ffd94a]">★ {t('splash.shiny')}</span>}
             </p>
-            <p className="truncate font-display text-title-2 text-text-primary">{entry.name}</p>
+            <p className="break-words font-display text-title-2 text-text-primary">{entry.name}</p>
             <p className="text-footnote text-text-secondary">{text.meta}</p>
             <p className="text-footnote tabular-nums text-text-secondary">
               {[text.height && `${t('splash.height')} ${text.height}`, text.weight && `${t('splash.weight')} ${text.weight}`]

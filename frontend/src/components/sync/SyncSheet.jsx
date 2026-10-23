@@ -113,7 +113,7 @@ export function SyncControls() {
       </div>
       {!autoSync && <p className="text-xs text-yellow">{t('sync.autoSyncPaused')}</p>}
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted">
-        <span>{`${t('sync.waitingSize')}: ${megabytes(waitingBytes)} MB`}</span>
+        <span>{`${t('sync.waitingSize')}: ${formatSize(waitingBytes)}`}</span>
         <span>
           {`${t('sync.lastSynced')}: `}
           {lastSynced ? new Date(lastSynced).toLocaleString() : t('sync.never')}
@@ -167,7 +167,7 @@ export function SyncItemList() {
               <div className="flex items-start gap-3">
                 <Icon size={18} className="mt-0.5 flex-shrink-0 text-text-muted" aria-hidden />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-text-primary">{itemSummary(item, t)}</p>
+                  <p className="break-words text-sm font-medium text-text-primary">{itemSummary(item, t)}</p>
                   <p className="text-xs text-text-muted">{`${t('sync.item.captured')} ${formatAge(item.createdAt, language)}`}</p>
                 </div>
                 <span className={`inline-flex flex-shrink-0 items-center gap-1 text-xs font-medium ${chip.tone}`}>
@@ -240,28 +240,56 @@ export function StorageSummary({ showSafari = true }) {
   }, [outbox])
   useEffect(() => { load() }, [load, items.length])
 
+  // The sizes are read when the section is shown, never at launch; the figures of other stores come from IndexedDB.
+  const { languages } = useCardDb()
+  const [breakdown, setBreakdown] = useState(null)
+  const cardKey = Object.entries(languages).map(([lang, entry]) => `${lang}:${entry?.meta ? entry.bytes : ''}`).join(',')
+  const waiting = info ? info.photoBytes ?? 0 : null
+  useEffect(() => {
+    let cancelled = false
+    loadStorageBreakdown({ languages, waiting }).then(result => { if (!cancelled) setBreakdown(result) }).catch(() => {})
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardKey, waiting])
+
+  const rows = breakdown && [
+    ['storage-card-data', t('sync.storageCardData'), breakdown.cardData],
+    ['storage-pictures', t('sync.storagePictures'), breakdown.pictures],
+    ['storage-pages', t('sync.storagePages'), breakdown.pages],
+    ['storage-waiting', t('sync.storageWaiting'), breakdown.waiting],
+  ]
+  const unavailable = t('sync.storageNotAvailable')
+  const totalText = breakdown && formatSize(breakdown.usage) && (
+    breakdown.quota ? `${formatSize(breakdown.usage)} / ${formatSize(breakdown.quota)}` : formatSize(breakdown.usage)
+  )
   const known = info && (info.usage !== null || info.persisted !== null)
   return (
     <div className="space-y-2 text-xs text-text-secondary">
       <p className="text-sm font-medium text-text-primary">{t('sync.storageTitle')}</p>
-      {known ? (
-        <>
-          {info.usage !== null && (
-            <p>
-              {`${t('sync.storageUsed')}: ${megabytes(info.photoBytes)} MB`}
-              {info.quota ? ` (${formatSize(info.usage)} / ${formatSize(info.quota)})` : ''}
-            </p>
-          )}
-          {info.persisted !== null && (
-            <p className="flex items-center gap-1.5">
-              <ShieldCheck size={13} className={info.persisted ? 'text-green' : 'text-yellow'} aria-hidden />
-              {info.persisted ? t('sync.storagePersistent') : t('sync.storageNotPersistent')}
-            </p>
-          )}
-        </>
-      ) : (
-        <p>{t('sync.storageUnavailable')}</p>
+      {rows ? (
+        <ul className="divide-y divide-border text-sm" data-testid="storage-breakdown">
+          {rows.map(([id, label, bytes]) => (
+            <li key={id} data-testid={id} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 py-2">
+              <span className="text-text-secondary">{label}</span>
+              <span className="tabular-nums text-text-primary">{formatSize(bytes) ?? unavailable}</span>
+            </li>
+          ))}
+          <li data-testid="storage-total" className="py-2">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+              <span className="font-medium text-text-primary">{t('sync.storageTotal')}</span>
+              <span className="tabular-nums text-text-primary">{totalText || unavailable}</span>
+            </div>
+            <p className="mt-0.5 text-xs text-text-muted">{t('sync.storageTotalNote')}</p>
+          </li>
+        </ul>
+      ) : null}
+      {info && info.persisted !== null && (
+        <p className="flex items-start gap-1.5">
+          <ShieldCheck size={13} className={`mt-0.5 flex-shrink-0 ${info.persisted ? 'text-green' : 'text-yellow'}`} aria-hidden />
+          {info.persisted ? t('sync.storagePersistent') : t('sync.storageNotPersistent')}
+        </p>
       )}
+      {!known && !rows && <p>{t('sync.storageUnavailable')}</p>}
       <p>{t('sync.onlyCopyWarning')}</p>
       {showSafari && warning !== 'none' && (
         <p className={warning === 'strong' ? 'font-medium text-brand-red' : 'text-yellow'} data-testid="safari-warning">

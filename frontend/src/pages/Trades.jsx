@@ -244,8 +244,8 @@ function CashHistoryRow({ item, t, formatPrice }) {
         <Wallet size={18} />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-semibold text-text-primary">{t('trades.cashAmount')}</p>
-        <p className="truncate text-xs text-text-muted">{t('trades.cashLine')}</p>
+        <p className="break-words text-sm font-semibold text-text-primary">{t('trades.cashAmount')}</p>
+        <p className="break-words text-xs text-text-muted">{t('trades.cashLine')}</p>
       </div>
       <div className="text-right text-sm font-bold text-text-primary flex-shrink-0">{formatPrice(item.value_total)}</div>
     </div>

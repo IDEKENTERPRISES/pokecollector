@@ -28,8 +28,8 @@ export default function CardSelectionQuantityModal({ t, items = [], quantities, 
               <div key={item.id} className="flex items-center gap-3 rounded-xl border border-border bg-bg-elevated/40 p-3">
                 {item.image ? <img src={item.image} alt="" className="h-16 w-12 flex-shrink-0 rounded object-cover" /> : <div className="h-16 w-12 flex-shrink-0 rounded bg-bg-elevated" />}
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-text-primary">{item.name}</p>
-                  {item.subtitle && <p className="truncate text-xs text-text-muted">{item.subtitle}</p>}
+                  <p className="break-words text-sm font-semibold text-text-primary">{item.name}</p>
+                  {item.subtitle && <p className="break-words text-xs text-text-muted">{item.subtitle}</p>}
                   {item.maxQuantity !== undefined && <p className="mt-1 text-xs font-medium text-blue">{maximum} {t('cardListPicker.available')}</p>}
                 </div>
                 <div className="flex flex-shrink-0 items-center gap-1">
