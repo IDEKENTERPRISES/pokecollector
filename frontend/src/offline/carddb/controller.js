@@ -12,7 +12,7 @@ import {
   inspectPictureSets,
 } from './pictures.js'
 import { createPictureStore } from './pictureStore.js'
-import { dismissPictureMigrationNotice, migrateLegacyPictureCaches, readPictureMigrationNotice } from './pictureMigration.js'
+import { dismissPictureMigrationNotice, migrateLegacyPictureCaches, readPictureMigrationNotice, writePictureMigrationNotice } from './pictureMigration.js'
 import { AbortedError, OfflineError, runCardDbSync } from './sync.js'
 
 export const PREFS_KEY = 'pc-carddb-prefs'
@@ -140,6 +140,7 @@ const initialSnapshot = () => ({
   prefs: { enabled: true, languages: {}, pictures: {} },
   storageOk: true,
   error: null,
+  picturesNeedRedownload: false, // true while picturesMigrated is not empty
   picturesMigrated: [], // languages whose old pictures were removed (F16a): Settings says to download again
 })
 
@@ -159,7 +160,8 @@ export function createCardDbController({
   stallMs = STALL_MS,
   autoResumeBaseMs = AUTO_RESUME_BASE_MS,
 } = {}) {
-  let snapshot = { ...initialSnapshot(), prefs: readPrefs(storage), picturesMigrated: readPictureMigrationNotice(storage) }
+  const initialNotice = readPictureMigrationNotice(storage)
+  let snapshot = { ...initialSnapshot(), prefs: readPrefs(storage), picturesMigrated: initialNotice, picturesNeedRedownload: initialNotice.length > 0 }
   const listeners = new Set()
   let running = null
   let lastRunAt = 0
@@ -172,11 +174,21 @@ export function createCardDbController({
 
   const emit = patch => {
     snapshot = { ...snapshot, ...patch }
+    if ('picturesMigrated' in patch) snapshot.picturesNeedRedownload = snapshot.picturesMigrated.length > 0
     listeners.forEach(listener => listener())
   }
-  const setPicture = (lang, patch) => emit({
-    languages: { ...snapshot.languages, [lang]: { ...snapshot.languages[lang], pictures: { ...snapshot.languages[lang]?.pictures, ...patch } } },
-  })
+  const setPicture = (lang, patch) => {
+    emit({
+      languages: { ...snapshot.languages, [lang]: { ...snapshot.languages[lang], pictures: { ...snapshot.languages[lang]?.pictures, ...patch } } },
+    })
+    // Downloaded again: the "download pictures again" notice for this language is done.
+    if (patch.status === 'complete' && snapshot.picturesMigrated.includes(lang)) {
+      const left = snapshot.picturesMigrated.filter(item => item !== lang)
+      if (left.length) writePictureMigrationNotice(left, storage)
+      else dismissPictureMigrationNotice(storage)
+      emit({ picturesMigrated: left })
+    }
+  }
   const savePrefs = prefs => {
     writePrefs(prefs, storage)
     emit({ prefs })

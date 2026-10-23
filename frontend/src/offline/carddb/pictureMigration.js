@@ -20,6 +20,14 @@ export function readPictureMigrationNotice(storage = globalThis.localStorage) {
   }
 }
 
+export function writePictureMigrationNotice(langs, storage = globalThis.localStorage) {
+  try {
+    storage?.setItem(MIGRATION_NOTICE_KEY, JSON.stringify(langs))
+  } catch {
+    // the notice just reappears or not
+  }
+}
+
 export function dismissPictureMigrationNotice(storage = globalThis.localStorage) {
   try {
     storage?.removeItem(MIGRATION_NOTICE_KEY)

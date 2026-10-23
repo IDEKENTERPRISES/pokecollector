@@ -256,6 +256,18 @@ describe('pictures', () => {
     expect(await pictureStore.count('de')).toBe(0)
   })
 
+  it('picturesNeedRedownload is true after the migration and clears by itself once the pictures are downloaded again', async () => {
+    const { controller, cacheApi, storage } = setup({ manifest: manifest() })
+    await controller.sync({ force: true })
+    cacheApi.caches.set(pictureCacheName('en'), new Map())
+    expect(controller.getSnapshot().picturesNeedRedownload).toBe(false)
+    await controller.migrateLegacyPictures()
+    expect(controller.getSnapshot().picturesNeedRedownload).toBe(true)
+    await controller.startPictures('en')
+    expect(controller.getSnapshot()).toMatchObject({ picturesNeedRedownload: false, picturesMigrated: [] })
+    expect(storage.getItem(MIGRATION_NOTICE_KEY)).toBeNull()
+  })
+
   it('migrates old picture caches in the background: deleted, back to not downloaded, notice kept', async () => {
     const { controller, cacheApi, storage } = setup({ manifest: manifest() })
     await controller.sync({ force: true })
@@ -268,7 +280,7 @@ describe('pictures', () => {
     expect(controller.getSnapshot().prefs.pictures.en).toBe(false)
     expect(JSON.parse(storage.getItem(MIGRATION_NOTICE_KEY))).toEqual(['en'])
     controller.dismissPicturesMigrationNotice()
-    expect(controller.getSnapshot().picturesMigrated).toEqual([])
+    expect(controller.getSnapshot()).toMatchObject({ picturesMigrated: [], picturesNeedRedownload: false })
     // done once: a later start does not even list the caches
     const keys = vi.fn(async () => [])
     await createCardDbController({ store: controller === null ? null : setup().store, storage, listCaches: keys }).migrateLegacyPictures()

@@ -17,7 +17,7 @@ export function getCardDbController() {
 
 const NOOP_SNAPSHOT = Object.freeze({
   serverEnabled: false, available: [], status: 'idle', progress: null, languages: {}, storageOk: false, error: null,
-  prefs: { enabled: false, languages: {}, pictures: {} }, picturesMigrated: [],
+  prefs: { enabled: false, languages: {}, pictures: {} }, picturesMigrated: [], picturesNeedRedownload: false,
 })
 const noopSubscribe = () => () => {}
 
