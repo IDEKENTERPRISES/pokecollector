@@ -64,3 +64,23 @@ describe('groupSetsBySeries', () => {
     expect(groupSetsBySeries([])).toEqual([])
   })
 })
+
+describe('groupSetsBySeries with several languages', () => {
+  const both = [
+    set('sv1_en', 'Scarlet & Violet', { series_id: 'sv', lang: 'en', release_date: '2023-03-31' }),
+    set('sv1_ja', 'スカーレット＆バイオレット', { series_id: 'sv', lang: 'ja', release_date: '2023-01-20' }),
+    set('sv2_ja', 'スカーレット＆バイオレット', { series_id: 'sv', lang: 'ja', release_date: '2023-04-14' }),
+  ]
+  it('gives each language its own group, even when the series id is shared', () => {
+    const groups = groupSetsBySeries(both)
+    expect(groups.map(group => group.key).sort()).toEqual(['sv~en', 'sv~ja'])
+    const ja = groups.find(group => group.lang === 'ja')
+    expect(ja.name).toBe('スカーレット＆バイオレット')
+    expect(ja.sets.map(item => item.id)).toEqual(['sv2_ja', 'sv1_ja'])
+    expect(groups.find(group => group.lang === 'en').sets.map(item => item.id)).toEqual(['sv1_en'])
+  })
+  it('keeps the plain key for a single language', () => {
+    const groups = groupSetsBySeries(both.filter(item => item.lang === 'ja'))
+    expect(groups.map(group => [group.key, group.lang])).toEqual([['sv', null]])
+  })
+})

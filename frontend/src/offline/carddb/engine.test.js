@@ -3,7 +3,7 @@ import { IDBFactory } from 'fake-indexeddb'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createCardDbEngine, signatureOf } from './engine.js'
 import { createBackgroundEngine } from './engineClient.js'
-import { FIXTURE_PRICES, FIXTURE_SETS, seedStore } from './fixture.js'
+import { FIXTURE_PRICES, FIXTURE_SETS, seedBilingualStore, seedStore } from './fixture.js'
 import { CARDDB_DB_NAME } from './store.js'
 
 let factory
@@ -100,5 +100,44 @@ describe('card database engine', () => {
     const wrapped = createBackgroundEngine({ store, createWorker: () => null })
     expect((await wrapped.search(['en'], { q: 'Morpeko 117 PBL' })).data.map(card => card.id)).toEqual(['pbl-117_en'])
     expect(await wrapped.pricesUpdatedAt(['en'])).toBe(FIXTURE_PRICES.updatedAt)
+  })
+})
+
+describe('a database in two languages that share catalogue ids (F18)', () => {
+  let bilingual
+  beforeEach(async () => {
+    const both = await seedBilingualStore(new IDBFactory())
+    bilingual = createCardDbEngine({ store: both })
+  })
+
+  it('opens the Japanese set with its own Japanese cards, not the English set that shares its catalogue id', async () => {
+    const ja = await bilingual.checklist(['en', 'ja'], 'pbl_ja')
+    expect(ja.set).toMatchObject({ id: 'pbl_ja', lang: 'ja' })
+    expect(ja.cards.map(card => card.id)).toEqual(['pbl-9_ja', 'pbl-117_ja', 'pbl-118_ja'])
+    expect(ja.cards.every(card => card.lang === 'ja')).toBe(true)
+    expect(ja.cards.map(card => card.name)).toEqual(['ピカチュウ', 'モルペコ', 'モルペコ'])
+    const en = await bilingual.checklist(['en', 'ja'], 'pbl_en')
+    expect(en.cards.map(card => card.id)).toEqual(['pbl-9_en', 'pbl-117_en', 'pbl-118_en', 'pbl-120_en'])
+  })
+
+  it('searches inside one language\'s set only, and across languages with the bare catalogue id', async () => {
+    const ids = result => result.data.map(card => card.id).sort()
+    expect(ids(await bilingual.search(['en', 'ja'], { set_id: 'pbl_ja' }))).toEqual(['pbl-117_ja', 'pbl-118_ja', 'pbl-9_ja'])
+    expect(ids(await bilingual.search(['en', 'ja'], { set_id: 'pbl_en' }))).toEqual(['pbl-117_en', 'pbl-118_en', 'pbl-120_en', 'pbl-9_en'])
+    expect(ids(await bilingual.search(['en', 'ja'], { set_id: 'pbl' }))).toHaveLength(7)
+  })
+
+  it('finds a Japanese-only set and a set whose cards are another language\'s stand-ins, each under its own id', async () => {
+    expect((await bilingual.checklist(['en', 'ja'], 'jpo_ja')).cards.map(card => card.id)).toEqual(['jpo-1_ja'])
+    expect(await bilingual.checklist(['en'], 'jpo_ja')).toBeNull()
+    const borrowed = await bilingual.checklist(['en', 'ja'], 'fbk_ja')
+    expect(borrowed.cards.map(card => [card.id, card.lang, card.data_source_lang])).toEqual([
+      ['fbk-1_ja', 'ja', 'en'], ['fbk-2_ja', 'ja', 'en'],
+    ])
+  })
+
+  it('opens a card by its own language id', async () => {
+    expect((await bilingual.card(['en', 'ja'], 'pbl-117_ja')).name).toBe('モルペコ')
+    expect((await bilingual.card(['en', 'ja'], 'pbl-117_en')).name).toBe('Morpeko')
   })
 })

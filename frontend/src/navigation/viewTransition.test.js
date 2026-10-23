@@ -6,6 +6,8 @@ const {
   SLIDE_TRANSITIONS,
   isPlainClick,
   notifyLocationCommitted,
+  MAX_PAGE_SCREENS,
+  pageTooTall,
   runViewTransition,
   viewTransitionsEnabled,
 } = await import('./viewTransition')
@@ -108,6 +110,25 @@ describe('runViewTransition', () => {
     const doc = fakeDoc()
     doc.startViewTransition = () => { throw new Error('nope') }
     expect(runViewTransition(update, { doc, win: win() })).toBeNull()
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(doc.documentElement.dataset.vt).toBeUndefined()
+  })
+})
+
+describe('pages too tall to capture', () => {
+  const tall = screens => ({ documentElement: { dataset: {}, scrollHeight: 800 * screens }, startViewTransition: undefined })
+
+  it('measures the page against the screen', () => {
+    expect(pageTooTall(tall(MAX_PAGE_SCREENS), { innerHeight: 800 })).toBe(false)
+    expect(pageTooTall(tall(MAX_PAGE_SCREENS + 1), { innerHeight: 800 })).toBe(true)
+    expect(pageTooTall({ documentElement: {} }, { innerHeight: 800 })).toBe(false)
+  })
+
+  it('navigates without a transition when leaving such a page (a set of hundreds of cards froze iPhone WebKit)', () => {
+    const doc = { ...fakeDoc(), documentElement: { dataset: {}, scrollHeight: 800 * 12 } }
+    doc.startViewTransition = () => { throw new Error('must not start') }
+    const update = vi.fn()
+    expect(runViewTransition(update, { doc, win: { ...win(), innerHeight: 800 }, direction: 'back' })).toBeNull()
     expect(update).toHaveBeenCalledTimes(1)
     expect(doc.documentElement.dataset.vt).toBeUndefined()
   })

@@ -238,12 +238,11 @@ export function searchCardsOffline({ cards, sets, params = {}, prepared = null }
   const term = String(q ?? '').trim() || String(name ?? '').trim()
   const index = prepared?.index ?? buildSetIndex(sets)
   const lists = prepared?.lists ?? buildNameLists(cards)
+  // Keyed by the composite set id only: the same tcg_set_id exists once per language, so a bare one
+  // would resolve to whichever language came last.
   const setByKey = prepared?.setByKey ?? new Map()
   if (!prepared?.setByKey) {
-    for (const item of sets ?? []) {
-      setByKey.set(item.id, item)
-      if (item.tcg_set_id) setByKey.set(item.tcg_set_id, item)
-    }
+    for (const item of sets ?? []) setByKey.set(item.id, item)
   }
   const nameWanted = nameText => stripDiacritics(nameText)
 
@@ -261,7 +260,9 @@ export function searchCardsOffline({ cards, sets, params = {}, prepared = null }
     if (setFilter) {
       const setObj = setByKey.get(setFilter)
       const target = setObj ? (setObj.tcg_set_id || setObj.id) : setFilter
-      result = result.filter(card => card.set_id === target)
+      // A composite id names one language's set; a bare catalogue id matches the set in every language.
+      const targetLang = setObj?.lang ?? null
+      result = result.filter(card => card.set_id === target && (!targetLang || card.lang === targetLang))
     }
     const wantedNumber = normalizeCardNumber(String(number ?? '').trim())
     if (wantedNumber) result = result.filter(card => normalizeCardNumber(card.number) === wantedNumber)

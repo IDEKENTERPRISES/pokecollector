@@ -1820,6 +1820,7 @@ const en = {
 
   // Set Detail
   setDetail: {
+    borrowedCards: 'The {lang} cards for this set are not available yet. These are the {source} cards.',
     backToSets: 'Back to Sets',
     owned: 'Owned',
     missing: 'Missing',

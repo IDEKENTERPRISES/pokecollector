@@ -193,11 +193,7 @@ export function createCardDbEngine({ store }) {
       combined.clear()
       const sets = entries.flatMap(entry => entry.sets)
       const cards = entries.length === 1 ? entries[0].cards : entries.flatMap(entry => entry.cards)
-      const setByKey = new Map()
-      for (const item of sets) {
-        setByKey.set(item.id, item)
-        if (item.tcg_set_id) setByKey.set(item.tcg_set_id, item)
-      }
+      const setByKey = new Map(sets.map(item => [item.id, item]))
       combined.set(key, { sets, cards, prepared: { index: buildSetIndex(sets), lists: buildNameLists(cards), setByKey } })
     }
     return combined.get(key)
