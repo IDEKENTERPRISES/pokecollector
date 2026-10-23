@@ -7,6 +7,9 @@
 // index store keep it cheap. This module is the page side; sw/sw.js reads the same database with the
 // same names (a test keeps the two in step).
 //
+// A browser that cannot keep Blobs in IndexedDB (WebKit in private browsing, Playwright's WebKit) gets the
+// pack as an ArrayBuffer instead: still one record per set, just read whole on a lookup.
+//
 // Stores: `packs` (`<lang>|<setId>` -> Blob), `index` (card id -> { p, o, l, t, lang }, with an index on
 // `p` and on `lang`) and `loose` (picture path -> { blob, t, lang }): the few pictures a pack did not
 // carry, and set logos and symbols. Every access is guarded by the caller: a failure means "no pictures".
@@ -56,6 +59,10 @@ const promisify = request => new Promise((resolve, reject) => {
   request.onerror = () => reject(request.error)
 })
 
+const asBlob = (value, start, end, type) => (typeof value.slice === 'function' && 'size' in value
+  ? value.slice(start, end, type)
+  : new Blob([value.slice(start, end)], { type }))
+
 const txDone = tx => new Promise((resolve, reject) => {
   tx.oncomplete = () => resolve()
   tx.onerror = () => reject(tx.error)
@@ -99,13 +106,20 @@ export function createPictureStore({ indexedDB = globalThis.indexedDB } = {}) {
      */
     async putPack({ lang, setId, blob, items }) {
       const handle = await db()
-      const tx = handle.transaction([PICTURE_STORES.packs, PICTURE_STORES.index], 'readwrite')
-      const done = txDone(tx)
       const key = packKey(lang, setId)
-      tx.objectStore(PICTURE_STORES.packs).put(blob, key)
-      const index = tx.objectStore(PICTURE_STORES.index)
-      for (const item of items) index.put({ p: key, o: item.offset, l: item.length, t: item.type, lang }, item.id)
-      await done
+      const write = async value => {
+        const tx = handle.transaction([PICTURE_STORES.packs, PICTURE_STORES.index], 'readwrite')
+        const done = txDone(tx)
+        tx.objectStore(PICTURE_STORES.packs).put(value, key)
+        const index = tx.objectStore(PICTURE_STORES.index)
+        for (const item of items) index.put({ p: key, o: item.offset, l: item.length, t: item.type, lang }, item.id)
+        await done
+      }
+      try {
+        await write(blob)
+      } catch {
+        await write(await blob.arrayBuffer()) // no Blobs in IndexedDB here; a real storage error fails again
+      }
     },
 
     /** Saves one picture a pack did not carry (or a set logo/symbol) under its URL path. */
@@ -114,7 +128,12 @@ export function createPictureStore({ indexedDB = globalThis.indexedDB } = {}) {
       const tx = handle.transaction(PICTURE_STORES.loose, 'readwrite')
       const done = txDone(tx)
       tx.objectStore(PICTURE_STORES.loose).put({ blob, t: type, lang }, path)
-      await done
+      await done.catch(async () => {
+        const retry = handle.transaction(PICTURE_STORES.loose, 'readwrite')
+        const again = txDone(retry)
+        retry.objectStore(PICTURE_STORES.loose).put({ blob: await blob.arrayBuffer(), t: type, lang }, path)
+        await again
+      })
     },
 
     /** The URL paths of every stored picture (cards by `pathOfCard(id)`, loose ones as saved). */
@@ -136,13 +155,13 @@ export function createPictureStore({ indexedDB = globalThis.indexedDB } = {}) {
       const entry = await promisify(handle.transaction(PICTURE_STORES.index, 'readonly').objectStore(PICTURE_STORES.index).get(cardId))
       if (!entry) return null
       const pack = await promisify(handle.transaction(PICTURE_STORES.packs, 'readonly').objectStore(PICTURE_STORES.packs).get(entry.p))
-      return pack ? pack.slice(entry.o, entry.o + entry.l, entry.t) : null
+      return pack ? asBlob(pack, entry.o, entry.o + entry.l, entry.t) : null
     },
 
     async getLoose(path) {
       const handle = await db()
       const entry = await promisify(handle.transaction(PICTURE_STORES.loose, 'readonly').objectStore(PICTURE_STORES.loose).get(path))
-      return entry ? entry.blob.slice(0, entry.blob.size, entry.t) : null
+      return entry ? asBlob(entry.blob, 0, entry.blob.size ?? entry.blob.byteLength, entry.t) : null
     },
 
     /** How many pictures are stored for a language (cards in packs plus loose ones). */

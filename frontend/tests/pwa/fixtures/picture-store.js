@@ -34,13 +34,15 @@ export function seedPictureStore(page, { items = null, count = 0, kb = 1, prefix
       const chunk = ids.slice(start, start + setSize)
       const key = `${language}|${idPrefix}-set${set}`
       const blob = new Blob(chunk.map(() => bytes))
-      await new Promise((resolve, reject) => {
+      const write = value => new Promise((resolve, reject) => {
         const tx = db.transaction(['packs', 'index'], 'readwrite')
-        tx.objectStore('packs').put(blob, key)
+        tx.objectStore('packs').put(value, key)
         chunk.forEach((id, n) => tx.objectStore('index').put({ p: key, o: n * each, l: each, t: 'image/png', lang: language }, id))
         tx.oncomplete = resolve
         tx.onerror = () => reject(tx.error)
       })
+      // WebKit in an automated (private-like) context cannot keep Blobs in IndexedDB: use an ArrayBuffer there.
+      await write(blob).catch(async () => write(await blob.arrayBuffer()))
     }
     db.close()
     return ids.length

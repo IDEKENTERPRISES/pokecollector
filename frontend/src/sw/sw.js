@@ -291,6 +291,11 @@ async function fetchLargeImage(event, cache, smallPath, offline) {
   return small || Response.error()
 }
 
+// A pack is a Blob, or an ArrayBuffer where the browser cannot keep Blobs in IndexedDB.
+const sliceOf = (value, start, end, type) => (typeof value.size === 'number'
+  ? value.slice(start, end, type)
+  : new Blob([value.slice(start, end)], { type }))
+
 const pictureResponse = (blob, type) => new Response(blob, {
   headers: { 'Content-Type': type || blob.type || 'image/webp', 'Cache-Control': 'public, max-age=86400' },
 })
@@ -308,11 +313,11 @@ async function matchDownloadedPicture(request) {
       const entry = await idbGet(db, 'index', decodeURIComponent(card[1]))
       if (entry) {
         const pack = await idbGet(db, 'packs', entry.p)
-        if (pack) return pictureResponse(pack.slice(entry.o, entry.o + entry.l, entry.t), entry.t)
+        if (pack) return pictureResponse(sliceOf(pack, entry.o, entry.o + entry.l, entry.t), entry.t)
       }
     }
     const loose = await idbGet(db, 'loose', pathname)
-    return loose ? pictureResponse(loose.blob.slice(0, loose.blob.size, loose.t), loose.t) : null
+    return loose ? pictureResponse(sliceOf(loose.blob, 0, loose.blob.size ?? loose.blob.byteLength, loose.t), loose.t) : null
   } catch {
     return null
   }
