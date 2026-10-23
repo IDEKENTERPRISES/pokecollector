@@ -296,6 +296,25 @@ const sliceOf = (value, start, end, type) => (typeof value.size === 'number'
   ? value.slice(start, end, type)
   : new Blob([value.slice(start, end)], { type }))
 
+// Packs kept as ArrayBuffers (no Blobs in IndexedDB) are read whole: keep the last few, so a set's
+// pictures cost one read. Blob packs are sliced without reading and need no cache.
+const PACK_CACHE_MAX = 3
+const packCache = new Map()
+async function packOf(db, key) {
+  if (packCache.has(key)) {
+    const hit = packCache.get(key)
+    packCache.delete(key)
+    packCache.set(key, hit)
+    return hit
+  }
+  const pack = await idbGet(db, 'packs', key)
+  if (pack && typeof pack.size !== 'number') {
+    packCache.set(key, pack)
+    if (packCache.size > PACK_CACHE_MAX) packCache.delete(packCache.keys().next().value)
+  }
+  return pack
+}
+
 const pictureResponse = (blob, type) => new Response(blob, {
   headers: { 'Content-Type': type || blob.type || 'image/webp', 'Cache-Control': 'public, max-age=86400' },
 })
@@ -312,7 +331,7 @@ async function matchDownloadedPicture(request) {
     if (card) {
       const entry = await idbGet(db, 'index', decodeURIComponent(card[1]))
       if (entry) {
-        const pack = await idbGet(db, 'packs', entry.p)
+        const pack = await packOf(db, entry.p)
         if (pack) return pictureResponse(sliceOf(pack, entry.o, entry.o + entry.l, entry.t), entry.t)
       }
     }

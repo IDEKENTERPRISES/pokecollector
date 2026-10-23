@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
-import { describe, expect, it } from 'vitest'
+import FDBObjectStore from 'fake-indexeddb/lib/FDBObjectStore'
+import { describe, expect, it, vi } from 'vitest'
 import { PICTURE_DB_NAME, createPictureStore } from './pictureStore.js'
 
 const text = async blob => new TextDecoder().decode(await blob.arrayBuffer())
@@ -57,5 +58,24 @@ describe('picture store', () => {
 
   it('rejects when IndexedDB is missing, so the caller can report "storage"', async () => {
     await expect(createPictureStore({ indexedDB: null }).knownPaths(String)).rejects.toThrow()
+  })
+})
+
+describe('browsers without Blobs in IndexedDB (WebKit private browsing)', () => {
+  it('stores the pack as an ArrayBuffer instead and still serves slices', async () => {
+    const put = FDBObjectStore.prototype.put
+    const spy = vi.spyOn(FDBObjectStore.prototype, 'put').mockImplementation(function guarded(value, key) {
+      if (value instanceof Blob || value?.blob instanceof Blob) throw new DOMException('no blobs', 'DataCloneError')
+      return put.call(this, value, key)
+    })
+    try {
+      const store = createPictureStore({ indexedDB: new IDBFactory() })
+      await store.putPack(pack)
+      expect(await text(await store.getCard('sv1-1'))).toBe('bbb')
+      await store.putLoose({ lang: 'en', path: '/p', blob: new Blob(['LL']), type: 'image/png' })
+      expect(await text(await store.getLoose('/p'))).toBe('LL')
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

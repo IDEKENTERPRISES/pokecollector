@@ -10,6 +10,7 @@ import { chromium, expect, test, webkit } from '@playwright/test'
 //   none  : the app's own small cache only
 //   cache : + pc-carddb-images-v1-en with PICTURES entries (the old store)
 //   idb   : + PICTURES pictures as PACKS (one Blob per set) and an index of card id -> slice (the new store)
+//   idbbuf: the same with each pack as an ArrayBuffer (browsers without Blobs in IndexedDB: WebKit private browsing)
 // PICTURES / PICTURE_KB / RUNS tune the size (default 22,000 x 2 KB, 3 cold starts each).
 
 const PICTURES = Number(process.env.PICTURES ?? 22000)
@@ -40,7 +41,7 @@ async function seed(page, mode, count, kb) {
           cache.put(`${location.origin}/api/images/card/en/seed${start + offset}/small`, new Response(bytes.slice(), { headers: { 'Content-Type': 'image/webp' } }))
         )))
       }
-    } else if (kind === 'idb') {
+    } else if (kind === 'idb' || kind === 'idbbuf') {
       const db = await new Promise((resolve, reject) => {
         const request = indexedDB.open('pc-bench-pictures', 1)
         request.onupgradeneeded = () => {
@@ -54,7 +55,8 @@ async function seed(page, mode, count, kb) {
       for (let set = 0; set < sets; set += 1) {
         const inSet = Math.min(perSet, total - set * perSet)
         if (inSet <= 0) break
-        const blob = new Blob([new Uint8Array(inSet * size * 1024)])
+        const bytesOfSet = new Uint8Array(inSet * size * 1024)
+        const blob = kind === 'idbbuf' ? bytesOfSet.buffer : new Blob([bytesOfSet])
         await new Promise((resolve, reject) => {
           const tx = db.transaction(['packs', 'index'], 'readwrite')
           tx.objectStore('packs').put(blob, `en|set${set}`)
@@ -83,7 +85,7 @@ async function measure(page, mode, total) {
     t = performance.now()
     await caches.keys()
     out.cachesKeysMs = performance.now() - t
-    if (kind === 'idb') {
+    if (kind === 'idb' || kind === 'idbbuf') {
       t = performance.now()
       const db = await new Promise((resolve, reject) => {
         const request = indexedDB.open('pc-bench-pictures', 1)
@@ -95,9 +97,11 @@ async function measure(page, mode, total) {
       const id = `seed${Math.floor(count / 2)}`
       const entry = await new Promise(resolve => { const r = db.transaction('index').objectStore('index').get(id); r.onsuccess = () => resolve(r.result) })
       const blob = await new Promise(resolve => { const r = db.transaction('packs').objectStore('packs').get(entry.p); r.onsuccess = () => resolve(r.result) })
-      const bytes = await blob.slice(entry.o, entry.o + entry.l, entry.t).arrayBuffer()
+      const slice = value => (typeof value.size === 'number' ? value.slice(entry.o, entry.o + entry.l, entry.t) : new Blob([value.slice(entry.o, entry.o + entry.l)], { type: entry.t }))
+      const bytes = await slice(blob).arrayBuffer()
       out.idbPictureMs = performance.now() - t
       out.idbBytes = bytes.byteLength
+      out.packMB = Math.round(((blob.size ?? blob.byteLength) / 1048576) * 10) / 10
       db.close()
     }
     return out
@@ -111,7 +115,7 @@ for (const [name, type] of [['webkit', webkit], ['chromium', chromium]]) {
     const server = await startServer()
     const results = {}
     try {
-      for (const mode of ['none', 'cache', 'idb']) {
+      for (const mode of ['none', 'cache', 'idb', 'idbbuf']) {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), `pc-bench-${name}-${mode}-`))
         const origin = `http://127.0.0.1:${PORT}/`
         let context = await type.launchPersistentContext(dir)
@@ -143,8 +147,10 @@ for (const [name, type] of [['webkit', webkit], ['chromium', chromium]]) {
     fs.writeFileSync(testInfo.outputPath(`bench-${name}.json`), JSON.stringify(results, null, 2))
     // The new store must keep the first Cache Storage access about as cheap as having no pictures.
     const base = results.none.median.cachesOpenMs + results.none.median.cacheMatchMs
-    const idb = results.idb.median.cachesOpenMs + results.idb.median.cacheMatchMs
-    expect(idb).toBeLessThan(Math.max(base * 3, base + 250))
-    expect(results.idb.median.idbPictureMs).toBeLessThan(500)
+    for (const mode of ['idb', 'idbbuf']) {
+      const total = results[mode].median.cachesOpenMs + results[mode].median.cacheMatchMs
+      expect(total).toBeLessThan(Math.max(base * 3, base + 250))
+      expect(results[mode].median.idbPictureMs).toBeLessThan(500)
+    }
   })
 }

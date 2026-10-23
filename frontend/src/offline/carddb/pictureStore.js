@@ -125,15 +125,17 @@ export function createPictureStore({ indexedDB = globalThis.indexedDB } = {}) {
     /** Saves one picture a pack did not carry (or a set logo/symbol) under its URL path. */
     async putLoose({ lang, path, blob, type }) {
       const handle = await db()
-      const tx = handle.transaction(PICTURE_STORES.loose, 'readwrite')
-      const done = txDone(tx)
-      tx.objectStore(PICTURE_STORES.loose).put({ blob, t: type, lang }, path)
-      await done.catch(async () => {
-        const retry = handle.transaction(PICTURE_STORES.loose, 'readwrite')
-        const again = txDone(retry)
-        retry.objectStore(PICTURE_STORES.loose).put({ blob: await blob.arrayBuffer(), t: type, lang }, path)
-        await again
-      })
+      const write = async value => {
+        const tx = handle.transaction(PICTURE_STORES.loose, 'readwrite')
+        const done = txDone(tx)
+        tx.objectStore(PICTURE_STORES.loose).put({ blob: value, t: type, lang }, path)
+        await done
+      }
+      try {
+        await write(blob)
+      } catch {
+        await write(await blob.arrayBuffer())
+      }
     },
 
     /** The URL paths of every stored picture (cards by `pathOfCard(id)`, loose ones as saved). */
