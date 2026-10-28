@@ -97,7 +97,7 @@ class PrefsTests(NotificationTestCase):
         self.assertTrue(n.category_enabled(self.db, user.id, "wishlist_dips"))
         self.assertFalse(n.category_enabled(self.db, user.id, "big_movers"))
         self.assertFalse(n.category_enabled(self.db, user.id, "weekly_recap"))
-        self.assertEqual(n.UI_CATEGORIES, ["scans_ready", "wishlist_alerts", "new_sets", "wishlist_dips", "big_movers"])
+        self.assertEqual(n.UI_CATEGORIES, ["scans_ready", "wishlist_alerts", "new_sets", "wishlist_dips", "big_movers", "badges"])
 
     def test_user_value_overrides_default(self):
         user = _user(self.db)

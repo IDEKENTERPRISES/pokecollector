@@ -1,4 +1,5 @@
-from typing import List
+import datetime
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -6,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
 from database import get_db
-from models import User, UserEvent
+from models import User, UserAchievement, UserEvent
 from services.progress.checkin import CheckinError, record_checkin
 
 router = APIRouter()
@@ -51,3 +52,59 @@ def list_events(
         }
         for row in rows
     ]
+
+
+class SeenRequest(BaseModel):
+    ids: Optional[List[str]] = None
+
+
+def _unseen_query(db: Session, user_id: int):
+    return db.query(UserAchievement).filter(
+        UserAchievement.user_id == user_id, UserAchievement.seen_at.is_(None)
+    ).order_by(UserAchievement.unlocked_at.asc(), UserAchievement.id.asc())
+
+
+@router.get("/unlocks/unseen")
+def unseen_unlocks(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Badges earned but not yet celebrated, oldest first. Works in single-user mode."""
+    from services.achievements import registry_by_id
+
+    known = registry_by_id()
+    items = []
+    for row in _unseen_query(db, current_user.id).all():
+        config = known.get(row.achievement_id)
+        if config is None:
+            continue
+        items.append({
+            "id": config["id"],
+            "name_key": config["name_key"],
+            "description_key": config["description_key"],
+            "tier": config["tier"],
+            "track": config["track"],
+            "art": config.get("art"),
+            "badge_id": config.get("badge_id"),
+            "unlocked_at": row.unlocked_at.isoformat() if row.unlocked_at else None,
+        })
+    return {"unlocks": items}
+
+
+@router.post("/unlocks/seen")
+def mark_unlocks_seen(
+    body: SeenRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Mark badges as celebrated: the given ids, or every unseen one when `ids` is omitted."""
+    query = _unseen_query(db, current_user.id)
+    if body.ids is not None:
+        query = query.filter(UserAchievement.achievement_id.in_(body.ids))
+    now = datetime.datetime.utcnow()
+    count = 0
+    for row in query.all():
+        row.seen_at = now
+        count += 1
+    db.commit()
+    return {"marked": count}

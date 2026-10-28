@@ -16,7 +16,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.orm import Session
 
-from models import Card, CollectionItem, NotificationQueue, Set, User, UserSetting, WishlistItem
+from models import (
+    Card, CollectionItem, NotificationQueue, Set, User, UserAchievement, UserSetting, WishlistItem,
+)
 from services import push, telegram
 from services.card_values import effective_market_price, normalize_price_field
 
@@ -60,7 +62,7 @@ CATEGORIES: dict[str, Category] = {
     "wishlist_dips": Category("wishlist_dips", True, DIGEST, "/wishlist", "wishlist dip"),
     "big_movers": Category("big_movers", False, DIGEST, "/collection", "big mover"),
     "weekly_recap": Category("weekly_recap", False, None, "/", "recap"),
-    "badges": Category("badges", True, None, "/", "badge"),
+    "badges": Category("badges", True, INSTANT, "/achievements", "badge"),
     "goal_milestones": Category("goal_milestones", True, None, "/", "goal"),
     "swap_offers": Category("swap_offers", True, None, "/", "swap offer"),
 }
@@ -352,6 +354,11 @@ def build_scans_payload(count: int) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
+def build_badge_payload() -> str:
+    """Content-light: it never names the badge."""
+    return push._encode_payload("PokéCollector", "You earned a badge", CATEGORIES["badges"].navigate)
+
+
 def scans_needing_review(db: Session, user_id: int) -> int:
     """The icon number: unresolved finished items of this user's scan jobs."""
     from models import ScanJobItem
@@ -421,6 +428,15 @@ def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, 
     elif row.category == "wishlist_alerts":
         card = db.query(Card).filter(Card.id == row.subject_key.split("card:", 1)[-1]).first()
         _send(db, row.user_id, push.build_price_alert_payload(card.name if card else ""))
+        result["instant"] += 1
+    elif row.category == "badges":
+        achievement_id = row.subject_key.split("badge:", 1)[-1]
+        pending = db.query(UserAchievement).filter_by(
+            user_id=row.user_id, achievement_id=achievement_id, seen_at=None
+        ).first()
+        if pending is None:  # the trainer already saw the sheet
+            return
+        _send(db, row.user_id, build_badge_payload())
         result["instant"] += 1
 
 
