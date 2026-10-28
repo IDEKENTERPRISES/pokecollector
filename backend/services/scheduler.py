@@ -9,6 +9,9 @@ logger = logging.getLogger(__name__)
 # Give the persistent scan queue a short recovery window without changing other jobs.
 scheduler = BackgroundScheduler()
 _SCAN_QUEUE_MISFIRE_GRACE_SECONDS = 60
+# Progress evaluation and the notification flush only act on dirty users / due rows,
+# so a short interval is cheap and makes a badge or push land within seconds.
+_PROGRESS_NOTIFICATION_INTERVAL_SECONDS = 30
 
 _DEFAULT_FULL_SYNC_DAYS = 5
 _DEFAULT_PRICE_SYNC_MINUTES = 30
@@ -291,11 +294,11 @@ def start_scheduler():
 
         scheduler.add_job(
             run_progress_dirty_job,
-            trigger=IntervalTrigger(minutes=2),
+            trigger=IntervalTrigger(seconds=_PROGRESS_NOTIFICATION_INTERVAL_SECONDS),
             id="progress_dirty_job",
             name="Progress Evaluation",
             replace_existing=True,
-            next_run_time=now_utc + datetime.timedelta(minutes=2),
+            next_run_time=now_utc + datetime.timedelta(seconds=_PROGRESS_NOTIFICATION_INTERVAL_SECONDS),
             misfire_grace_time=_SCAN_QUEUE_MISFIRE_GRACE_SECONDS,
             coalesce=True,
             max_instances=1,
@@ -303,11 +306,11 @@ def start_scheduler():
 
         scheduler.add_job(
             run_notification_job,
-            trigger=IntervalTrigger(minutes=1),
+            trigger=IntervalTrigger(seconds=_PROGRESS_NOTIFICATION_INTERVAL_SECONDS),
             id="notification_job",
             name="Notifications and Daily Digest",
             replace_existing=True,
-            next_run_time=now_utc + datetime.timedelta(minutes=1),
+            next_run_time=now_utc + datetime.timedelta(seconds=_PROGRESS_NOTIFICATION_INTERVAL_SECONDS),
             misfire_grace_time=_SCAN_QUEUE_MISFIRE_GRACE_SECONDS,
             coalesce=True,
             max_instances=1,

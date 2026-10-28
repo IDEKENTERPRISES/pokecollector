@@ -51,9 +51,39 @@ _LEGACY_PLACEMENT = {
 }
 
 
-def _entry(id_, key, metric, target, track, tier, art, family=None, since=REGISTRY_VERSION):
+# English badge names for the push text. They are the strings of `achievements.*` in
+# frontend/src/i18n/en.js, so a notification names the badge exactly as the app does.
+_LEGACY_NAMES = {
+    "first_card": "First Card",
+    "collector_10": "Collector",
+    "collector_50": "Avid Collector",
+    "collector_100": "Centurion",
+    "collector_500": "Grand Collector",
+    "collector_1000": "Master Collector",
+    "first_set": "First Set",
+    "set_master_5": "Set Master",
+    "set_master_10": "Set Legend",
+    "big_spender_100": "Investor",
+    "big_spender_500": "Big Investor",
+    "big_spender_1000": "Premium Collector",
+    "big_spender_5000": "Elite Collector",
+    "investor": "In the Green",
+    "diversifier": "Diversity",
+    "diversifier_25": "Globe Trotter",
+    "wishlist_hunter": "Wish Hunter",
+    "first_sale": "First Sale",
+    "trader": "Trader",
+    "rare_finder": "Rare Finder",
+}
+
+# Shown when a badge has no English `name` (an entry added without one).
+FALLBACK_BADGE_NAME = "a new badge"
+
+
+def _entry(id_, key, name, metric, target, track, tier, art, family=None, since=REGISTRY_VERSION):
     return {
         "id": id_,
+        "name": name,
         "name_key": f"achievements.{key}",
         "description_key": f"achievements.{key}Desc",
         "badge_id": None,
@@ -80,29 +110,30 @@ def _gen_size(generation: int) -> int:
 
 # --- the new badges: edit this list to trim or extend --------------------------------------
 _NEW = (
-    [_entry(f"dex_{n}", f"dex{n}", "dex_species", n, "pokedex", tier, "dex", family="dex_species")
+    [_entry(f"dex_{n}", f"dex{n}", f"Species Seeker {n}", "dex_species", n, "pokedex", tier, "dex",
+            family="dex_species")
      for n, tier in _DEX_STEPS]
-    + [_entry(f"dex_gen_{g}", f"dexGen{g}", f"dex_gen_{g}", _gen_size(g), "pokedex", "silver", "region",
-              family="dex_generation")
+    + [_entry(f"dex_gen_{g}", f"dexGen{g}", f"{_GEN_NAMES[g]} Complete", f"dex_gen_{g}", _gen_size(g), "pokedex",
+              "silver", "region", family="dex_generation")
        for g in sorted(_GEN_NAMES)]
     + [
-        _entry("all_types", "allTypes", "energy_types", len(ENERGY_TYPES), "variety", "gold", "types"),
-        _entry("first_holo", "firstHolo", "holo_flag", 1, "variety", "bronze", "holo"),
-        _entry("first_full_art", "firstFullArt", "full_art_flag", 1, "variety", "silver", "fullart"),
-        _entry("first_scan", "firstScan", "scans_confirmed", 1, "explorer", "bronze", "scan"),
-        _entry("first_trade", "firstTrade", "trades_count", 1, "trader", "bronze", "trade"),
-        _entry("first_deck", "firstDeck", "decks_count", 1, "explorer", "bronze", "deck"),
-        _entry("true_master", "trueMaster", "master_sets", 1, "sets", "gold", "master"),
+        _entry("all_types", "allTypes", "Rainbow Collection", "energy_types", len(ENERGY_TYPES), "variety", "gold", "types"),
+        _entry("first_holo", "firstHolo", "First Shine", "holo_flag", 1, "variety", "bronze", "holo"),
+        _entry("first_full_art", "firstFullArt", "Full Art", "full_art_flag", 1, "variety", "silver", "fullart"),
+        _entry("first_scan", "firstScan", "Scan Star", "scans_confirmed", 1, "explorer", "bronze", "scan"),
+        _entry("first_trade", "firstTrade", "Trade Partner", "trades_count", 1, "trader", "bronze", "trade"),
+        _entry("first_deck", "firstDeck", "Deck Builder", "decks_count", 1, "explorer", "bronze", "deck"),
+        _entry("true_master", "trueMaster", "True Master", "master_sets", 1, "sets", "gold", "master"),
     ]
     # The "daily" track (P7, registry version 3): streaks, Who's That Pokémon and quests.
-    + [_entry(f"streak_{n}", f"streak{n}", "streak_best", n, "daily", tier, "flame", family="streak", since=3)
-       for n, tier in ((7, "bronze"), (30, "silver"), (100, "gold"))]
+    + [_entry(f"streak_{n}", f"streak{n}", name, "streak_best", n, "daily", tier, "flame", family="streak", since=3)
+       for n, name, tier in ((7, "Week Warrior", "bronze"), (30, "Monthly Regular", "silver"), (100, "Eternal Flame", "gold"))]
     + [
-        _entry("first_wtp", "firstWtp", "wtp_wins", 1, "daily", "bronze", "silhouette", since=3),
-        _entry("wtp_run_7", "wtpRun7", "wtp_best_run", 7, "daily", "silver", "silhouette", since=3),
-        _entry("quests_10", "quests10", "quests_done", 10, "daily", "bronze", "quest", family="quests", since=3),
-        _entry("quests_50", "quests50", "quests_done", 50, "daily", "silver", "quest", family="quests", since=3),
-        _entry("quests_200", "quests200", "quests_done", 200, "daily", "gold", "quest", family="quests", since=3),
+        _entry("first_wtp", "firstWtp", "Sharp Eyes", "wtp_wins", 1, "daily", "bronze", "silhouette", since=3),
+        _entry("wtp_run_7", "wtpRun7", "Silhouette Master", "wtp_best_run", 7, "daily", "silver", "silhouette", since=3),
+        _entry("quests_10", "quests10", "Errand Runner", "quests_done", 10, "daily", "bronze", "quest", family="quests", since=3),
+        _entry("quests_50", "quests50", "Quest Seeker", "quests_done", 50, "daily", "silver", "quest", family="quests", since=3),
+        _entry("quests_200", "quests200", "Quest Legend", "quests_done", 200, "daily", "gold", "quest", family="quests", since=3),
     ]
 )
 
@@ -115,7 +146,7 @@ def _build() -> tuple[dict, ...]:
     for config in ACHIEVEMENTS:
         track, tier = _LEGACY_PLACEMENT.get(config["id"], ("collection", "bronze"))
         legacy.append({
-            **config, "art": None, "track": track, "tier": tier,
+            **config, "name": _LEGACY_NAMES.get(config["id"], ""), "art": None, "track": track, "tier": tier,
             "family": config["metric"], "since": 1,
         })
     return tuple(legacy + _NEW)

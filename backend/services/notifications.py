@@ -1,8 +1,12 @@
 """Notification categories, per-user preferences, quiet hours and the daily digest.
 
-See docs/ENGAGEMENT_DESIGN.md §7 P4. Instant categories (scans ready) are queued and sent by
-`flush_due` as soon as quiet hours allow; digest categories (new sets, wishlist dips, big movers)
-are queued and sent as one push a day at the user's digest time. Payloads carry no prices.
+See docs/ENGAGEMENT_DESIGN.md §7 P4. Instant categories (scans ready, wishlist price alerts, badges)
+are queued and sent by `flush_due` as soon as quiet hours allow; digest categories (new sets,
+wishlist dips, big movers) are queued and sent as one push a day at the user's digest time.
+
+Each queued row keeps `details`, what the event was about as it was when it happened (card name,
+prices, badge id, ...). Pushes say what they are about by default; a trainer who switches off
+"Show card names and prices" (`notify_show_details`) gets the content-light texts instead.
 """
 
 from __future__ import annotations
@@ -12,6 +16,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.orm import Session
@@ -42,6 +47,12 @@ TIME_ZONE_KEY = "time_zone"
 DIGEST_HOUR_KEY = "notify_digest_hour"
 QUIET_ENABLED_KEY = "notify_quiet_hours"
 LAST_DIGEST_KEY = "notify_last_digest"
+SHOW_DETAILS_KEY = "notify_show_details"
+
+# Lock-screen friendly: the service worker clips a body at 300 characters, so lists are fitted
+# to that, with "and N more" for the rest. push.MAX_PAYLOAD_BYTES is the hard limit on top.
+MAX_BODY_CHARS = 300
+MAX_NAME_CHARS = 40
 
 
 @dataclass(frozen=True)
@@ -78,11 +89,12 @@ def default_settings() -> dict[str, str]:
     defaults = {pref_key(c.id): "true" if c.default else "false" for c in CATEGORIES.values()}
     defaults[DIGEST_HOUR_KEY] = str(DEFAULT_DIGEST_HOUR)
     defaults[QUIET_ENABLED_KEY] = "true"
+    defaults[SHOW_DETAILS_KEY] = "true"
     return defaults
 
 
 def boolean_keys() -> set[str]:
-    return {pref_key(c.id) for c in CATEGORIES.values()} | {QUIET_ENABLED_KEY}
+    return {pref_key(c.id) for c in CATEGORIES.values()} | {QUIET_ENABLED_KEY, SHOW_DETAILS_KEY}
 
 
 def normalize_digest_hour(value) -> str:
@@ -121,6 +133,12 @@ def digest_hour(db: Session, user_id: int) -> int:
 
 def quiet_hours_enabled(db: Session, user_id: int) -> bool:
     value = _setting(db, user_id, QUIET_ENABLED_KEY)
+    return True if value is None else value.strip().lower() in {"true", "1", "yes", "on"}
+
+
+def show_details(db: Session, user_id: int) -> bool:
+    """Whether pushes may name cards and prices (default on)."""
+    value = _setting(db, user_id, SHOW_DETAILS_KEY)
     return True if value is None else value.strip().lower() in {"true", "1", "yes", "on"}
 
 
@@ -191,10 +209,12 @@ def enqueue(
     *,
     now: datetime.datetime | None = None,
     repeat_days: int | None = None,
+    details: dict | None = None,
 ) -> bool:
     """Queue one notification unless the category is off or the subject was already queued.
 
     `repeat_days=None` means once ever for the subject; otherwise once per that many days.
+    `details` is stored with the row as the event was when it happened (see the module docstring).
     The caller commits.
     """
     now = now or datetime.datetime.utcnow()
@@ -214,19 +234,53 @@ def enqueue(
     send_after = send_time_for_instant(db, user_id, now) if CATEGORIES[category].timing == INSTANT else now
     db.add(NotificationQueue(
         user_id=user_id, category=category, subject_key=subject_key, created_at=now, send_after=send_after,
+        details=details or None,
     ))
     _log("queued", category, user_id, subject_key, f"send_after={send_after.isoformat()}")
     return True
 
 
-def notify_wishlist_alert(db: Session, user_id: int, card_id: str, now: datetime.datetime | None = None) -> bool:
-    """A wishlist price threshold was crossed. The payload (card name only) is built when it is sent."""
-    return enqueue(db, user_id, "wishlist_alerts", f"card:{card_id}", now=now, repeat_days=1)
+def _card_details(db: Session, card: Card, **extra) -> dict:
+    """The card as the push names it: name, set (name and code) and number."""
+    set_row = None
+    if card.set_id:
+        set_row = db.query(Set).filter(Set.tcg_set_id == card.set_id, Set.lang == (card.lang or "en")).first()
+    return {
+        "card_id": card.id,
+        "name": card.name,
+        "set": set_row.name if set_row else None,
+        "set_code": ((set_row.abbreviation or "").strip() or None) if set_row else None,
+        "number": card.number,
+        **extra,
+    }
 
 
-def notify_scans_ready(db: Session, user_id: int, job_id: int, now: datetime.datetime | None = None) -> bool:
-    """Called when a scan job needs review; one push per job."""
-    return enqueue(db, user_id, "scans_ready", f"job:{job_id}", now=now)
+def notify_wishlist_alert(
+    db: Session,
+    user_id: int,
+    card_id: str,
+    now: datetime.datetime | None = None,
+    *,
+    price: float | None = None,
+    threshold: float | None = None,
+    alert_type: str | None = None,
+) -> bool:
+    """A wishlist price threshold was crossed. Price and threshold are kept as they were now."""
+    details: dict = {"card_id": card_id}
+    card = db.query(Card).filter(Card.id == card_id).first()
+    if card is not None:
+        details = _card_details(db, card)
+    if price is not None and threshold is not None:
+        details.update(price=round(float(price), 2), threshold=round(float(threshold), 2), alert_type=alert_type)
+    return enqueue(db, user_id, "wishlist_alerts", f"card:{card_id}", now=now, repeat_days=1, details=details)
+
+
+def notify_scans_ready(
+    db: Session, user_id: int, job_id: int, now: datetime.datetime | None = None, count: int | None = None
+) -> bool:
+    """Called when a scan job needs review; one push per job. `count` is its items to review now."""
+    details = {"job_id": job_id, "count": int(count)} if count is not None else {"job_id": job_id}
+    return enqueue(db, user_id, "scans_ready", f"job:{job_id}", now=now, details=details)
 
 
 def _active_user_ids(db: Session) -> list[int]:
@@ -247,7 +301,7 @@ def on_new_sets(db: Session, set_ids: list[str]) -> None:
         except Exception:
             logger.exception("Telegram new-sets notification failed for user %s", user_id)
         for s in rows:
-            enqueue(db, user_id, "new_sets", f"set:{s.id}")
+            enqueue(db, user_id, "new_sets", f"set:{s.id}", details={"name": s.name, "series": s.series or ""})
     db.commit()
 
 
@@ -307,8 +361,14 @@ def queue_price_events(db: Session, card_ids: list[str], now: datetime.datetime 
             continue
         price = effective_market_price(item.card, price_field=_price_field(db, item.user_id))
         if is_dip(price, item.card.price_avg30):
+            avg30 = item.card.price_avg30
+            details = _card_details(
+                db, item.card,
+                price=round(price, 2), avg30=round(avg30, 2), drop_pct=round((avg30 - price) / avg30 * 100, 1),
+            )
             queued += enqueue(
-                db, item.user_id, "wishlist_dips", f"card:{item.card_id}", now=now, repeat_days=REPEAT_DAYS
+                db, item.user_id, "wishlist_dips", f"card:{item.card_id}", now=now, repeat_days=REPEAT_DAYS,
+                details=details,
             )
 
     owned = db.query(CollectionItem).join(Card, Card.id == CollectionItem.card_id).filter(
@@ -322,8 +382,15 @@ def queue_price_events(db: Session, card_ids: list[str], now: datetime.datetime 
         seen.add(key)
         price = effective_market_price(item.card, price_field=_price_field(db, item.user_id))
         if is_big_move(price, item.card.price_avg7, mover_threshold(db, item.user_id)):
+            baseline = item.card.price_avg7
+            details = _card_details(
+                db, item.card,
+                price=round(price, 2), baseline=round(baseline, 2),
+                change_pct=round((price - baseline) / baseline * 100, 1),
+            )
             queued += enqueue(
-                db, item.user_id, "big_movers", f"card:{item.card_id}", now=now, repeat_days=REPEAT_DAYS
+                db, item.user_id, "big_movers", f"card:{item.card_id}", now=now, repeat_days=REPEAT_DAYS,
+                details=details,
             )
     db.commit()
     return queued
@@ -355,16 +422,199 @@ def build_digest_payload(counts: dict[str, int]) -> str | None:
     return push._encode_payload("PokéCollector", body, navigate)
 
 
-def build_scans_payload(count: int) -> str:
-    """Actionable: carries the icon number so the service worker can set the app badge."""
-    payload = json.loads(push._encode_payload("PokéCollector", "Scans ready to review", CATEGORIES["scans_ready"].navigate))
+def build_scans_payload(count: int, review_count: int | None = None) -> str:
+    """Actionable: carries the icon number (`count`) so the service worker can set the app badge.
+
+    `review_count` switches on the detailed text ("3 scans ready to review"); without it the
+    content-light "Scans ready to review" is sent.
+    """
+    if review_count is None:
+        body = "Scans ready to review"
+    else:
+        body = f"{review_count} scan{'' if review_count == 1 else 's'} ready to review"
+    payload = json.loads(push._encode_payload("PokéCollector", body, CATEGORIES["scans_ready"].navigate))
     payload["app_badge"] = int(count)
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
-def build_badge_payload() -> str:
-    """Content-light: it never names the badge."""
-    return push._encode_payload("PokéCollector", "You earned a badge", CATEGORIES["badges"].navigate)
+def build_badge_payload(badge_id: str | None = None) -> str:
+    """"Badge unlocked" naming the badge and tier; content-light "You earned a badge" without an id."""
+    navigate = CATEGORIES["badges"].navigate
+    if not badge_id:
+        return push._encode_payload("PokéCollector", "You earned a badge", navigate)
+    from services.achievements import FALLBACK_BADGE_NAME, registry_by_id
+
+    entry = registry_by_id().get(badge_id) or {}
+    name = (entry.get("name") or "").strip()
+    tier = (entry.get("tier") or "").strip().capitalize()
+    body = name or f"You earned {FALLBACK_BADGE_NAME}"
+    if tier:
+        body = f"{body} · {tier}"
+    return push.encode_payload_fitted("Badge unlocked", body, navigate)
+
+
+# --- detailed texts ------------------------------------------------------------------------
+# Prices are EUR, the currency the catalogue stores (Cardmarket); the backend has no per-user
+# conversion helper to call while a push is built, so they are shown with €.
+
+
+def _money(value) -> str:
+    return f"€{float(value):.2f}"
+
+
+def _clip(text, limit: int = MAX_NAME_CHARS) -> str:
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _percent(value) -> str:
+    return f"{abs(float(value)):.0f}%"
+
+
+def _card_label(details: dict) -> str:
+    """"Charizard ex (OBF 125)": name, then the set code (or set name) and the number."""
+    name = _clip(details.get("name")) or "Card"
+    code = _clip(details.get("set_code") or details.get("set"), 20)
+    number = str(details.get("number") or "").strip()
+    inner = " ".join(part for part in (code, number) if part)
+    if inner and not code:
+        inner = f"#{number}"
+    return f"{name} ({inner})" if inner else name
+
+
+def _fit(items: list[str], budget: int, sep: str = " · ", more_sep: str | None = None) -> str:
+    """Join the items; when they exceed `budget` characters the last ones become "and N more"."""
+    more_sep = sep if more_sep is None else more_sep
+    shown = list(items)
+    while True:
+        hidden = len(items) - len(shown)
+        text = sep.join(shown) + (f"{more_sep}and {hidden} more" if hidden else "")
+        if len(text) <= budget or len(shown) <= 1:
+            return text
+        shown.pop()
+
+
+def _dip_item(d: dict) -> str:
+    return f"{_clip(d.get('name'))} −{_percent(d.get('drop_pct') or 0)} {_money(d.get('price') or 0)}"
+
+
+def _mover_item(d: dict) -> str:
+    pct = float(d.get("change_pct") or 0)
+    return f"{_clip(d.get('name'))} {'▲' if pct >= 0 else '▼'}{_percent(pct)} {_money(d.get('price') or 0)}"
+
+
+def _single_dip(d: dict) -> str:
+    return (
+        f"{_card_label(d)} is down {_percent(d.get('drop_pct') or 0)} to {_money(d.get('price') or 0)} "
+        f"(30-day avg {_money(d.get('avg30') or 0)})"
+    )
+
+
+def _single_mover(d: dict) -> str:
+    pct = float(d.get("change_pct") or 0)
+    return (
+        f"{_card_label(d)} is {'up' if pct >= 0 else 'down'} {_percent(pct)} to {_money(d.get('price') or 0)} "
+        f"(7-day avg {_money(d.get('baseline') or 0)})"
+    )
+
+
+# Per digest category: the line prefix of a mixed digest, how to sort and render its entries.
+def _sorted_dips(entries: list[dict]) -> list[dict]:
+    return sorted(entries, key=lambda d: -(d.get("drop_pct") or 0))
+
+
+def _sorted_movers(entries: list[dict]) -> list[dict]:
+    return sorted(entries, key=lambda d: -abs(d.get("change_pct") or 0))
+
+
+_DETAIL_ORDER = ("wishlist_dips", "big_movers", "new_sets")
+_TITLE_NOUNS = {"wishlist_dips": "Wishlist dip", "big_movers": "Big mover", "new_sets": "New set"}
+
+
+def _detail_texts(category: str, entries: list[dict]) -> list[str]:
+    if category == "wishlist_dips":
+        return [_dip_item(d) for d in _sorted_dips(entries)]
+    if category == "big_movers":
+        return [_mover_item(d) for d in _sorted_movers(entries)]
+    return [_clip(d.get("name"), 60) for d in entries if d.get("name")] or [_digest_line(category, len(entries))]
+
+
+def _digest_route(groups: dict[str, list[dict]]) -> str:
+    """Wishlist for dips only, the one card's page for a single card, the category page for one
+    kind of entry, otherwise the home screen."""
+    cards = {d.get("card_id") for cat in ("wishlist_dips", "big_movers") for d in groups.get(cat, [])}
+    if "new_sets" not in groups and len(cards) == 1 and None not in cards:
+        card_id = next(iter(cards))
+        if "big_movers" in groups:
+            return f"/collection?cardId={quote(str(card_id), safe='')}"
+        return CATEGORIES["wishlist_dips"].navigate
+    if len(groups) == 1:
+        return CATEGORIES[next(iter(groups))].navigate
+    return "/"
+
+
+def build_detail_digest_payload(groups: dict[str, list[dict | None]]) -> str | None:
+    """One push for the day that says what it is about.
+
+    `groups` maps a digest category to the `details` of its queued rows. A category with a row
+    that has no details (queued before they were stored) is shown as a count, as before.
+    """
+    groups = {c: list(rows) for c, rows in groups.items() if rows and c in CATEGORIES}
+    if not groups:
+        return None
+    counts = {c: len(rows) for c, rows in groups.items()}
+    detailed = {
+        c: rows for c, rows in groups.items()
+        if c in _DETAIL_ORDER and all(isinstance(d, dict) and d for d in rows)
+    }
+    if not detailed:
+        return build_digest_payload(counts)
+    navigate = _digest_route(detailed) if len(detailed) == len(groups) else "/"
+
+    if len(groups) == 1:
+        category, entries = next(iter(detailed.items()))
+        if len(entries) == 1 and category in ("wishlist_dips", "big_movers"):
+            title = _TITLE_NOUNS[category]
+            body = _single_dip(entries[0]) if category == "wishlist_dips" else _single_mover(entries[0])
+        else:
+            noun = _TITLE_NOUNS[category]
+            title = noun if len(entries) == 1 else f"{len(entries)} {noun.lower()}s"
+            sep, more_sep = (", ", " ") if category == "new_sets" else (" · ", " · ")
+            body = _fit(_detail_texts(category, entries), MAX_BODY_CHARS, sep, more_sep)
+        return push.encode_payload_fitted(title, body, navigate)
+
+    prefixes = {"wishlist_dips": "Wishlist: ", "big_movers": "Movers: ", "new_sets": "New sets: "}
+    lines: list[str] = []
+    budget = max(40, (MAX_BODY_CHARS - (len(groups) - 1)) // len(groups))
+    for category, rows in groups.items():
+        if category in detailed:
+            prefix = prefixes[category]
+            sep, more_sep = (", ", " ") if category == "new_sets" else (" · ", " · ")
+            lines.append(prefix + _fit(_detail_texts(category, rows), budget - len(prefix), sep, more_sep))
+        else:
+            lines.append(_digest_line(category, len(rows)))
+    title = ", ".join(_digest_line(c, n) for c, n in counts.items())
+    return push.encode_payload_fitted(title, "\n".join(lines), navigate)
+
+
+def build_wishlist_alert_payload(details: dict | None, fallback_name: str = "", hide_card: bool = False) -> str:
+    """"Charizard ex is now €12.40, under your €13.00 alert"; the light text when no price was kept.
+
+    `hide_card` (the trainer switched off card names and prices) names no card and shows no price.
+    """
+    navigate = CATEGORIES["wishlist_alerts"].navigate
+    if hide_card:
+        return push.encode_payload_fitted(
+            "Wishlist price alert", "A card on your wishlist hit your price alert", navigate
+        )
+    details = details or {}
+    name = (details.get("name") or fallback_name or "").strip()
+    price, threshold = details.get("price"), details.get("threshold")
+    if price is None or threshold is None:
+        return push.build_price_alert_payload(name)
+    over = details.get("alert_type") == "above"
+    body = f"{_clip(name) or 'Card'} is now {_money(price)}, {'over' if over else 'under'} your {_money(threshold)} alert"
+    return push.encode_payload_fitted("Wishlist price alert", body, CATEGORIES["wishlist_alerts"].navigate)
 
 
 def scans_needing_review(db: Session, user_id: int) -> int:
@@ -400,7 +650,7 @@ def _sent_reason(outcome: dict | None) -> str:
 
 
 def flush_due(db: Session, now: datetime.datetime | None = None) -> dict:
-    """Send what is due. Run every minute by the scheduler."""
+    """Send what is due. Run every 30 seconds by the scheduler."""
     now = now or datetime.datetime.utcnow()
     result = {"instant": 0, "digests": 0}
 
@@ -444,12 +694,21 @@ def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, 
         if count <= 0:  # already reviewed
             _log("skipped", category, user_id, subject, "reason=already_reviewed")
             return
-        outcome = _send(db, user_id, build_scans_payload(count))
+        review_count = None
+        if show_details(db, user_id):
+            # This job's items as they were when it finished, but never more than are still waiting.
+            kept = (row.details or {}).get("count")
+            review_count = min(int(kept), count) if isinstance(kept, int) and kept > 0 else count
+        outcome = _send(db, user_id, build_scans_payload(count, review_count))
         result["instant"] += 1
         _log("flushed", category, user_id, subject, f"{_sent_reason(outcome)} to_review={count}")
     elif category == "wishlist_alerts":
         card = db.query(Card).filter(Card.id == subject.split("card:", 1)[-1]).first()
-        outcome = _send(db, user_id, push.build_price_alert_payload(card.name if card else ""))
+        if show_details(db, user_id):
+            payload = build_wishlist_alert_payload(row.details, card.name if card else "")
+        else:
+            payload = build_wishlist_alert_payload(None, hide_card=True)
+        outcome = _send(db, user_id, payload)
         result["instant"] += 1
         _log("flushed", category, user_id, subject, _sent_reason(outcome))
     elif category == "badges":
@@ -460,7 +719,8 @@ def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, 
         if pending is None:  # the trainer already saw the sheet
             _log("skipped", category, user_id, subject, "reason=sheet_already_seen")
             return
-        outcome = _send(db, user_id, build_badge_payload())
+        badge_id = (row.details or {}).get("badge_id") or achievement_id
+        outcome = _send(db, user_id, build_badge_payload(badge_id if show_details(db, user_id) else None))
         result["instant"] += 1
         _log("flushed", category, user_id, subject, _sent_reason(outcome))
 
@@ -478,11 +738,16 @@ def _flush_digest(db: Session, user_id: int, rows, now: datetime.datetime, resul
         logger.info("Digest waiting for tomorrow: user=%s entries=%s reason=already_sent_today", user_id, len(rows))
         return
     counts: dict[str, int] = {}
+    groups: dict[str, list] = {}
     for row in rows:
         if category_enabled(db, user_id, row.category):
             counts[row.category] = counts.get(row.category, 0) + 1
+            groups.setdefault(row.category, []).append(row.details)
     _mark_sent(rows, now)
-    payload = build_digest_payload(counts)
+    if show_details(db, user_id):
+        payload = build_detail_digest_payload(groups)
+    else:
+        payload = build_digest_payload(counts)
     if payload:
         outcome = _send(db, user_id, payload)
         _set_setting(db, user_id, LAST_DIGEST_KEY, today)
@@ -494,23 +759,28 @@ def _flush_digest(db: Session, user_id: int, rows, now: datetime.datetime, resul
         logger.info("Digest skipped: user=%s entries=%s reason=all_categories_off", user_id, len(rows))
 
 
-def job_needs_review(db: Session, job_id: int) -> bool:
+def job_review_count(db: Session, job_id: int) -> int:
+    """How many of the job's items wait for the trainer."""
     from models import ScanJobItem
 
     return db.query(ScanJobItem).filter(
         ScanJobItem.job_id == job_id,
         ScanJobItem.resolved == False,  # noqa: E712
         ScanJobItem.status.in_(("done", "failed")),
-    ).first() is not None
+    ).count()
+
+
+def job_needs_review(db: Session, job_id: int) -> bool:
+    return job_review_count(db, job_id) > 0
 
 
 def on_scan_job_finished(db: Session, job, now: datetime.datetime | None = None) -> None:
     """A scan job reached "needs review". Queues one push per job; never raises into the scan queue."""
     try:
         with db.begin_nested():
-            needs_review = job_needs_review(db, job.id)
-            if needs_review:
-                notify_scans_ready(db, job.user_id, job.id, now=now)
+            review_count = job_review_count(db, job.id)
+            if review_count > 0:
+                notify_scans_ready(db, job.user_id, job.id, now=now, count=review_count)
             else:
                 _log("not queued", "scans_ready", job.user_id, f"job:{job.id}", "reason=nothing_to_review")
     except Exception:
