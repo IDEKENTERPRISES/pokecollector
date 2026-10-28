@@ -8,7 +8,8 @@ import { useAuth } from '../contexts/AuthContext'
 import { useSettings } from '../contexts/SettingsContext'
 import { useOffline } from '../offline/useOffline'
 import { localDate, readDay, splashLanguage } from '../components/splash/entryStore'
-import { fill, typeColour } from '../components/splash/format'
+import { HOME_FACTS } from '../components/splash/config'
+import { factLabelKey, fill, typeColour } from '../components/splash/format'
 import { ensureDay } from '../components/splash/prefetch'
 import WhosThatPokemon from './WhosThatPokemon'
 
@@ -95,7 +96,7 @@ function PokemonRow({ entry, pokemon, t, formatPrice }) {
   }
 
   return (
-    <div className="flex items-center gap-4 p-4" data-testid="pokemon-of-the-day">
+    <div className="flex items-center gap-4 p-4">
       <img
         src={entry.sprite_url}
         alt=""
@@ -106,7 +107,7 @@ function PokemonRow({ entry, pokemon, t, formatPrice }) {
         style={entry.sprite_style === 'pixel' ? { imageRendering: 'pixelated' } : undefined}
       />
       <div className="min-w-0 flex-1">
-        <p className="text-caption-1 font-semibold uppercase tracking-wide text-text-secondary">{t('today.pokemon')}</p>
+        <h3 className="text-caption-1 font-semibold uppercase tracking-wide text-text-secondary">{t('splash.todayTitle')}</h3>
         <p className="break-words font-display text-title-3 text-text-primary">{entry.name}</p>
         {owned > 0 && (
           <p className="text-footnote text-text-secondary" data-testid="pokemon-owned">
@@ -206,15 +207,30 @@ export default function DailyTodayCard() {
             )}
           </div>
         )}
-        {entry && <PokemonRow entry={entry} pokemon={summary?.pokemon} t={t} formatPrice={formatPrice} />}
         {entry && (
-          <Link
-            to={`/pokedex/${entry.dex_id}`}
-            className="flex min-h-[44px] items-center justify-between border-t-[0.5px] border-border px-4 text-body text-tint ios-press"
-          >
-            {t('today.seeCards')}
-            <ChevronRight size={18} aria-hidden="true" />
-          </Link>
+          <div data-testid="pokemon-of-the-day">
+            <PokemonRow entry={entry} pokemon={summary?.pokemon} t={t} formatPrice={formatPrice} />
+            {entry.facts.length > 0 && (
+              <ul className="space-y-3 border-t-[0.5px] border-border px-4 py-3">
+                {entry.facts.slice(0, HOME_FACTS).map(fact => (
+                  <li key={`${fact.kind}-${fact.title ?? ''}`}>
+                    <p className="text-caption-1 font-semibold" style={{ color: 'color-mix(in srgb, var(--today-type) 70%, #fff)' }}>{t(factLabelKey(fact.kind))}</p>
+                    <p className="text-subheadline text-text-secondary">
+                      {fact.title && <strong className="font-semibold text-text-primary">{fact.title}: </strong>}
+                      {fact.text}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <Link
+              to={`/pokedex/${entry.dex_id}`}
+              className="flex min-h-[44px] items-center justify-between border-t-[0.5px] border-border px-4 text-body text-tint ios-press"
+            >
+              {t('splash.todayCards')}
+              <ChevronRight size={18} aria-hidden="true" />
+            </Link>
+          </div>
         )}
         {summary?.quests?.length > 0 && <Quests quests={summary.quests} t={t} />}
         {typeof userId === 'number' && (
