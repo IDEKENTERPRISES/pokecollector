@@ -145,7 +145,7 @@ export default function BinderDetail() {
   // Book view: the pockets (P5). The server assigns them lazily and keeps them in step with the cards.
   const slotsKey = ['binder-slots', binderId]
   const slotsEnabled = viewMode === 'book' && Boolean(binder) && (isWishlist || isCollection)
-  const { data: slotData } = useQuery({
+  const { data: slotData, isError: slotsFailed } = useQuery({
     queryKey: slotsKey,
     queryFn: () => getBinderSlots(parseInt(binderId)),
     enabled: slotsEnabled,
@@ -769,7 +769,12 @@ export default function BinderDetail() {
       ) : visibleCards.length === 0 && viewMode !== 'book' ? (
         <div className="card text-center py-12 text-text-muted">{t('common.noResults')}</div>
       ) : viewMode === 'book' ? (
-        !(isCollection || isWishlist) ? null : !slotData ? (
+        !(isCollection || isWishlist) ? null : !slotData && slotsFailed ? (
+          <div className="card space-y-3 py-10 text-center" role="alert" data-testid="book-slots-failed">
+            <p className="text-sm text-text-secondary">{isOffline() ? t('book.needsConnection') : t('book.slotsFailed')}</p>
+            <button type="button" className="btn-primary" onClick={() => changeViewMode('grid')}>{t('book.gridView')}</button>
+          </div>
+        ) : !slotData ? (
           <div className="skeleton h-64 rounded-xl" />
         ) : (
           <BookView

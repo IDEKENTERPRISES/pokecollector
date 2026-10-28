@@ -1890,6 +1890,7 @@ const en = {
     pocketSizeHelp: 'Cards keep their pocket numbers; only the pages change.',
     pocketSizeFailed: 'Could not change the pocket size.',
     holdHint: 'Hold a card to move it',
+    slotsFailed: 'The pockets could not be loaded.',
     done: 'Done',
   },
   setDetail: {

@@ -196,6 +196,22 @@ test.describe('binder pockets', () => {
     await page.mouse.up()
   })
 
+  test('if the pockets cannot be loaded the book says so and offers Grid', async ({ page, context }) => {
+    const server = makeServer()
+    await mockApi(context, server)
+    await context.route(url => url.pathname === `/api/binders/${BINDER_ID}/slots`, route => route.fulfill({ status: 500, json: { detail: 'boom' } }))
+    await page.addInitScript(user => {
+      localStorage.setItem('token', 'test-token')
+      localStorage.setItem('user', JSON.stringify(user))
+      localStorage.setItem('pc-book-view:binder', 'book')
+    }, ada)
+    await page.goto(`/binders/${BINDER_ID}`)
+    await expect(page.getByTestId('book-slots-failed')).toBeVisible({ timeout: 30000 })
+    await page.getByTestId('book-slots-failed').getByRole('button', { name: 'Grid view' }).click()
+    await expect(page.getByTestId('book-slots-failed')).toHaveCount(0)
+    await expect(page.getByTestId('book-view')).toHaveCount(0)
+  })
+
   test('dropping on another card swaps the two', async ({ page, context }) => {
     const server = makeServer()
     await openBinder(page, context, server)
