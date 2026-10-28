@@ -12,6 +12,7 @@ from api.collection import ensure_card_exists, _find_card_by_code, _annotate_sca
 from services.binder_slots import (
     POCKET_LAYOUTS,
     SlotError,
+    binder_has_pockets,
     compact_layout,
     delete_slots_for_entries,
     get_layout,
@@ -60,7 +61,9 @@ BINDER_CSV_PHYSICAL_COLUMNS = [
 ]
 BINDER_CSV_COLUMNS_V1 = [*BINDER_CSV_PHYSICAL_COLUMNS_V1, "collection_item_id"]
 BINDER_CSV_COLUMNS = [*BINDER_CSV_PHYSICAL_COLUMNS, "collection_item_id"]
-BINDER_CSV_POSITION_COLUMNS = ["page", "pocket"]
+# Older (P5) exports ended in page,pocket; current ones add pocket_size, the binder's pocket_layout.
+BINDER_CSV_POSITION_COLUMNS_V1 = ["page", "pocket"]
+BINDER_CSV_POSITION_COLUMNS = [*BINDER_CSV_POSITION_COLUMNS_V1, "pocket_size"]
 BINDER_CSV_MAX_BYTES = 256 * 1024
 BINDER_CSV_MAX_ROWS = 1000
 DECK_TYPES = {"deck", "physical_deck"}
@@ -91,7 +94,8 @@ def _clean_binder_format(value: str | None) -> str | None:
 def _parse_csv_positions(row: dict, layout: int, required_quantity: int) -> list:
     """Optional page / pocket columns: 1-based, '|' separated when a row holds several copies.
 
-    Returns one slot_index per listed copy (a blank cell means "first free pocket").
+    `layout` is the pocket size the CSV was made with. Returns one slot_index
+    ((page - 1) * layout + pocket - 1) per listed copy; a blank cell means "first free pocket".
     """
     page_cell = (row.get("page") or "").strip()
     pocket_cell = (row.get("pocket") or "").strip()
@@ -2272,6 +2276,7 @@ def _csv_position_cells(positions: dict, entry: BinderCard, layout: int) -> dict
     return {
         "page": "|".join(str(index // layout + 1) for index in indexes),
         "pocket": "|".join(str(index % layout + 1) for index in indexes),
+        "pocket_size": layout,
     }
 
 
@@ -2385,9 +2390,14 @@ async def import_binder_csv(
 
     reader = csv.DictReader(io.StringIO(text), delimiter=",")
     csv_headers = list(reader.fieldnames or [])
-    has_positions = csv_headers[-2:] == BINDER_CSV_POSITION_COLUMNS
-    if has_positions:
-        csv_headers = csv_headers[:-2]
+    has_positions = False
+    has_size_column = False
+    if csv_headers[-len(BINDER_CSV_POSITION_COLUMNS):] == BINDER_CSV_POSITION_COLUMNS:
+        has_positions = has_size_column = True
+        csv_headers = csv_headers[:-len(BINDER_CSV_POSITION_COLUMNS)]
+    elif csv_headers[-len(BINDER_CSV_POSITION_COLUMNS_V1):] == BINDER_CSV_POSITION_COLUMNS_V1:
+        has_positions = True
+        csv_headers = csv_headers[:-len(BINDER_CSV_POSITION_COLUMNS_V1)]
     pocket_layout_size = int(binder.pocket_layout or 9)
     if csv_headers not in (
         BINDER_CSV_COLUMNS,
@@ -2408,6 +2418,33 @@ async def import_binder_csv(
             ),
         )
 
+    csv_rows = list(reader)
+    # Pockets are numbered with the size the CSV was made with. A new (empty) binder adopts that
+    # size so pages look identical; a binder that already holds cards keeps its own layout and the
+    # page / pocket numbers are read against it. Older files without pocket_size use the binder's.
+    csv_pocket_size = pocket_layout_size
+    if has_size_column:
+        listed_sizes = {
+            (row.get("pocket_size") or "").strip() for row in csv_rows if (row.get("pocket_size") or "").strip()
+        }
+        if len(listed_sizes) > 1:
+            raise HTTPException(status_code=422, detail="pocket_size must be the same on every row")
+        if listed_sizes:
+            try:
+                csv_pocket_size = int(next(iter(listed_sizes)))
+            except ValueError:
+                csv_pocket_size = 0
+            if csv_pocket_size not in POCKET_LAYOUTS:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"pocket_size must be one of: {', '.join(str(size) for size in POCKET_LAYOUTS)}",
+                )
+    binder_was_empty = db.query(BinderCard.id).filter(BinderCard.binder_id == binder_id).first() is None
+    adopt_pocket_size = (
+        has_size_column and binder_was_empty and binder_has_pockets(binder) and csv_pocket_size != pocket_layout_size
+    )
+    position_layout = csv_pocket_size if binder_was_empty else pocket_layout_size
+
     added = 0
     updated = 0
     skipped = 0
@@ -2418,7 +2455,7 @@ async def import_binder_csv(
     planned_card_rows: dict[str, dict] = {}
     planned_collection_rows: dict[int, dict] = {}
     collection_item_usage_counts = _collection_binder_usage_counts(db, current_user)
-    for row_number, row in enumerate(reader, start=2):
+    for row_number, row in enumerate(csv_rows, start=2):
         if None in row:
             failed += 1
             errors.append(f"row {row_number}: too many columns")
@@ -2450,7 +2487,7 @@ async def import_binder_csv(
             row_positions = []
             if has_positions:
                 try:
-                    row_positions = _parse_csv_positions(row, pocket_layout_size, required_quantity)
+                    row_positions = _parse_csv_positions(row, position_layout, required_quantity)
                 except ValueError as exc:
                     failed += 1
                     errors.append(f"row {row_number}: {exc}")
@@ -2734,6 +2771,9 @@ async def import_binder_csv(
                 for offset, index in enumerate(requested):
                     if index is not None:
                         wanted_pockets[(entry.id, base_copies + offset)] = index
+        if adopt_pocket_size and validated_rows:
+            binder.pocket_layout = csv_pocket_size
+            binder.updated_at = datetime.datetime.utcnow()
         if wanted_pockets:
             # Place the listed copies first; every other new copy takes the first free pocket.
             db.flush()

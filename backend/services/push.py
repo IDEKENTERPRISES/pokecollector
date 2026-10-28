@@ -239,12 +239,14 @@ def _send_one(db: Session, sub: PushSubscription, payload: str, vapid, now: date
     except WebPushException as exc:
         status = _status_of(exc)
         if status in (404, 410):
+            logger.warning("Push service answered HTTP %s for subscription %s; removing it (gone)", status, sub.id)
             db.delete(sub)
             return "removed"
         if status == 403:
-            logger.warning("Push service rejected VAPID credentials for subscription %s (403)", sub.id)
+            logger.warning("Push service answered HTTP 403 for subscription %s: VAPID credentials rejected", sub.id)
             return "skipped"
         if status == 429:
+            logger.warning("Push service answered HTTP 429 for subscription %s: rate limited, not sent", sub.id)
             return "skipped"
         return _record_failure(db, sub, f"HTTP {status}" if status else "no response")
     except Exception as exc:  # network errors, timeouts, malformed keys

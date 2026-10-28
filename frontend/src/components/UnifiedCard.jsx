@@ -12,6 +12,7 @@ import { CARD_SYSTEM_TOKENS } from './card-system/tokens'
 import { useBodyScrollLock, useSwipeDismiss } from './ios/sheetGesture'
 import HoloViewer from './holo/HoloViewer'
 import FoilPatternRow from './holo/FoilPatternRow'
+import { resolveFoilPattern } from './holo/foilRules'
 
 export const FALLBACK_KIND_ORDER = ['data', 'price', 'image']
 
@@ -376,6 +377,10 @@ export function UnifiedCardDialog({
     </button>
   )
   const holoOptions = holo ? (holo === true ? {} : holo) : null
+  // The zoom overlay shows the same foil the sheet's artwork has.
+  const zoomFoil = holoOptions
+    ? resolveFoilPattern({ card, variant: variantEffectSource, printingDetails: holoOptions.printingDetails, foilPattern: holoOptions.foilPattern }).pattern
+    : null
   const renderAside = ({ art, controls = null, foilRow = null }) => (
     <aside className="min-w-0 sm:border-r sm:border-white/8 sm:pr-6">
       <div className="flex items-start gap-4 sm:block">
@@ -558,7 +563,7 @@ export function UnifiedCardDialog({
     <>
       {createPortal(dialog, document.body)}
       {imageZoomOpen && imageZoomSource && (
-        <ImageZoomOverlay src={imageZoomSource} alt={card.name} onClose={() => setImageZoomOpen(false)} />
+        <ImageZoomOverlay src={imageZoomSource} alt={card.name} foil={zoomFoil} supertype={card.supertype} onClose={() => setImageZoomOpen(false)} />
       )}
     </>
   )

@@ -141,7 +141,26 @@ docker compose up -d
 The Settings restore action accepts `.sql` files, streams the upload into a
 temporary file, and executes it with PostgreSQL `ON_ERROR_STOP` in a single
 transaction. Any statement failure rolls back the complete restore, and the
-temporary upload is deleted afterward. After a successful restore the app also
+temporary upload is deleted afterward. The restore runs as a background job: the
+upload is answered at once (HTTP 202) and Settings polls
+`GET /api/backup/restore/status` every 3 seconds (`idle`, `running`, `done` or
+`failed`, with the error). Only one restore runs at a time. The status survives a
+page reload and is kept in `restore_status.json` next to the backups.
+
+`RESTORE_TIMEOUT_SECONDS` (default `3600`) is how long one restore may run. A
+large database can need more than the old 120 seconds; when the limit is hit,
+`psql` is stopped, PostgreSQL rolls the transaction back, nothing is restored and
+the status says so. Raise the value in the stack's environment if your restore
+legitimately needs longer.
+
+For a very large dump, or when you would rather not depend on the web request at
+all, restore from the server instead (this is the same command the app runs):
+
+```bash
+docker exec -i <postgres container> psql -U pokemon -d pokemon_tcg --single-transaction -v ON_ERROR_STOP=1 < backup.sql
+```
+
+After a successful restore the app also
 clears its stored idempotency keys; after a manual `psql` restore, run
 `DELETE FROM idempotency_keys;` yourself so a retried request cannot be
 mistaken for one that was already applied.

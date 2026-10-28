@@ -122,11 +122,18 @@ as ghosts). `binder_slots` stores where each copy sits; `binder_cards` stays the
   `slot_index`; page = `slot_index // pocket_layout`.
 - A new copy or a raised quantity takes the first free pocket. A removed copy or lowered quantity
   leaves an empty pocket (a gap); the other cards do not shift.
-- CSV export of a binder that has pockets gains optional `page` and `pocket` columns (1-based). A row
-  with several copies lists them separated by `|`, for example `2|1` and `3|5`. Import accepts the two
-  columns when present: both must list the same number of copies (at most `required_quantity`), each
-  pocket must be within the page size, and a pocket already taken is filled by the first free one.
-  Files without the columns import as before.
+- CSV export of a binder that has pockets gains the optional columns `page`, `pocket` (1-based) and
+  `pocket_size` (the binder's `pocket_layout`: 4, 9 or 12, repeated on every row). A row with several
+  copies lists page and pocket separated by `|`, for example `2|1` and `3|5`. Import accepts the
+  columns when present: page and pocket must list the same number of copies (at most
+  `required_quantity`), each pocket must be within the page size, and a pocket already taken is filled
+  by the first free one. Files without the columns import as before.
+- Import reads the positions with the CSV's `pocket_size`: slot = `(page - 1) * size + pocket - 1`,
+  and the pocket is checked against that size. When the target binder has no cards yet it takes over
+  the CSV's size, so a 4-pocket binder comes back as a 4-pocket binder with the same pages. A binder
+  that already holds cards keeps its own layout and reads page and pocket against it. Older files that
+  end in `page,pocket` (no `pocket_size`) are still accepted and use the target binder's layout. Rows
+  that disagree on `pocket_size`, or a size other than 4, 9 or 12, reject the whole file (422).
 
 ## Printing identity and details
 

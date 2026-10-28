@@ -220,6 +220,22 @@ class PushSendOutcomeTests(PushDatabaseTestCase):
         self.assertEqual(result["removed"], 1)
         self.assertEqual(self.subs(), [])
 
+    def test_every_non_2xx_status_is_logged_without_endpoint_or_payload(self):
+        for status in (403, 429, 410, 500):
+            with self.subTest(status=status):
+                self.add_sub(endpoint=f"{APPLE}/log{status}")
+                with self.assertLogs("services.push", level="WARNING") as logs:
+                    self.send(web_push_error(status))
+                text = "\n".join(logs.output)
+                self.assertIn(f"HTTP {status}", text)
+                self.assertNotIn("web.push.apple.com", text)
+                self.assertNotIn('"x"', text)
+                # Delete through the ORM: SQLite reuses the row id, and a bulk delete would leave the
+                # old instance in the identity map to clash with the next subtest's subscription.
+                for sub in self.subs():
+                    self.db.delete(sub)
+                self.db.commit()
+
     def test_only_the_users_own_subscriptions_are_used(self):
         self.add_sub()
         self.add_sub(user=self.other, endpoint=FCM)

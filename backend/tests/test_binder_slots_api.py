@@ -279,6 +279,94 @@ class BinderSlotsApiTests(unittest.TestCase):
         self.assertEqual(pockets[4][0], entries[self.cards[0].id].id)
         self.assertEqual(pockets[0], (entries[self.cards[1].id].id, 0))
 
+    def _import(self, binder, text):
+        return asyncio.run(import_binder_csv(
+            binder.id, file=UploadFile(filename="b.csv", file=io.BytesIO(text.encode())), current_user=self.user, db=self.db,
+        ))
+
+    def test_four_pocket_binder_round_trips_into_an_empty_binder(self):
+        binder = self._binder("wishlist")
+        update_binder(binder.id, BinderUpdate(pocket_layout=4), current_user=self.user, db=self.db)
+        add_card_to_binder(binder.id, self.cards[0].id, required_quantity=2, current_user=self.user, db=self.db)
+        add_card_to_binder(binder.id, self.cards[1].id, required_quantity=1, current_user=self.user, db=self.db)
+        a, b = (self.db.query(BinderCard).filter_by(binder_id=binder.id, card_id=c.id).one() for c in self.cards[:2])
+        self._put(binder, self._get(binder), [
+            {"slot_index": 6, "binder_card_id": a.id, "copy_index": 0},   # page 2, pocket 3
+            {"slot_index": 3, "binder_card_id": a.id, "copy_index": 1},   # page 1, pocket 4
+            {"slot_index": 8, "binder_card_id": b.id, "copy_index": 0},   # page 3, pocket 1
+        ])
+
+        text = asyncio.run(self._body(export_binder_csv(binder.id, current_user=self.user, db=self.db)))
+        rows = list(csv.DictReader(io.StringIO(text)))
+        self.assertTrue(text.splitlines()[0].endswith(",page,pocket,pocket_size"))
+        self.assertEqual({row["pocket_size"] for row in rows}, {"4"})
+        by_number = {r["number"]: r for r in rows}
+        self.assertEqual((by_number["1"]["page"], by_number["1"]["pocket"]), ("2|1", "3|4"))
+
+        copy = self._binder("wishlist")
+        self.assertEqual(copy.pocket_layout or 9, 9)
+        result = self._import(copy, text)
+        self.assertEqual(result["failed"], 0, result)
+
+        self.db.refresh(copy)
+        self.assertEqual(copy.pocket_layout, 4)
+        entries = {e.card_id: e for e in self.db.query(BinderCard).filter_by(binder_id=copy.id)}
+        payload = self._get(copy)
+        self.assertEqual(payload["pocket_layout"], 4)
+        self.assertEqual(
+            self._by_pocket(payload),
+            {
+                6: (entries[self.cards[0].id].id, 0),
+                3: (entries[self.cards[0].id].id, 1),
+                8: (entries[self.cards[1].id].id, 0),
+            },
+        )
+
+    def test_older_two_column_position_files_still_import(self):
+        binder = self._binder("wishlist")
+        text = (
+            "set_code,number,required_quantity,lang,variant,condition,printing_details,collection_item_id,page,pocket\n"
+            "sv1,1,1,en,,,,,2,3\n"
+        )
+        result = self._import(binder, text)
+        self.assertEqual(result["failed"], 0, result)
+        self.db.refresh(binder)
+        self.assertEqual(binder.pocket_layout or 9, 9)  # no size in the file: the binder keeps its layout
+        entry = self.db.query(BinderCard).filter_by(binder_id=binder.id).one()
+        self.assertEqual(self._by_pocket(self._get(binder)), {9 + 2: (entry.id, 0)})
+
+    def test_pocket_is_validated_against_the_csv_size(self):
+        binder = self._binder("wishlist")
+        header = "set_code,number,required_quantity,lang,variant,condition,printing_details,collection_item_id,page,pocket,pocket_size\n"
+        result = self._import(binder, header + "sv1,1,1,en,,,,,1,5,4\n")
+        self.assertEqual(result["failed"], 1)
+        self.assertIn("between 1 and 4", result["errors"][0])
+        self.assertEqual(self.db.query(BinderCard).filter_by(binder_id=binder.id).count(), 0)
+        # A 12-pocket file accepts pocket 12 even though the target binder is a 9-pocket one.
+        result = self._import(binder, header + "sv1,1,1,en,,,,,1,12,12\n")
+        self.assertEqual(result["failed"], 0, result)
+        self.db.refresh(binder)
+        self.assertEqual(binder.pocket_layout, 12)
+
+    def test_unsupported_or_mixed_pocket_sizes_are_rejected(self):
+        binder = self._binder("wishlist")
+        header = "set_code,number,required_quantity,lang,variant,condition,printing_details,collection_item_id,page,pocket,pocket_size\n"
+        for body in ("sv1,1,1,en,,,,,1,1,7\n", "sv1,1,1,en,,,,,1,1,4\nsv1,2,1,en,,,,,1,2,9\n"):
+            with self.assertRaises(HTTPException) as raised:
+                self._import(binder, header + body)
+            self.assertEqual(raised.exception.status_code, 422)
+        self.db.refresh(binder)
+        self.assertEqual(binder.pocket_layout or 9, 9)
+
+    def test_binder_with_cards_keeps_its_layout(self):
+        binder = self._binder("wishlist")
+        add_card_to_binder(binder.id, self.cards[2].id, required_quantity=1, current_user=self.user, db=self.db)
+        header = "set_code,number,required_quantity,lang,variant,condition,printing_details,collection_item_id,page,pocket,pocket_size\n"
+        result = self._import(binder, header + "sv1,1,1,en,,,,,1,2,4\n")
+        self.assertEqual(result["failed"], 0, result)
+        self.db.refresh(binder)
+        self.assertEqual(binder.pocket_layout or 9, 9)
+
     def test_csv_import_rejects_bad_pocket(self):
         binder = self._binder()
         self._own(self.cards[0])

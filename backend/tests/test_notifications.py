@@ -12,7 +12,8 @@ try:
     from api import settings as settings_api
     from database import Base
     from models import (
-        Card, CollectionItem, NotificationQueue, PushSubscription, ScanJob, ScanJobItem, Set, User, UserSetting,
+        Card, CollectionItem, NotificationQueue, PushSubscription, ScanJob, ScanJobItem, Set, User, UserAchievement,
+        UserSetting,
         WishlistItem,
     )
     from services import notifications as n
@@ -247,6 +248,108 @@ class ScansReadyTests(NotificationTestCase):
         self.db.query(ScanJobItem).update({"resolved": True})
         self.db.commit()
         n.flush_due(self.db, now=NOON_UTC)
+        self.webpush.assert_not_called()
+
+
+@unittest.skipUnless(DEPS_AVAILABLE, SKIP_REASON)
+class ScansReadyLogTests(NotificationTestCase):
+    """The scans-ready path explains every decision in the INFO log (no payloads, no endpoints)."""
+
+    def logged(self, action):
+        with self.assertLogs("services.notifications", level="INFO") as captured:
+            action()
+        return "\n".join(captured.output)
+
+    def test_enqueued(self):
+        user = _user(self.db, time_zone="UTC")
+        job = self.make_job(user)
+        text = self.logged(lambda: scan_queue._refresh_job_status(self.db, job, NOON_UTC))
+        self.assertIn(f"Notification queued: category=scans_ready user={user.id} subject=job:{job.id}", text)
+
+    def test_not_enqueued_category_off(self):
+        user = _user(self.db)
+        _set_pref(self.db, user.id, "notify_scans_ready", "false")
+        job = self.make_job(user)
+        text = self.logged(lambda: scan_queue._refresh_job_status(self.db, job, NOON_UTC))
+        self.assertIn(f"Notification not queued: category=scans_ready user={user.id} subject=job:{job.id} category_off", text)
+
+    def test_not_enqueued_duplicate(self):
+        user = _user(self.db)
+        job = self.make_job(user)
+        scan_queue._refresh_job_status(self.db, job, NOON_UTC)
+        self.db.commit()
+        text = self.logged(lambda: scan_queue._refresh_job_status(self.db, job, NOON_UTC))
+        self.assertIn("not queued: category=scans_ready", text)
+        self.assertIn("duplicate", text)
+
+    def test_not_enqueued_nothing_to_review(self):
+        user = _user(self.db)
+        job = self.make_job(user, (("done", True),))
+        text = self.logged(lambda: scan_queue._refresh_job_status(self.db, job, NOON_UTC))
+        self.assertIn("nothing_to_review", text)
+
+    def test_flushed_logs_the_send_counts(self):
+        user = _user(self.db, time_zone="UTC")
+        job = self.make_job(user)
+        scan_queue._refresh_job_status(self.db, job, NOON_UTC)
+        self.db.commit()
+        text = self.logged(lambda: n.flush_due(self.db, now=NOON_UTC))
+        self.assertIn(f"Notification flushed: category=scans_ready user={user.id} subject=job:{job.id} sent=1 removed=0", text)
+        self.assertNotIn("web.push.apple.com", text)
+        self.assertNotIn("Scans ready to review", text)
+
+    def test_flushed_without_a_device_says_so(self):
+        user = _user(self.db, time_zone="UTC")
+        self.db.query(PushSubscription).delete()
+        self.db.commit()
+        job = self.make_job(user)
+        scan_queue._refresh_job_status(self.db, job, NOON_UTC)
+        self.db.commit()
+        text = self.logged(lambda: n.flush_due(self.db, now=NOON_UTC))
+        self.assertIn("sent=0 removed=0 (no device received it)", text)
+
+    def test_deferred_for_quiet_hours_logs_the_end_time(self):
+        user = _user(self.db, time_zone="Europe/Berlin")
+        late = datetime.datetime(2026, 10, 28, 22, 30)
+        job = self.make_job(user)
+        scan_queue._refresh_job_status(self.db, job, NOON_UTC)  # queued for noon, due immediately
+        self.db.commit()
+        text = self.logged(lambda: n.flush_due(self.db, now=late))
+        self.assertIn("Notification deferred: category=scans_ready", text)
+        self.assertIn("reason=quiet_hours until=2026-10-29T07:00:00", text)
+
+    def test_skipped_when_the_category_was_switched_off_meanwhile(self):
+        user = _user(self.db, time_zone="UTC")
+        job = self.make_job(user)
+        scan_queue._refresh_job_status(self.db, job, NOON_UTC)
+        self.db.commit()
+        _set_pref(self.db, user.id, "notify_scans_ready", "false")
+        text = self.logged(lambda: n.flush_due(self.db, now=NOON_UTC))
+        self.assertIn("Notification skipped: category=scans_ready", text)
+        self.assertIn("reason=category_off", text)
+
+    def test_skipped_when_already_reviewed(self):
+        user = _user(self.db, time_zone="UTC")
+        job = self.make_job(user)
+        scan_queue._refresh_job_status(self.db, job, NOON_UTC)
+        self.db.commit()
+        self.db.query(ScanJobItem).update({"resolved": True})
+        self.db.commit()
+        text = self.logged(lambda: n.flush_due(self.db, now=NOON_UTC))
+        self.assertIn("Notification skipped: category=scans_ready", text)
+        self.assertIn("reason=already_reviewed", text)
+
+    def test_badge_skipped_when_the_sheet_was_already_seen(self):
+        user = _user(self.db, time_zone="UTC")
+        self.db.add(UserAchievement(
+            user_id=user.id, achievement_id="first_scan", unlocked_at=NOON_UTC, seen_at=NOON_UTC,
+        ))
+        self.db.commit()
+        n.enqueue(self.db, user.id, "badges", "badge:first_scan", now=NOON_UTC)
+        self.db.commit()
+        text = self.logged(lambda: n.flush_due(self.db, now=NOON_UTC))
+        self.assertIn("Notification skipped: category=badges", text)
+        self.assertIn("reason=sheet_already_seen", text)
         self.webpush.assert_not_called()
 
 

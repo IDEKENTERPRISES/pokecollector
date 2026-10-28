@@ -33,6 +33,9 @@
 5. **Data:**
    - On prod, go to Settings › Data & sync › Download Backup and choose a full backup.
    - On nonprod, sign in as the admin from `ADMIN_USERNAME` / `ADMIN_PASSWORD`, then use Settings › Data & sync › Import Backup.
+   - The restore runs in the background and Settings shows "Restoring… this can take several minutes" until it ends. Keep the page open or come back later; the status survives a reload.
+   - `RESTORE_TIMEOUT_SECONDS` (default `3600`, set it in the stack's environment) is how long a restore may run. If a big database hits it, nothing is restored and the status says "timed out".
+   - Server-side alternative that does not depend on the web request: `docker exec -i <postgres container> psql -U pokemon -d pokemon_tcg --single-transaction -v ON_ERROR_STOP=1 < backup.sql`.
    - Nonprod then has prod's users and passwords.
 
 6. **iPhone:** open the nonprod address in Safari, then Share › Add to Home Screen. It is a separate app with its own offline data and its own notification switch.
@@ -44,5 +47,6 @@
 - **Push:**
   - Subscriptions restored from prod belong to prod's key. Nonprod's own key can't reach them, and nonprod deletes them after they fail.
   - Enable notifications again in the nonprod app.
+- **Push diagnosis:** the backend log says what happened to each notification (`docker logs <backend> | grep "Notification "`): `queued` or `not queued` (category off, duplicate, nothing to review), `deferred` (quiet hours, with the end time), `skipped` (category off, already reviewed, badge sheet already seen) and `flushed` with `sent=`/`removed=` counts (`sent=0` means no device received it). Any non-2xx answer from a push service (403, 429, 410 …) is logged as a warning. Payloads and push endpoints are never logged.
 - **Scanner:** per-user scanner keys come with the restore and share the provider's quota with prod.
 - **Syncs:** nonprod runs its own scheduled syncs against TCGdex. You can lengthen the intervals in nonprod's Settings.

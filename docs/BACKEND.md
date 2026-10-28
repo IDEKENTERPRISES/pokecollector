@@ -211,7 +211,8 @@ responses.
 | GET | `/api/export/csv` | CSV export |
 | GET | `/api/export/pdf` | PDF export |
 | GET | `/api/backup/download` | Admin-only SQL backup |
-| POST | `/api/backup/restore` | Admin-only SQL restore |
+| POST | `/api/backup/restore` | Admin-only SQL restore; starts a background job and returns 202 (409 while one runs) |
+| GET | `/api/backup/restore/status` | Admin-only restore status: `{state: idle\|running\|done\|failed, started_at, finished_at, error}` |
 | POST | `/api/backup/clear-image-cache` | Admin-only image cache clear |
 | POST | `/api/sync/` | Admin-only full sync |
 | POST | `/api/sync/prices` | Admin-only small price sync |
@@ -450,8 +451,14 @@ and queued-photo files remain filesystem data and are not part of SQL backups.
 ### Manual restore
 
 `POST /api/backup/restore` accepts only a non-empty `.sql` upload, streams it to
-a temporary file, and invokes `psql` with `ON_ERROR_STOP=1`, `--no-psqlrc`, and
-`--single-transaction`. Any SQL error rolls back the whole restore. The
+a temporary file, checks it, and starts `psql` (`ON_ERROR_STOP=1`, `--no-psqlrc`,
+`--single-transaction`) in a background thread, answering 202 at once. The job
+is limited by `RESTORE_TIMEOUT_SECONDS` (default 3600); on timeout `psql` is
+killed and PostgreSQL rolls the transaction back. `GET /api/backup/restore/status`
+reports the state, kept in memory and in `restore_status.json` under the backup
+directory; while a restore runs it authenticates the starting admin from the
+signed token alone, because the restore holds locks on `users`. Any SQL error
+rolls back the whole restore. The
 temporary file is removed whether the operation succeeds or fails. After a
 successful restore the endpoint also deletes every row in `idempotency_keys`
 (best effort): an older dump would otherwise leave keys whose business rows no
