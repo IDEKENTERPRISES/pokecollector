@@ -9,6 +9,15 @@ FOIL_PATTERNS = (
     "rainbow",
     "gold",
     "pokeball-reverse",
+    "radiant",
+    "amazing",
+    "v-full-art",
+    "vmax",
+    "vstar",
+    "trainer-gallery",
+    "shiny",
+    "illustration-rare",
+    "special-illustration",
 )
 
 

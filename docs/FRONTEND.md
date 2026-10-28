@@ -457,3 +457,7 @@ Production builds honour three harmless `localStorage` flags, set by opening `/?
 
 - No eBay integration in the current frontend
 - No grading UI in the current frontend
+
+## Holo viewer credits
+
+The foil styles in `frontend/src/components/holo/holo.css` are adapted from [simeydotme/pokemon-cards-css](https://github.com/simeydotme/pokemon-cards-css) (GPL-3.0, demo https://poke-holo.simey.me), combined with this AGPL-3.0 project under section 13 of both licenses. None of its image files are used: every texture (galaxy, glitter, grain, illusion, metal, geometric, trainer/vmax/ancient backgrounds) is replaced by a CSS gradient or a small generated SVG tile.

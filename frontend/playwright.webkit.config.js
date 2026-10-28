@@ -26,7 +26,7 @@ export default defineConfig({
     {
       // The iPhone shell (docs/IOS_UI_DESIGN.md §12): tabs, back targets and the Scan overlay on iPhone WebKit.
       name: 'webkit-iphone',
-      testMatch: 'shell.spec.js',
+      testMatch: ['shell.spec.js', 'holo-viewer.spec.js'],
       use: { ...devices['iPhone 13'], browserName: 'webkit' },
     },
   ],

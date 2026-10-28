@@ -458,6 +458,12 @@ function CollectionEditModal({ item, onClose }) {
     onError: () => toast.error(t('collection.updateFailed')),
   })
 
+  const foilMutation = useMutation({
+    mutationFn: (pattern) => updateCollectionItem(item.id, { foil_pattern: pattern }),
+    onSuccess: () => invalidateCardState(queryClient),
+    onError: (err) => toast.error(getApiErrorMessage(err, t('collection.updateFailed'))),
+  })
+
   const acquiredMutation = useMutation({
     mutationFn: (date) => updateCollectionItem(item.id, { acquired_at: date }),
     onSuccess: (response) => {
@@ -695,6 +701,12 @@ function CollectionEditModal({ item, onClose }) {
         </div>
       ) : null}
       variantEffectSource={variant}
+      holo={{
+        printingDetails: item.printing_details,
+        foilPattern: item.foil_pattern,
+        onFoilChange: (pattern) => foilMutation.mutate(pattern),
+        pending: foilMutation.isPending,
+      }}
       price={marketPrice > 0 ? formatPrice(marketPrice) : null}
       tabs={dialogTabs}
       activeTab={activeTab}
