@@ -81,7 +81,7 @@ const Page = memo(function Page({ items, pageIndex, layout, side, renderPocket }
  * lifted card without moving it calls `onHold(index)`. The lifted card moves through a ref and CSS variables, never
  * React state, so a drag does not re-render the pockets.
  */
-export default function BookView({ items, renderPocket, pocketLayout, resetKey = '', onMoveSlot, onHold, initialPage = 0 }) {
+export default function BookView({ items, renderPocket, pocketLayout, resetKey = '', onMoveSlot, onHold }) {
   const { t } = useSettings()
   const layout = normalizePocketLayout(pocketLayout)
   const spread = useMatchMedia(SPREAD_QUERY)
@@ -93,7 +93,7 @@ export default function BookView({ items, renderPocket, pocketLayout, resetKey =
   const pages = pageCount(totalItems, layout)
   const units = unitCount(pages, perUnit)
 
-  const [state, setState] = useState({ key: resetKey, page: initialPage })
+  const [state, setState] = useState({ key: resetKey, page: 0 })
   const page = clampPage(state.key === resetKey ? state.page : 0, totalItems, layout)
   const unit = Math.min(units - 1, Math.floor(page / perUnit))
   const viewportRef = useRef(null)
