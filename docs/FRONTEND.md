@@ -224,7 +224,8 @@ Defined in `frontend/src/components/TabNav.jsx`.
 
 ### `pages/Achievements.jsx`
 
-- Shows achievements for current user or another user when `:userId` is present
+- Shows achievements for current user or another user when `:userId` is present, in single-user mode too, grouped by gym-badge track with tier, HP-bar progress and unlock date
+- `progress/UnlockSheetHost.jsx` (mounted in `Layout`) shows each unseen badge once as a holo `BadgeMedal` page sheet when the app opens or returns to the foreground, one after another, and posts `/progress/unlocks/seen`. It waits while a scan screen or another dialog is open (`isBusy` in `progress/achievements.js`). The trainer card's `GymBadges` takes the server's `tracks` and lights each track by its highest tier.
 
 ### Invites and the audit log
 

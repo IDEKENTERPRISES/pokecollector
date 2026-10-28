@@ -6,10 +6,10 @@ import PokeBall from './PokeBall'
  * Profile trainer card (design doc §5.5, §7.12): an accent gradient card with holo shine and a
  * Poké Ball watermark, the trainer's sprite in a white ring, name, "@handle" (only when the
  * public profile is on), "ID No." padded to five digits, three stats and, in multi-user mode,
- * a row of gym badges.
+ * a row of gym badges (single-user mode too).
  *
  * user: { name, handle, id, sprite }; stats: { cards, sets, pokedex } (display strings);
- * badges: { earned, total, to } or omitted (single-user mode).
+ * badges: { earned, total, to, tracks } or omitted until the achievements have loaded.
  */
 export default function TrainerCard({ user = {}, stats = {}, badges, className = '' }) {
   const { t } = useSettings()
@@ -57,7 +57,7 @@ export default function TrainerCard({ user = {}, stats = {}, badges, className =
 
       {badges && (
         <div className="relative mt-3">
-          <GymBadges earned={badges.earned} total={badges.total} to={badges.to} label={t('ios.gymBadges')} />
+          <GymBadges earned={badges.earned} total={badges.total} to={badges.to} tracks={badges.tracks} label={t('ios.gymBadges')} />
         </div>
       )}
     </div>

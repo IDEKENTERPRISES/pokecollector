@@ -474,6 +474,8 @@ export const getRescueDonations = () => api.get('/github/rescue-donations').then
 export const getLeaderboard = (params = {}) => api.get('/social/leaderboard', { params })
 export const compareUsers = (userId, params = {}) => api.get(`/social/compare/${userId}`, { params })
 export const getAchievements = (userId, params = {}) => api.get(`/social/achievements/${userId}`, { params })
+export const getUnseenUnlocks = () => api.get('/progress/unlocks/unseen')
+export const markUnlocksSeen = (ids) => api.post('/progress/unlocks/seen', ids ? { ids } : {})
 
 // Web push (docs/PWA_OFFLINE_DESIGN.md §6.7)
 export const getVapidPublicKey = () => api.get('/push/vapid-public-key').then(r => r.data)
