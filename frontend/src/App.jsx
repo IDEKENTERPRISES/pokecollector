@@ -6,6 +6,7 @@ import PokeBallLoader from './components/PokeBallLoader'
 import AuthStartupScreen from './components/AuthStartupScreen'
 import { SettingsProvider } from './contexts/SettingsContext'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+import AppBadgeSync from './components/pwa/AppBadgeSync'
 import { forceChangePassword } from './api/client'
 import Layout from './components/Layout'
 import { useSettings } from './contexts/SettingsContext'
@@ -279,6 +280,7 @@ export default function App() {
           <LaunchSplash />
           {/* Keeps the offline card database up to date in the background (Settings > Data & sync). */}
           <CardDbAutoSync />
+          <AppBadgeSync />
         </ConfirmDialogProvider>
         </OfflineProvider>
       </SettingsProvider>

@@ -209,6 +209,21 @@ def run_progress_nightly_job():
         db.close()
 
 
+def run_notification_job():
+    """Send due notifications: instant ones after quiet hours, and the daily digest."""
+    from database import SessionLocal
+    from services.notifications import flush_due
+
+    db = SessionLocal()
+    try:
+        flush_due(db)
+    except Exception:
+        db.rollback()
+        logger.exception("Notification job failed")
+    finally:
+        db.close()
+
+
 def start_scheduler():
     """Start the background scheduler with separate full and small price sync jobs."""
     if not scheduler.running:
@@ -281,6 +296,18 @@ def start_scheduler():
             name="Progress Evaluation",
             replace_existing=True,
             next_run_time=now_utc + datetime.timedelta(minutes=2),
+            misfire_grace_time=_SCAN_QUEUE_MISFIRE_GRACE_SECONDS,
+            coalesce=True,
+            max_instances=1,
+        )
+
+        scheduler.add_job(
+            run_notification_job,
+            trigger=IntervalTrigger(minutes=1),
+            id="notification_job",
+            name="Notifications and Daily Digest",
+            replace_existing=True,
+            next_run_time=now_utc + datetime.timedelta(minutes=1),
             misfire_grace_time=_SCAN_QUEUE_MISFIRE_GRACE_SECONDS,
             coalesce=True,
             max_instances=1,

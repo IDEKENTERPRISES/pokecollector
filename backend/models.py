@@ -1001,3 +1001,19 @@ class UserAchievement(Base):
     backfilled = Column(Boolean, nullable=False, default=False)
 
     __table_args__ = (UniqueConstraint("user_id", "achievement_id", name="uq_user_achievement"),)
+
+
+class NotificationQueue(Base):
+    """A notification waiting to go out: instant ones wait for quiet hours to end, digest ones for the digest."""
+
+    __tablename__ = "notification_queue"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    category = Column(String(40), nullable=False)
+    subject_key = Column(String(160), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    send_after = Column(DateTime, nullable=False, default=func.now())
+    sent_at = Column(DateTime, nullable=True, index=True)
+
+    __table_args__ = (Index("ix_notification_queue_subject", "user_id", "category", "subject_key"),)

@@ -413,6 +413,7 @@ def delete_user(
         CollectionItem,
         CustomCardMatch,
         ImageCache,
+        NotificationQueue,
         PortfolioSnapshot,
         PriceHistory,
         ProgressState,
@@ -455,7 +456,7 @@ def delete_user(
     )
     db.query(PortfolioSnapshot).filter(PortfolioSnapshot.user_id == user_id).delete()
     db.query(UserSetting).filter(UserSetting.user_id == user_id).delete()
-    for progress_model in (UserAchievement, UserDailyActivity, UserEvent, ProgressState):
+    for progress_model in (UserAchievement, UserDailyActivity, UserEvent, ProgressState, NotificationQueue):
         db.query(progress_model).filter(progress_model.user_id == user_id).delete(
             synchronize_session=False
         )

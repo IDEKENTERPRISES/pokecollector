@@ -29,7 +29,7 @@ class FakeCache {
   async delete(key) { return this.map.delete(String(key?.url ?? key)) }
 }
 
-function load({ precache = [], fetchImpl, existingCaches = {}, windowClients = [], indexedDB = new IDBFactory() } = {}) {
+function load({ precache = [], fetchImpl, existingCaches = {}, windowClients = [], indexedDB = new IDBFactory(), navigator } = {}) {
   const store = new Map(Object.entries(existingCaches))
   const caches = {
     open: async name => { if (!store.has(name)) store.set(name, new FakeCache()); return store.get(name) },
@@ -49,6 +49,7 @@ function load({ precache = [], fetchImpl, existingCaches = {}, windowClients = [
   const self = {
     location: new URL(`${ORIGIN}/sw.js`),
     __PC_SW_TEST_MODE__: true,
+    navigator,
     addEventListener: (type, fn) => { listeners[type] = fn },
     skipWaiting: () => { calls.skipWaiting += 1 },
     registration: { showNotification: async (title, options) => { calls.notifications.push({ title, options }) } },
@@ -78,9 +79,9 @@ const classifyPath = (api, path, init) => api.classify(req(path, init), new URL(
 describe('placeholders', () => {
   it('is valid JS unreplaced and exposes helpers only in test mode', () => {
     const { api } = load()
-    expect(Object.keys(api).sort()).toEqual(['classify', 'isCacheableImage', 'smallImagePath', 'trimCache', 'validatePrecache', 'validateShell'])
+    expect(Object.keys(api).sort()).toEqual(['classify', 'isCacheableImage', 'pushPayload', 'safeNavigateUrl', 'smallImagePath', 'trimCache', 'validatePrecache', 'validateShell'])
     expect(SOURCE).not.toMatch(/\bimport\s/)
-    expect(SOURCE.split('\n').length).toBeLessThanOrEqual(480)
+    expect(SOURCE.split('\n').length).toBeLessThanOrEqual(500)
   })
 })
 
@@ -389,6 +390,49 @@ describe('web push', () => {
     const { listeners, calls } = load()
     await run(listeners, 'push', pushEvent({ title: 'Hi', body: 'There' }))
     expect(calls.notifications[0]).toMatchObject({ title: 'Hi', options: { body: 'There' } })
+  })
+
+  describe('icon number', () => {
+    const badgeNav = () => {
+      const log = []
+      return { log, setAppBadge: async n => { log.push(['set', n]) }, clearAppBadge: async () => { log.push(['clear']) } }
+    }
+    const actionable = n => declarative({ title: 'PokéCollector', body: 'Scans ready to review', navigate: '/scans' })
+    const withBadge = (n, payload = actionable()) => ({ ...payload, app_badge: n })
+
+    it('sets the app badge from a numeric field and still shows the notification', async () => {
+      const navigator = badgeNav()
+      const { listeners, calls } = load({ navigator })
+      await run(listeners, 'push', pushEvent(withBadge(3)))
+      expect(navigator.log).toEqual([['set', 3]])
+      expect(calls.notifications).toHaveLength(1)
+      expect(calls.notifications[0].options.data.navigate).toBe('/scans')
+    })
+
+    it('clears the badge at zero and leaves it alone for informational pushes or bad values', async () => {
+      const navigator = badgeNav()
+      const { listeners } = load({ navigator })
+      await run(listeners, 'push', pushEvent(withBadge(0)))
+      await run(listeners, 'push', pushEvent(declarative({ title: 'Digest', body: '2 new sets', navigate: '/' })))
+      for (const bad of ['3', -1, 1.5, null, NaN, 1e9]) await run(listeners, 'push', pushEvent(withBadge(bad)))
+      expect(navigator.log).toEqual([['clear']])
+    })
+
+    it('does nothing when the Badging API is missing or throws', async () => {
+      for (const navigator of [undefined, {}, { setAppBadge: async () => { throw new Error('denied') } }]) {
+        const { listeners, calls } = load({ navigator })
+        await run(listeners, 'push', pushEvent(withBadge(2)))
+        expect(calls.notifications).toHaveLength(1)
+      }
+    })
+  })
+
+  it('routes each notification to its own page', async () => {
+    for (const target of ['/sets', '/wishlist', '/collection', '/scans']) {
+      const { pending, calls } = click(target, [])
+      await pending
+      expect(calls.opened).toEqual([ORIGIN + target])
+    }
   })
 
   const click = (navigate, windowClients) => {
