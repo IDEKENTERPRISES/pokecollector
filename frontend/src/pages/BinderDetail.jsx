@@ -18,13 +18,16 @@ import { BINDER_SORT_OPTIONS, sortBinderCards } from '../utils/binderCards'
 import { partitionSettledResults } from '../utils/settledResults'
 import { formatBinderCountSummary } from '../utils/binderCounts'
 import { binderPickerItemsWithQuantities, binderPickerQuantitiesAreValid, canConvertWishlistBinder } from '../utils/binderQuantity'
-import { CardDialog, CardLegend } from '../components/card-system'
+import { CardDialog, CardDisplay, CardLegend } from '../components/card-system'
 import { CollectionCardDisplay, OwnPhotoOverlayBadge, showsOwnPhoto, useCollectionPhotoUrl } from '../components/CollectionCardImage'
 import Modal from '../components/ui/Modal'
 import BinderCsvImportModal, { downloadBinderCsvTemplate } from '../components/binders/BinderCsvImportModal'
 import CardSelectionQuantityModal from '../components/card-system/CardSelectionQuantityModal'
 import CardListPicker from '../components/card-lists/CardListPicker'
 import CardListGallery from '../components/card-lists/CardListGallery'
+import BookView from '../components/book/BookView'
+import BookViewSwitch from '../components/book/BookViewSwitch'
+import { readViewPreference, writeViewPreference } from '../components/book/bookPages'
 import { useDynamicFilterUrlState } from '../hooks/useDynamicFilterUrlState'
 import PrintingDetailBadges from '../components/PrintingDetailBadges'
 
@@ -69,6 +72,11 @@ export default function BinderDetail() {
   const [showSearch, setShowSearch] = useState(false)
   const [binderFilterQuery, setBinderFilterQuery] = useState('')
   const [binderSortBy, setBinderSortBy] = useState('recent')
+  const [viewMode, setViewMode] = useState(() => readViewPreference('binder'))
+  const changeViewMode = mode => {
+    setViewMode(mode)
+    writeViewPreference('binder', mode)
+  }
   const {
     filters: binderFilters,
     updateFilter: updateBinderFilter,
@@ -440,6 +448,22 @@ export default function BinderDetail() {
     return true
   }), binderSortBy, { isWishlist })
 
+  // The book follows the current sort; a planned card the trainer does not own yet is a ghost pocket.
+  const bookItems = viewMode === 'book'
+    ? visibleCards.map(entry => {
+      const card = entry.card || entry
+      const ownedQuantity = Number(entry.available_quantity ?? entry.owned_quantity ?? card.owned_quantity) || 0
+      return {
+        key: entry.binder_card_id || entry.id || card.id,
+        card: { ...card, owned: !isWishlist || ownedQuantity > 0, owned_quantity: ownedQuantity },
+        source: entry,
+        number: card.number ?? '',
+        name: card.name ?? '',
+        ghost: isWishlist && ownedQuantity <= 0,
+      }
+    })
+    : []
+
   const changeRequiredQuantity = (card, delta) => {
     const maximum = isCollection ? (card.max_assignable_quantity || 1) : 99
     const next = Math.max(1, Math.min(maximum, (card.required_quantity || 1) + delta))
@@ -625,8 +649,9 @@ export default function BinderDetail() {
                 <option key={option} value={option}>{t(`binderTypes.sort.${option}`)}</option>
               ))}
           </select>
-          <div className="col-span-2 flex flex-wrap items-center lg:col-span-4">
+          <div className="col-span-2 flex flex-wrap items-center justify-between gap-2 lg:col-span-4">
             <button type="button" className="btn-ghost" onClick={clearBinderFilters}>{t('common.clear')}</button>
+            <BookViewSwitch value={viewMode} onChange={changeViewMode} />
           </div>
         </div>
       )}
@@ -642,6 +667,23 @@ export default function BinderDetail() {
         </div>
       ) : visibleCards.length === 0 ? (
         <div className="card text-center py-12 text-text-muted">{t('common.noResults')}</div>
+      ) : viewMode === 'book' ? (
+        <BookView
+          items={bookItems}
+          pocketLayout={binder?.pocket_layout}
+          resetKey={`${binderId}|${binderFilterQuery}|${binderFilterSet}|${binderFilterStatus}|${binderSortBy}`}
+          renderPocket={item => (
+            <CardDisplay
+              variant="artwork"
+              card={item.card}
+              image={resolveCardImageUrl(item.card)}
+              alt={item.name}
+              interactive
+              dimmed={item.ghost}
+              onClick={() => setSelectedCard(item.source)}
+            />
+          )}
+        />
       ) : (
         <CardListGallery
           entries={visibleCards}

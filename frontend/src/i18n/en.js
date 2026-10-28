@@ -1820,6 +1820,19 @@ const en = {
   },
 
   // Set Detail
+  book: {
+    label: 'Binder pages',
+    pageOfTotal: 'Page {page} of {total}',
+    pagesOfTotal: 'Pages {from}–{to} of {total}',
+    previousPage: 'Previous page',
+    nextPage: 'Next page',
+    goToPage: 'Go to page',
+    pageRange: 'Page number (1–{total})',
+    go: 'Go',
+    gridView: 'Grid view',
+    bookView: 'Book view',
+    viewMode: 'View',
+  },
   setDetail: {
     borrowedCards: 'The {lang} cards for this set are not available yet. These are the {source} cards.',
     backToSets: 'Back to Sets',
