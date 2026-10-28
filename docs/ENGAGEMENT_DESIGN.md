@@ -345,7 +345,7 @@ Size: S = one PR, M = a few days of worker time, L = several PRs.
   | scans ready (instant) | PokéCollector | 3 scans ready to review (with `app_badge`) |
 
   The digest still goes out once a day. It opens the page that fits: `/wishlist` for dips only, the card (`/collection?cardId=…`, or `/wishlist` for a dip) when it is about exactly one card, `/collection` for movers only, `/sets` for new sets only, otherwise `/`. Rows queued before `details` existed are shown as counts.
-- **Privacy switch.** "Show card names and prices in notifications" (`notify_show_details`, default on). Off sends the earlier texts: counts only for the digest ("2 new sets, 1 wishlist dip"), "Scans ready to review", "You earned a badge", and the wishlist alert as "<card> price alert".
+- **Privacy switch.** "Show card names and prices in notifications" (`notify_show_details`, default on). Off sends the earlier texts: counts only for the digest ("2 new sets, 1 wishlist dip"), "Scans ready to review", "You earned a badge", and the wishlist alert as "Wishlist price alert" / "A card on your wishlist hit your price alert" (no card name).
 - Icon number: `navigator.setAppBadge(n)` where n = scans needing review (+ swap offers from P11).
   - It is set by the app on start, on foreground and after scan changes, and by the service worker on an actionable push (n included in the payload).
   - It is cleared at 0. It needs notification permission (iOS 16.4+ Home Screen apps).

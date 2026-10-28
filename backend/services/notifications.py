@@ -597,8 +597,16 @@ def build_detail_digest_payload(groups: dict[str, list[dict | None]]) -> str | N
     return push.encode_payload_fitted(title, "\n".join(lines), navigate)
 
 
-def build_wishlist_alert_payload(details: dict | None, fallback_name: str = "") -> str:
-    """"Charizard ex is now €12.40, under your €13.00 alert"; the light text when no price was kept."""
+def build_wishlist_alert_payload(details: dict | None, fallback_name: str = "", hide_card: bool = False) -> str:
+    """"Charizard ex is now €12.40, under your €13.00 alert"; the light text when no price was kept.
+
+    `hide_card` (the trainer switched off card names and prices) names no card and shows no price.
+    """
+    navigate = CATEGORIES["wishlist_alerts"].navigate
+    if hide_card:
+        return push.encode_payload_fitted(
+            "Wishlist price alert", "A card on your wishlist hit your price alert", navigate
+        )
     details = details or {}
     name = (details.get("name") or fallback_name or "").strip()
     price, threshold = details.get("price"), details.get("threshold")
@@ -699,7 +707,7 @@ def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, 
         if show_details(db, user_id):
             payload = build_wishlist_alert_payload(row.details, card.name if card else "")
         else:
-            payload = push.build_price_alert_payload((row.details or {}).get("name") or (card.name if card else ""))
+            payload = build_wishlist_alert_payload(None, hide_card=True)
         outcome = _send(db, user_id, payload)
         result["instant"] += 1
         _log("flushed", category, user_id, subject, _sent_reason(outcome))

@@ -714,10 +714,26 @@ class StoredDetailsTests(NotificationTestCase):
         self.db.commit()
         n.flush_due(self.db, now=datetime.datetime(2026, 10, 28, 18, 0))
         bodies = sorted(p["notification"]["body"] for p in self.payloads())
-        self.assertEqual(bodies, ["1 wishlist dip, 1 new set", "Dipcard price alert", "Scans ready to review",
-                                  "You earned a badge"])
+        self.assertEqual(bodies, ["1 wishlist dip, 1 new set", "A card on your wishlist hit your price alert",
+                                  "Scans ready to review", "You earned a badge"])
         for payload in self.payloads():
-            self.assertNotRegex(json.dumps(payload, ensure_ascii=False), r"€|Fresh Set|20%")
+            self.assertNotRegex(json.dumps(payload, ensure_ascii=False), r"€|Fresh Set|Dipcard|20%")
+
+    def test_the_switch_off_wishlist_alert_names_no_card_or_price(self):
+        _set_pref(self.db, self.user.id, "notify_show_details", "false")
+        card = _card(self.db, "alertcard", price=5.0)
+        n.notify_wishlist_alert(self.db, self.user.id, card.id, now=NOON_UTC, price=12.4, threshold=13.0, alert_type="below")
+        self.db.commit()
+        n.flush_due(self.db, now=NOON_UTC)
+        notes = [p["notification"] for p in self.payloads()]
+        self.assertEqual(notes, [{
+            "title": "Wishlist price alert",
+            "body": "A card on your wishlist hit your price alert",
+            "navigate": "/wishlist",
+        }])
+        raw = json.dumps(self.payloads())
+        self.assertNotIn("Alertcard", raw)
+        self.assertNotRegex(raw, r"€|12\.4|13\.0")
 
     def test_instant_pushes_carry_the_details_by_default(self):
         card = _card(self.db, "alertcard", price=5.0)
