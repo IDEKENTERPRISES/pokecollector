@@ -232,6 +232,8 @@ class PushSendOutcomeTests(PushDatabaseTestCase):
                 self.assertNotIn('"x"', text)
                 self.db.query(push_service.PushSubscription).delete()
                 self.db.commit()
+                # SQLite reuses the deleted row's id; forget the old instance so the next add does not clash.
+                self.db.expunge_all()
 
     def test_only_the_users_own_subscriptions_are_used(self):
         self.add_sub()
