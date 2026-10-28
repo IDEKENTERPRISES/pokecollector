@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 from api.auth import get_current_user
 from database import get_db
 from models import User, UserAchievement, UserEvent
+from services.progress import daily
 from services.progress.checkin import CheckinError, record_checkin
+from services.progress.state import mark_users_dirty
 
 router = APIRouter()
 
@@ -108,3 +110,68 @@ def mark_unlocks_seen(
         count += 1
     db.commit()
     return {"marked": count}
+
+
+def _requested_day(db: Session, user_id: int, value):
+    today = daily.local_today(daily.user_zone(db, user_id))
+    if value is None:
+        return today
+    try:
+        return daily.parse_local_date(value, today)
+    except CheckinError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/today")
+def today_card(
+    date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The Today card: streak, three quests, XP and level, the Pokémon of the day's ownership."""
+    day = _requested_day(db, current_user.id, date)
+    return daily.today_summary(db, current_user.id, day)
+
+
+class DayRequest(BaseModel):
+    date: Optional[str] = None
+
+
+@router.post("/daily/view")
+def view_pokemon_of_day(
+    body: DayRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The trainer looked at today's Pokémon: the "look at today's Pokémon" quest."""
+    day = _requested_day(db, current_user.id, body.date)
+    daily.set_activity_flag(db, current_user.id, day, "viewed", True)
+    db.commit()
+    return daily.today_summary(db, current_user.id, day)
+
+
+class WtpAnswer(BaseModel):
+    date: str
+    dex_id: int
+
+
+@router.post("/wtp/answer")
+def answer_wtp(
+    body: WtpAnswer,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Record the trainer's one try at Who's That Pokémon. The first answer for a date wins, so
+    replaying an offline result is harmless."""
+    from services.progress.wtp import wtp_species
+
+    day = _requested_day(db, current_user.id, body.date)
+    answer = wtp_species(day)
+    correct = body.dex_id == answer
+    daily.set_activity_flag(db, current_user.id, day, "wtp", {"dex_id": body.dex_id, "correct": correct})
+    row = daily.activity_row(db, current_user.id, day)
+    stored = (row.data or {}).get("wtp") or {}
+    db.commit()
+    mark_users_dirty(db, [current_user.id])
+    summary = daily.today_summary(db, current_user.id, day)
+    return {"correct": bool(stored.get("correct")), "answer": answer, "chosen": stored.get("dex_id"), "today": summary}

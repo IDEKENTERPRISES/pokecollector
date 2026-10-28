@@ -13,8 +13,9 @@ import { CardModal } from '../components/CardItem'
 import { TrainerAvatar, countLabel, PODIUM_TYPES } from './socialParts'
 
 const NAV_BAR = {}
-const SORT_OPTIONS = ['total_value', 'total_cards', 'unique_cards', 'sets_completed', 'pnl']
+const SORT_OPTIONS = ['xp', 'total_value', 'total_cards', 'unique_cards', 'sets_completed', 'pnl']
 const SORT_LABEL_KEYS = {
+  xp: 'level',
   total_value: 'value',
   total_cards: 'cards',
   unique_cards: 'uniqueCards',
@@ -92,6 +93,7 @@ export default function Leaderboard() {
             const summary = [
               t('leaderboard.rankLabel').replace('{rank}', rank),
               trainer.username,
+              t('leaderboard.levelShort').replace('{level}', trainer.level ?? 1),
               `${t('leaderboard.value')} ${value}`,
             ].join(', ')
             const header = (
@@ -110,6 +112,9 @@ export default function Leaderboard() {
                 <span className="min-w-0 flex-1 text-left">
                   <span className="block break-words text-headline text-text-primary">{trainer.username}</span>
                   <span className="block text-footnote text-text-secondary">{trainer.role}</span>
+                </span>
+                <span className="flex-shrink-0 rounded-full bg-fill-tertiary px-2 py-0.5 text-footnote font-semibold tabular-nums text-text-primary" data-testid="leaderboard-level">
+                  {t('leaderboard.levelShort').replace('{level}', trainer.level ?? 1)}
                 </span>
                 <span className="flex-shrink-0 text-body font-semibold text-yellow tabular-nums">{value}</span>
                 {!isSelf && <ChevronRight size={18} strokeWidth={2.25} className="flex-shrink-0 text-text-tertiary" aria-hidden="true" />}

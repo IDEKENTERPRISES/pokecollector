@@ -8,7 +8,9 @@ import {
   getInvestmentTracker,
   getPokedexSummary,
   getProfile,
+  getTodaySummary,
 } from '../api/client'
+import { localDateString } from '../progress/checkin'
 import GymBadges from '../components/ios/GymBadges'
 import HideValuesToggle from '../components/ios/HideValuesToggle'
 import LargeTitle from '../components/ios/LargeTitle'
@@ -73,6 +75,13 @@ export default function Profile() {
     queryFn: () => getAchievements(user.id, { price_field: pricePrimaryField }).then(r => r.data),
     enabled: Boolean(user?.id),
   })
+  const { data: todaySummary } = useQuery({
+    queryKey: ['today-card', user?.id, localDateString()],
+    queryFn: () => getTodaySummary(localDateString()),
+    enabled: Boolean(user?.id),
+    staleTime: 30 * 1000,
+    retry: false,
+  })
   const { data: customMatches = [] } = useQuery({
     queryKey: ['custom-matches'],
     queryFn: () => getCustomMatches().then(r => r.data),
@@ -114,6 +123,7 @@ export default function Profile() {
           }}
           stats={stats}
           badges={badges}
+          level={todaySummary?.xp}
           className="mt-1"
         />
       </LargeTitle>

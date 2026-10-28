@@ -25,6 +25,7 @@ try:
         UserDailyActivity,
         UserEvent,
         UserSetting,
+        UserXpLedger,
     )
     from services.binder_slots import delete_slots_for_entries
     from services.progress import listeners
@@ -507,6 +508,7 @@ class CascadeTests(ProgressTestBase):
             UserEvent(user_id=victim.id, kind="big_pull", occurred_at=now, dedupe_key="x", payload={}),
             UserDailyActivity(user_id=victim.id, local_date=now.date()),
             UserAchievement(user_id=victim.id, achievement_id="first_card", unlocked_at=now),
+            UserXpLedger(user_id=victim.id, source="quest", source_key="k", amount=10),
             UserEvent(user_id=self.user.id, kind="big_pull", occurred_at=now, dedupe_key="x", payload={}),
         ])
         self.db.commit()
@@ -517,7 +519,7 @@ class CascadeTests(ProgressTestBase):
         self.assertEqual(response.status_code, 200, response.text)
 
         self.db.expire_all()
-        for model in (ProgressState, UserEvent, UserDailyActivity, UserAchievement):
+        for model in (ProgressState, UserEvent, UserDailyActivity, UserAchievement, UserXpLedger):
             self.assertEqual(self.db.query(model).filter(model.user_id == victim_id).count(), 0, model.__name__)
         self.assertEqual(self.db.query(BinderSlot).count(), 0)
         self.assertEqual(self.db.query(UserEvent).filter_by(user_id=self.user.id).count(), 1)

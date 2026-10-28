@@ -393,6 +393,12 @@ def get_leaderboard(
     current_user: User = Depends(get_current_user),
 ):
     stats = _load_user_stats(db, price_field=price_field)
+    from services.progress.xp import level_info, totals_for
+
+    totals = totals_for(db, list(stats))
+    for user_id, entry in stats.items():
+        info = level_info(totals.get(user_id, 0))
+        entry["xp"], entry["level"] = info["xp"], info["level"]
     leaderboard = sorted(
         stats.values(),
         key=lambda entry: (entry["total_value"], entry["total_cards"], entry["unique_cards"]),
