@@ -258,7 +258,12 @@ def _leased_items(db: Session, claim: ClaimedScanItem) -> list[ScanJobItem]:
 
 def _refresh_job_status(db: Session, job: ScanJob, now: datetime.datetime) -> None:
     finished_now = False
-    statuses = [row[0] for row in db.query(ScanJobItem.status).filter(ScanJobItem.job_id == job.id).all()]
+    # The caller has just changed item statuses in this session. SessionLocal runs with
+    # autoflush off, so without this the query below would still see the old ("processing")
+    # status of those items, the job would never be marked finished and no "scans ready"
+    # push would be queued.
+    db.flush()
+    statuses =[row[0] for row in db.query(ScanJobItem.status).filter(ScanJobItem.job_id == job.id).all()]
     if not statuses:
         job.status = "failed"
         job.error_message = "The scan job contains no photos."

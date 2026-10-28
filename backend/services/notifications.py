@@ -178,6 +178,11 @@ def send_time_for_instant(db: Session, user_id: int, now: datetime.datetime) -> 
 # --- queue ------------------------------------------------------------------------------
 
 
+def _log(event: str, category: str, user_id: int, subject_key: str, reason: str) -> None:
+    """One INFO line per queue decision. Never the payload, a card name or a push endpoint."""
+    logger.info("Notification %s: category=%s user=%s subject=%s %s", event, category, user_id, subject_key, reason)
+
+
 def enqueue(
     db: Session,
     user_id: int,
@@ -194,6 +199,7 @@ def enqueue(
     """
     now = now or datetime.datetime.utcnow()
     if not category_enabled(db, user_id, category):
+        _log("not queued", category, user_id, subject_key, "category_off")
         return False
     seen = db.query(NotificationQueue).filter(
         NotificationQueue.user_id == user_id,
@@ -203,11 +209,13 @@ def enqueue(
     if repeat_days is not None:
         seen = seen.filter(NotificationQueue.created_at > now - datetime.timedelta(days=repeat_days))
     if seen.first() is not None:
+        _log("not queued", category, user_id, subject_key, "duplicate")
         return False
     send_after = send_time_for_instant(db, user_id, now) if CATEGORIES[category].timing == INSTANT else now
     db.add(NotificationQueue(
         user_id=user_id, category=category, subject_key=subject_key, created_at=now, send_after=send_after,
     ))
+    _log("queued", category, user_id, subject_key, f"send_after={send_after.isoformat()}")
     return True
 
 
@@ -375,11 +383,20 @@ def _mark_sent(rows, now: datetime.datetime) -> None:
         row.sent_at = now
 
 
-def _send(db: Session, user_id: int, payload: str) -> None:
+def _send(db: Session, user_id: int, payload: str) -> dict | None:
+    """Send to the user's devices. Returns the `send_to_user` counts, or None when it raised."""
     try:
-        push.send_to_user(db, user_id, payload)
+        return push.send_to_user(db, user_id, payload)
     except Exception:
         logger.exception("Web push failed for user %s", user_id)
+        return None
+
+
+def _sent_reason(outcome: dict | None) -> str:
+    if outcome is None:
+        return "send_failed"
+    delivered = "" if outcome.get("sent") else " (no device received it)"
+    return f"sent={outcome.get('sent', 0)} removed={outcome.get('removed', 0)}{delivered}"
 
 
 def flush_due(db: Session, now: datetime.datetime | None = None) -> dict:
@@ -411,33 +428,41 @@ def flush_due(db: Session, now: datetime.datetime | None = None) -> dict:
 
 
 def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, result: dict) -> None:
-    if quiet_hours_enabled(db, row.user_id):
-        zone = user_zone(db, row.user_id)
+    category, user_id, subject = row.category, row.user_id, row.subject_key
+    if quiet_hours_enabled(db, user_id):
+        zone = user_zone(db, user_id)
         if in_quiet_hours(now, zone):
             row.send_after = quiet_hours_end(now, zone)
+            _log("deferred", category, user_id, subject, f"reason=quiet_hours until={row.send_after.isoformat()}")
             return
-    count = scans_needing_review(db, row.user_id) if row.category == "scans_ready" else 0
+    count = scans_needing_review(db, user_id) if category == "scans_ready" else 0
     row.sent_at = now
-    if not category_enabled(db, row.user_id, row.category):
+    if not category_enabled(db, user_id, category):
+        _log("skipped", category, user_id, subject, "reason=category_off")
         return
-    if row.category == "scans_ready":
+    if category == "scans_ready":
         if count <= 0:  # already reviewed
+            _log("skipped", category, user_id, subject, "reason=already_reviewed")
             return
-        _send(db, row.user_id, build_scans_payload(count))
+        outcome = _send(db, user_id, build_scans_payload(count))
         result["instant"] += 1
-    elif row.category == "wishlist_alerts":
-        card = db.query(Card).filter(Card.id == row.subject_key.split("card:", 1)[-1]).first()
-        _send(db, row.user_id, push.build_price_alert_payload(card.name if card else ""))
+        _log("flushed", category, user_id, subject, f"{_sent_reason(outcome)} to_review={count}")
+    elif category == "wishlist_alerts":
+        card = db.query(Card).filter(Card.id == subject.split("card:", 1)[-1]).first()
+        outcome = _send(db, user_id, push.build_price_alert_payload(card.name if card else ""))
         result["instant"] += 1
-    elif row.category == "badges":
-        achievement_id = row.subject_key.split("badge:", 1)[-1]
+        _log("flushed", category, user_id, subject, _sent_reason(outcome))
+    elif category == "badges":
+        achievement_id = subject.split("badge:", 1)[-1]
         pending = db.query(UserAchievement).filter_by(
-            user_id=row.user_id, achievement_id=achievement_id, seen_at=None
+            user_id=user_id, achievement_id=achievement_id, seen_at=None
         ).first()
         if pending is None:  # the trainer already saw the sheet
+            _log("skipped", category, user_id, subject, "reason=sheet_already_seen")
             return
-        _send(db, row.user_id, build_badge_payload())
+        outcome = _send(db, user_id, build_badge_payload())
         result["instant"] += 1
+        _log("flushed", category, user_id, subject, _sent_reason(outcome))
 
 
 def _flush_digest(db: Session, user_id: int, rows, now: datetime.datetime, result: dict) -> None:
@@ -447,8 +472,10 @@ def _flush_digest(db: Session, user_id: int, rows, now: datetime.datetime, resul
     today = local.date().isoformat()
     # Only inside the daily window (digest hour up to quiet hours) and at most once a day.
     if not (hour <= local.hour < QUIET_START_HOUR):
+        logger.info("Digest waiting for the daily window: user=%s entries=%s reason=outside_window", user_id, len(rows))
         return
     if _setting(db, user_id, LAST_DIGEST_KEY) == today:
+        logger.info("Digest waiting for tomorrow: user=%s entries=%s reason=already_sent_today", user_id, len(rows))
         return
     counts: dict[str, int] = {}
     for row in rows:
@@ -457,9 +484,14 @@ def _flush_digest(db: Session, user_id: int, rows, now: datetime.datetime, resul
     _mark_sent(rows, now)
     payload = build_digest_payload(counts)
     if payload:
-        _send(db, user_id, payload)
+        outcome = _send(db, user_id, payload)
         _set_setting(db, user_id, LAST_DIGEST_KEY, today)
         result["digests"] += 1
+        logger.info(
+            "Digest flushed: user=%s categories=%s %s", user_id, ",".join(sorted(counts)), _sent_reason(outcome)
+        )
+    else:
+        logger.info("Digest skipped: user=%s entries=%s reason=all_categories_off", user_id, len(rows))
 
 
 def job_needs_review(db: Session, job_id: int) -> bool:
@@ -476,7 +508,10 @@ def on_scan_job_finished(db: Session, job, now: datetime.datetime | None = None)
     """A scan job reached "needs review". Queues one push per job; never raises into the scan queue."""
     try:
         with db.begin_nested():
-            if job_needs_review(db, job.id):
+            needs_review = job_needs_review(db, job.id)
+            if needs_review:
                 notify_scans_ready(db, job.user_id, job.id, now=now)
+            else:
+                _log("not queued", "scans_ready", job.user_id, f"job:{job.id}", "reason=nothing_to_review")
     except Exception:
         logger.exception("Could not queue the scans-ready notification for job %s", getattr(job, "id", None))
