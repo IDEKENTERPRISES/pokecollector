@@ -417,3 +417,76 @@ test('Reduce Motion keeps a still, translucent sheen in the sheet and the zoom',
   await expect(zoom.getByTestId('zoom-holo').locator('.holo-shine')).toHaveCount(1)
   expect(await zoom.getByTestId('zoom-holo').evaluate(el => el.getAnimations({ subtree: true }).length)).toBe(0)
 })
+
+// ---------------------------------------------------------------------------------------------
+// Texture scale: the foil's tile sizes follow the rendered card, so the zoomed (bigger) card shows
+// the same number of repeats as the card in the sheet instead of many more. Computed styles only:
+// no screenshots, so it stays fast and never waits for the idle sheen to be "stable".
+// ---------------------------------------------------------------------------------------------
+
+// The first tile of the patterned layer: pokeball-reverse is a mask, the others tile their first
+// background image.
+const PATTERN_TILES = [
+  { pattern: 'pokeball-reverse', property: 'mask' },
+  { pattern: 'cracked-ice', property: 'background' },
+  { pattern: 'v-full-art', property: 'background' },
+]
+
+// Computed tile size in px, the card's layout width (ignores the zoom overlay's CSS transform) and
+// the --holo-scale the app wrote.
+async function readTile(card, property) {
+  return card.evaluate((root, prop) => {
+    const style = getComputedStyle(root.querySelector('.holo-shine'))
+    const value = prop === 'mask' ? (style.maskSize || style.webkitMaskSize) : style.backgroundSize
+    return {
+      raw: value,
+      tile: parseFloat(value.split(/[ ,]/)[0]),
+      width: root.offsetWidth,
+      scale: parseFloat(root.style.getPropertyValue('--holo-scale')),
+    }
+  }, property)
+}
+
+test('foil textures scale with the card: the sheet and the zoom show the same number of repeats', async ({ page }, testInfo) => {
+  await installFixtures(page)
+  const { stage } = await openSheet(page)
+  await settledBox(stage)
+  const inSheet = {}
+  for (const { pattern, property } of PATTERN_TILES) {
+    await stage.evaluate((el, p) => el.setAttribute('data-foil', p), pattern)
+    inSheet[pattern] = await readTile(stage, property)
+  }
+
+  await stage.getByRole('button', { name: /Zoom image/ }).click()
+  const zoom = page.getByRole('dialog', { name: /Zoom image/ })
+  const card = zoom.getByTestId('zoom-holo')
+  await expect(card).toBeVisible()
+  // --holo-scale is the card's width over the 130 px reference; wait until it matches the zoom card.
+  await expect.poll(() => card.evaluate(el => Math.abs(parseFloat(el.style.getPropertyValue('--holo-scale')) * 130 - el.offsetWidth))).toBeLessThan(1)
+  const zoomWidth = await card.evaluate(el => el.offsetWidth)
+  console.log(`HOLO_SCALE ${testInfo.project.name}: sheet card ${inSheet['pokeball-reverse'].width}px, zoom card ${zoomWidth}px`)
+
+  for (const { pattern, property } of PATTERN_TILES) {
+    await card.evaluate((el, p) => el.setAttribute('data-foil', p), pattern)
+    const zoomed = await readTile(card, property)
+    const sheet = inSheet[pattern]
+    expect(sheet.tile, `${pattern} has a tile size in the sheet (${sheet.raw})`).toBeGreaterThan(0)
+    expect(zoomed.tile, `${pattern} has a tile size in the zoom (${zoomed.raw})`).toBeGreaterThan(0)
+    const sheetRepeats = sheet.tile / sheet.width
+    const zoomRepeats = zoomed.tile / zoomed.width
+    expect(
+      Math.abs(zoomRepeats / sheetRepeats - 1),
+      `${pattern}: tile / card width is ${sheetRepeats.toFixed(4)} in the sheet and ${zoomRepeats.toFixed(4)} zoomed`,
+    ).toBeLessThan(0.05)
+  }
+
+  // Zooming with + (or a pinch) enlarges the card with a CSS transform, which scales the painted
+  // textures by itself: the variable and the computed tile size must not change with it.
+  await card.evaluate(el => el.setAttribute('data-foil', 'pokeball-reverse'))
+  const before = await readTile(card, 'mask')
+  await zoom.getByRole('button', { name: /Zoom in/ }).click()
+  await expect.poll(() => card.evaluate(el => el.style.transform)).toContain('scale(1.75)')
+  const after = await readTile(card, 'mask')
+  expect(after.scale).toBe(before.scale)
+  expect(after.tile).toBeCloseTo(before.tile, 1)
+})

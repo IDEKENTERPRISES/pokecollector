@@ -6,6 +6,7 @@ import { useTilt } from '../../hooks/useTilt'
 import { CardArtworkFrame } from '../UnifiedCard'
 import { resolveFoilPattern } from './foilRules'
 import { holoEngine } from './holoEngine'
+import { useHoloScale } from './useHoloScale'
 import './holo.css'
 
 /**
@@ -28,6 +29,7 @@ export default function HoloViewer({
   const { t } = useSettings()
   const foil = resolveFoilPattern({ card, variant, printingDetails, foilPattern })
   const { ref, bind, reduced, motion } = useTilt()
+  useHoloScale(ref)
   const [flipped, setFlipped] = useState(false)
   const [flipping, setFlipping] = useState(false)
   const flipTimer = useRef(null)

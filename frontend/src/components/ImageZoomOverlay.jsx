@@ -5,6 +5,7 @@ import { useDialogBehavior } from './ui/dialogBehavior'
 import { useSettings } from '../contexts/SettingsContext'
 import { useTilt } from '../hooks/useTilt'
 import { holoEngine } from './holo/holoEngine'
+import { useHoloScale } from './holo/useHoloScale'
 import './holo/holo.css'
 
 const MIN_SCALE = 1
@@ -38,6 +39,8 @@ export default function ImageZoomOverlay({ src, alt = '', onClose, foil = null, 
   // The zoomed card carries the same foil as the sheet's artwork, as a resting sheen: panning and
   // pinching own the gestures here, so there is no tilt, only the variables the layers read.
   const { ref: foilRef } = useTilt({ enabled: false })
+  // Textures scale with the card's layout width (the pinch/+/- transform scales them by itself).
+  useHoloScale(foilRef, Boolean(foil))
   const [scale, setScale] = useState(MIN_SCALE)
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [showHint, setShowHint] = useState(true)
