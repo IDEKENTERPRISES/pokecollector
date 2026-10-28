@@ -5,6 +5,7 @@ import { useSettings } from '../../contexts/SettingsContext'
 import { useTilt } from '../../hooks/useTilt'
 import { CardArtworkFrame } from '../UnifiedCard'
 import { resolveFoilPattern } from './foilRules'
+import { holoEngine } from './holoEngine'
 import './holo.css'
 
 /**
@@ -49,6 +50,7 @@ export default function HoloViewer({
       data-testid="holo-stage"
       data-foil={foil.pattern || 'none'}
       data-foil-source={foil.source}
+      data-engine={holoEngine}
       data-supertype={String(card?.supertype || '').toLowerCase()}
       data-flipped={flipped ? 'true' : 'false'}
       {...bind}

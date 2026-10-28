@@ -15,7 +15,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 const MAX_TILT = 14 // degrees at the card edge
 const EASE_MS = 70 // time constant of the ease; frame-rate independent
-const REST_SHEEN = { px: 30, py: 20, op: 0.55 }
+const REST_SHEEN = { px: 30, py: 20, op: 0.5 }
+const ACTIVE_OPACITY = 0.75 // foil strength while dragging or tilting; never fully opaque, the art must show through
 const DRAG_SLOP = 6 // px before a press counts as a drag (and swallows the click that follows)
 
 export const prefersReducedMotion = () => (
@@ -99,7 +100,7 @@ export function useTilt({ enabled = true } = {}) {
     t.py = y * 100
     t.rx = (x - 0.5) * 2 * MAX_TILT
     t.ry = -(y - 0.5) * 2 * MAX_TILT
-    t.op = 1
+    t.op = ACTIVE_OPACITY
     wake()
   }, [wake])
 

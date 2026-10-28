@@ -9,6 +9,12 @@
   every texture (galaxy, glitter, grain, illusion, metal, geometric, ...) is a CSS gradient or a
   small generated SVG tile of our own, defined below as --tex-*.
 
+  Layering (see also holoEngine.js): the 3D rotation lives on .holo__rotator only. Inside it the
+  card face (.holo__front > the artwork) is one flat, isolated stacking context: no preserve-3d,
+  will-change or backface-visibility between the face and the shine/glare layers that blend with
+  the art. WebKit still drops mix-blend-mode inside a 3D-composited card, so there the foil is
+  built from plain translucent layers instead (the data-engine="webkit" block at the end).
+
   Nothing here animates by itself. Layers move only when the variables change (finger drag,
   device motion, mouse hover) and the flip has a one-shot transition.
 */
@@ -29,8 +35,12 @@
   --background-y: 40%;
   --rotate-x: 0deg;
   --rotate-y: 0deg;
-  --card-opacity: 0.55;
+  --card-opacity: 0.5;
   --flip: 0deg;
+
+  /* The dark end of the gradients. The blend-mode foil needs real black; the WebKit foil (see
+     the data-engine block at the end) swaps it for transparent so it can never paint over the art. */
+  --dark: #000;
 
   /* Where the artwork sits on a Pokémon card and on a trainer card (reverse holo and plain holo
      only shine inside / outside this window). */
@@ -77,17 +87,29 @@
 
 .holo__rotator {
   position: relative;
-  transform-style: preserve-3d;
+  /* Flat while the card rests or tilts, so the foil blends with the art in one flat context.
+     Only a flip needs the two faces in a shared 3D space. */
+  transform-style: flat;
   transform: rotateY(calc(var(--flip) + var(--rotate-x))) rotateX(var(--rotate-y));
 }
+.holo.is-flipping .holo__rotator,
+.holo[data-flipped="true"] .holo__rotator { transform-style: preserve-3d; }
 
 .holo.is-flipping .holo__rotator { transition: transform 0.55s cubic-bezier(0.3, 0.8, 0.3, 1); }
 
-.holo__front,
-.holo__back {
+.holo__front { position: relative; isolation: isolate; }
+/* The artwork is the stacking context the foil blends inside. */
+.holo .unified-card-art { isolation: isolate; }
+
+/* Back-face culling only while a flip needs it; at rest the hidden face is simply not painted. */
+.holo.is-flipping .holo__front,
+.holo.is-flipping .holo__back,
+.holo[data-flipped="true"] .holo__front,
+.holo[data-flipped="true"] .holo__back {
   -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
 }
+.holo[data-flipped="false"]:not(.is-flipping) .holo__back { visibility: hidden; }
 
 .holo__back {
   position: absolute;
@@ -124,7 +146,7 @@
   pointer-events: none;
 }
 
-.holo-shine { z-index: 12; overflow: hidden; opacity: var(--card-opacity); mix-blend-mode: color-dodge; filter: brightness(0.85) contrast(2.2) saturate(0.7); }
+.holo-shine { z-index: 12; overflow: hidden; opacity: calc(var(--card-opacity) * 0.7); mix-blend-mode: color-dodge; filter: brightness(0.85) contrast(2.2) saturate(0.7); }
 .holo-shine::before,
 .holo-shine::after { content: ""; }
 .holo-glare {
@@ -142,7 +164,7 @@
 .holo[data-foil="holo"] .holo-shine {
   --scan: 1px;
   clip-path: var(--window);
-  background-image: var(--rainbow), repeating-linear-gradient(90deg, #000 0 calc(var(--scan) * 2), #666 calc(var(--scan) * 2) calc(var(--scan) * 4));
+  background-image: var(--rainbow), repeating-linear-gradient(90deg, var(--dark) 0 calc(var(--scan) * 2), #666 calc(var(--scan) * 2) calc(var(--scan) * 4));
   background-position: calc(((50% - var(--background-x)) * 2.6) + 50%) calc(((50% - var(--background-y)) * 3.5) + 50%), center;
   background-size: 400% 400%, cover;
   background-blend-mode: overlay;
@@ -150,14 +172,14 @@
 }
 .holo[data-foil="holo"] .holo-shine::before {
   --bars: 3%;
-  background-image: repeating-linear-gradient(90deg, #000 calc(var(--bars) * 2), hsl(0 0% 70%) calc(var(--bars) * 3), #000 calc(var(--bars) * 3.5), hsl(0 0% 70%) calc(var(--bars) * 4), #000 calc(var(--bars) * 5), #000 calc(var(--bars) * 14));
+  background-image: repeating-linear-gradient(90deg, var(--dark) calc(var(--bars) * 2), hsl(0 0% 70%) calc(var(--bars) * 3), var(--dark) calc(var(--bars) * 3.5), hsl(0 0% 70%) calc(var(--bars) * 4), var(--dark) calc(var(--bars) * 5), var(--dark) calc(var(--bars) * 14));
   background-position: calc(((50% - var(--background-x)) * 1.65) + 50%) var(--background-x);
   background-size: 200% 200%;
   mix-blend-mode: hard-light;
   filter: brightness(1.15) contrast(1.1);
 }
 .holo[data-foil="holo"] .holo-shine::after {
-  background-image: radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(0, 0%, 90%, 0.8) 0%, hsla(0, 0%, 78%, 0.1) 25%, #000 90%);
+  background-image: radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(0, 0%, 90%, 0.8) 0%, hsla(0, 0%, 78%, 0.1) 25%, var(--dark) 90%);
   mix-blend-mode: luminosity;
   filter: brightness(0.6) contrast(4);
 }
@@ -169,8 +191,8 @@
 .holo[data-foil="pokeball-reverse"] .holo-shine {
   clip-path: var(--window-out);
   background-image:
-    radial-gradient(circle at var(--pointer-x) var(--pointer-y), #fff 5%, #000 50%, #fff 80%),
-    linear-gradient(-45deg, #000 15%, #fff, #000 85%),
+    radial-gradient(circle at var(--pointer-x) var(--pointer-y), #fff 5%, var(--dark) 50%, #fff 80%),
+    linear-gradient(-45deg, var(--dark) 15%, #fff, var(--dark) 85%),
     var(--tex-metal);
   background-blend-mode: soft-light, difference;
   background-size: 120% 120%, 200% 200%, cover;
@@ -195,7 +217,7 @@
 /* ---------- cracked-ice (no upstream equivalent: shards over rainbow) ---------- */
 
 .holo[data-foil="cracked-ice"] .holo-shine {
-  background-image: var(--tex-cracks), var(--rainbow), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(190, 100%, 90%, 0.9), hsla(200, 40%, 50%, 0.2) 45%, #000 120%);
+  background-image: var(--tex-cracks), var(--rainbow), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(190, 100%, 90%, 0.9), hsla(200, 40%, 50%, 0.2) 45%, var(--dark) 120%);
   background-size: 130px 130px, 300% 300%, cover;
   background-position: calc(var(--pointer-from-left) * 40px) calc(var(--pointer-from-top) * 40px), calc(((50% - var(--background-x)) * 2) + 50%) calc(((50% - var(--background-y)) * 2) + 50%), center;
   background-blend-mode: overlay, soft-light, normal;
@@ -218,7 +240,7 @@
   background-image:
     var(--tex-galaxy),
     repeating-linear-gradient(82deg, hsl(53, 65%, 60%) calc(var(--space) * 1), hsl(93, 56%, 50%) calc(var(--space) * 2), hsl(176, 54%, 49%) calc(var(--space) * 3), hsl(228, 59%, 55%) calc(var(--space) * 4), hsl(283, 60%, 55%) calc(var(--space) * 5), hsl(326, 59%, 51%) calc(var(--space) * 6), hsl(326, 59%, 51%) calc(var(--space) * 7), hsl(283, 60%, 55%) calc(var(--space) * 8), hsl(228, 59%, 55%) calc(var(--space) * 9), hsl(176, 54%, 49%) calc(var(--space) * 10), hsl(93, 56%, 50%) calc(var(--space) * 11), hsl(53, 65%, 60%) calc(var(--space) * 12)),
-    radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(180, 100%, 89%, 0.5) 5%, hsla(180, 14%, 57%, 0.3) 40%, #000 130%);
+    radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(180, 100%, 89%, 0.5) 5%, hsla(180, 14%, 57%, 0.3) 40%, var(--dark) 130%);
   background-size: 320px 320px, 400% 900%, cover;
   background-blend-mode: color-burn, multiply;
 }
@@ -241,7 +263,7 @@
 /* ---------- etched (trainer-full-art.css: ridged texture over rainbow) ---------- */
 
 .holo[data-foil="etched"] .holo-shine {
-  background-image: var(--tex-etch), var(--rainbow), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(0, 0%, 100%, 0.85), hsla(0, 0%, 40%, 0.2) 50%, #000 120%);
+  background-image: var(--tex-etch), var(--rainbow), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(0, 0%, 100%, 0.85), hsla(0, 0%, 40%, 0.2) 50%, var(--dark) 120%);
   background-size: 6px 6px, 300% 300%, cover;
   background-position: center, calc(((50% - var(--background-x)) * 1.8) + 50%) calc(((50% - var(--background-y)) * 1.8) + 50%), center;
   background-blend-mode: soft-light, overlay, normal;
@@ -251,7 +273,7 @@
 /* ---------- rainbow (rainbow-holo.css) ---------- */
 
 .holo[data-foil="rainbow"] .holo-shine {
-  background-image: var(--tex-glitter), var(--rainbow), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(0, 0%, 100%, 0.7), hsla(0, 0%, 30%, 0.2) 50%, #000 120%);
+  background-image: var(--tex-glitter), var(--rainbow), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(0, 0%, 100%, 0.7), hsla(0, 0%, 30%, 0.2) 50%, var(--dark) 120%);
   background-size: 180px 180px, 360% 360%, cover;
   background-position: calc(var(--pointer-from-left) * 50px) calc(var(--pointer-from-top) * 50px), calc(((50% - var(--background-x)) * 2.4) + 50%) calc(((50% - var(--background-y)) * 2.4) + 50%), center;
   background-blend-mode: overlay, soft-light, normal;
@@ -261,7 +283,7 @@
 /* ---------- gold (secret-rare.css: gold with glitter and geometric lines) ---------- */
 
 .holo[data-foil="gold"] .holo-shine {
-  background-image: var(--tex-glitter), var(--tex-geometric), linear-gradient(115deg, #7a5600, #ffe27a 30%, #b88300 50%, #fff3b0 70%, #8a6000), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(45, 80%, 50%, 0.2) 45%, #000 130%);
+  background-image: var(--tex-glitter), var(--tex-geometric), linear-gradient(115deg, #7a5600, #ffe27a 30%, #b88300 50%, #fff3b0 70%, #8a6000), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(45, 80%, 50%, 0.2) 45%, var(--dark) 130%);
   background-size: 180px 180px, 90px 90px, 260% 260%, cover;
   background-position: calc(var(--pointer-from-left) * 60px) calc(var(--pointer-from-top) * 60px), center, calc(var(--pointer-from-left) * 100%) calc(var(--pointer-from-top) * 100%), center;
   background-blend-mode: overlay, soft-light, multiply, normal;
@@ -272,7 +294,7 @@
 /* ---------- radiant (radiant-holo.css) ---------- */
 
 .holo[data-foil="radiant"] .holo-shine {
-  background-image: var(--tex-ribs), repeating-linear-gradient(90deg, hsl(2, 100%, 73%), hsl(53, 100%, 69%), hsl(93, 100%, 69%), hsl(176, 100%, 76%), hsl(228, 100%, 74%), hsl(283, 100%, 73%), hsl(2, 100%, 73%)), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(0, 0%, 40%, 0.2) 50%, #000 120%);
+  background-image: var(--tex-ribs), repeating-linear-gradient(90deg, hsl(2, 100%, 73%), hsl(53, 100%, 69%), hsl(93, 100%, 69%), hsl(176, 100%, 76%), hsl(228, 100%, 74%), hsl(283, 100%, 73%), hsl(2, 100%, 73%)), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(0, 0%, 40%, 0.2) 50%, var(--dark) 120%);
   background-size: 8px 8px, 200% 100%, cover;
   background-position: center, calc(var(--pointer-from-left) * 100%) 0, center;
   background-blend-mode: soft-light, overlay, normal;
@@ -282,7 +304,7 @@
 /* ---------- amazing (amazing-rare.css: swirling rainbow) ---------- */
 
 .holo[data-foil="amazing"] .holo-shine {
-  background-image: var(--tex-glitter), conic-gradient(from calc(var(--pointer-from-left) * 360deg) at var(--pointer-x) var(--pointer-y), #ff5c8a, #ffd45c, #5cffb0, #5cb8ff, #b05cff, #ff5c8a), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(0, 0%, 30%, 0.2) 50%, #000 120%);
+  background-image: var(--tex-glitter), conic-gradient(from calc(var(--pointer-from-left) * 360deg) at var(--pointer-x) var(--pointer-y), #ff5c8a, #ffd45c, #5cffb0, #5cb8ff, #b05cff, #ff5c8a), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(0, 0%, 30%, 0.2) 50%, var(--dark) 120%);
   background-size: 160px 160px, cover, cover;
   background-position: calc(var(--pointer-from-left) * 40px) calc(var(--pointer-from-top) * 40px), center, center;
   background-blend-mode: overlay, soft-light, normal;
@@ -292,7 +314,7 @@
 /* ---------- v-full-art (v-full-art.css: rainbow over an illusion pattern) ---------- */
 
 .holo[data-foil="v-full-art"] .holo-shine {
-  background-image: var(--tex-illusion), var(--rainbow), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(0, 0%, 100%, 0.8), hsla(0, 0%, 30%, 0.2) 50%, #000 120%);
+  background-image: var(--tex-illusion), var(--rainbow), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(0, 0%, 100%, 0.8), hsla(0, 0%, 30%, 0.2) 50%, var(--dark) 120%);
   background-size: 240px 240px, 300% 300%, cover;
   background-position: calc(var(--pointer-from-left) * 120px) calc(var(--pointer-from-top) * 120px), calc(((50% - var(--background-x)) * 2) + 50%) calc(((50% - var(--background-y)) * 2) + 50%), center;
   background-blend-mode: soft-light, overlay, normal;
@@ -302,7 +324,7 @@
 /* ---------- vmax (v-max.css) ---------- */
 
 .holo[data-foil="vmax"] .holo-shine {
-  background-image: var(--tex-stars), var(--tex-ribs), linear-gradient(160deg, #1d2a7a, #7a3cff 45%, #ff5cae 70%, #2a2fa0), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(280, 60%, 50%, 0.2) 50%, #000 120%);
+  background-image: var(--tex-stars), var(--tex-ribs), linear-gradient(160deg, #1d2a7a, #7a3cff 45%, #ff5cae 70%, #2a2fa0), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(280, 60%, 50%, 0.2) 50%, var(--dark) 120%);
   background-size: 200px 200px, 10px 10px, 220% 220%, cover;
   background-position: calc(var(--pointer-from-left) * 80px) calc(var(--pointer-from-top) * 80px), center, calc(var(--pointer-from-left) * 100%) calc(var(--pointer-from-top) * 100%), center;
   background-blend-mode: overlay, soft-light, multiply, normal;
@@ -312,7 +334,7 @@
 /* ---------- vstar (v-star.css: gold-pink with a diamond pattern) ---------- */
 
 .holo[data-foil="vstar"] .holo-shine {
-  background-image: var(--tex-stars), var(--tex-diamonds), linear-gradient(115deg, #fff3b0, #ffb84d 35%, #d98cff 65%, #fff3b0), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(40, 70%, 50%, 0.2) 50%, #000 120%);
+  background-image: var(--tex-stars), var(--tex-diamonds), linear-gradient(115deg, #fff3b0, #ffb84d 35%, #d98cff 65%, #fff3b0), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(40, 70%, 50%, 0.2) 50%, var(--dark) 120%);
   background-size: 200px 200px, 28px 28px, 260% 260%, cover;
   background-position: calc(var(--pointer-from-left) * 60px) calc(var(--pointer-from-top) * 60px), center, calc(var(--pointer-from-left) * 100%) calc(var(--pointer-from-top) * 100%), center;
   background-blend-mode: overlay, soft-light, multiply, normal;
@@ -323,7 +345,7 @@
 
 .holo[data-foil="trainer-gallery"] .holo-shine {
   clip-path: var(--window);
-  background-image: var(--tex-glitter), var(--rainbow), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(0, 0%, 30%, 0.2) 50%, #000 120%);
+  background-image: var(--tex-glitter), var(--rainbow), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(0, 0%, 30%, 0.2) 50%, var(--dark) 120%);
   background-size: 160px 160px, 300% 300%, cover;
   background-position: calc(var(--pointer-from-left) * 40px) calc(var(--pointer-from-top) * 40px), calc(((50% - var(--background-x)) * 2) + 50%) calc(((50% - var(--background-y)) * 2) + 50%), center;
   background-blend-mode: overlay, soft-light, normal;
@@ -333,7 +355,7 @@
 /* ---------- shiny (shiny-rare.css: illusion rings and sparkles) ---------- */
 
 .holo[data-foil="shiny"] .holo-shine {
-  background-image: var(--tex-stars), var(--tex-illusion), linear-gradient(135deg, #bfe9ff, #fff6c8 45%, #ffc8f4 75%, #bfe9ff), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(0, 0%, 40%, 0.2) 50%, #000 120%);
+  background-image: var(--tex-stars), var(--tex-illusion), linear-gradient(135deg, #bfe9ff, #fff6c8 45%, #ffc8f4 75%, #bfe9ff), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(0, 0%, 40%, 0.2) 50%, var(--dark) 120%);
   background-size: 180px 180px, 200px 200px, 240% 240%, cover;
   background-position: calc(var(--pointer-from-left) * 70px) calc(var(--pointer-from-top) * 70px), calc(var(--pointer-from-left) * -80px) calc(var(--pointer-from-top) * -80px), calc(var(--pointer-from-left) * 100%) calc(var(--pointer-from-top) * 100%), center;
   background-blend-mode: overlay, soft-light, multiply, normal;
@@ -344,7 +366,7 @@
 
 .holo[data-foil="illustration-rare"] .holo-shine,
 .holo[data-foil="special-illustration"] .holo-shine {
-  background-image: var(--tex-grain), var(--tex-etch), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(40, 80%, 92%, 0.9), hsla(40, 20%, 40%, 0.2) 50%, #000 120%);
+  background-image: var(--tex-grain), var(--tex-etch), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(40, 80%, 92%, 0.9), hsla(40, 20%, 40%, 0.2) 50%, var(--dark) 120%);
   background-size: 160px 160px, 5px 5px, cover;
   background-position: calc(var(--pointer-from-left) * 30px) calc(var(--pointer-from-top) * 30px), center, center;
   background-blend-mode: overlay, soft-light, normal;
@@ -359,6 +381,63 @@
   filter: brightness(1) contrast(1.4) saturate(0.8);
   opacity: 0.75;
 }
+
+/* ---------- WebKit: a translucent sheen that needs no backdrop blending ----------
+   WebKit paints blended layers inside a 3D-composited card as ordinary opaque layers (that was
+   the "everything looks opaque" report). So with data-engine="webkit" no layer uses mix-blend-mode
+   or filter: the pattern keeps its own internal background-blend-modes (those only mix the
+   layer's own gradients and work everywhere), every black stop is transparent, and the whole
+   layer is a low-opacity normal overlay, so the artwork always shows through. The light still
+   follows the finger, tilt and device motion because the same variables drive it. */
+
+.holo[data-engine="webkit"] {
+  --dark: transparent;
+  --foil-alpha: 0.5; /* shine opacity = --card-opacity (0.5 at rest, up to 0.75 while tilting) x this */
+  --glare-alpha: 0.5;
+  --tex-etch: repeating-linear-gradient(45deg, #fff 0 1px, transparent 1px 3px), repeating-linear-gradient(-45deg, #fff 0 1px, transparent 1px 3px);
+  --tex-illusion: repeating-radial-gradient(circle at 30% 25%, #fff 0 2px, transparent 2px 7px, #aaa 7px 11px);
+  --tex-geometric: repeating-linear-gradient(60deg, #fff 0 1px, transparent 1px 14px), repeating-linear-gradient(-60deg, #fff 0 1px, transparent 1px 14px);
+  --tex-metal: linear-gradient(115deg, #999, #eee 25%, #aaa 45%, #fff 62%, #999 80%, #ddd);
+  --tex-ribs: repeating-linear-gradient(90deg, #fff 0 2px, transparent 2px 6px);
+  --tex-diamonds: repeating-conic-gradient(from 45deg at 50% 50%, #fff 0 25%, transparent 0 50%);
+}
+
+.holo[data-engine="webkit"][data-foil] .holo-shine {
+  mix-blend-mode: normal;
+  filter: none;
+  opacity: calc(var(--card-opacity) * var(--foil-alpha));
+}
+.holo[data-engine="webkit"][data-foil] .holo-shine::before,
+.holo[data-engine="webkit"][data-foil] .holo-shine::after {
+  mix-blend-mode: normal;
+  filter: none;
+  opacity: 0.6;
+}
+/* The window-clipped and printed-pattern foils keep their clip and mask; just no blending. */
+.holo[data-engine="webkit"][data-foil] .holo-glare {
+  mix-blend-mode: normal;
+  filter: none;
+  background-image: radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(0, 0%, 100%, 0.9) 0%, hsla(0, 0%, 100%, 0.3) 30%, hsla(0, 0%, 100%, 0) 65%);
+  opacity: calc(var(--card-opacity) * var(--glare-alpha));
+}
+.holo[data-engine="webkit"][data-foil="gold"] .holo-glare {
+  background-image: radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(45, 100%, 85%, 0.9) 0%, hsla(45, 90%, 60%, 0.3) 30%, hsla(45, 90%, 60%, 0) 65%);
+}
+
+/* ---------- Zoom overlay card: the same foil on the enlarged image, resting sheen only ---------- */
+
+.holo--zoom {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(80vw, 480px, calc((100dvh - 9rem) * 0.714));
+  aspect-ratio: 2.5 / 3.5;
+  perspective: none;
+  isolation: isolate;
+  border-radius: 4.5% / 3.2%;
+  overflow: hidden;
+}
+.holo--zoom > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 
 /* ---------- Controls ---------- */
 

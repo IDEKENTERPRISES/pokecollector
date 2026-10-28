@@ -244,3 +244,171 @@ test('measures the frame rate during a drag', async ({ page, browserName }, test
   console.log(`HOLO_PERF ${testInfo.project.name} ${browserName} throttle=${process.env.HOLO_THROTTLE || 4}: ${stats.fps.toFixed(1)} fps, worst frame ${stats.worst.toFixed(0)} ms`)
   expect(stats.fps).toBeGreaterThan(20)
 })
+
+// ---------------------------------------------------------------------------------------------
+// Translucency: the foil may tint and sparkle, but the artwork must stay readable under it.
+// The fixture's artwork is /cardback.jpg, a detailed known image. Screenshot the artwork with the
+// foil layers hidden and with them showing, then compare the two in the page: the structure of the
+// art (luminance correlation) has to survive, and the average change has to stay small. An opaque
+// coat of paint (the WebKit blend-mode fallback bug) fails both.
+// ---------------------------------------------------------------------------------------------
+
+const ALL_PATTERNS = [
+  'holo', 'reverse', 'cracked-ice', 'cosmos', 'etched', 'rainbow', 'gold', 'pokeball-reverse', 'radiant',
+  'amazing', 'v-full-art', 'vmax', 'vstar', 'trainer-gallery', 'shiny', 'illustration-rare', 'special-illustration',
+]
+const MIN_ART_CORRELATION = 0.75
+const MAX_MEAN_DIFF = 50 // of 255, averaged over the artwork's pixels and channels
+
+async function waitForArt(locator) {
+  await expect.poll(() => locator.locator('img').first().evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true)
+}
+
+async function compareArtWithFoil(page, art, setFoil = () => {}) {
+  const layers = art.locator('.holo-shine, .holo-glare')
+  const setLayers = (visibility) => layers.evaluateAll((els, v) => els.forEach(el => { el.style.visibility = v }), visibility)
+  await setLayers('hidden')
+  await page.waitForTimeout(80)
+  const bare = (await art.screenshot({ animations: 'disabled' })).toString('base64')
+  await setFoil()
+  await setLayers('visible')
+  await page.waitForTimeout(80)
+  const foiled = (await art.screenshot({ animations: 'disabled' })).toString('base64')
+  return page.evaluate(async ([a, b]) => {
+    const load = async (b64) => {
+      const image = new Image()
+      image.src = `data:image/png;base64,${b64}`
+      await image.decode()
+      const canvas = document.createElement('canvas')
+      canvas.width = image.naturalWidth
+      canvas.height = image.naturalHeight
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(image, 0, 0)
+      return ctx.getImageData(0, 0, canvas.width, canvas.height).data
+    }
+    const [x, y] = await Promise.all([load(a), load(b)])
+    let diff = 0
+    const lx = []
+    const ly = []
+    for (let i = 0; i < x.length; i += 4) {
+      diff += (Math.abs(x[i] - y[i]) + Math.abs(x[i + 1] - y[i + 1]) + Math.abs(x[i + 2] - y[i + 2])) / 3
+      lx.push(0.299 * x[i] + 0.587 * x[i + 1] + 0.114 * x[i + 2])
+      ly.push(0.299 * y[i] + 0.587 * y[i + 1] + 0.114 * y[i + 2])
+    }
+    const n = lx.length
+    const mx = lx.reduce((s, v) => s + v, 0) / n
+    const my = ly.reduce((s, v) => s + v, 0) / n
+    let sxy = 0
+    let sxx = 0
+    let syy = 0
+    for (let i = 0; i < n; i += 1) {
+      sxy += (lx[i] - mx) * (ly[i] - my)
+      sxx += (lx[i] - mx) ** 2
+      syy += (ly[i] - my) ** 2
+    }
+    return { meanDiff: diff / n, correlation: sxy / Math.sqrt(sxx * syy || 1) }
+  }, [bare, foiled])
+}
+
+test('every foil pattern is a translucent sheen: the card art shows through it', async ({ page }, testInfo) => {
+  await installFixtures(page)
+  const { stage } = await openSheet(page)
+  await settledBox(stage)
+  const art = stage.locator('.unified-card-art')
+  await waitForArt(art)
+  for (const pattern of ALL_PATTERNS) {
+    const result = await compareArtWithFoil(page, art, () => stage.evaluate((el, p) => el.setAttribute('data-foil', p), pattern))
+    console.log(`HOLO_ART ${testInfo.project.name} ${pattern}: correlation ${result.correlation.toFixed(3)}, mean diff ${result.meanDiff.toFixed(1)}`)
+    expect(result.correlation, `${pattern} hides the art`).toBeGreaterThan(MIN_ART_CORRELATION)
+    expect(result.meanDiff, `${pattern} covers the art`).toBeLessThan(MAX_MEAN_DIFF)
+  }
+})
+
+test('at full tilt (drag and device motion) the foil is at its strongest and still not opaque', async ({ page }) => {
+  await installFixtures(page)
+  const { stage } = await openSheet(page)
+  const box = await settledBox(stage)
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width * 0.9, box.y + box.height * 0.1, { steps: 10 })
+  await expect.poll(async () => parseFloat(await cssVar(stage, '--card-opacity'))).toBeGreaterThan(0.7)
+  expect(parseFloat(await cssVar(stage, '--card-opacity'))).toBeLessThan(0.9)
+  const opacity = parseFloat(await stage.locator('.holo-shine').evaluate(el => getComputedStyle(el).opacity))
+  expect(opacity).toBeLessThan(0.9)
+  await page.mouse.up()
+})
+
+test('WebKit uses the translucent foil with no backdrop blending; the rest keep their blend modes', async ({ page, browserName }) => {
+  await installFixtures(page)
+  const { stage } = await openSheet(page)
+  const engine = browserName === 'webkit' ? 'webkit' : 'default'
+  await expect(stage).toHaveAttribute('data-engine', engine)
+  const styles = await Promise.all([stage.locator('.holo-shine'), stage.locator('.holo-glare')].map(l => l.evaluate((el) => {
+    const s = getComputedStyle(el)
+    return { blend: s.mixBlendMode, opacity: parseFloat(s.opacity), filter: s.filter }
+  })))
+  if (engine === 'webkit') {
+    for (const s of styles) {
+      expect(s.blend).toBe('normal')
+      expect(s.filter).toBe('none')
+      expect(s.opacity).toBeLessThanOrEqual(0.4)
+    }
+  } else {
+    expect(styles[0].blend).toBe('color-dodge')
+  }
+  // The 3D context is only on while a flip needs it: no preserve-3d between the face and the foil.
+  expect(await stage.locator('.holo__rotator').evaluate(el => getComputedStyle(el).transformStyle)).toBe('flat')
+  expect(await stage.locator('.holo__front').evaluate(el => getComputedStyle(el).willChange)).toBe('auto')
+})
+
+test('the zoom overlay shows the same foil on the enlarged card', async ({ page }) => {
+  await installFixtures(page)
+  const { stage } = await openSheet(page)
+  await settledBox(stage)
+  await stage.getByRole('button', { name: /Zoom image/ }).click()
+  const zoom = page.getByRole('dialog', { name: /Zoom image/ })
+  await expect(zoom).toBeVisible()
+  const card = zoom.getByTestId('zoom-holo')
+  await expect(card).toHaveAttribute('data-foil', 'holo')
+  await expect(card.locator('.holo-shine')).toHaveCount(1)
+  await expect(card.locator('.holo-glare')).toHaveCount(1)
+  await expect(card.locator('img')).toBeVisible()
+  await waitForArt(card)
+  const opacity = parseFloat(await card.locator('.holo-shine').evaluate(el => getComputedStyle(el).opacity))
+  expect(opacity).toBeGreaterThan(0)
+  expect(opacity).toBeLessThan(0.9)
+
+  // The foil layers cover exactly the image.
+  const imgBox = await card.locator('img').boundingBox()
+  const shineBox = await card.locator('.holo-shine').boundingBox()
+  expect(Math.abs(shineBox.width - imgBox.width)).toBeLessThan(2)
+  expect(Math.abs(shineBox.height - imgBox.height)).toBeLessThan(2)
+
+  // The art still shows through in the zoomed card.
+  const result = await compareArtWithFoil(page, card)
+  expect(result.correlation).toBeGreaterThan(MIN_ART_CORRELATION)
+  expect(result.meanDiff).toBeLessThan(MAX_MEAN_DIFF)
+
+  await page.keyboard.press('Escape')
+  await expect(zoom).toHaveCount(0)
+})
+
+test('Reduce Motion keeps a still, translucent sheen in the sheet and the zoom', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await installFixtures(page)
+  const { stage } = await openSheet(page)
+  await settledBox(stage)
+  const art = stage.locator('.unified-card-art')
+  await waitForArt(art)
+  const layer = stage.locator('.holo-shine')
+  await expect(layer).toHaveCount(1)
+  expect(parseFloat(await layer.evaluate(el => getComputedStyle(el).opacity))).toBeGreaterThan(0)
+  const result = await compareArtWithFoil(page, art)
+  expect(result.correlation).toBeGreaterThan(MIN_ART_CORRELATION)
+  expect(result.meanDiff).toBeLessThan(MAX_MEAN_DIFF)
+
+  await stage.getByRole('button', { name: /Zoom image/ }).click()
+  const zoom = page.getByRole('dialog', { name: /Zoom image/ })
+  await expect(zoom.getByTestId('zoom-holo').locator('.holo-shine')).toHaveCount(1)
+  expect(await zoom.getByTestId('zoom-holo').evaluate(el => el.getAnimations({ subtree: true }).length)).toBe(0)
+})
