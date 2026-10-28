@@ -290,6 +290,18 @@ class BinderUpdate(BaseModel):
     target_size: Optional[Literal[20, 40, 60]] = None
     icon_pokemon_id: Optional[int] = None
     is_public: Optional[bool] = None
+    pocket_layout: Optional[Literal[4, 9, 12]] = None
+
+
+class BinderSlotItem(BaseModel):
+    slot_index: int
+    binder_card_id: int
+    copy_index: int
+
+
+class BinderSlotsReplace(BaseModel):
+    version: str
+    slots: List[BinderSlotItem]
 
 
 class BinderCardUpdate(BaseModel):
@@ -319,6 +331,7 @@ class BinderResponse(BaseModel):
     card_count: int = 0
     unique_card_count: int = 0
     is_public: bool = False
+    pocket_layout: int = 9
 
     class Config:
         from_attributes = True
