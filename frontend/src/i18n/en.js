@@ -2336,6 +2336,22 @@ const en = {
   },
 
   // Achievements
+  notifyPrefs: {
+    categoriesTitle: 'What to notify me about',
+    scansReady: 'Scans ready to review',
+    scansReadyDesc: 'Sent right away, once per batch.',
+    newSets: 'New sets',
+    newSetsDesc: 'In the daily digest.',
+    wishlistDips: 'Wishlist dips',
+    wishlistDipsDesc: 'Cards at least 15 % below their 30-day average. In the daily digest.',
+    bigMovers: 'Big movers in your collection',
+    bigMoversDesc: 'Cards that moved by your price-alert percentage. In the daily digest.',
+    digestTime: 'Daily digest time',
+    digestTimeDesc: 'One notification a day, in your time zone.',
+    quietHours: 'Quiet hours',
+    quietHoursDesc: '22:00 to 08:00. Instant notifications wait until morning.',
+    badgeNote: 'The number on the app icon counts scans waiting for review.',
+  },
   pwa: {
     updateAvailable: 'A new version is available.',
     updateNow: 'Update',

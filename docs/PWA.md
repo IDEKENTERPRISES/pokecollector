@@ -72,6 +72,24 @@ Wishlist price alerts can also arrive as a notification, next to Telegram.
 
 Each device is enabled separately. If notifications stop, tap **Disable** and **Enable** again. A subscription the phone has dropped is removed from the server automatically the next time it fails. The server keeps its signing key in `./data/auth` (see [DEPLOYMENT.md](DEPLOYMENT.md)); losing it only means turning notifications on again. Details: [BACKEND.md](BACKEND.md#web-push).
 
+### Categories, daily digest and the icon number
+
+Once a device is enabled, Settings › Notifications lists what to be notified about (per trainer, in `user_settings` as `notify_<category>`):
+
+| Category | Default | When |
+|---|---|---|
+| Scans ready to review | on | right away, once per scan batch |
+| New sets | on | daily digest |
+| Wishlist dips (at least 15 % below the 30-day average and at least €1 lower; a card at most once a week) | on | daily digest |
+| Big movers in your collection (your price-alert percentage, default 10 %, and at least €2) | off | daily digest |
+
+- **Daily digest:** at most one push a day, at **Daily digest time** (default 18:00) in the phone's time zone (the server's time zone until the app has checked in). It lists counts only, never prices.
+- **Quiet hours** (22:00 to 08:00 local, on by default): an instant notification that falls inside waits until 08:00.
+- **Icon number:** the number on the Home Screen icon is the scans waiting for review. The app updates it on start, when it returns to the foreground and when scans change; a scans-ready push sets it too (`app_badge` in the payload). It needs notification permission and iOS 16.4 or later, and does nothing where the Badging API is missing. Informational notifications are never counted.
+- Telegram's new-sets message is now sent when a sync finds new sets (and `TELEGRAM_ENABLED=false` still silences it).
+
+Server side: `services/notifications.py` (queue table `notification_queue`, flushed every minute by the scheduler).
+
 ## Opening the app offline (cached sign-in)
 
 With `OFFLINE_QUEUE_ENABLED` on, the app remembers who was signed in (id, name, role, avatar; never the password or token) in this browser for up to 90 days. If the server cannot be reached when the app starts, it opens in a *degraded* state from that memory instead of the "Cannot reach PokéCollector" screen. The remembered user is only for display; the server checks every request. The app keeps retrying in the background and switches to normal as soon as the server answers. Without a remembered sign-in (first visit, after logout, expired, or a pending password change) the connection screen shows as before.
