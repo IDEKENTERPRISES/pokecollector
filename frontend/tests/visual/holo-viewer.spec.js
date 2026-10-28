@@ -265,15 +265,19 @@ async function waitForArt(locator) {
 }
 
 async function compareArtWithFoil(page, art, setFoil = () => {}) {
+  // A clipped page screenshot: an element screenshot waits for the card to be "stable", which the
+  // idle sheen never is on a slow CI runner.
+  const clip = await art.boundingBox()
+  const shot = async () => (await page.screenshot({ clip, animations: 'disabled' })).toString('base64')
   const layers = art.locator('.holo-shine, .holo-glare')
   const setLayers = (visibility) => layers.evaluateAll((els, v) => els.forEach(el => { el.style.visibility = v }), visibility)
   await setLayers('hidden')
   await page.waitForTimeout(80)
-  const bare = (await art.screenshot({ animations: 'disabled' })).toString('base64')
+  const bare = await shot()
   await setFoil()
   await setLayers('visible')
   await page.waitForTimeout(80)
-  const foiled = (await art.screenshot({ animations: 'disabled' })).toString('base64')
+  const foiled = await shot()
   return page.evaluate(async ([a, b]) => {
     const load = async (b64) => {
       const image = new Image()
@@ -311,6 +315,7 @@ async function compareArtWithFoil(page, art, setFoil = () => {}) {
 }
 
 test('every foil pattern is a translucent sheen: the card art shows through it', async ({ page }, testInfo) => {
+  test.setTimeout(120_000) // two screenshots for each of the 17 patterns
   await installFixtures(page)
   const { stage } = await openSheet(page)
   await settledBox(stage)
