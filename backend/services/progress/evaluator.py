@@ -2,7 +2,7 @@
 import datetime
 import logging
 
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -17,7 +17,7 @@ from models import (
 )
 from services.card_values import effective_market_price
 from services.digital_sets import digital_sets_enabled
-from services.progress.state import BIG_PULL_EUR, BIG_PULL_MAX_AGE, DIRTY_BATCH_SIZE, _now
+from services.progress.state import BIG_PULL_EUR, BIG_PULL_MAX_AGE, DIRTY_BATCH_SIZE, _now, mark_users_dirty
 from services.tcgdex_languages import has_lang_suffix
 
 logger = logging.getLogger(__name__)
@@ -160,7 +160,8 @@ def _evaluate_big_pulls(
         for item, card in rows:
             if item.added_at is not None and item.added_at < cutoff:
                 continue
-            if effective_market_price(card, item.variant, price_field) < BIG_PULL_EUR:
+            price = effective_market_price(card, item.variant, price_field)
+            if price is None or price < BIG_PULL_EUR:
                 continue
             record_event(
                 db, user_id, EVENT_BIG_PULL,
@@ -200,9 +201,15 @@ def evaluate_user(db: Session, user_id: int) -> bool:
         _evaluate_big_pulls(db, user_id, state, price_field, first, started)
 
         state.evaluated_at = started
-        # Keep the flag if something changed while we were evaluating.
-        if state.dirty_at is None or state.dirty_at <= started:
-            state.dirty_at = None
+        db.flush()
+        # Clear the flag in SQL, only if nothing marked the user dirty after we started: the
+        # listener may have committed a newer dirty_at in another transaction meanwhile.
+        db.execute(
+            update(ProgressState)
+            .where(ProgressState.user_id == user_id, ProgressState.dirty_at <= started)
+            .values(dirty_at=None)
+            .execution_options(synchronize_session=False)
+        )
         db.commit()
         return True
     except Exception:
@@ -220,7 +227,17 @@ def evaluate_users(db: Session, user_ids) -> int:
         except Exception:
             db.rollback()
             logger.exception("Progress evaluation failed for user %s", user_id)
+            _requeue_failed_user(db, user_id)
     return done
+
+
+def _requeue_failed_user(db: Session, user_id: int) -> None:
+    """Send a failing user to the back of the queue so it cannot starve the others."""
+    try:
+        with Session(bind=db.get_bind()) as fresh:
+            mark_users_dirty(fresh, [user_id])
+    except Exception:
+        logger.exception("Could not requeue user %s after a failed evaluation", user_id)
 
 
 def evaluate_dirty_users(db: Session, limit: int = DIRTY_BATCH_SIZE) -> int:

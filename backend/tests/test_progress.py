@@ -199,6 +199,59 @@ class EvaluatorTests(ProgressTestBase):
         evaluate_user(self.db, self.user.id)
         self.assertIsNotNone(self.db.get(ProgressState, self.user.id).dirty_at)
 
+    def test_unpriced_new_card_is_evaluated_without_error(self):
+        self.db.add(Card(id="free-001_en", tcg_card_id="free-001", name="Free", set_id="free",
+                         number="001", lang="en", is_custom=False))
+        self.db.commit()
+        self.own("tst-001")
+        evaluate_user(self.db, self.user.id)
+
+        unpriced = self.own("free-001")
+        with patch("services.progress.evaluator.effective_market_price", return_value=None):
+            self.assertTrue(evaluate_user(self.db, self.user.id))
+        self.assertEqual(self.events("big_pull"), [])
+        state = self.db.get(ProgressState, self.user.id)
+        self.assertEqual(state.last_seen_collection_id, unpriced.id)
+        self.assertIsNone(state.dirty_at)
+
+    def test_dirty_mark_committed_mid_evaluation_survives(self):
+        import services.progress.evaluator as evaluator
+
+        self.own("tst-001")
+        mark_users_dirty(self.db, [self.user.id])
+        real = evaluator._evaluate_sets
+
+        def evaluate_and_get_marked(db, user_id, state, first, now):
+            real(db, user_id, state, first, now)
+            with self.Session() as other_session:
+                mark_users_dirty(other_session, [user_id], now=now + datetime.timedelta(seconds=1))
+
+        with patch.object(evaluator, "_evaluate_sets", side_effect=evaluate_and_get_marked):
+            evaluate_user(self.db, self.user.id)
+        self.db.expire_all()
+        self.assertIsNotNone(self.db.get(ProgressState, self.user.id).dirty_at)
+
+    def test_failing_user_goes_to_the_back_of_the_queue(self):
+        from services.progress.evaluator import evaluate_dirty_users
+
+        old = datetime.datetime.utcnow() - datetime.timedelta(hours=1)
+        mark_users_dirty(self.db, [self.user.id], now=old)
+        mark_users_dirty(self.db, [self.other.id], now=old + datetime.timedelta(minutes=5))
+        real = evaluate_user
+
+        def flaky(db, user_id):
+            if user_id == self.user.id:
+                raise RuntimeError("boom")
+            return real(db, user_id)
+
+        with patch("services.progress.evaluator.evaluate_user", side_effect=flaky):
+            self.assertEqual(evaluate_dirty_users(self.db, limit=5), 1)
+
+        self.db.expire_all()
+        failed = self.db.get(ProgressState, self.user.id)
+        self.assertGreater(failed.dirty_at, old + datetime.timedelta(minutes=30))
+        self.assertIsNone(self.db.get(ProgressState, self.other.id).dirty_at)
+
     def test_mark_all_users_dirty_covers_active_users_only(self):
         self.other.is_active = False
         self.db.commit()
