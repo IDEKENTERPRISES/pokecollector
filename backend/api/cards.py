@@ -9,6 +9,7 @@ from api.auth import get_current_user
 from database import get_db
 from models import Binder, BinderCard, Card, Set, PriceHistory, CustomCardMatch, CollectionCardPhoto, CollectionItem, WishlistItem, User, ImageCache, ProductCard, ProductLedgerEntry, TradeItem
 from schemas import CardBase, CardWithSet, PriceHistoryResponse, CardCustomCreate, CustomCardUpdate, CardCustomImageUpdate
+from services.binder_slots import delete_slots_for_entries
 from services import pokemon_api
 from services.card_fallbacks import (
     apply_cross_language_fallbacks,
@@ -185,6 +186,7 @@ def _with_collection_summary(db: Session, current_user: User, card_dicts: List[d
                 "printing_details": [tag.name for tag in item.printing_detail_tags],
                 "lang": item.lang,
                 "purchase_price": item.purchase_price,
+                "foil_pattern": item.foil_pattern,
                 "acquired_at": (item.acquired_at or item.added_at).isoformat() if (item.acquired_at or item.added_at) else None,
             }
             for item in by_card.get(card.get("id"), [])
@@ -529,6 +531,7 @@ def delete_custom_card(
     try:
         db.query(CollectionItem).filter(CollectionItem.card_id == card_id).delete(synchronize_session=False)
         db.query(WishlistItem).filter(WishlistItem.card_id == card_id).delete(synchronize_session=False)
+        delete_slots_for_entries(db, db.query(BinderCard).filter(BinderCard.card_id == card_id))
         db.query(BinderCard).filter(BinderCard.card_id == card_id).delete(synchronize_session=False)
         db.query(PriceHistory).filter(PriceHistory.card_id == card_id).delete(synchronize_session=False)
         db.query(CustomCardMatch).filter(CustomCardMatch.custom_card_id == card_id).delete(synchronize_session=False)

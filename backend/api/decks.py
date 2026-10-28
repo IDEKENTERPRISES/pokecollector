@@ -15,6 +15,7 @@ from schemas import (
     DeckResponse,
     DeckUpdate,
 )
+from services.binder_slots import delete_slots_for_entries
 from services.binder_allocations import (
     collection_binder_allocation_counts,
     lock_user_card_allocations,
@@ -366,10 +367,12 @@ def convert_deck_to_real(
     # Old previews allowed optional allocations on planned decks. Drop those
     # rows first so conversion always recomputes availability from one source
     # of truth and can safely roll back as a unit.
-    db.query(BinderCard).filter(
+    allocation_rows = db.query(BinderCard).filter(
         BinderCard.binder_id == deck.id,
         BinderCard.collection_item_id.isnot(None),
-    ).delete(synchronize_session=False)
+    )
+    delete_slots_for_entries(db, allocation_rows)
+    allocation_rows.delete(synchronize_session=False)
     db.flush()
 
     entries = db.query(BinderCard).filter(
@@ -412,10 +415,12 @@ def convert_deck_to_planned(
     deck = _locked_deck_or_404(db, deck_id, current_user.id)
     if deck.binder_type == "deck":
         return get_deck(deck_id, current_user, db)
-    db.query(BinderCard).filter(
+    allocation_rows = db.query(BinderCard).filter(
         BinderCard.binder_id == deck.id,
         BinderCard.collection_item_id.isnot(None),
-    ).delete(synchronize_session=False)
+    )
+    delete_slots_for_entries(db, allocation_rows)
+    allocation_rows.delete(synchronize_session=False)
     deck.binder_type = "deck"
     deck.updated_at = datetime.datetime.utcnow()
     db.commit()

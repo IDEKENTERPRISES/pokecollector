@@ -171,6 +171,8 @@ class CollectionItemUpdate(BaseModel):
     lang: Optional[str] = None
     # Owner-editable acquisition date. Send null to fall back to the date added.
     acquired_at: Optional[datetime] = None
+    # Holo viewer foil pattern id; null means automatic.
+    foil_pattern: Optional[str] = None
 
 
 class BulkCollectionAddRequest(BaseModel):
@@ -209,6 +211,7 @@ class CollectionItemResponse(BaseModel):
     added_at: Optional[datetime] = None
     # Defaults to added_at until the owner sets their own date.
     acquired_at: Optional[datetime] = None
+    foil_pattern: Optional[str] = None
     standard_legal: bool = False
     # True when the owner has their own private photo of this card. A flag rather
     # than the image: bytes use a separate authenticated endpoint so collection

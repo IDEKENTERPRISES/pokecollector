@@ -310,6 +310,8 @@ class CollectionItem(Base):
     # inherit the date they were added unless the owner overrides it. added_at
     # itself is never edited: Recently Added and sync-change detection rely on it.
     acquired_at = Column(DateTime, nullable=True)
+    # Foil pattern id for the holo viewer; NULL means automatic.
+    foil_pattern = Column(String, nullable=True)
 
     card = relationship("Card", back_populates="collection_items")
     printing_detail_tags = relationship(
@@ -419,10 +421,13 @@ class Binder(Base):
     # Set only when importing Decks created by the original standalone PR #386
     # schema. Keeping the source id makes that data migration idempotent.
     legacy_deck_id = Column(Integer, nullable=True)
+    # Pockets a page in book view: 4, 9 or 12 (validated in the API).
+    pocket_layout = Column(Integer, default=9, nullable=False, server_default="9")
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     binder_cards = relationship("BinderCard", back_populates="binder", cascade="all, delete-orphan")
+    slots = relationship("BinderSlot", back_populates="binder", cascade="all, delete-orphan")
 
     @property
     def entries(self):
@@ -458,6 +463,7 @@ class BinderCard(Base):
     binder = relationship("Binder", back_populates="binder_cards")
     card = relationship("Card", back_populates="binder_cards")
     collection_item = relationship("CollectionItem")
+    slots = relationship("BinderSlot", back_populates="binder_card", cascade="all, delete-orphan")
 
     __table_args__ = (
         CheckConstraint("required_quantity >= 1 AND required_quantity <= 99", name="ck_binder_card_quantity_range"),
@@ -470,6 +476,27 @@ class BinderCard(Base):
             postgresql_where=collection_item_id.is_(None),
             sqlite_where=collection_item_id.is_(None),
         ),
+    )
+
+
+class BinderSlot(Base):
+    """A physical pocket in a binder (book view). One row per placed copy."""
+
+    __tablename__ = "binder_slots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    binder_id = Column(Integer, ForeignKey("binders.id", ondelete="CASCADE"), nullable=False)
+    slot_index = Column(Integer, nullable=False)  # page = slot_index // pocket_layout
+    binder_card_id = Column(Integer, ForeignKey("binder_cards.id", ondelete="CASCADE"), nullable=False)
+    copy_index = Column(Integer, nullable=False, default=0)  # 0 .. required_quantity-1
+
+    binder = relationship("Binder", back_populates="slots")
+    binder_card = relationship("BinderCard", back_populates="slots")
+
+    __table_args__ = (
+        UniqueConstraint("binder_id", "slot_index", name="uq_binder_slot_index"),
+        UniqueConstraint("binder_card_id", "copy_index", name="uq_binder_slot_copy"),
+        CheckConstraint("slot_index >= 0 AND copy_index >= 0", name="ck_binder_slot_nonneg"),
     )
 
 
@@ -914,3 +941,63 @@ class ScannerProviderLimitState(Base):
     blocked_until = Column(DateTime, nullable=True, index=True)
     blocked_reason = Column(String, nullable=True)
     updated_at = Column(DateTime, default=func.now(), nullable=False)
+
+
+class ProgressState(Base):
+    """The progress evaluator's memory, one row per user."""
+
+    __tablename__ = "progress_state"
+
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    evaluated_at = Column(DateTime, nullable=True)
+    dirty_at = Column(DateTime, nullable=True, index=True)
+    completed_sets = Column(JSON, nullable=False, default=list)
+    last_seen_collection_id = Column(Integer, nullable=False, default=0)
+    state_version = Column(Integer, nullable=False, default=1)
+
+
+class UserEvent(Base):
+    """Something that happened to a trainer; written by the evaluator and later services."""
+
+    __tablename__ = "user_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String(40), nullable=False)
+    occurred_at = Column(DateTime, nullable=False, index=True, default=func.now())
+    subject_key = Column(String(160), nullable=True)
+    payload = Column(JSON, nullable=False, default=dict)
+    dedupe_key = Column(String(200), nullable=False)
+
+    __table_args__ = (UniqueConstraint("user_id", "dedupe_key", name="uq_user_event_dedupe"),)
+
+
+class UserDailyActivity(Base):
+    """One row per user per local day the app was opened."""
+
+    __tablename__ = "user_daily_activity"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    local_date = Column(Date, nullable=False)
+    first_seen_at = Column(DateTime, nullable=False, default=func.now())
+    last_seen_at = Column(DateTime, nullable=False, default=func.now())
+    opens = Column(Integer, nullable=False, default=1)
+    offline = Column(Boolean, nullable=False, default=False)
+    data = Column(JSON, nullable=False, default=dict)
+
+    __table_args__ = (UniqueConstraint("user_id", "local_date", name="uq_user_daily_activity"),)
+
+
+class UserAchievement(Base):
+    __tablename__ = "user_achievements"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    achievement_id = Column(String(64), nullable=False)
+    unlocked_at = Column(DateTime, nullable=False, default=func.now())
+    seen_at = Column(DateTime, nullable=True)
+    notified_at = Column(DateTime, nullable=True)
+    backfilled = Column(Boolean, nullable=False, default=False)
+
+    __table_args__ = (UniqueConstraint("user_id", "achievement_id", name="uq_user_achievement"),)

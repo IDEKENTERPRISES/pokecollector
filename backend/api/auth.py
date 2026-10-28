@@ -407,6 +407,7 @@ def delete_user(
     from models import (
         Binder,
         BinderCard,
+        BinderSlot,
         Card,
         CollectionCardPhoto,
         CollectionItem,
@@ -414,11 +415,15 @@ def delete_user(
         ImageCache,
         PortfolioSnapshot,
         PriceHistory,
+        ProgressState,
         ProductCard,
         ProductLedgerEntry,
         ProductPurchase,
         Trade,
         TradeItem,
+        UserAchievement,
+        UserDailyActivity,
+        UserEvent,
         UserSetting,
         WishlistItem,
     )
@@ -428,8 +433,12 @@ def delete_user(
             Card.custom_owner_id == user_id,
         ).all()
     ]
+    user_binder_ids = db.query(Binder.id).filter(Binder.user_id == user_id)
+    db.query(BinderSlot).filter(
+        BinderSlot.binder_id.in_(user_binder_ids)
+    ).delete(synchronize_session=False)
     db.query(BinderCard).filter(
-        BinderCard.binder_id.in_(db.query(Binder.id).filter(Binder.user_id == user_id))
+        BinderCard.binder_id.in_(user_binder_ids)
     ).delete(synchronize_session=False)
     db.query(Binder).filter(Binder.user_id == user_id).delete()
     db.query(ProductLedgerEntry).filter(ProductLedgerEntry.user_id == user_id).delete()
@@ -446,6 +455,10 @@ def delete_user(
     )
     db.query(PortfolioSnapshot).filter(PortfolioSnapshot.user_id == user_id).delete()
     db.query(UserSetting).filter(UserSetting.user_id == user_id).delete()
+    for progress_model in (UserAchievement, UserDailyActivity, UserEvent, ProgressState):
+        db.query(progress_model).filter(progress_model.user_id == user_id).delete(
+            synchronize_session=False
+        )
     db.query(UserSession).filter(UserSession.user_id == user_id).delete(synchronize_session=False)
     if owned_custom_card_ids:
         db.query(CustomCardMatch).filter(
