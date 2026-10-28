@@ -208,6 +208,18 @@ def _encode_payload(title: str, body: str, navigate: str) -> str:
     )
 
 
+def encode_payload_fitted(title: str, body: str, navigate: str) -> str:
+    """`_encode_payload` that never exceeds MAX_PAYLOAD_BYTES: a long body is cut with an ellipsis."""
+    title = title[:120]
+    navigate = navigate[:512]
+    while True:
+        payload = _encode_payload(title, body, navigate)
+        if len(payload.encode("utf-8")) <= MAX_PAYLOAD_BYTES or not body:
+            return payload
+        body = body[: max(0, min(len(body) - 1, len(body) * 3 // 4))].rstrip()
+        body = (body.rstrip("…") + "…") if body else ""
+
+
 def build_price_alert_payload(card_name: str) -> str:
     """Declarative Web Push JSON, at most 4096 bytes UTF-8. Only the card name is included."""
     name = (card_name or "").strip() or "Card"

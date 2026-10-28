@@ -1,4 +1,5 @@
 import datetime
+import inspect
 import json
 import unittest
 from unittest.mock import MagicMock, patch
@@ -9,6 +10,7 @@ try:
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
 
+    import database
     from api import settings as settings_api
     from database import Base
     from models import (
@@ -469,6 +471,274 @@ class DigestTests(NotificationTestCase):
         self._queue(user, "new_sets", "set:a")
         n.flush_due(self.db, now=datetime.datetime(2026, 10, 28, 23, 0))
         self.webpush.assert_not_called()
+
+
+def _dip(name="Charizard ex", price=12.4, avg30=15.1, drop=17.9, set_code="OBF", number="125", card_id=None):
+    return {
+        "card_id": card_id or name.lower().replace(" ", "-") + "_en", "name": name, "set": "Obsidian Flames",
+        "set_code": set_code, "number": number, "price": price, "avg30": avg30, "drop_pct": drop,
+    }
+
+
+def _mover(name="Pikachu ex", price=30.0, baseline=26.8, change=11.9, card_id=None):
+    return {
+        "card_id": card_id or name.lower().replace(" ", "-") + "_en", "name": name, "set": "Surging Sparks",
+        "set_code": "SSP", "number": "57", "price": price, "baseline": baseline, "change_pct": change,
+    }
+
+
+def _note(raw):
+    payload = json.loads(raw)
+    assert payload["web_push"] == 8030
+    assert len(raw.encode("utf-8")) <= push_service.MAX_PAYLOAD_BYTES
+    return payload["notification"]
+
+
+@unittest.skipUnless(DEPS_AVAILABLE, SKIP_REASON)
+class DetailedPayloadTests(NotificationTestCase):
+    def test_one_dip_names_the_card_and_the_drop(self):
+        note = _note(n.build_detail_digest_payload({"wishlist_dips": [_dip()]}))
+        self.assertEqual(note["title"], "Wishlist dip")
+        self.assertEqual(note["body"], "Charizard ex (OBF 125) is down 18% to €12.40 (30-day avg €15.10)")
+        self.assertEqual(note["navigate"], "/wishlist")
+
+    def test_several_dips_list_the_biggest_drop_first(self):
+        dips = [_dip("Pikachu", 3.1, 3.7, 16.2), _dip("Charizard ex", 12.4, 15.1, 17.9), _dip("Eevee", 1.0, 2.0, 50.0)]
+        note = _note(n.build_detail_digest_payload({"wishlist_dips": dips}))
+        self.assertEqual(note["title"], "3 wishlist dips")
+        self.assertEqual(note["body"], "Eevee −50% €1.00 · Charizard ex −18% €12.40 · Pikachu −16% €3.10")
+        self.assertEqual(note["navigate"], "/wishlist")
+
+    def test_big_movers_show_direction_and_percent(self):
+        single = _note(n.build_detail_digest_payload({"big_movers": [_mover()]}))
+        self.assertEqual(single["title"], "Big mover")
+        self.assertEqual(single["body"], "Pikachu ex (SSP 57) is up 12% to €30.00 (7-day avg €26.80)")
+        self.assertEqual(single["navigate"], "/collection?cardId=pikachu-ex_en")
+        movers = [_mover("Mewtwo", 8.0, 9.0, -11.1), _mover("Pikachu ex"), _mover("Ditto", 2.0, 2.0, 0.0)]
+        several = _note(n.build_detail_digest_payload({"big_movers": movers[:2]}))
+        self.assertEqual(several["title"], "2 big movers")
+        self.assertEqual(several["body"], "Pikachu ex ▲12% €30.00 · Mewtwo ▼11% €8.00")
+        self.assertEqual(several["navigate"], "/collection")
+
+    def test_new_sets_list_the_names(self):
+        one = _note(n.build_detail_digest_payload({"new_sets": [{"name": "Obsidian Flames", "series": "SV"}]}))
+        self.assertEqual((one["title"], one["body"], one["navigate"]), ("New set", "Obsidian Flames", "/sets"))
+        two = _note(n.build_detail_digest_payload({
+            "new_sets": [{"name": "Obsidian Flames"}, {"name": "Paldea Evolved"}],
+        }))
+        self.assertEqual((two["title"], two["body"]), ("2 new sets", "Obsidian Flames, Paldea Evolved"))
+
+    def test_mixed_digest_is_one_push_with_a_line_per_category(self):
+        note = _note(n.build_detail_digest_payload({
+            "new_sets": [{"name": "Obsidian Flames"}],
+            "wishlist_dips": [_dip(), _dip("Pikachu", 3.1, 3.7, 16.2)],
+            "big_movers": [_mover()],
+        }))
+        self.assertEqual(note["title"], "1 new set, 2 wishlist dips, 1 big mover")
+        self.assertEqual(note["body"].split("\n"), [
+            "New sets: Obsidian Flames",
+            "Wishlist: Charizard ex −18% €12.40 · Pikachu −16% €3.10",
+            "Movers: Pikachu ex ▲12% €30.00",
+        ])
+        self.assertEqual(note["navigate"], "/")
+
+    def test_navigation_picks_the_most_relevant_page(self):
+        route = lambda groups: _note(n.build_detail_digest_payload(groups))["navigate"]  # noqa: E731
+        self.assertEqual(route({"wishlist_dips": [_dip(), _dip("Pikachu")]}), "/wishlist")
+        self.assertEqual(route({"wishlist_dips": [_dip()]}), "/wishlist")
+        self.assertEqual(route({"wishlist_dips": [_dip()], "big_movers": [_mover(card_id=_dip()["card_id"])]}),
+                         "/collection?cardId=charizard-ex_en")
+        self.assertEqual(route({"wishlist_dips": [_dip()], "big_movers": [_mover()]}), "/")
+        self.assertEqual(route({"wishlist_dips": [_dip()], "new_sets": [{"name": "X"}]}), "/")
+
+    def test_rows_without_details_fall_back_to_counts(self):
+        note = _note(n.build_detail_digest_payload({"new_sets": [None, None]}))
+        self.assertEqual(note["body"], "2 new sets")
+        mixed = _note(n.build_detail_digest_payload({"new_sets": [None], "wishlist_dips": [_dip()]}))
+        self.assertEqual(mixed["body"].split("\n"), ["1 new set", "Wishlist: Charizard ex −18% €12.40"])
+        self.assertEqual(mixed["navigate"], "/")
+
+    def test_a_long_list_ends_with_and_n_more_and_stays_in_the_limit(self):
+        dips = [_dip(f"Card number {i} with a long name", 10.0, 20.0, 50.0 - i / 10) for i in range(300)]
+        note = _note(n.build_detail_digest_payload({"wishlist_dips": dips}))
+        self.assertEqual(note["title"], "300 wishlist dips")
+        self.assertLessEqual(len(note["body"]), n.MAX_BODY_CHARS)
+        self.assertRegex(note["body"], r" · and \d+ more$")
+        shown = note["body"].count("−")
+        self.assertEqual(int(note["body"].rsplit("and ", 1)[1].split()[0]), 300 - shown)
+        sets = [{"name": f"Set {i} of the very long names"} for i in range(200)]
+        body = _note(n.build_detail_digest_payload({"new_sets": sets}))["body"]
+        self.assertRegex(body, r" and \d+ more$")
+        mixed = _note(n.build_detail_digest_payload({"wishlist_dips": dips, "big_movers": dips, "new_sets": sets}))
+        self.assertLessEqual(len(mixed["body"]), n.MAX_BODY_CHARS + 2)
+
+    def test_the_hard_limit_is_enforced_for_huge_or_multibyte_text(self):
+        raw = push_service.encode_payload_fitted("T" * 500, "🃏" * 5000, "/" + "x" * 2000)
+        self.assertLessEqual(len(raw.encode("utf-8")), push_service.MAX_PAYLOAD_BYTES)
+        json.loads(raw)
+        dips = [_dip("🃏" * 200, 10.0, 20.0, 50.0)] * 50
+        _note(n.build_detail_digest_payload({"wishlist_dips": dips, "new_sets": [{"name": "é" * 5000}]}))
+
+    def test_wishlist_price_alert_says_price_against_the_threshold(self):
+        below = {"name": "Charizard ex", "price": 12.4, "threshold": 13.0, "alert_type": "below"}
+        note = _note(n.build_wishlist_alert_payload(below))
+        self.assertEqual(note["title"], "Wishlist price alert")
+        self.assertEqual(note["body"], "Charizard ex is now €12.40, under your €13.00 alert")
+        self.assertEqual(note["navigate"], "/wishlist")
+        above = _note(n.build_wishlist_alert_payload({**below, "price": 20.0, "threshold": 18.5, "alert_type": "above"}))
+        self.assertEqual(above["body"], "Charizard ex is now €20.00, over your €18.50 alert")
+        light = _note(n.build_wishlist_alert_payload({"name": "Charizard ex"}))
+        self.assertEqual(light["body"], "Charizard ex price alert")
+
+    def test_badge_names_the_badge_and_tier(self):
+        note = _note(n.build_badge_payload("dex_50"))
+        self.assertEqual((note["title"], note["body"], note["navigate"]),
+                         ("Badge unlocked", "Species Seeker 50 · Bronze", "/achievements"))
+        self.assertEqual(_note(n.build_badge_payload("collector_100"))["body"], "Centurion · Silver")
+        self.assertEqual(_note(n.build_badge_payload())["body"], "You earned a badge")
+
+    def test_badge_without_a_name_falls_back(self):
+        from services import achievements as ach
+
+        entry = {**ach.registry_by_id()["dex_50"], "name": ""}
+        with patch.object(ach, "registry_by_id", return_value={"dex_50": entry}):
+            self.assertEqual(_note(n.build_badge_payload("dex_50"))["body"], "You earned a new badge · Bronze")
+        self.assertEqual(_note(n.build_badge_payload("not_a_badge"))["body"], "You earned a new badge")
+
+    def test_scans_ready_text_and_app_badge(self):
+        payload = json.loads(n.build_scans_payload(5, 3))
+        self.assertEqual(payload["notification"]["body"], "3 scans ready to review")
+        self.assertEqual(payload["app_badge"], 5)
+        self.assertEqual(json.loads(n.build_scans_payload(1, 1))["notification"]["body"], "1 scan ready to review")
+        light = json.loads(n.build_scans_payload(5))
+        self.assertEqual(light["notification"]["body"], "Scans ready to review")
+        self.assertEqual(light["app_badge"], 5)
+
+
+@unittest.skipUnless(DEPS_AVAILABLE, SKIP_REASON)
+class StoredDetailsTests(NotificationTestCase):
+    def setUp(self):
+        super().setUp()
+        self.user = _user(self.db, time_zone="UTC")
+
+    def row(self, category):
+        self.db.expire_all()
+        return self.db.query(NotificationQueue).filter_by(category=category).one()
+
+    def test_the_model_has_the_details_column(self):
+        self.assertIn("details", NotificationQueue.__table__.columns)
+        self.assertTrue(NotificationQueue.__table__.columns["details"].nullable)
+        self.assertIn(
+            "ALTER TABLE notification_queue ADD COLUMN IF NOT EXISTS details",
+            inspect.getsource(database._run_migrations),
+        )
+
+    def test_dip_details_are_stored_as_they_were(self):
+        self.db.add(Set(id="tst_en", tcg_set_id="tst", name="Test Set", abbreviation="TST", lang="en"))
+        card = _card(self.db, "dipcard", price=8.0, avg30=10.0)
+        self.db.add(WishlistItem(user_id=self.user.id, card_id=card.id))
+        self.db.commit()
+        n.queue_price_events(self.db, [card.id], now=NOON_UTC)
+        details = self.row("wishlist_dips").details
+        self.assertEqual(
+            details,
+            {"card_id": "dipcard", "name": "Dipcard", "set": "Test Set", "set_code": "TST", "number": "1",
+             "price": 8.0, "avg30": 10.0, "drop_pct": 20.0},
+        )
+        card.price_trend = card.price_market = 2.0  # later price changes do not touch the stored values
+        self.db.commit()
+        self.assertEqual(self.row("wishlist_dips").details["price"], 8.0)
+
+    def test_mover_details_are_stored(self):
+        _set_pref(self.db, self.user.id, "notify_big_movers", "true")
+        card = _card(self.db, "movecard", price=17.0, avg7=20.0)
+        self.db.add(CollectionItem(user_id=self.user.id, card_id=card.id, quantity=1))
+        self.db.commit()
+        n.queue_price_events(self.db, [card.id], now=NOON_UTC)
+        details = self.row("big_movers").details
+        self.assertEqual((details["name"], details["price"], details["baseline"], details["change_pct"]),
+                         ("Movecard", 17.0, 20.0, -15.0))
+
+    def test_alert_new_set_scan_and_badge_details_are_stored(self):
+        card = _card(self.db, "alertcard", price=5.0)
+        n.notify_wishlist_alert(self.db, self.user.id, card.id, now=NOON_UTC, price=12.4, threshold=13.0, alert_type="below")
+        self.db.add(Set(id="new1_en", tcg_set_id="new1", name="Fresh Set", series="SV", lang="en", is_new=True))
+        self.db.commit()
+        with patch.object(n.telegram, "send_new_sets_notification"):
+            n.on_new_sets(self.db, ["new1_en"])
+        job = self.make_job(self.user, items=(("done", False), ("failed", False), ("done", True)), status="done")
+        n.on_scan_job_finished(self.db, job, now=NOON_UTC)
+        n.enqueue(self.db, self.user.id, "badges", "badge:first_scan", now=NOON_UTC, details={"badge_id": "first_scan"})
+        self.db.commit()
+        alert = self.row("wishlist_alerts").details
+        self.assertEqual((alert["name"], alert["price"], alert["threshold"], alert["alert_type"]),
+                         ("Alertcard", 12.4, 13.0, "below"))
+        self.assertEqual(self.row("new_sets").details, {"name": "Fresh Set", "series": "SV"})
+        self.assertEqual(self.row("scans_ready").details, {"job_id": job.id, "count": 2})
+        self.assertEqual(self.row("badges").details, {"badge_id": "first_scan"})
+
+    def test_enqueue_without_details_leaves_the_column_empty(self):
+        n.enqueue(self.db, self.user.id, "new_sets", "set:z", now=NOON_UTC)
+        self.db.commit()
+        self.assertIsNone(self.row("new_sets").details)
+
+    def test_the_daily_digest_uses_the_stored_values_end_to_end(self):
+        card = _card(self.db, "dipcard", price=8.0, avg30=10.0)
+        self.db.add(WishlistItem(user_id=self.user.id, card_id=card.id))
+        self.db.commit()
+        n.queue_price_events(self.db, [card.id], now=NOON_UTC)
+        n.flush_due(self.db, now=datetime.datetime(2026, 10, 28, 18, 0))
+        note = self.payloads()[0]["notification"]
+        self.assertEqual(note["title"], "Wishlist dip")
+        self.assertEqual(note["body"], "Dipcard (#1) is down 20% to €8.00 (30-day avg €10.00)")
+
+    def test_the_switch_off_sends_the_content_light_texts(self):
+        _set_pref(self.db, self.user.id, "notify_show_details", "false")
+        card = _card(self.db, "dipcard", price=8.0, avg30=10.0)
+        self.db.add(WishlistItem(user_id=self.user.id, card_id=card.id))
+        self.db.commit()
+        n.queue_price_events(self.db, [card.id], now=NOON_UTC)
+        self.db.add(Set(id="new1_en", tcg_set_id="new1", name="Fresh Set", series="SV", lang="en", is_new=True))
+        self.db.commit()
+        with patch.object(n.telegram, "send_new_sets_notification"):
+            n.on_new_sets(self.db, ["new1_en"])
+        self.db.query(NotificationQueue).filter_by(category="new_sets").update({"send_after": NOON_UTC})
+        self.db.commit()
+        n.notify_wishlist_alert(self.db, self.user.id, card.id, now=NOON_UTC, price=8.0, threshold=9.0, alert_type="below")
+        job = self.make_job(self.user, status="done")
+        n.on_scan_job_finished(self.db, job, now=NOON_UTC)
+        n.enqueue(self.db, self.user.id, "badges", "badge:first_scan", now=NOON_UTC, details={"badge_id": "first_scan"})
+        self.db.add(UserAchievement(
+            user_id=self.user.id, achievement_id="first_scan", unlocked_at=NOON_UTC, seen_at=None,
+        ))
+        self.db.commit()
+        n.flush_due(self.db, now=datetime.datetime(2026, 10, 28, 18, 0))
+        bodies = sorted(p["notification"]["body"] for p in self.payloads())
+        self.assertEqual(bodies, ["1 wishlist dip, 1 new set", "Dipcard price alert", "Scans ready to review",
+                                  "You earned a badge"])
+        for payload in self.payloads():
+            self.assertNotRegex(json.dumps(payload, ensure_ascii=False), r"€|Fresh Set|20%")
+
+    def test_instant_pushes_carry_the_details_by_default(self):
+        card = _card(self.db, "alertcard", price=5.0)
+        n.notify_wishlist_alert(self.db, self.user.id, card.id, now=NOON_UTC, price=12.4, threshold=13.0, alert_type="below")
+        job = self.make_job(self.user, items=(("done", False), ("done", False), ("done", False)), status="done")
+        n.on_scan_job_finished(self.db, job, now=NOON_UTC)
+        self.db.commit()
+        n.flush_due(self.db, now=NOON_UTC)
+        notes = {p["notification"]["title"]: p for p in self.payloads()}
+        self.assertEqual(notes["Wishlist price alert"]["notification"]["body"],
+                         "Alertcard is now €12.40, under your €13.00 alert")
+        self.assertEqual(notes["PokéCollector"]["notification"]["body"], "3 scans ready to review")
+        self.assertEqual(notes["PokéCollector"]["app_badge"], 3)
+
+    def test_the_setting_defaults_on_and_is_a_boolean(self):
+        self.assertTrue(n.show_details(self.db, self.user.id))
+        merged = settings_api._get_user_settings(self.db, self.user.id)
+        self.assertEqual(merged["notify_show_details"], "true")
+        self.assertEqual(settings_api._coerce_setting_value("notify_show_details", "off"), "false")
+        _set_pref(self.db, self.user.id, "notify_show_details", "false")
+        self.assertFalse(n.show_details(self.db, self.user.id))
 
 
 if __name__ == "__main__":

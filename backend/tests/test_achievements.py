@@ -1,4 +1,7 @@
 import datetime
+import json
+import pathlib
+import re
 import unittest
 from unittest.mock import patch
 
@@ -77,6 +80,23 @@ class RegistryTests(AchievementTestBase):
             self.assertIn(entry["tier"], ach.TIERS)
             self.assertLessEqual(len(entry["id"]), 64)
         self.assertEqual(len(ach.TRACKS), 8)
+
+    def test_every_entry_has_an_english_name(self):
+        for entry in ach.registry():
+            self.assertTrue(str(entry.get("name") or "").strip(), f"{entry['id']} has no English name")
+
+    def test_names_match_the_app_strings(self):
+        """The push names a badge exactly as the app does (frontend/src/i18n/en.js)."""
+        en_js = pathlib.Path(__file__).resolve().parents[2] / "frontend" / "src" / "i18n" / "en.js"
+        if not en_js.exists():
+            self.skipTest("frontend sources are not part of this checkout")
+        text = en_js.read_text(encoding="utf-8")
+        start = text.index("\n  achievements: {")
+        block = text[start:text.index("\n  },", start)]
+        strings = dict(re.findall(r"^\s{4}(\w+): '((?:[^'\\]|\\.)*)',?$", block, flags=re.MULTILINE))
+        for entry in ach.registry():
+            key = entry["name_key"].split(".", 1)[1]
+            self.assertEqual(entry["name"], strings.get(key), entry["id"])
 
     def test_new_badges_are_marked_with_the_current_version(self):
         self.assertTrue(all(e["since"] == 1 for e in ach.registry()[:20]))
@@ -166,7 +186,7 @@ class UnlockFlowTests(AchievementTestBase):
                          sorted(f"badge:{i}" for i, r in rows.items() if not r.backfilled))
         self.assertEqual(len([q for q in self.queued() if q.subject_key == "badge:first_holo"]), 1)
 
-    def test_push_is_content_light_and_skipped_once_seen(self):
+    def test_push_names_the_badge_and_tier_and_is_skipped_once_seen(self):
         self.own("tst-001")
         evaluate_user(self.db, self.user.id)
         self.own("tst-002", "Holo")
@@ -175,9 +195,9 @@ class UnlockFlowTests(AchievementTestBase):
         with patch.object(n, "in_quiet_hours", return_value=False), patch.object(n, "_send") as send:
             n.flush_due(self.db, now)
         self.assertTrue(send.called)
-        payload = send.call_args.args[2]
-        self.assertIn("You earned a badge", payload)
-        self.assertNotIn("holo", payload.lower())
+        notes = [json.loads(call.args[2])["notification"] for call in send.call_args_list]
+        self.assertTrue(all(note["title"] == "Badge unlocked" and note["navigate"] == "/achievements" for note in notes))
+        self.assertIn("First Shine · Bronze", [note["body"] for note in notes])
 
         # Seen before the push goes out: nothing is sent.
         self.db.query(NotificationQueue).delete()
@@ -190,6 +210,32 @@ class UnlockFlowTests(AchievementTestBase):
         with patch.object(n, "in_quiet_hours", return_value=False), patch.object(n, "_send") as send:
             n.flush_due(self.db, now)
         send.assert_not_called()
+
+    def test_push_is_content_light_when_details_are_switched_off(self):
+        from models import UserSetting
+
+        self.db.add(UserSetting(user_id=self.user.id, key="notify_show_details", value="false"))
+        self.db.commit()
+        self.own("tst-001")
+        evaluate_user(self.db, self.user.id)
+        self.own("tst-002", "Holo")
+        evaluate_user(self.db, self.user.id)
+        now = datetime.datetime.utcnow() + datetime.timedelta(days=1, hours=12)
+        with patch.object(n, "in_quiet_hours", return_value=False), patch.object(n, "_send") as send:
+            n.flush_due(self.db, now)
+        self.assertTrue(send.called)
+        for call in send.call_args_list:
+            payload = call.args[2]
+            self.assertIn("You earned a badge", payload)
+            self.assertNotIn("holo", payload.lower())
+
+    def test_queued_badge_row_keeps_the_badge_id(self):
+        self.own("tst-001")
+        evaluate_user(self.db, self.user.id)
+        self.own("tst-002", "Holo")
+        evaluate_user(self.db, self.user.id)
+        details = {q.subject_key: q.details for q in self.queued()}
+        self.assertEqual(details["badge:first_holo"], {"badge_id": "first_holo"})
 
     def test_badges_push_respects_the_user_switch(self):
         from models import UserSetting

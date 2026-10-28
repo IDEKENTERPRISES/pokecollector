@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import NotificationPrefs, { categoryEnabled, digestHour, NOTIFY_CATEGORIES, quietHoursEnabled } from './NotificationPrefs'
+import NotificationPrefs, { categoryEnabled, digestHour, NOTIFY_CATEGORIES, quietHoursEnabled, showDetailsEnabled } from './NotificationPrefs'
 
 const t = key => key
 const switches = html => [...html.matchAll(/<button[^>]*role="switch"[^>]*>/g)].map(m => m[0])
@@ -22,14 +22,21 @@ describe('NotificationPrefs', () => {
     ])
     expect(digestHour({})).toBe(18)
     expect(quietHoursEnabled({})).toBe(true)
+    expect(showDetailsEnabled({})).toBe(true)
   })
 
-  it('renders one switch per category plus quiet hours, with their captions and the digest time', () => {
+  it('treats the card-details switch as on unless it is stored as false', () => {
+    expect(showDetailsEnabled({ notify_show_details: 'false' })).toBe(false)
+    expect(showDetailsEnabled({ notify_show_details: 'true' })).toBe(true)
+    expect(showDetailsEnabled({ notify_show_details: null })).toBe(true)
+  })
+
+  it('renders one switch per category plus quiet hours and card details, with their captions and the digest time', () => {
     const html = renderToStaticMarkup(<NotificationPrefs settings={{ notify_big_movers: 'true', notify_new_sets: 'false', notify_digest_hour: '9' }} save={vi.fn()} t={t} />)
     const tags = switches(html)
-    expect(tags).toHaveLength(7)
-    expect(tags.map(checkedOf)).toEqual([true, true, false, true, true, true, true])
-    for (const key of ['notifyPrefs.scansReadyDesc', 'notifyPrefs.newSetsDesc', 'notifyPrefs.wishlistDipsDesc', 'notifyPrefs.bigMoversDesc', 'notifyPrefs.badgesDesc', 'notifyPrefs.digestTime', 'notifyPrefs.quietHoursDesc']) {
+    expect(tags).toHaveLength(8)
+    expect(tags.map(checkedOf)).toEqual([true, true, false, true, true, true, true, true])
+    for (const key of ['notifyPrefs.scansReadyDesc', 'notifyPrefs.newSetsDesc', 'notifyPrefs.wishlistDipsDesc', 'notifyPrefs.bigMoversDesc', 'notifyPrefs.badgesDesc', 'notifyPrefs.digestTime', 'notifyPrefs.quietHoursDesc', 'notifyPrefs.showDetails', 'notifyPrefs.showDetailsDesc']) {
       expect(html).toContain(key)
     }
     expect(html).toContain('<option value="9" selected="">09:00</option>')
@@ -39,11 +46,16 @@ describe('NotificationPrefs', () => {
     const save = vi.fn().mockResolvedValue({})
     const tree = NotificationPrefs({ settings: { notify_big_movers: "true" }, save, t })
     const toggles = findAll(tree, n => typeof n.props.onChange === "function" && n.props.label)
-    expect(toggles.map(n => n.props.label)).toEqual(["notifyPrefs.scansReady", "notifyPrefs.wishlistAlerts", "notifyPrefs.newSets", "notifyPrefs.wishlistDips", "notifyPrefs.bigMovers", "notifyPrefs.badges", "notifyPrefs.quietHours"])
+    expect(toggles.map(n => n.props.label)).toEqual(["notifyPrefs.scansReady", "notifyPrefs.wishlistAlerts", "notifyPrefs.newSets", "notifyPrefs.wishlistDips", "notifyPrefs.bigMovers", "notifyPrefs.badges", "notifyPrefs.quietHours", "notifyPrefs.showDetails"])
     toggles[0].props.onChange(false)
     toggles[4].props.onChange(false)
     toggles[6].props.onChange(false)
-    expect(save.mock.calls).toEqual([[{ notify_scans_ready: "false" }], [{ notify_big_movers: "false" }], [{ notify_quiet_hours: "false" }]])
+    toggles[7].props.onChange(false)
+    toggles[7].props.onChange(true)
+    expect(save.mock.calls).toEqual([
+      [{ notify_scans_ready: "false" }], [{ notify_big_movers: "false" }], [{ notify_quiet_hours: "false" }],
+      [{ notify_show_details: "false" }], [{ notify_show_details: "true" }],
+    ])
     const select = findAll(tree, n => n.type === "select")[0]
     select.props.onChange({ target: { value: "20" } })
     expect(save).toHaveBeenLastCalledWith({ notify_digest_hour: "20" })

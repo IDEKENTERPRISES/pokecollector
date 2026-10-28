@@ -145,13 +145,16 @@ def _evaluate_achievements(
 
 
 def _push_unlocks(db: Session, user_id: int, achievement_ids: list[str], now) -> None:
-    """One content-light push per genuine unlock; never for backfills."""
+    """One push per genuine unlock, naming the badge unless the trainer chose content-light; never for backfills."""
     from services import notifications
 
     for achievement_id in achievement_ids:
         try:
             with db.begin_nested():
-                queued = notifications.enqueue(db, user_id, "badges", f"badge:{achievement_id}", now=now)
+                queued = notifications.enqueue(
+                    db, user_id, "badges", f"badge:{achievement_id}", now=now,
+                    details={"badge_id": achievement_id},
+                )
                 if queued:
                     db.query(UserAchievement).filter_by(
                         user_id=user_id, achievement_id=achievement_id
