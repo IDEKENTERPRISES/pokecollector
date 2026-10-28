@@ -740,6 +740,7 @@ export function CardModal({ card, onClose, onEdit, defaultLang = 'en', ownedItem
       imageOverlay={imageOverlay}
       imageAccessory={imageAccessory}
       variantEffectSource={variant}
+      holo
       price={selectedPrimaryPrice > 0 ? formatPrice(selectedPrimaryPrice) : null}
       tabs={modalTabs}
       activeTab={activeTab}

@@ -10,6 +10,8 @@ import CardStateIndicators from './CardStateIndicators'
 import ImageZoomOverlay from './ImageZoomOverlay'
 import { CARD_SYSTEM_TOKENS } from './card-system/tokens'
 import { useBodyScrollLock, useSwipeDismiss } from './ios/sheetGesture'
+import HoloViewer from './holo/HoloViewer'
+import FoilPatternRow from './holo/FoilPatternRow'
 
 export const FALLBACK_KIND_ORDER = ['data', 'price', 'image']
 
@@ -262,6 +264,7 @@ export function UnifiedCardDialog({
   closeButtonRef,
   children,
   className = '',
+  holo = false,
 }) {
   const { t } = useSettings()
   const internalCloseButtonRef = useRef(null)
@@ -372,51 +375,92 @@ export function UnifiedCardDialog({
       <X size={18} aria-hidden />
     </button>
   )
+  const holoOptions = holo ? (holo === true ? {} : holo) : null
+  const renderAside = ({ art, controls = null, foilRow = null }) => (
+    <aside className="min-w-0 sm:border-r sm:border-white/8 sm:pr-6">
+      <div className="flex items-start gap-4 sm:block">
+        <div className={clsx('relative flex-shrink-0 sm:w-full', holoOptions ? 'w-32' : 'w-24')}>
+          {art}
+          {imageZoomReady && (
+            <span
+              className="pointer-events-none absolute right-2 top-2 z-20 grid h-7 w-7 place-items-center rounded-full border border-white/15 bg-black/75 text-white shadow-lg"
+              aria-hidden="true"
+            >
+              <ZoomIn size={14} />
+            </span>
+          )}
+        </div>
+        <div className="min-w-0 flex-1 pr-9 sm:mt-4 sm:pr-0">
+          <h2 className="break-words text-base font-black text-text-primary sm:text-xl">{card.name}</h2>
+          {card.is_custom && (
+            <span className="badge-yellow mt-1.5 inline-flex px-2 py-0.5 text-[10px]">Custom</span>
+          )}
+          {(setNumber || price) && (
+            <div className="mt-1.5 flex min-w-0 items-center justify-between gap-2">
+              <span className="truncate font-mono text-xs font-black text-brand-red">{setNumber}</span>
+              {price && <span className="shrink-0 text-sm font-black text-green">{price}</span>}
+            </div>
+          )}
+          {card.rarity && <p className="mt-1 text-xs text-text-muted">{card.rarity}</p>}
+          <FallbackBadges card={card} className="mt-2" />
+        </div>
+      </div>
+      {controls}
+      {foilRow}
+      {imageAccessory && <div className="mt-3">{imageAccessory}</div>}
+    </aside>
+  )
+  const artwork = (
+    <CardArtworkFrame
+      card={card}
+      image={image}
+      overlay={imageOverlay}
+      alt={card.name}
+      variantEffectSource={variantEffectSource}
+      showStateIndicators={false}
+      loading="eager"
+      interactive={imageZoomReady}
+      onClick={() => setImageZoomOpen(true)}
+      onImageStatusChange={handleImageStatusChange}
+      actionLabel={`${t('card.zoomImage')} — ${card.name}`}
+      actionClassName="cursor-zoom-in"
+    />
+  )
+  const asideContent = holoOptions ? (
+    <HoloViewer
+      card={card}
+      image={image}
+      overlay={imageOverlay}
+      alt={card.name}
+      variant={variantEffectSource}
+      variantEffectSource={variantEffectSource}
+      printingDetails={holoOptions.printingDetails}
+      foilPattern={holoOptions.foilPattern}
+      showStateIndicators={false}
+      loading="eager"
+      interactive={imageZoomReady}
+      onClick={() => setImageZoomOpen(true)}
+      onImageStatusChange={handleImageStatusChange}
+      actionLabel={`${t('card.zoomImage')} — ${card.name}`}
+      actionClassName="cursor-zoom-in"
+    >
+      {({ stage, controls, foil }) => renderAside({
+        art: stage,
+        controls,
+        foilRow: holoOptions.onFoilChange ? (
+          <FoilPatternRow
+            foil={foil}
+            value={holoOptions.foilPattern || null}
+            onChange={holoOptions.onFoilChange}
+            pending={holoOptions.pending}
+          />
+        ) : null,
+      })}
+    </HoloViewer>
+  ) : renderAside({ art: artwork })
   const content = (
         <div className="grid gap-4 p-4 sm:grid-cols-[minmax(220px,300px)_minmax(0,1fr)] sm:gap-6 sm:p-6">
-          <aside className="min-w-0 sm:border-r sm:border-white/8 sm:pr-6">
-            <div className="flex items-start gap-4 sm:block">
-              <div className="relative w-24 flex-shrink-0 sm:w-full">
-                <CardArtworkFrame
-                  card={card}
-                  image={image}
-                  overlay={imageOverlay}
-                  alt={card.name}
-                  variantEffectSource={variantEffectSource}
-                  showStateIndicators={false}
-                  loading="eager"
-                  interactive={imageZoomReady}
-                  onClick={() => setImageZoomOpen(true)}
-                  onImageStatusChange={handleImageStatusChange}
-                  actionLabel={`${t('card.zoomImage')} — ${card.name}`}
-                  actionClassName="cursor-zoom-in"
-                />
-                {imageZoomReady && (
-                  <span
-                    className="pointer-events-none absolute right-2 top-2 z-20 grid h-7 w-7 place-items-center rounded-full border border-white/15 bg-black/75 text-white shadow-lg"
-                    aria-hidden="true"
-                  >
-                    <ZoomIn size={14} />
-                  </span>
-                )}
-              </div>
-              <div className="min-w-0 flex-1 pr-9 sm:mt-4 sm:pr-0">
-                <h2 className="break-words text-base font-black text-text-primary sm:text-xl">{card.name}</h2>
-                {card.is_custom && (
-                  <span className="badge-yellow mt-1.5 inline-flex px-2 py-0.5 text-[10px]">Custom</span>
-                )}
-                {(setNumber || price) && (
-                  <div className="mt-1.5 flex min-w-0 items-center justify-between gap-2">
-                    <span className="truncate font-mono text-xs font-black text-brand-red">{setNumber}</span>
-                    {price && <span className="shrink-0 text-sm font-black text-green">{price}</span>}
-                  </div>
-                )}
-                {card.rarity && <p className="mt-1 text-xs text-text-muted">{card.rarity}</p>}
-                <FallbackBadges card={card} className="mt-2" />
-              </div>
-            </div>
-            {imageAccessory && <div className="mt-3">{imageAccessory}</div>}
-          </aside>
+          {asideContent}
 
           <section className="min-w-0">
             {tabs.length > 0 && (
