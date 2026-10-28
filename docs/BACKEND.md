@@ -162,7 +162,9 @@ responses.
 | GET | `/api/analytics/new-sets` | Analytics new sets |
 | GET | `/api/social/leaderboard` | Multi-user leaderboard |
 | GET | `/api/social/compare/{user_id}` | Multi-user comparison |
-| GET | `/api/social/achievements/{user_id}` | Achievement progress |
+| GET | `/api/social/achievements/{user_id}` | Achievement progress; each entry also has `tier`, `track`, `art`, `unlocked_at`, `seen_at` (own user only), and the response has `tracks` (per gym-badge track: `earned`, `total`, highest `tier`). Works in single-user mode |
+| GET | `/api/progress/unlocks/unseen` | Badges earned but not yet celebrated, oldest first |
+| POST | `/api/progress/unlocks/seen` | Marks `{ids: [...]}` (or all, when omitted) as seen |
 | GET | `/api/github/contributors` | Public GitHub contributors feed |
 | GET | `/api/community/supporters` | Fresh, strictly validated public supporter registry projection; returns `503` with `Cache-Control: no-store` on any upstream or validation failure |
 | GET | `/api/github/rescue-donations` | Rescue donation total from `RESCUE_DONATIONS.csv` |
@@ -601,3 +603,9 @@ All routes need a signed-in user (`backend/api/push.py`, prefix `/api/push`):
 - They are idempotent and run on startup
 - Automatic pre-upgrade backups run before `init_db()` migrations on existing installs when the app version changes
 - Legacy migration comments still mention older columns like `grade` or removed integrations, but the current runtime model and routers do not include eBay functionality
+
+## Achievements registry (engagement P6)
+
+`services/achievements.py` lists every badge: the 20 from `api/social.py` (unchanged, placed on a track and tier by `_LEGACY_PLACEMENT`) plus the new ones in `_NEW`, one place to trim. A tiered family is a run of entries sharing a `family`; each step is its own entry and its own `user_achievements` row. There are eight gym-badge tracks (`TRACKS`); `daily` is empty until P7 adds streak badges. Extra metrics (`extra_stats`) come from one pass over the owned cards plus small counts; they are merged with `_load_user_stats`.
+
+`REGISTRY_VERSION` is stored in `progress_state.state_version`. Each entry has `since`; on an evaluation, badges with `since` above the user's stored version unlock silently (`backfilled`, already seen), so a release that adds badges never floods existing trainers. Genuine unlocks queue one `badges` push each (instant, "You earned a badge", no badge name), skipped if the trainer sees the sheet first.

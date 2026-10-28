@@ -71,7 +71,7 @@ export default function Profile() {
   const { data: achievements } = useQuery({
     queryKey: ['achievements', user?.id, pricePrimaryField],
     queryFn: () => getAchievements(user.id, { price_field: pricePrimaryField }).then(r => r.data),
-    enabled: multiUser && Boolean(user?.id),
+    enabled: Boolean(user?.id),
   })
   const { data: customMatches = [] } = useQuery({
     queryKey: ['custom-matches'],
@@ -81,9 +81,8 @@ export default function Profile() {
   })
 
   const handle = profile?.is_profile_public ? profile?.public_handle : ''
-  const unlocked = (achievements?.achievements ?? []).map(item => Boolean(item.unlocked))
-  const badges = multiUser
-    ? { earned: unlocked, total: Number(achievements?.total ?? 20), to: '/achievements' }
+  const badges = achievements
+    ? { earned: Number(achievements.earned ?? 0), total: Number(achievements.total ?? 20), to: '/achievements', tracks: achievements.tracks }
     : undefined
 
   const first = Number(tracker[0]?.value)
@@ -131,7 +130,7 @@ export default function Profile() {
         />
         <StatTile type="grass" icon={ArrowLeftRight} label={t('nav.trades')} value={tileIcon(ArrowLeftRight)} to="/trades" />
         {multiUser && <StatTile type="psychic" icon={Trophy} label={t('nav.leaderboard')} value={tileIcon(Trophy)} to="/leaderboard" />}
-        {multiUser && <StatTile type="fairy" icon={Award} label={t('profile.badges')} value={tileIcon(Award)} to="/achievements" />}
+        <StatTile type="fairy" icon={Award} label={t('profile.badges')} value={tileIcon(Award)} to="/achievements" />
         {multiUser && handle && <StatTile type="dragon" icon={Globe} label={t('profile.publicPage')} value={tileIcon(Users)} to={`/u/${handle}`} />}
       </div>
 

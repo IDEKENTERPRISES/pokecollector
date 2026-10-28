@@ -101,35 +101,63 @@ def _completed_sets(db: Session, user_id: int) -> dict[str, dict]:
     return complete
 
 
-def _evaluate_achievements(db: Session, user_id: int, stats: dict, first: bool, now) -> None:
-    from api.social import ACHIEVEMENTS  # lazy: social imports a lot
+def _evaluate_achievements(
+    db: Session, user_id: int, stats: dict, first: bool, known_version: int, now
+) -> list[str]:
+    """Insert rows for newly reached badges. Returns the ids that deserve a celebration.
+
+    Badges unlock silently (backfilled, already seen) on the first evaluation, and, after the
+    registry grew, for the entries added since the version this trainer's state was last at.
+    """
+    from services.achievements import registry
 
     have = {
         row.achievement_id
         for row in db.query(UserAchievement.achievement_id).filter(UserAchievement.user_id == user_id)
     }
-    for config in ACHIEVEMENTS:
+    celebrate: list[str] = []
+    for config in registry():
         if config["id"] in have:
             continue
         if (stats.get(config["metric"]) or 0) < config["target"]:
             continue
+        silent = first or config.get("since", 1) > known_version
         db.add(UserAchievement(
             user_id=user_id,
             achievement_id=config["id"],
             unlocked_at=now,
-            seen_at=now if first else None,
-            backfilled=first,
+            seen_at=now if silent else None,
+            backfilled=silent,
         ))
-        if not first:
+        if not silent:
+            celebrate.append(config["id"])
             record_event(
                 db, user_id, EVENT_ACHIEVEMENT_UNLOCKED,
                 dedupe_key=f"{EVENT_ACHIEVEMENT_UNLOCKED}:{config['id']}",
                 subject_key=config["id"],
                 payload={"achievement_id": config["id"], "badge_id": config.get("badge_id"),
-                         "name_key": config.get("name_key")},
+                         "name_key": config.get("name_key"), "tier": config.get("tier"),
+                         "track": config.get("track")},
                 occurred_at=now,
             )
     db.flush()
+    return celebrate
+
+
+def _push_unlocks(db: Session, user_id: int, achievement_ids: list[str], now) -> None:
+    """One content-light push per genuine unlock; never for backfills."""
+    from services import notifications
+
+    for achievement_id in achievement_ids:
+        try:
+            with db.begin_nested():
+                queued = notifications.enqueue(db, user_id, "badges", f"badge:{achievement_id}", now=now)
+                if queued:
+                    db.query(UserAchievement).filter_by(
+                        user_id=user_id, achievement_id=achievement_id
+                    ).update({"notified_at": now})
+        except Exception:
+            logger.exception("Could not queue the badge push for user %s", user_id)
 
 
 def _evaluate_sets(db: Session, user_id: int, state: ProgressState, first: bool, now) -> None:
@@ -193,10 +221,16 @@ def evaluate_user(db: Session, user_id: int) -> bool:
                 user_id=user_id, completed_sets=[], last_seen_collection_id=0, state_version=1
             )
             db.add(state)
+        known_version = state.state_version or 1
 
         price_field = _user_price_field(db, user_id)
         stats = _load_user_stats(db, [user_id], price_field).get(user_id) or {}
-        _evaluate_achievements(db, user_id, stats, first, started)
+        from services.achievements import REGISTRY_VERSION, metrics_for
+
+        stats = metrics_for(db, user_id, stats)
+        celebrate = _evaluate_achievements(db, user_id, stats, first, known_version, started)
+        _push_unlocks(db, user_id, celebrate, started)
+        state.state_version = max(known_version, REGISTRY_VERSION)
         _evaluate_sets(db, user_id, state, first, started)
         _evaluate_big_pulls(db, user_id, state, price_field, first, started)
 

@@ -232,7 +232,7 @@ export const PROFILE_LINKS = Object.freeze([
   { key: 'products', to: '/products', labelKey: 'nav.products', icon: 'Package' },
   { key: 'trades', to: '/trades', labelKey: 'nav.trades', icon: 'ArrowLeftRight' },
   { key: 'leaderboard', to: '/leaderboard', labelKey: 'nav.leaderboard', icon: 'Trophy', multiUser: true },
-  { key: 'achievements', to: '/achievements', labelKey: 'nav.achievements', icon: 'Award', multiUser: true },
+  { key: 'achievements', to: '/achievements', labelKey: 'nav.achievements', icon: 'Award' },
   { key: 'settings', to: '/settings', labelKey: 'nav.settings', icon: 'Settings' },
   { key: 'sync', to: '/offline', labelKey: 'profile.syncOffline', icon: 'RefreshCw', queue: true },
 ])

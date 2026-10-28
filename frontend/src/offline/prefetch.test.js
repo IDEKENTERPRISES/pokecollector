@@ -38,9 +38,9 @@ describe('buildPrefetchPlan', () => {
     expect(firstFive).toEqual(['binders', 'collection', 'decks', 'sets-all', 'wishlist'])
   })
 
-  it('leaves achievements out in single-user mode', () => {
+  it('plans achievements in single-user mode too', () => {
     const single = buildPrefetchPlan({ pricePrimaryField: 'market', userId: 1, multiUser: false, client: fakeClient() })
-    expect(single.some(task => task.queryKey[0] === 'achievements')).toBe(false)
+    expect(single.some(task => task.queryKey[0] === 'achievements')).toBe(true)
   })
 
   it('never plans set checklists', () => {

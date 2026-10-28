@@ -8,6 +8,7 @@ import PullToRefresh from './ios/PullToRefresh'
 import SidebarNav from './ios/SidebarNav'
 import TabBar from './ios/TabBar'
 import { ScannerProvider } from '../contexts/ScannerContext'
+import UnlockSheetHost from '../progress/UnlockSheetHost'
 import { useReleaseManualHistoryScrollRestoration } from '../hooks/useListScrollRestoration'
 import { recordNavigation } from '../navigation/historyMirror'
 import { NavBarContext, createNavBarStore } from '../navigation/NavBarContext'
@@ -97,6 +98,7 @@ export default function Layout() {
             </div>
           </div>
         </div>
+        <UnlockSheetHost />
         <PullToRefresh enabled />
         <TabBar />
       </ScannerProvider>
