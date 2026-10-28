@@ -869,6 +869,7 @@ export default function BinderDetail() {
             </div>
           ) : null}
           variantEffectSource={selectedCard.variant}
+          holo
           price={selectedCard.price_market > 0 ? formatPrice(selectedCard.price_market) : null}
           tabs={[
             { id: 'binder', label: t('cardTabs.binder') },

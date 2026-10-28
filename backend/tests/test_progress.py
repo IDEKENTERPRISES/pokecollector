@@ -438,6 +438,19 @@ class ProgressApiTests(ProgressTestBase):
         self.assertEqual(cleared.status_code, 200)
         self.assertIsNone(cleared.json()["foil_pattern"])
 
+    def test_every_foil_pattern_id_is_accepted(self):
+        from services.foil_patterns import FOIL_PATTERNS
+
+        for expected in ("holo", "pokeball-reverse", "radiant", "amazing", "v-full-art", "vmax",
+                         "vstar", "trainer-gallery", "shiny", "illustration-rare",
+                         "special-illustration"):
+            self.assertIn(expected, FOIL_PATTERNS)
+        item = self.own("tst-001")
+        for pattern in FOIL_PATTERNS:
+            response = self.client.put(f"/api/collection/{item.id}", json={"foil_pattern": pattern})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["foil_pattern"], pattern)
+
 
 @unittest.skipUnless(DEPS_AVAILABLE, "FastAPI is not installed")
 class CascadeTests(ProgressTestBase):
@@ -536,6 +549,21 @@ class SchemaAndBackupTests(unittest.TestCase):
         source = inspect.getsource(database._run_migrations)
         self.assertIn("ALTER TABLE collection ADD COLUMN IF NOT EXISTS foil_pattern", source)
         self.assertIn("ALTER TABLE binders ADD COLUMN IF NOT EXISTS pocket_layout", source)
+
+
+class FoilPatternIdTests(unittest.TestCase):
+    def test_ids_cover_the_viewer_styles_and_normalize(self):
+        from services.foil_patterns import FOIL_PATTERNS, normalize_foil_pattern
+
+        for expected in ("holo", "reverse", "cracked-ice", "cosmos", "etched", "rainbow", "gold",
+                         "pokeball-reverse", "radiant", "amazing", "v-full-art", "vmax", "vstar",
+                         "trainer-gallery", "shiny", "illustration-rare", "special-illustration"):
+            self.assertIn(expected, FOIL_PATTERNS)
+            self.assertEqual(normalize_foil_pattern(f" {expected.upper()} "), expected)
+        self.assertIsNone(normalize_foil_pattern(None))
+        self.assertIsNone(normalize_foil_pattern("  "))
+        with self.assertRaises(ValueError):
+            normalize_foil_pattern("sparkles")
 
 
 if __name__ == "__main__":
