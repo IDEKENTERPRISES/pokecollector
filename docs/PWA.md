@@ -79,6 +79,7 @@ Once a device is enabled, Settings › Notifications lists what to be notified a
 | Category | Default | When |
 |---|---|---|
 | Scans ready to review | on | right away, once per scan batch |
+| Wishlist price alerts (your own thresholds) | on | right away |
 | New sets | on | daily digest |
 | Wishlist dips (at least 15 % below the 30-day average and at least €1 lower; a card at most once a week) | on | daily digest |
 | Big movers in your collection (your price-alert percentage, default 10 %, and at least €2) | off | daily digest |

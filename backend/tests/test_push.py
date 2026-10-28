@@ -14,7 +14,7 @@ try:
 
     from api import push as push_api
     from database import Base
-    from models import Card, PushSubscription, User, WishlistItem
+    from models import Card, NotificationQueue, PushSubscription, User, WishlistItem
     from services import push as push_service
     from services import sync_service
     DEPS_AVAILABLE = push_service.webpush is not None
@@ -320,17 +320,18 @@ class PushAlertHookTests(PushDatabaseTestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def test_alert_sends_telegram_and_push(self):
-        with patch.object(sync_service.telegram, "send_price_alert") as telegram_alert, \
-                patch.object(sync_service.push, "send_price_alert") as push_alert:
+    def test_alert_sends_telegram_and_queues_push(self):
+        with patch.object(sync_service.telegram, "send_price_alert") as telegram_alert,                 patch.object(sync_service.push, "send_price_alert") as push_alert:
             sync_service.check_wishlist_alerts(self.db, [self.card.id])
         telegram_alert.assert_called_once()
-        push_alert.assert_called_once_with(self.db, self.user.id, "Sprigatito", 5.0, 1.0, "above")
+        push_alert.assert_not_called()  # the push goes through the notification queue now
+        rows = self.db.query(NotificationQueue).all()
+        self.assertEqual([(r.user_id, r.category, r.subject_key) for r in rows],
+                         [(self.user.id, "wishlist_alerts", "card:" + self.card.id)])
         self.assertIsNotNone(self.db.get(WishlistItem, self.item.id).notified_at)
 
-    def test_push_failure_does_not_break_telegram_or_notified_at(self):
-        with patch.object(sync_service.telegram, "send_price_alert") as telegram_alert, \
-                patch.object(sync_service.push, "send_price_alert", side_effect=RuntimeError("boom")):
+    def test_queue_failure_does_not_break_telegram_or_notified_at(self):
+        with patch.object(sync_service.telegram, "send_price_alert") as telegram_alert,                 patch.object(sync_service.notifications, "notify_wishlist_alert", side_effect=RuntimeError("boom")):
             sync_service.check_wishlist_alerts(self.db, [self.card.id])
         telegram_alert.assert_called_once()
         self.assertIsNotNone(self.db.get(WishlistItem, self.item.id).notified_at)

@@ -2340,6 +2340,8 @@ const en = {
     categoriesTitle: 'What to notify me about',
     scansReady: 'Scans ready to review',
     scansReadyDesc: 'Sent right away, once per batch.',
+    wishlistAlerts: 'Wishlist price alerts',
+    wishlistAlertsDesc: 'Your own thresholds. Sent right away.',
     newSets: 'New sets',
     newSetsDesc: 'In the daily digest.',
     wishlistDips: 'Wishlist dips',

@@ -744,9 +744,9 @@ def check_wishlist_alerts(db: Session, updated_card_ids: list):
                 card.name, current_price, threshold, alert_type, db=db, user_id=item.user_id
             )
             try:
-                push.send_price_alert(db, item.user_id, card.name, current_price, threshold, alert_type)
+                notifications.notify_wishlist_alert(db, item.user_id, card.id)
             except Exception:
-                logger.exception("Web push price alert failed for user %s", item.user_id)
+                logger.exception("Could not queue the web push price alert for user %s", item.user_id)
             item.notified_at = now
 
     db.commit()

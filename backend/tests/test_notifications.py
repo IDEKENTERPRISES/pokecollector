@@ -97,7 +97,7 @@ class PrefsTests(NotificationTestCase):
         self.assertTrue(n.category_enabled(self.db, user.id, "wishlist_dips"))
         self.assertFalse(n.category_enabled(self.db, user.id, "big_movers"))
         self.assertFalse(n.category_enabled(self.db, user.id, "weekly_recap"))
-        self.assertEqual(n.UI_CATEGORIES, ["scans_ready", "new_sets", "wishlist_dips", "big_movers"])
+        self.assertEqual(n.UI_CATEGORIES, ["scans_ready", "wishlist_alerts", "new_sets", "wishlist_dips", "big_movers"])
 
     def test_user_value_overrides_default(self):
         user = _user(self.db)
@@ -248,6 +248,47 @@ class ScansReadyTests(NotificationTestCase):
         self.db.commit()
         n.flush_due(self.db, now=NOON_UTC)
         self.webpush.assert_not_called()
+
+
+@unittest.skipUnless(DEPS_AVAILABLE, SKIP_REASON)
+class WishlistAlertTests(NotificationTestCase):
+    def setUp(self):
+        super().setUp()
+        self.user = _user(self.db, time_zone='UTC')
+        self.card = _card(self.db, 'alertcard', price=5.0)
+
+    def test_pushes_card_name_only_without_a_price(self):
+        self.assertTrue(n.notify_wishlist_alert(self.db, self.user.id, self.card.id, now=NOON_UTC))
+        self.db.commit()
+        n.flush_due(self.db, now=NOON_UTC)
+        payloads = self.payloads()
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0]['notification']['body'], 'Alertcard price alert')
+        self.assertEqual(payloads[0]['notification']['navigate'], '/wishlist')
+        self.assertNotIn('app_badge', payloads[0])
+        self.assertNotRegex(payloads[0]['notification']['body'], r'[0-9]|EUR')
+
+    def test_switch_off_means_no_push(self):
+        _set_pref(self.db, self.user.id, 'notify_wishlist_alerts', 'false')
+        self.assertFalse(n.notify_wishlist_alert(self.db, self.user.id, self.card.id, now=NOON_UTC))
+        self.db.commit()
+        n.flush_due(self.db, now=NOON_UTC)
+        self.webpush.assert_not_called()
+
+    def test_alert_in_quiet_hours_waits_until_08_00(self):
+        late = datetime.datetime(2026, 10, 28, 23, 30)
+        n.notify_wishlist_alert(self.db, self.user.id, self.card.id, now=late)
+        self.db.commit()
+        self.assertEqual(self.db.query(NotificationQueue).one().send_after, datetime.datetime(2026, 10, 29, 8, 0))
+        n.flush_due(self.db, now=datetime.datetime(2026, 10, 29, 3, 0))
+        self.webpush.assert_not_called()
+        n.flush_due(self.db, now=datetime.datetime(2026, 10, 29, 8, 1))
+        self.assertEqual(len(self.payloads()), 1)
+
+    def test_same_card_queued_once_a_day(self):
+        self.assertTrue(n.notify_wishlist_alert(self.db, self.user.id, self.card.id, now=NOON_UTC))
+        self.db.commit()
+        self.assertFalse(n.notify_wishlist_alert(self.db, self.user.id, self.card.id, now=NOON_UTC + datetime.timedelta(hours=2)))
 
 
 @unittest.skipUnless(DEPS_AVAILABLE, SKIP_REASON)

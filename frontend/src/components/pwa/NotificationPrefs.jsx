@@ -4,6 +4,7 @@ import Switch from '../ios/Switch'
 // the server also returns them in /api/settings, so this only matters before settings load.
 export const NOTIFY_CATEGORIES = [
   { id: 'scans_ready', fallback: true, label: 'notifyPrefs.scansReady', desc: 'notifyPrefs.scansReadyDesc' },
+  { id: 'wishlist_alerts', fallback: true, label: 'notifyPrefs.wishlistAlerts', desc: 'notifyPrefs.wishlistAlertsDesc' },
   { id: 'new_sets', fallback: true, label: 'notifyPrefs.newSets', desc: 'notifyPrefs.newSetsDesc' },
   { id: 'wishlist_dips', fallback: true, label: 'notifyPrefs.wishlistDips', desc: 'notifyPrefs.wishlistDipsDesc' },
   { id: 'big_movers', fallback: false, label: 'notifyPrefs.bigMovers', desc: 'notifyPrefs.bigMoversDesc' },

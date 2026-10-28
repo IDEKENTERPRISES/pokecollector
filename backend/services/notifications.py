@@ -55,6 +55,7 @@ class Category:
 # with a `timing`; the Settings UI shows a row only for categories in `UI_CATEGORIES`.
 CATEGORIES: dict[str, Category] = {
     "scans_ready": Category("scans_ready", True, INSTANT, "/scans", "scan"),
+    "wishlist_alerts": Category("wishlist_alerts", True, INSTANT, "/wishlist", "price alert"),
     "new_sets": Category("new_sets", True, DIGEST, "/sets", "new set"),
     "wishlist_dips": Category("wishlist_dips", True, DIGEST, "/wishlist", "wishlist dip"),
     "big_movers": Category("big_movers", False, DIGEST, "/collection", "big mover"),
@@ -206,6 +207,11 @@ def enqueue(
         user_id=user_id, category=category, subject_key=subject_key, created_at=now, send_after=send_after,
     ))
     return True
+
+
+def notify_wishlist_alert(db: Session, user_id: int, card_id: str, now: datetime.datetime | None = None) -> bool:
+    """A wishlist price threshold was crossed. The payload (card name only) is built when it is sent."""
+    return enqueue(db, user_id, "wishlist_alerts", f"card:{card_id}", now=now, repeat_days=1)
 
 
 def notify_scans_ready(db: Session, user_id: int, job_id: int, now: datetime.datetime | None = None) -> bool:
@@ -411,6 +417,10 @@ def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, 
         if count <= 0:  # already reviewed
             return
         _send(db, row.user_id, build_scans_payload(count))
+        result["instant"] += 1
+    elif row.category == "wishlist_alerts":
+        card = db.query(Card).filter(Card.id == row.subject_key.split("card:", 1)[-1]).first()
+        _send(db, row.user_id, push.build_price_alert_payload(card.name if card else ""))
         result["instant"] += 1
 
 
