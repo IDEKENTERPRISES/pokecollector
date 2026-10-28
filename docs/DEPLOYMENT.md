@@ -150,6 +150,12 @@ Selective backup groups are useful for targeted exports, but they may depend on
 rows outside their group and do not currently include every newer feature
 table. Full backups are the recovery and upgrade format.
 
+## Test stack (nonprod)
+
+New features are tested on a second stack built from the `nonprod` branch before
+they reach `deploy`. Its overrides are in `docker-compose.nonprod.yml`, and the
+setup is described in [`NONPROD.md`](NONPROD.md).
+
 ## Local development images
 
 Contributors can build from source with the checked-in override:

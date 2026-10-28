@@ -15,6 +15,7 @@ on:
     branches:
       - main
       - feature/ios-ui
+      - nonprod
       - deploy
   workflow_dispatch:
 
