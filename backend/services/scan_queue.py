@@ -257,6 +257,7 @@ def _leased_items(db: Session, claim: ClaimedScanItem) -> list[ScanJobItem]:
 
 
 def _refresh_job_status(db: Session, job: ScanJob, now: datetime.datetime) -> None:
+    finished_now = False
     statuses = [row[0] for row in db.query(ScanJobItem.status).filter(ScanJobItem.job_id == job.id).all()]
     if not statuses:
         job.status = "failed"
@@ -265,11 +266,16 @@ def _refresh_job_status(db: Session, job: ScanJob, now: datetime.datetime) -> No
     elif all(status in TERMINAL_ITEM_STATUSES for status in statuses):
         job.status = "done" if any(status == "done" for status in statuses) else "failed"
         job.finished_at = now
+        finished_now = True
     elif any(status == "processing" for status in statuses):
         job.status = "running"
     else:
         job.status = "pending"
     job.updated_at = now
+    if finished_now:
+        from services.notifications import on_scan_job_finished
+
+        on_scan_job_finished(db, job, now)
 
 
 def complete_claim(db: Session, claim: ClaimedScanItem, result: dict) -> bool:
