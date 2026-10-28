@@ -431,10 +431,12 @@ export const restoreBackup = async (file, password) => {
   await appendUpload(formData, 'file', file)
   // Required by the server whenever logins are enabled.
   if (password) formData.append('password', password)
+  // Answers 202 at once; the restore itself runs in the background (see getRestoreStatus).
   return api.post('/backup/restore', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
 }
+export const getRestoreStatus = () => api.get('/backup/restore/status', { timeout: 15000 }).then(r => r.data)
 
 // Settings
 export const getSettings = () => api.get('/settings/')
