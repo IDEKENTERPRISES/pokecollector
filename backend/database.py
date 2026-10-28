@@ -706,6 +706,8 @@ def _run_migrations(conn):
             CONSTRAINT uq_push_subscription_endpoint UNIQUE (endpoint)
         )""",
         "CREATE INDEX IF NOT EXISTS ix_push_subscriptions_user_id ON push_subscriptions(user_id)",
+        # Push details: what each queued notification was about (card, prices, badge id).
+        "ALTER TABLE notification_queue ADD COLUMN IF NOT EXISTS details JSON",
     ]
     for stmt in migrations:
         try:

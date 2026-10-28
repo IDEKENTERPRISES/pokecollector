@@ -344,6 +344,11 @@ class PushAlertHookTests(PushDatabaseTestCase):
         rows = self.db.query(NotificationQueue).all()
         self.assertEqual([(r.user_id, r.category, r.subject_key) for r in rows],
                          [(self.user.id, "wishlist_alerts", "card:" + self.card.id)])
+        details = rows[0].details
+        self.assertEqual(details["name"], self.card.name)
+        self.assertIsNotNone(details["price"])
+        self.assertIsNotNone(details["threshold"])
+        self.assertIn(details["alert_type"], ("above", "below"))
         self.assertIsNotNone(self.db.get(WishlistItem, self.item.id).notified_at)
 
     def test_queue_failure_does_not_break_telegram_or_notified_at(self):

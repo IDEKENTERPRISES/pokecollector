@@ -1015,5 +1015,8 @@ class NotificationQueue(Base):
     created_at = Column(DateTime, nullable=False, default=func.now())
     send_after = Column(DateTime, nullable=False, default=func.now())
     sent_at = Column(DateTime, nullable=True, index=True)
+    # What the event was about, as it was when it happened (card name, prices, badge id, ...).
+    # Read when the push is built; NULL for rows queued before this column existed.
+    details = Column(JSON, nullable=True)
 
     __table_args__ = (Index("ix_notification_queue_subject", "user_id", "category", "subject_key"),)

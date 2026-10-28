@@ -84,7 +84,8 @@ Once a device is enabled, Settings › Notifications lists what to be notified a
 | Wishlist dips (at least 15 % below the 30-day average and at least €1 lower; a card at most once a week) | on | daily digest |
 | Big movers in your collection (your price-alert percentage, default 10 %, and at least €2) | off | daily digest |
 
-- **Daily digest:** at most one push a day, at **Daily digest time** (default 18:00) in the phone's time zone (the server's time zone until the app has checked in). It lists counts only, never prices.
+- **Daily digest:** at most one push a day, at **Daily digest time** (default 18:00) in the phone's time zone (the server's time zone until the app has checked in). It says what it is about: the card and how far it dipped or moved, the new set names, one line per category when several arrive together ("Charizard ex (OBF 125) is down 18% to €12.40 (30-day avg €15.10)"). Long lists end with "and N more".
+- **Show card names and prices in notifications** (on by default): turn it off to get short texts again, with counts instead of names and no prices ("2 new sets, 1 wishlist dip", "You earned a badge"). With it on, a badge push reads "Badge unlocked: <badge> · <tier>" and a scans push "3 scans ready to review". Prices in notifications are in EUR, the currency prices are stored in.
 - **Quiet hours** (22:00 to 08:00 local, on by default): an instant notification that falls inside waits until 08:00.
 - **Icon number:** the number on the Home Screen icon is the scans waiting for review. The app updates it on start, when it returns to the foreground and when scans change; a scans-ready push sets it too (`app_badge` in the payload). It needs notification permission and iOS 16.4 or later, and does nothing where the Badging API is missing. Informational notifications are never counted.
 - Telegram's new-sets message is now sent when a sync finds new sets (and `TELEGRAM_ENABLED=false` still silences it).

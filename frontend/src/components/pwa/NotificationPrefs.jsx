@@ -25,6 +25,9 @@ export function digestHour(settings) {
 
 export const quietHoursEnabled = settings => isOn(settings?.notify_quiet_hours, true)
 
+// Pushes name cards, prices and badges unless this is off (the server then sends short texts).
+export const showDetailsEnabled = settings => isOn(settings?.notify_show_details, true)
+
 const pad = hour => `${String(hour).padStart(2, '0')}:00`
 
 function Row({ label, description, children }) {
@@ -70,6 +73,13 @@ export default function NotificationPrefs({ settings, save, t }) {
             checked={quietHoursEnabled(settings)}
             label={t('notifyPrefs.quietHours')}
             onChange={next => update({ notify_quiet_hours: next ? 'true' : 'false' })}
+          />
+        </Row>
+        <Row label={t('notifyPrefs.showDetails')} description={t('notifyPrefs.showDetailsDesc')}>
+          <Switch
+            checked={showDetailsEnabled(settings)}
+            label={t('notifyPrefs.showDetails')}
+            onChange={next => update({ notify_show_details: next ? 'true' : 'false' })}
           />
         </Row>
       </div>

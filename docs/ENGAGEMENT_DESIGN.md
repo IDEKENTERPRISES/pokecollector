@@ -67,7 +67,7 @@ The app already has strong passive hooks: the Pokémon of the day, price alerts,
 - **Works in single-user mode,** except social.
 - **Offline is stated per feature.** Reading works offline wherever the data is cached. Writes that the outbox can't queue say "Needs a connection".
 - **Hide values.** Every amount goes through `formatPrice` and is masked by the eye. Share images respect it.
-- **Push payloads stay content-light,** like today's price alerts: no prices in the payload.
+- **Push payloads say what they are about.** Detail is the default: the card, the price and the drop, the set names, the badge and its tier. A per-user switch, "Show card names and prices in notifications" (`notify_show_details`, default on), turns this off, and the pushes fall back to the earlier content-light texts. The details are stored when the notification is queued, so they match the moment of the event.
 - **New strings go in `en.js` only.** Other languages show English.
 - **Non-goals:** native wrappers, light mode, a pack simulator or pull-rate odds (no data), comments or chat, money between trainers.
 
@@ -331,10 +331,25 @@ Size: S = one PR, M = a few days of worker time, L = several PRs.
 - New sets: when a sync marks sets `is_new`, push to users with the category on. `send_new_sets_notification` is also called for Telegram.
 - The digest is one push a day at 18:00 in the user's time zone (falling back to the server's). Quiet hours are 22:00–08:00, and instant pushes wait until the end of quiet hours.
 - The service worker routes each notification to its page (`navigate`).
+- **Push texts** (English, prices in EUR as stored, a body fitted to 300 characters with "and N more", never more than 4096 bytes). Each queued row keeps a `details` JSON (card name, set name and code, number, price, baseline, drop or change %, threshold, set name, scan count, badge id) as of the event.
+
+  | push | title | body |
+  |---|---|---|
+  | one wishlist dip | Wishlist dip | Charizard ex (OBF 125) is down 18% to €12.40 (30-day avg €15.10) |
+  | several dips | 3 wishlist dips | Charizard ex −18% €12.40 · Pikachu −16% €3.10 · … (biggest drop first) |
+  | big movers | Big mover / 3 big movers | Pikachu ex (SSP 57) is up 12% to €30.00 (7-day avg €26.80); several: Pikachu ex ▲12% €30.00 · Mewtwo ▼11% €8.00 |
+  | new sets | New set / 2 new sets | the set names |
+  | mixed digest | counts, e.g. "2 wishlist dips, 1 new set" | one line per category: `Wishlist: …`, `Movers: …`, `New sets: …` |
+  | wishlist price alert (instant) | Wishlist price alert | Charizard ex is now €12.40, under your €13.00 alert |
+  | badge (instant) | Badge unlocked | the badge's English name and tier, e.g. Species Seeker 50 · Bronze |
+  | scans ready (instant) | PokéCollector | 3 scans ready to review (with `app_badge`) |
+
+  The digest still goes out once a day. It opens the page that fits: `/wishlist` for dips only, the card (`/collection?cardId=…`, or `/wishlist` for a dip) when it is about exactly one card, `/collection` for movers only, `/sets` for new sets only, otherwise `/`. Rows queued before `details` existed are shown as counts.
+- **Privacy switch.** "Show card names and prices in notifications" (`notify_show_details`, default on). Off sends the earlier texts: counts only for the digest ("2 new sets, 1 wishlist dip"), "Scans ready to review", "You earned a badge", and the wishlist alert as "Wishlist price alert" / "A card on your wishlist hit your price alert" (no card name).
 - Icon number: `navigator.setAppBadge(n)` where n = scans needing review (+ swap offers from P11).
   - It is set by the app on start, on foreground and after scan changes, and by the service worker on an actionable push (n included in the payload).
   - It is cleared at 0. It needs notification permission (iOS 16.4+ Home Screen apps).
-- Settings › Notifications gets the category switches under the existing device switch.
+- Settings › Notifications gets the category switches under the existing device switch, plus the card-details switch.
 - Tests: digest assembly, the thresholds, quiet hours, the service worker routing (`sw.test.js`), and the Settings switches.
 
 ### Milestone B — progress (round 2, promotion 2)
