@@ -241,7 +241,7 @@ Code: `backend/services/progress/` (`state.py`, `evaluator.py`, `listeners.py`, 
 - Each evaluation is one transaction, idempotent through `dedupe_key`. One user's failure is logged and never blocks the others.
 
 **Triggers (slow path, `services/scheduler.py`)**
-- `progress_dirty_job` every 2 minutes evaluates users with `dirty_at` set, oldest first, at most 25 a run.
+- `progress_dirty_job` every 30 seconds evaluates users with `dirty_at` set, oldest first, at most 25 a run.
 - After every price sync and full sync, every active user is marked dirty (value-based badges). It is one guarded call after `take_portfolio_snapshot` in each sync; the only edit to `sync_service.py`.
 - `progress_nightly_job` at 03:30 server time marks every active user dirty: the safety net for anything the listeners missed.
 

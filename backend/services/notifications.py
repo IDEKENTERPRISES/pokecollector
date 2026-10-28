@@ -400,7 +400,7 @@ def _sent_reason(outcome: dict | None) -> str:
 
 
 def flush_due(db: Session, now: datetime.datetime | None = None) -> dict:
-    """Send what is due. Run every minute by the scheduler."""
+    """Send what is due. Run every 30 seconds by the scheduler."""
     now = now or datetime.datetime.utcnow()
     result = {"instant": 0, "digests": 0}
 
