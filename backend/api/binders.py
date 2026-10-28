@@ -1136,6 +1136,7 @@ def get_binder_cards(
             "format": binder.format,
             "target_size": binder.target_size,
             "icon_pokemon_id": binder.icon_pokemon_id,
+            "pocket_layout": binder.pocket_layout or 9,
         },
         "cards": cards,
         "owned_count": owned_count,
