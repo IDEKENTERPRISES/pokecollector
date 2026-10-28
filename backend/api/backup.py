@@ -59,6 +59,7 @@ BACKUP_GROUPS = {
         "user_events",
         "user_daily_activity",
         "user_achievements",
+        "user_xp_ledger",
         "notification_queue",
     ],
     "cards": ["cards", "sets", "price_history", "custom_card_matches"],

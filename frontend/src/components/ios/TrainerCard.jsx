@@ -9,9 +9,10 @@ import PokeBall from './PokeBall'
  * a row of gym badges (single-user mode too).
  *
  * user: { name, handle, id, sprite }; stats: { cards, sets, pokedex } (display strings);
- * badges: { earned, total, to, tracks } or omitted until the achievements have loaded.
+ * badges: { earned, total, to, tracks } or omitted until the achievements have loaded;
+ * level: { level, xp, level_start, next_level_at } from the Today summary, or omitted.
  */
-export default function TrainerCard({ user = {}, stats = {}, badges, className = '' }) {
+export default function TrainerCard({ user = {}, stats = {}, badges, level, className = '' }) {
   const { t } = useSettings()
   const idText = user.id != null && user.id !== '' ? String(user.id).padStart(5, '0') : null
   const statItems = [
@@ -42,6 +43,11 @@ export default function TrainerCard({ user = {}, stats = {}, badges, className =
           <p className="break-words text-title-1 font-display">{user.name}</p>
           {user.handle && <p className="break-words text-subheadline opacity-90">@{user.handle}</p>}
           {idText && <p className="text-footnote tabular-nums opacity-80">{t('ios.idNo')} {idText}</p>}
+          {level && (
+            <p className="text-footnote font-semibold tabular-nums" data-testid="trainer-level">
+              {t('ios.level').replace('{level}', level.level)} · {t('ios.xpProgress').replace('{xp}', level.xp)}
+            </p>
+          )}
         </div>
       </div>
 

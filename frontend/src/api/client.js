@@ -480,6 +480,9 @@ export const getLeaderboard = (params = {}) => api.get('/social/leaderboard', { 
 export const compareUsers = (userId, params = {}) => api.get(`/social/compare/${userId}`, { params })
 export const getAchievements = (userId, params = {}) => api.get(`/social/achievements/${userId}`, { params })
 export const getUnseenUnlocks = () => api.get('/progress/unlocks/unseen')
+export const getTodaySummary = (date) => api.get('/progress/today', { params: date ? { date } : {} }).then(r => r.data)
+export const postViewedPokemon = (date) => api.post('/progress/daily/view', { date }).then(r => r.data)
+export const postWtpAnswer = (date, dexId) => api.post('/progress/wtp/answer', { date, dex_id: dexId }).then(r => r.data)
 export const markUnlocksSeen = (ids) => api.post('/progress/unlocks/seen', ids ? { ids } : {})
 
 // Web push (docs/PWA_OFFLINE_DESIGN.md §6.7)

@@ -142,6 +142,32 @@ def get_splash(
     return entry
 
 
+@router.get("/wtp")
+def get_wtp(
+    request: Request,
+    response: Response,
+    date: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    lang: str | None = Query(None, max_length=16),
+):
+    """The day's Who's That Pokémon puzzle: the silhouette's image and four choices. Public and
+    throttled like the splash, so a phone can fetch tomorrow's ahead and play it offline."""
+    retry_after = splash_throttle.hit(client_ip(request))
+    if retry_after:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests",
+            headers={"Retry-After": str(retry_after), "Cache-Control": "no-store"},
+        )
+    try:
+        day = parse_day(date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid date")
+    from services.progress.wtp import build_puzzle
+
+    response.headers["Cache-Control"] = "no-store"
+    return build_puzzle(day, lang or "en")
+
+
 @router.get("/splash/cache")
 def get_splash_cache(current_user: User = Depends(get_current_user)):
     """Progress of the admin warm-up of the splash cache."""

@@ -1003,6 +1003,21 @@ class UserAchievement(Base):
     __table_args__ = (UniqueConstraint("user_id", "achievement_id", name="uq_user_achievement"),)
 
 
+class UserXpLedger(Base):
+    """Experience points, one row per award. The unique (user, source, source_key) makes awards idempotent."""
+
+    __tablename__ = "user_xp_ledger"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    source = Column(String(24), nullable=False)
+    source_key = Column(String(160), nullable=False)
+    amount = Column(Integer, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+
+    __table_args__ = (UniqueConstraint("user_id", "source", "source_key", name="uq_user_xp_ledger_source"),)
+
+
 class NotificationQueue(Base):
     """A notification waiting to go out: instant ones wait for quiet hours to end, digest ones for the digest."""
 

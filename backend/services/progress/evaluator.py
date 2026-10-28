@@ -204,6 +204,26 @@ def _evaluate_big_pulls(
     state.last_seen_collection_id = max(last_seen, max_id)
 
 
+def _evaluate_daily(db: Session, user_id: int) -> None:
+    """Quests for today and yesterday, streak XP, and XP for badges and finished sets (all idempotent)."""
+    from services.achievements import registry_by_id
+    from services.progress import xp
+    from services.progress.daily import award_streak_xp, local_today, sync_daily, user_streak, user_zone
+
+    today = local_today(user_zone(db, user_id))
+    for day in (today - datetime.timedelta(days=1), today):
+        sync_daily(db, user_id, day)
+    award_streak_xp(db, user_id, user_streak(db, user_id, today))
+    known = registry_by_id()
+    for (achievement_id,) in db.query(UserAchievement.achievement_id).filter(UserAchievement.user_id == user_id):
+        config = known.get(achievement_id)
+        if config:
+            xp.award(db, user_id, xp.SOURCE_BADGE, achievement_id, xp.BADGE_XP.get(config.get("tier"), 20))
+    for set_key in _completed_sets(db, user_id):
+        xp.award(db, user_id, xp.SOURCE_SET, set_key, xp.SET_XP)
+    db.flush()
+
+
 def evaluate_user(db: Session, user_id: int) -> bool:
     """Evaluate one user in a single transaction. Returns False if the user is gone."""
     from api.social import _load_user_stats  # lazy, not moved: keeps the upstream diff small
@@ -236,6 +256,7 @@ def evaluate_user(db: Session, user_id: int) -> bool:
         state.state_version = max(known_version, REGISTRY_VERSION)
         _evaluate_sets(db, user_id, state, first, started)
         _evaluate_big_pulls(db, user_id, state, price_field, first, started)
+        _evaluate_daily(db, user_id)
 
         state.evaluated_at = started
         db.flush()

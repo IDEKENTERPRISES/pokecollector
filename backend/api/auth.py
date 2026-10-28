@@ -426,6 +426,7 @@ def delete_user(
         UserDailyActivity,
         UserEvent,
         UserSetting,
+        UserXpLedger,
         WishlistItem,
     )
     owned_custom_card_ids = [
@@ -456,7 +457,9 @@ def delete_user(
     )
     db.query(PortfolioSnapshot).filter(PortfolioSnapshot.user_id == user_id).delete()
     db.query(UserSetting).filter(UserSetting.user_id == user_id).delete()
-    for progress_model in (UserAchievement, UserDailyActivity, UserEvent, ProgressState, NotificationQueue):
+    for progress_model in (
+        UserAchievement, UserDailyActivity, UserEvent, UserXpLedger, ProgressState, NotificationQueue,
+    ):
         db.query(progress_model).filter(progress_model.user_id == user_id).delete(
             synchronize_session=False
         )

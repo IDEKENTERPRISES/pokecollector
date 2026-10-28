@@ -403,6 +403,13 @@ Size: S = one PR, M = a few days of worker time, L = several PRs.
   - Wordle-style share text.
 - Settings › Appearance: "Show streaks and quests" switch (default on).
 
+*As built (P7):*
+- Streak, quests and XP live in `backend/services/progress/` (`streak.py`, `quests.py`, `xp.py`, `daily.py`, `wtp.py`). The freeze is computed from `user_daily_activity` (one missed day per ISO week is bridged), so nothing extra is stored. Quest progress and the Who's That Pokémon result sit in `user_daily_activity.data`.
+- XP: quest 10, all three 15, streak day 5, set 100, badge 20/40/80 by tier. Level `n` starts at `50·(n-1)^1.5` XP. The evaluator awards badge, set and streak XP and checks today's and yesterday's quests; `GET /api/progress/today` checks them too.
+- Who's That Pokémon: `GET /api/pokedex/wtp` (public, like the splash) gives the date's puzzle; the species is half a cycle away from the Pokémon of the day. The device prefetches today's and tomorrow's with the splash, keeps the answer locally and posts it to `POST /api/progress/wtp/answer` when online (the first answer for a date wins).
+- "Show streaks and quests" is a per-device switch (`pc.progress.showDaily.v1`); off shows only the old Pokémon of the day card.
+- Registry version 3 adds the daily badges; trainers who already qualify get them silently.
+
 **P8 Small delights (M).** After P7.
 - On this day: a Home card, only when cards were acquired on this day in earlier years (`acquired_at` or else `added_at`).
 - Showcase 6:

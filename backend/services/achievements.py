@@ -19,7 +19,7 @@ TRACKS = ("collection", "sets", "value", "pokedex", "variety", "explorer", "trad
 # Stored in progress_state.state_version. Bump it when badges are added; an entry's `since` is the
 # registry version that introduced it, and badges a trainer already qualifies for when the version
 # rises unlock silently (backfilled) instead of flooding them with sheets and pushes.
-REGISTRY_VERSION = 2
+REGISTRY_VERSION = 3
 
 ENERGY_TYPES = (
     "grass", "fire", "water", "lightning", "psychic", "fighting",
@@ -124,8 +124,16 @@ _NEW = (
         _entry("first_trade", "firstTrade", "Trade Partner", "trades_count", 1, "trader", "bronze", "trade"),
         _entry("first_deck", "firstDeck", "Deck Builder", "decks_count", 1, "explorer", "bronze", "deck"),
         _entry("true_master", "trueMaster", "True Master", "master_sets", 1, "sets", "gold", "master"),
-        # Streak badges (7/30/100 days) and Who's That Pokémon belong to the "daily" track and are
-        # added by P7 with their own metrics; no entry yet.
+    ]
+    # The "daily" track (P7, registry version 3): streaks, Who's That Pokémon and quests.
+    + [_entry(f"streak_{n}", f"streak{n}", name, "streak_best", n, "daily", tier, "flame", family="streak", since=3)
+       for n, name, tier in ((7, "Week Warrior", "bronze"), (30, "Monthly Regular", "silver"), (100, "Eternal Flame", "gold"))]
+    + [
+        _entry("first_wtp", "firstWtp", "Sharp Eyes", "wtp_wins", 1, "daily", "bronze", "silhouette", since=3),
+        _entry("wtp_run_7", "wtpRun7", "Silhouette Master", "wtp_best_run", 7, "daily", "silver", "silhouette", since=3),
+        _entry("quests_10", "quests10", "Errand Runner", "quests_done", 10, "daily", "bronze", "quest", family="quests", since=3),
+        _entry("quests_50", "quests50", "Quest Seeker", "quests_done", 50, "daily", "silver", "quest", family="quests", since=3),
+        _entry("quests_200", "quests200", "Quest Legend", "quests_done", 200, "daily", "gold", "quest", family="quests", since=3),
     ]
 )
 
@@ -279,4 +287,6 @@ def _master_sets(db: Session, owned_by_set: dict, owned_variants: dict) -> int:
 
 
 def metrics_for(db: Session, user_id: int, base_stats: dict) -> dict:
-    return {**base_stats, **extra_stats(db, user_id)}
+    from services.progress.daily import daily_stats
+
+    return {**base_stats, **extra_stats(db, user_id), **daily_stats(db, user_id)}

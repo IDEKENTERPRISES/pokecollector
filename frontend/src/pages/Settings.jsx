@@ -41,6 +41,7 @@ import { SyncProgressBar, SyncResultNote } from '../components/SyncProgress'
 import { NAV_ICONS } from '../navigation/navIcons'
 import { settingsSection, visibleSettingsSections } from '../navigation/navConfig'
 import { readSplashEnabled, writeSplashEnabled } from '../components/splash/launch'
+import { readShowDaily, writeShowDaily } from '../progress/daily'
 import SplashCacheSection from '../components/splash/SplashCacheSection'
 import { ServerPicturesSection } from '../components/settings/OfflineCardDbSection'
 
@@ -507,6 +508,7 @@ export default function Settings() {
   const setsOpenInValue = resolveDefaultSetsLanguage(setsDefaultLanguage, visibleSetsLanguages.map(language => language.code)) ?? ''
   // The launch splash: per device, read synchronously at boot (components/splash/launch.js).
   const [splashEnabled, setSplashEnabled] = useState(() => readSplashEnabled())
+  const [showDaily, setShowDaily] = useState(() => readShowDaily())
 
   const [backupOptions, setBackupOptions] = useState(['full'])
   const [debugModeEnabled, setDebugModeEnabled] = useState(false)
@@ -1364,6 +1366,16 @@ export default function Settings() {
                   onChange={(value) => {
                     writeSplashEnabled(value)
                     setSplashEnabled(value)
+                  }}
+                />
+              </SettingsRow>
+              <SettingsRow label={t('settings.showDaily')} description={t('settings.showDailyDesc')}>
+                <Toggle
+                  value={showDaily}
+                  label={t('settings.showDaily')}
+                  onChange={(value) => {
+                    writeShowDaily(value)
+                    setShowDaily(value)
                   }}
                 />
               </SettingsRow>
