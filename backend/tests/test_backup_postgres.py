@@ -4,6 +4,7 @@ import asyncio
 import os
 import shutil
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -99,6 +100,15 @@ class BackupPostgresTests(unittest.TestCase):
             dbname=params["dbname"],
         )
 
+    @staticmethod
+    def _wait_for_restore(timeout=60.0):
+        deadline = time.monotonic() + timeout
+        while backup_api._load_restore_state()["state"] == "running":
+            if time.monotonic() > deadline:
+                raise AssertionError("restore did not finish")
+            time.sleep(0.05)
+        return backup_api._load_restore_state()
+
     def _api_patches(self):
         return (
             patch.object(backup_api, "BACKUP_DIR", self.temp_dir.name),
@@ -123,8 +133,10 @@ class BackupPostgresTests(unittest.TestCase):
             result = asyncio.run(
                 backup_api.restore_backup(ChunkedUpload(dump_bytes), current_user=self.admin)
             )
+            self.assertEqual(result["state"], "running")
+            status = self._wait_for_restore()
 
-        self.assertEqual(result, {"message": "Database restored successfully"})
+        self.assertEqual(status["state"], "done", status)
         with self._connect(self.params) as connection, connection.cursor() as cursor:
             cursor.execute("SELECT value FROM restore_marker")
             self.assertEqual(cursor.fetchone()[0], "from-backup")
@@ -143,10 +155,12 @@ class BackupPostgresTests(unittest.TestCase):
             SELECT 1 / 0;
         """
         backup_dir, params = self._api_patches()
-        with backup_dir, params, self.assertRaises(HTTPException):
+        with backup_dir, params:
             asyncio.run(
                 backup_api.restore_backup(ChunkedUpload(broken_dump), current_user=self.admin)
             )
+            status = self._wait_for_restore()
+        self.assertEqual(status["state"], "failed")
 
         with self._connect(self.params) as connection, connection.cursor() as cursor:
             cursor.execute("SELECT value FROM restore_marker")

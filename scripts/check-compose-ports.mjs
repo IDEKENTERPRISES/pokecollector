@@ -100,11 +100,14 @@ export function checkComposePorts(compose) {
       continue
     }
 
-    if (entries.includes(`"${mapping.published}:${mapping.container}"`)) {
+    // The backend may be bound to loopback only (the reverse proxy reaches it on the host).
+    const published = (port) => [`"${port}:${mapping.container}"`, `"127.0.0.1:${port}:${mapping.container}"`]
+
+    if (published(mapping.published).some((entry) => entries.includes(entry))) {
       continue
     }
 
-    if (entries.includes(`"${mapping.unsafePublished}:${mapping.container}"`)) {
+    if (published(mapping.unsafePublished).some((entry) => entries.includes(entry))) {
       errors.push(
         `${mapping.service} must use ${mapping.published}:${mapping.container}; ${mapping.unsafePublished} is wrong because an empty variable loses the stable default host port and may receive an ephemeral one`,
       )

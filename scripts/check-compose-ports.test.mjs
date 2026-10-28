@@ -17,7 +17,7 @@ test('the current compose host-port mappings are correct', () => {
 })
 
 test('backend requires the colon default form so an empty variable keeps the stable host port', () => {
-  const mutated = replaceOnce(compose, '${BACKEND_PORT:-8000}', '${BACKEND_PORT-8000}')
+  const mutated = replaceOnce(compose, '"127.0.0.1:${BACKEND_PORT:-8000}:8000"', '"127.0.0.1:${BACKEND_PORT-8000}:8000"')
 
   assert.ok(checkComposePorts(mutated).length > 0)
 })
@@ -29,13 +29,13 @@ test('frontend requires the colon default form so an empty variable keeps the st
 })
 
 test('backend requires the expected published-port default', () => {
-  const mutated = replaceOnce(compose, '${BACKEND_PORT:-8000}', '${BACKEND_PORT:-9000}')
+  const mutated = replaceOnce(compose, '"127.0.0.1:${BACKEND_PORT:-8000}:8000"', '"127.0.0.1:${BACKEND_PORT:-9000}:8000"')
 
   assert.ok(checkComposePorts(mutated).length > 0)
 })
 
 test('backend rejects a fully hardcoded port mapping', () => {
-  const mutated = replaceOnce(compose, '"${BACKEND_PORT:-8000}:8000"', '"8000:8000"')
+  const mutated = replaceOnce(compose, '"127.0.0.1:${BACKEND_PORT:-8000}:8000"', '"127.0.0.1:8000:8000"')
 
   assert.ok(checkComposePorts(mutated).length > 0)
 })
@@ -49,9 +49,15 @@ test('frontend requires the expected container port', () => {
 test('another published port alongside the parameterised one is accepted', () => {
   const mutated = replaceOnce(
     compose,
-    '      - "${BACKEND_PORT:-8000}:8000"',
-    '      - "9000:9000"\n      - "${BACKEND_PORT:-8000}:8000"',
+    '      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"',
+    '      - "9000:9000"\n      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"',
   )
+
+  assert.deepEqual(checkComposePorts(mutated), [])
+})
+
+test('the backend may publish on every interface instead of loopback', () => {
+  const mutated = replaceOnce(compose, '"127.0.0.1:${BACKEND_PORT:-8000}:8000"', '"${BACKEND_PORT:-8000}:8000"')
 
   assert.deepEqual(checkComposePorts(mutated), [])
 })
@@ -59,8 +65,8 @@ test('another published port alongside the parameterised one is accepted', () =>
 test('the mapping only counts inside the service ports list', () => {
   const mutated = replaceOnce(
     compose,
-    '      - "${BACKEND_PORT:-8000}:8000"',
-    '      - "${BACKEND_PORT-8000}:8000"\n    x-port-check:\n      - "${BACKEND_PORT:-8000}:8000"',
+    '      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"',
+    '      - "127.0.0.1:${BACKEND_PORT-8000}:8000"\n    x-port-check:\n      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"',
   )
 
   assert.ok(checkComposePorts(mutated).length > 0)
@@ -73,7 +79,7 @@ test('a service-shaped block outside the services section cannot stand in for a 
   assert.deepEqual(checkComposePorts(decoy + compose), [])
 
   // The decoy cannot mask a real service that is broken.
-  const broken = replaceOnce(compose, '${BACKEND_PORT:-8000}', '${BACKEND_PORT-8000}')
+  const broken = replaceOnce(compose, '"127.0.0.1:${BACKEND_PORT:-8000}:8000"', '"127.0.0.1:${BACKEND_PORT-8000}:8000"')
   assert.ok(checkComposePorts(decoy + broken).length > 0)
 })
 

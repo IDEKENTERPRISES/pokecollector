@@ -5,7 +5,7 @@ import { Crown, RefreshCw, Download, Upload, Plus, Pencil, Trash2, User, UserChe
 import clsx from 'clsx'
 import {
   getSyncStatus, triggerSync, triggerPriceSync, triggerAllPriceSync, rescheduleFullSync, reschedulePriceSync,
-  downloadBackup, restoreBackup, exportCSV,
+  downloadBackup, restoreBackup, getRestoreStatus, exportCSV,
   getSetting, setSetting, getTelegramStatus, saveSettings, setAuthMode,
   getUsers, createUser, updateUser, deleteUser, changePassword, changeAvatar, changeUsername,
   getContributors, getSupporters, getCustomMatches, downloadDebugLog, logoutOtherDevices,
@@ -20,6 +20,7 @@ import { useSetsView } from '../hooks/useSetsView'
 import { useSetsDefaultLanguage } from '../hooks/useSetsDefaultLanguage'
 import { useVisibleTcgdexLanguages } from '../hooks/useVisibleTcgdexLanguages'
 import { resolveDefaultSetsLanguage } from '../utils/setsLanguage'
+import { waitForRestore } from '../utils/restoreJob'
 import { useConfirmDialog } from '../contexts/ConfirmDialogContext'
 import Modal from '../components/ui/Modal'
 import PasswordPromptDialog from '../components/ui/PasswordPromptDialog'
@@ -470,6 +471,11 @@ export default function Settings() {
   const fileInputRef = useRef(null)
   const [restoring, setRestoring] = useState(false)
   const [restorePromptFile, setRestorePromptFile] = useState(null)
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
   const [showAvatarPicker, setShowAvatarPicker] = useState(false)
   const [editingUsername, setEditingUsername] = useState(false)
   const [usernameInput, setUsernameInput] = useState('')
@@ -966,19 +972,61 @@ export default function Settings() {
     await runRestore(file)
   }
 
+  // The server restores in the background (a big database takes minutes), so after the upload
+  // we poll its status every 3 s and only then report the outcome.
+  const followRestore = async () => {
+    setRestoring(true)
+    try {
+      const final = await waitForRestore({ fetchStatus: getRestoreStatus, isCancelled: () => !mountedRef.current })
+      if (!final) return
+      if (final.state === 'done') {
+        toast.success(t('settings.restoreSuccess'))
+        queryClient.invalidateQueries()
+        // The whole database was replaced: start from a clean slate.
+        setTimeout(() => window.location.reload(), 1500)
+        return
+      }
+      // The server's message already starts with what went wrong ("Restore failed: …").
+      const reason = final.state === 'failed' ? final.error : null
+      toast.error(reason || t('settings.restoreLost'), { duration: 10000 })
+      setRestoring(false)
+    } catch (err) {
+      if ([401, 403].includes(err.response?.status)) {
+        // The restored database no longer knows this session, which means it was replaced.
+        toast.success(t('settings.restoreSuccessSignIn'))
+        setTimeout(() => window.location.reload(), 1500)
+        return
+      }
+      toast.error(t('settings.restoreLost'), { duration: 10000 })
+      setRestoring(false)
+    }
+  }
+
   const runRestore = async (file, password) => {
     setRestoring(true)
     try {
       await restoreBackup(file, password)
-      toast.success(t('settings.restoreSuccess'))
-      setRestorePromptFile(null)
-      queryClient.invalidateQueries()
     } catch (err) {
       toast.error(t('settings.errorPrefix') + (err.response?.data?.detail || err.message))
-    } finally {
       setRestoring(false)
+      return
     }
+    setRestorePromptFile(null)
+    await followRestore()
   }
+
+  // A page reload mid-restore picks the running job up again.
+  useEffect(() => {
+    if (user?.role !== 'admin') return undefined
+    let cancelled = false
+    getRestoreStatus()
+      .then((status) => {
+        if (!cancelled && status?.state === 'running') followRestore()
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.role])
 
   const currentLang = settings.language || 'en'
   const currentAppLang = currentLang === 'zh' ? 'zh-cn' : currentLang
@@ -1728,6 +1776,11 @@ export default function Settings() {
                   />
                 </SettingsRow>
               </SettingsCard>
+              {restoring && (
+                <p role="status" className="px-4 pt-1.5 text-footnote font-medium text-text-primary">
+                  {t('settings.restoreRunning')}
+                </p>
+              )}
               <p className="px-4 pt-1.5 text-footnote text-text-secondary">{t('settings.restoreFooter')}</p>
             </section>
           )}
