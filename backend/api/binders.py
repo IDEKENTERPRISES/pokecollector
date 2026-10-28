@@ -9,6 +9,7 @@ from database import get_db
 from models import Binder, BinderCard, Card, CollectionCardPhoto, CollectionItem, Set, User, WishlistItem
 from schemas import BinderCreate, BinderUpdate, BinderResponse, BinderCardUpdate, BinderCardSwitch, BinderPrintOptimizationApply
 from api.collection import ensure_card_exists, _find_card_by_code, _annotate_scan_photos
+from services.binder_slots import delete_slots_for_entries
 from services import pokemon_api
 from services.card_fallbacks import apply_cross_language_fallbacks
 from services.card_upsert import upsert_card
@@ -1281,22 +1282,26 @@ def apply_binder_print_optimization(
                 continue
             existing.required_quantity = combined_quantity
             if binder_type == "physical_deck":
-                db.query(BinderCard).filter(
+                released_rows = db.query(BinderCard).filter(
                     BinderCard.binder_id == binder_id,
                     BinderCard.card_id == bc.card_id,
                     BinderCard.collection_item_id.isnot(None),
-                ).delete(synchronize_session=False)
+                )
+                delete_slots_for_entries(db, released_rows)
+                released_rows.delete(synchronize_session=False)
             db.delete(bc)
             applied += 1
             applied_total_savings += recommendation["total_savings"]
             continue
 
         if binder_type == "physical_deck":
-            db.query(BinderCard).filter(
+            released_rows = db.query(BinderCard).filter(
                 BinderCard.binder_id == binder_id,
                 BinderCard.card_id == bc.card_id,
                 BinderCard.collection_item_id.isnot(None),
-            ).delete(synchronize_session=False)
+            )
+            delete_slots_for_entries(db, released_rows)
+            released_rows.delete(synchronize_session=False)
         bc.card_id = target_card_id
         applied += 1
         applied_total_savings += recommendation["total_savings"]
@@ -1915,11 +1920,13 @@ def switch_binder_entry_card(
             raise HTTPException(status_code=400, detail="Switching would exceed the maximum required quantity of 99")
         existing.required_quantity = combined_quantity
         if binder_type == "physical_deck":
-            db.query(BinderCard).filter(
+            released_rows = db.query(BinderCard).filter(
                 BinderCard.binder_id == binder_id,
                 BinderCard.card_id == bc.card_id,
                 BinderCard.collection_item_id.isnot(None),
-            ).delete(synchronize_session=False)
+            )
+            delete_slots_for_entries(db, released_rows)
+            released_rows.delete(synchronize_session=False)
         db.delete(bc)
         db.commit()
         return {
@@ -1930,11 +1937,13 @@ def switch_binder_entry_card(
         }
 
     if binder_type == "physical_deck":
-        db.query(BinderCard).filter(
+        released_rows = db.query(BinderCard).filter(
             BinderCard.binder_id == binder_id,
             BinderCard.card_id == bc.card_id,
             BinderCard.collection_item_id.isnot(None),
-        ).delete(synchronize_session=False)
+        )
+        delete_slots_for_entries(db, released_rows)
+        released_rows.delete(synchronize_session=False)
     bc.card_id = target_card.id
     db.commit()
     return {

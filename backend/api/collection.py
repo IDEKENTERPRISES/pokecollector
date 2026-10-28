@@ -37,6 +37,7 @@ from services.printing_detail_tags import (
     printing_detail_keys,
 )
 from services.card_values import effective_market_price, normalize_price_field
+from services.foil_patterns import normalize_foil_pattern
 from services.idempotency import (
     SCOPE_COLLECTION_ADD,
     begin_idempotent,
@@ -927,6 +928,11 @@ def update_collection_item(
         update_data["variant"] = _normalize_collection_variant(update_data.get("variant"))
     if "acquired_at" in update_data:
         update_data["acquired_at"] = _validated_acquired_at(update_data["acquired_at"])
+    if "foil_pattern" in update_data:
+        try:
+            update_data["foil_pattern"] = normalize_foil_pattern(update_data["foil_pattern"])
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
     printing_details_marker = object()
     requested_printing_details = update_data.pop("printing_details", printing_details_marker)
     requested_tag_pairs = None

@@ -24,6 +24,7 @@ from services.portfolio_valuation import calculate_portfolio_valuation, portfoli
 from services.price_utils import PRICE_FIELDS, has_valid_price
 from services.sync_retry import RetryQueue, TransientSyncError, is_transient_error
 from services.tcgdex_languages import with_lang_suffix
+from services.progress.state import mark_all_users_dirty_safely
 from services import sync_progress
 
 logger = logging.getLogger(__name__)
@@ -1134,6 +1135,7 @@ def _perform_full_sync_locked(db: Session) -> dict:
 
         # 4. Take portfolio snapshot
         take_portfolio_snapshot(db)
+        mark_all_users_dirty_safely(db)
 
         # 5. Check if any custom cards now have API equivalents
         try:
@@ -1248,6 +1250,7 @@ def perform_price_sync(db: Session, *, force: bool = False) -> dict:
 
         # Take portfolio snapshot
         take_portfolio_snapshot(db)
+        mark_all_users_dirty_safely(db)
 
         # Update sync log
         log.finished_at = datetime.datetime.utcnow()

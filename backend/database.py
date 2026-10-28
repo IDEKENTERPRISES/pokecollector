@@ -114,6 +114,9 @@ def _run_migrations(conn):
         "ALTER TABLE collection ADD COLUMN IF NOT EXISTS grade VARCHAR DEFAULT 'raw'",
         # Owner-editable acquisition date; NULL falls back to added_at
         "ALTER TABLE collection ADD COLUMN IF NOT EXISTS acquired_at TIMESTAMP",
+        # Engagement P1: foil pattern for the holo viewer, pockets a page for book view
+        "ALTER TABLE collection ADD COLUMN IF NOT EXISTS foil_pattern VARCHAR",
+        "ALTER TABLE binders ADD COLUMN IF NOT EXISTS pocket_layout INTEGER NOT NULL DEFAULT 9",
         # v32: Add ebay_app_id to settings table
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS ebay_app_id VARCHAR",
         # v41: Add Pokemon avatar selection to users

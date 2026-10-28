@@ -17,6 +17,7 @@ import { cancelHungQueries, createOfflineEpisodes, refreshAfterReconnect } from 
 import { setOfflineMessage, setOfflineStatus } from './offlineStatus'
 import { whenLaunchSplashClosed } from '../components/splash/launch'
 import { applyFirst, persist, purge, purgeOthers, readFirst, restoreMissing } from './readCache'
+import { checkIn } from '../progress/checkin'
 import { buildPrefetchPlan, runPrefetch } from './prefetch'
 import { clearAllUserData, clearOtherUsersData } from './sessionCleanup'
 import { createSyncReporter } from './syncToasts'
@@ -161,6 +162,15 @@ export function OfflineProvider({ children }) {
       return outbox.syncNow('login')
     }).catch(ignore)
   }, [outbox, active, userId, status])
+
+  // Daily check-in (engagement P1): on start and each return to the foreground; silent, never awaited.
+  useEffect(() => {
+    if (!active) return undefined
+    const run = () => { if (document.visibilityState === 'visible') checkIn(userId) }
+    run()
+    document.addEventListener('visibilitychange', run)
+    return () => document.removeEventListener('visibilitychange', run)
+  }, [active, userId])
 
   // Read cache (P8): other users' saved data goes as soon as the signed-in user is known.
   // A different user signing in also clears the previous user's queued items and viewed pictures (F15c).

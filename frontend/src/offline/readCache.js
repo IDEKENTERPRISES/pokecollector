@@ -35,6 +35,7 @@ export const READ_CACHE_DENY = new Set([
   'user-sessions',
   'sessions', // signed-in devices
   'scanner-configuration', // provider setup (keys are masked server-side, but it is admin configuration)
+  'progress', // the trainer's own events (/api/progress/events) until P12 decides what is shareable
   'push', // push subscriptions
   'push-subscription',
   'telegram-status', // bot tokens and chat ids
