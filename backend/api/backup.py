@@ -18,6 +18,7 @@ from api.auth import get_current_user, multi_user_enabled, oauth2_scheme
 from database import get_db
 from models import User
 from services.auth import decode_token, verify_password
+from services import restore_schema
 from services.postgres_cli import parse_database_url
 from services.restore_sql_guard import RestoreSqlRejected, check_restore_sql
 
@@ -245,8 +246,37 @@ def _finish_restore(state: str, error: str | None = None) -> None:
         _restore_state.update(snapshot)
 
 
-def _execute_restore(command: list[str], env: dict, timeout: int) -> tuple[str, str | None]:
-    """Run psql and return (state, error) for the status."""
+def _recreate_schema() -> None:
+    """Bring the schema up to date with the models: the code startup runs.
+
+    Recreates any table the restore dropped (empty) and applies the migrations an older
+    backup needs. Raises on failure.
+    """
+    import database
+
+    database.init_db()
+
+
+def _mark_all_users_dirty() -> None:
+    """Best-effort: queue every user for the progress engine after a restore."""
+    try:
+        from database import SessionLocal
+        from services.progress.state import mark_all_users_dirty_safely
+
+        with SessionLocal() as db:
+            mark_all_users_dirty_safely(db)
+    except Exception:
+        logger.warning("Could not mark users dirty after restore", exc_info=True)
+
+
+def _execute_restore(
+    command: list[str], env: dict, timeout: int, dropped_tables: list[str] | None = None
+) -> tuple[str, str | None]:
+    """Run psql and return (state, error) for the status.
+
+    ``dropped_tables`` are the live tables the command drops (in its transaction) because
+    they depend on tables the dump replaces; they are recreated once psql succeeds.
+    """
     try:
         result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -265,16 +295,44 @@ def _execute_restore(command: list[str], env: dict, timeout: int) -> tuple[str, 
         logger.error("psql restore failed: %s", result.stderr)
         return "failed", f"Restore failed: {_first_error_line(result.stderr)}"
 
+    # The restore is committed. Recreate what it dropped and bring the schema up to date
+    # before anything else touches the database.
+    schema_error = None
+    try:
+        _recreate_schema()
+        if dropped_tables:
+            logger.info(
+                "Restore: recreated %s (dropped before the restore because they depend on "
+                "tables in the backup)",
+                ", ".join(dropped_tables),
+            )
+    except Exception:
+        logger.exception("Schema update after restore failed")
+        schema_error = (
+            "The backup was restored, but updating the schema afterwards failed. "
+            "Restart the server to finish (see the server log)."
+        )
+    _mark_all_users_dirty()
     _clear_idempotency_keys()
+    if schema_error:
+        return "failed", schema_error
     logger.info("Database restore finished")
     return "done", None
 
 
-def _run_restore_job(restore_path: Path, command: list[str], env: dict, timeout: int) -> None:
+def _run_restore_job(
+    restore_path: Path, command: list[str], env: dict, timeout: int, params: dict | None = None
+) -> None:
     """Background thread: run psql, delete the upload, then record the outcome."""
     state, error = "failed", "Restore failed: see the server log for details"
     try:
-        state, error = _execute_restore(command, env, timeout)
+        dropped: list[str] = []
+        if params:
+            # Same transaction as the dump (psql --single-transaction), so a failure
+            # rolls the drops back with everything else.
+            dropped = restore_schema.plan_restore_drops(restore_path, params)
+            command = restore_schema.with_drops(command, dropped)
+        state, error = _execute_restore(command, env, timeout, dropped)
     finally:
         try:
             restore_path.unlink(missing_ok=True)
@@ -400,7 +458,7 @@ async def restore_backup(
         _save_restore_state(snapshot)
         thread = threading.Thread(
             target=_run_restore_job,
-            args=(restore_path, command, env, timeout),
+            args=(restore_path, command, env, timeout, params),
             name="backup-restore",
             daemon=True,
         )

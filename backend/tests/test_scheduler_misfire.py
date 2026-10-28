@@ -94,6 +94,11 @@ class SchedulerMisfireTests(unittest.TestCase):
                 scan_job = scheduler.inner.get_job("scan_queue_maintenance_job")
                 self.assertEqual(scan_job.misfire_grace_time, 60)
                 self.assertTrue(scan_job.coalesce)
+                for job_id in ("progress_dirty_job", "notification_job"):
+                    job = scheduler.inner.get_job(job_id)
+                    self.assertEqual(job.trigger.interval.total_seconds(), 30, job_id)
+                    self.assertTrue(job.coalesce, job_id)
+                    self.assertEqual(job.max_instances, 1, job_id)
                 self.assertEqual(
                     scheduler.inner.get_job("full_sync_job").misfire_grace_time, 1
                 )

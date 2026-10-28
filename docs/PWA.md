@@ -89,7 +89,7 @@ Once a device is enabled, Settings › Notifications lists what to be notified a
 - **Icon number:** the number on the Home Screen icon is the scans waiting for review. The app updates it on start, when it returns to the foreground and when scans change; a scans-ready push sets it too (`app_badge` in the payload). It needs notification permission and iOS 16.4 or later, and does nothing where the Badging API is missing. Informational notifications are never counted.
 - Telegram's new-sets message is now sent when a sync finds new sets (and `TELEGRAM_ENABLED=false` still silences it).
 
-Server side: `services/notifications.py` (queue table `notification_queue`, flushed every minute by the scheduler).
+Server side: `services/notifications.py` (queue table `notification_queue`, flushed every 30 seconds by the scheduler).
 
 ## Opening the app offline (cached sign-in)
 

@@ -168,6 +168,17 @@ class RestoreBackupTests(unittest.IsolatedAsyncioTestCase):
         clear_keys = patch.object(backup_api, "_clear_idempotency_keys")
         self.clear_keys = clear_keys.start()
         self.addCleanup(clear_keys.stop)
+        # No live PostgreSQL here: nothing depends on the dump, and the post-restore
+        # steps are covered in test_restore_schema.py.
+        plan = patch.object(backup_api.restore_schema, "plan_restore_drops", return_value=[])
+        self.plan_drops = plan.start()
+        self.addCleanup(plan.stop)
+        recreate = patch.object(backup_api, "_recreate_schema")
+        self.recreate = recreate.start()
+        self.addCleanup(recreate.stop)
+        mark_dirty = patch.object(backup_api, "_mark_all_users_dirty")
+        self.mark_dirty = mark_dirty.start()
+        self.addCleanup(mark_dirty.stop)
 
     def tearDown(self):
         self._wait_for_restore_to_finish()
