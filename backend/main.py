@@ -96,6 +96,8 @@ async def lifespan(app: FastAPI):
 
     from services.progress.listeners import register_progress_listeners
     register_progress_listeners()
+    from services.binder_slots import register_binder_slot_listeners
+    register_binder_slot_listeners()
 
     from services.scheduler import start_scheduler
     start_scheduler()
