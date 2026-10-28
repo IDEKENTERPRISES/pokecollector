@@ -230,10 +230,11 @@ class PushSendOutcomeTests(PushDatabaseTestCase):
                 self.assertIn(f"HTTP {status}", text)
                 self.assertNotIn("web.push.apple.com", text)
                 self.assertNotIn('"x"', text)
-                self.db.query(push_service.PushSubscription).delete()
+                # Delete through the ORM: SQLite reuses the row id, and a bulk delete would leave the
+                # old instance in the identity map to clash with the next subtest's subscription.
+                for sub in self.subs():
+                    self.db.delete(sub)
                 self.db.commit()
-                # SQLite reuses the deleted row's id; forget the old instance so the next add does not clash.
-                self.db.expunge_all()
 
     def test_only_the_users_own_subscriptions_are_used(self):
         self.add_sub()
