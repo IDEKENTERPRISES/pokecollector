@@ -2638,6 +2638,8 @@ const en = {
     addWishlist: 'Add to wishlist',
     addedWishlist: 'Added to your wishlist',
     wishlistFailed: "Couldn't add it to your wishlist",
+    openCard: 'Open card: {name}',
+    openCardFailed: "Couldn't open that card",
     quests: 'Daily quests',
     questsDone: '{done} of {total} done',
     done: 'Done',
