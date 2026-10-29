@@ -1081,3 +1081,12 @@ input:-webkit-autofill:focus {
   --color-brand-red-dark:  #ec407a;
   --color-on-accent:   #000000;
 }
+
+/* Wrapped story (engagement P9b): the progress segment runs for six seconds and its end advances the
+   story; slides fade in. Both are off under reduced motion, so nothing moves on its own. */
+@keyframes wrapped-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes wrapped-slide-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: no-preference) {
+  .wrapped-fill { transform-origin: left; animation: wrapped-fill 6s linear forwards; }
+  .wrapped-slide { animation: wrapped-slide-in 0.25s ease; }
+}

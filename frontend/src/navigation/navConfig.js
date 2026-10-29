@@ -44,6 +44,8 @@ export const ROUTES = Object.freeze([
   { path: '/profile', section: 'profile', kind: 'root', titleKey: 'nav.profile' },
   { path: '/analytics', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.analytics' },
   { path: '/dna', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'delights.dna' },
+  { path: '/wrapped', section: 'profile', kind: 'pushed', backToPrevious: true, titleKey: 'wrapped.title' },
+  { path: '/wrapped/:year', section: 'profile', kind: 'pushed', backToPrevious: true, titleKey: 'wrapped.title' },
   { path: '/products', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.products' },
   { path: '/trades', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.trades' },
   { path: '/leaderboard', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.leaderboard' },
