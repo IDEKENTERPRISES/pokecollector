@@ -28,6 +28,7 @@ import DailyTodayCard from '../progress/TodayCard'
 import GreetingStreak from '../progress/GreetingStreak'
 import { readShowDaily } from '../progress/daily'
 import OnThisDayCard from '../delights/OnThisDayCard'
+import WrappedBanner from '../wrapped/WrappedBanner'
 import { useNavBar } from '../navigation/useNavBar'
 import {
   SCAN_JOBS_QUERY_KEY,
@@ -279,6 +280,9 @@ export default function HomeScreen() {
         <QuickAction to="/sets" icon={Grid2X2} label={t('nav.sets')} type="grass" />
         <QuickAction to="/analytics" icon={BarChart3} label={t('nav.analytics')} type="lightning" />
       </section>
+
+      {/* Only while the API says Wrapped is available (1 December to 15 January). */}
+      <WrappedBanner />
 
       <div className="-mx-4 -my-3 empty:hidden"><InstallHint /></div>
 
