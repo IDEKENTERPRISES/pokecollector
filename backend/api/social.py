@@ -393,12 +393,15 @@ def get_leaderboard(
     current_user: User = Depends(get_current_user),
 ):
     stats = _load_user_stats(db, price_field=price_field)
+    from services import delights
     from services.progress.xp import level_info, totals_for
 
     totals = totals_for(db, list(stats))
     for user_id, entry in stats.items():
         info = level_info(totals.get(user_id, 0))
         entry["xp"], entry["level"] = info["xp"], info["level"]
+        # Signed-in trainers always see each other's Showcase 6; public profiles don't gate it.
+        entry["showcase"] = delights.serialize_showcase(delights.showcase_items(db, user_id), False)
     leaderboard = sorted(
         stats.values(),
         key=lambda entry: (entry["total_value"], entry["total_cards"], entry["unique_cards"]),
