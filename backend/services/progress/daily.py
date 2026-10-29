@@ -211,9 +211,11 @@ def _print_summary(price, card, with_set: bool = False) -> dict:
 
 def pokemon_of_day_info(db: Session, user_id: int, day: datetime.date) -> dict:
     """How many printings of the day's Pokémon the trainer owns, the cheapest printing when they own
-    none, and the most expensive printing (owned or not), both by the trainer's price field."""
+    none, and the most expensive printing (owned or not), both by the trainer's price field. The
+    cheapest and most expensive lines only offer printings in the server's catalogue languages."""
     from models import CollectionItem
     from services.card_values import effective_market_price
+    from services.card_visibility import get_configured_sync_languages
     from services.pokedex_splash import species_for_date
     from services.sync_service import _user_price_field
 
@@ -226,7 +228,8 @@ def pokemon_of_day_info(db: Session, user_id: int, day: datetime.date) -> dict:
             CollectionItem.user_id == user_id, CollectionItem.card_id.in_(ids)).distinct()}
     info = {"dex_id": dex_id, "owned_printings": len(owned), "cheapest": None, "most_expensive": None}
     field = _user_price_field(db, user_id)
-    priced = [(effective_market_price(card, None, field), card) for card in cards]
+    languages = set(get_configured_sync_languages(db))
+    priced = [(effective_market_price(card, None, field), card) for card in cards if card.lang in languages]
     priced = [(price, card) for price, card in priced if price and price > 0]
     if priced:
         if not owned:

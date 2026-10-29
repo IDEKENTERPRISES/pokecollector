@@ -313,6 +313,24 @@ class DailyLoopTests(ProgressTestBase):
         info = daily.pokemon_of_day_info(self.db, self.user.id, self.today)
         self.assertEqual((info["most_expensive"]["card_id"], info["most_expensive"]["price"]), ("spd-001_en", 99.0))
 
+    def test_prints_on_offer_only_come_from_the_servers_languages(self):
+        from models import Setting
+
+        dex_id = species_for_date(self.today)
+        japanese = _species_card("spj-001", dex_id, 500.0)
+        japanese.id, japanese.lang = "spj-001_ja", "ja"
+        self.db.add_all([japanese, _species_card("spj-002", dex_id, 20.0)])
+        self.db.add(Setting(key="tcgdex_sync_languages", value="en"))
+        self.db.commit()
+        info = daily.pokemon_of_day_info(self.db, self.user.id, self.today)
+        self.assertEqual(info["most_expensive"]["card_id"], "spj-002_en")
+        self.assertEqual(info["cheapest"]["card_id"], "spj-002_en")
+
+        self.db.query(Setting).filter_by(key="tcgdex_sync_languages").update({"value": "en,ja"})
+        self.db.commit()
+        info = daily.pokemon_of_day_info(self.db, self.user.id, self.today)
+        self.assertEqual(info["most_expensive"]["card_id"], "spj-001_ja")
+
     def test_pokemon_of_day_has_no_prints_to_show_when_nothing_is_priced(self):
         info = daily.pokemon_of_day_info(self.db, self.user.id, self.today)
         self.assertIsNone(info["most_expensive"])
