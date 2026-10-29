@@ -420,6 +420,12 @@ Size: S = one PR, M = a few days of worker time, L = several PRs.
   - computed by `GET /api/analytics/dna`;
   - read-cached for offline.
 
+*As built (P8):*
+- Logic is in `backend/services/delights.py`. No new tables or columns: the showcase is the `user_settings` key `showcase` (JSON list of collection item ids).
+- `GET /api/progress/on-this-day` compares `acquired_at` (else `added_at`) with today's month and day in the user's `time_zone`, earlier years only. A 29 February copy shows only on 29 February. It is not tied to the "Show streaks and quests" switch.
+- `GET`/`PUT /api/profile/showcase` (max 6, own copies only, 400 otherwise). Copies deleted later are skipped on read. The public profile carries `showcase`, with values only when the public value setting is on.
+- `GET /api/analytics/dna` returns the first type of each card, illustrators, release-year eras and the first dex id; page `/dna`, read-cached under `['collection-dna']` and prefetched.
+
 ### Milestone C — recap and goals (round 3, promotion 3, on `deploy` by 1 December)
 
 **P9 Weekly recap and 2026 Wrapped (L).** After P8.

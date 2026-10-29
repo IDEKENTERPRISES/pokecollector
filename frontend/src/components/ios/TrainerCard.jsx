@@ -1,6 +1,7 @@
 import { useSettings } from '../../contexts/SettingsContext'
 import XpBar from '../../progress/XpBar'
 import GymBadges from './GymBadges'
+import ShowcaseStrip from '../../delights/ShowcaseStrip'
 import PokeBall from './PokeBall'
 
 /**
@@ -11,9 +12,10 @@ import PokeBall from './PokeBall'
  *
  * user: { name, handle, id, sprite }; stats: { cards, sets, pokedex } (display strings);
  * badges: { earned, total, to, tracks } or omitted until the achievements have loaded;
- * level: { level, xp, level_start, next_level_at } from the Today summary, or omitted.
+ * level: { level, xp, level_start, next_level_at } from the Today summary, or omitted;
+ * showcase: the Showcase 6 cards (engagement P8), or omitted.
  */
-export default function TrainerCard({ user = {}, stats = {}, badges, level, className = '' }) {
+export default function TrainerCard({ user = {}, stats = {}, badges, level, showcase, className = '' }) {
   const { t } = useSettings()
   const idText = user.id != null && user.id !== '' ? String(user.id).padStart(5, '0') : null
   const statItems = [
@@ -63,6 +65,12 @@ export default function TrainerCard({ user = {}, stats = {}, badges, level, clas
           </div>
         ))}
       </dl>
+
+      {showcase?.length > 0 && (
+        <div className="relative mt-3">
+          <ShowcaseStrip cards={showcase} label={t('delights.showcase')} />
+        </div>
+      )}
 
       {badges && (
         <div className="relative mt-3">
