@@ -28,6 +28,7 @@ import DailyTodayCard from '../progress/TodayCard'
 import GreetingStreak from '../progress/GreetingStreak'
 import { readShowDaily } from '../progress/daily'
 import OnThisDayCard from '../delights/OnThisDayCard'
+import RecapCard from '../recap/RecapCard'
 import { useNavBar } from '../navigation/useNavBar'
 import {
   SCAN_JOBS_QUERY_KEY,
@@ -374,6 +375,9 @@ export default function HomeScreen() {
 
       {/* The Today card (progress/TodayCard); with streaks and quests off, just the Pokémon of the day. */}
       {showDaily ? <DailyTodayCard /> : <TodayCard />}
+
+      {/* Shows from Sunday 18:00 to Tuesday, and only for a week with something in it. */}
+      <RecapCard />
 
       {/* Shows only when cards were acquired on this day in earlier years. */}
       <OnThisDayCard />

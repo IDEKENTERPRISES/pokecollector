@@ -72,7 +72,7 @@ CATEGORIES: dict[str, Category] = {
     "new_sets": Category("new_sets", True, DIGEST, "/sets", "new set"),
     "wishlist_dips": Category("wishlist_dips", True, DIGEST, "/wishlist", "wishlist dip"),
     "big_movers": Category("big_movers", False, DIGEST, "/collection", "big mover"),
-    "weekly_recap": Category("weekly_recap", False, None, "/", "recap"),
+    "weekly_recap": Category("weekly_recap", False, INSTANT, "/", "recap"),
     "badges": Category("badges", True, INSTANT, "/achievements", "badge"),
     "goal_milestones": Category("goal_milestones", True, None, "/", "goal"),
     "swap_offers": Category("swap_offers", True, None, "/", "swap offer"),
@@ -721,6 +721,13 @@ def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, 
             return
         badge_id = (row.details or {}).get("badge_id") or achievement_id
         outcome = _send(db, user_id, build_badge_payload(badge_id if show_details(db, user_id) else None))
+        result["instant"] += 1
+        _log("flushed", category, user_id, subject, _sent_reason(outcome))
+    elif category == "weekly_recap":
+        from services.recap import build_recap_push
+
+        title, body = build_recap_push(row.details if show_details(db, user_id) else None)
+        outcome = _send(db, user_id, push.encode_payload_fitted(title, body, CATEGORIES[category].navigate))
         result["instant"] += 1
         _log("flushed", category, user_id, subject, _sent_reason(outcome))
 

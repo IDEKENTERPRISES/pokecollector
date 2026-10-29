@@ -50,3 +50,11 @@
 - **Push diagnosis:** the backend log says what happened to each notification (`docker logs <backend> | grep "Notification "`): `queued` or `not queued` (category off, duplicate, nothing to review), `deferred` (quiet hours, with the end time), `skipped` (category off, already reviewed, badge sheet already seen) and `flushed` with `sent=`/`removed=` counts (`sent=0` means no device received it). Any non-2xx answer from a push service (403, 429, 410 …) is logged as a warning. Payloads and push endpoints are never logged.
 - **Scanner:** per-user scanner keys come with the restore and share the provider's quota with prod.
 - **Syncs:** nonprod runs its own scheduled syncs against TCGdex. You can lengthen the intervals in nonprod's Settings.
+
+## Previewing Wrapped
+
+`GET /api/progress/wrapped?year=2026` only answers from 1 December to 15 January (otherwise 404). To look at it on nonprod before then, set `WRAPPED_PREVIEW=1` in the backend's environment:
+
+- With it set, the date window is skipped.
+- `preview_date=YYYY-MM-DD` pretends it is that day (`/api/progress/wrapped?year=2026&preview_date=2026-12-05`) and still enforces the window for that date.
+- Leave it unset on prod; the preview date is ignored there.
