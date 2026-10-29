@@ -235,8 +235,8 @@ function download(file, doc, urls) {
  * Shares the picture with the system share sheet, or downloads it when files cannot be shared.
  * Resolves 'shared', 'downloaded' or 'cancelled' (the trainer closed the sheet); rejects on a real failure.
  */
-export async function sharePicture(blob, { nav = globalThis.navigator, doc = globalThis.document, urls = globalThis.URL } = {}) {
-  const file = shareFile(blob)
+export async function sharePicture(blob, { nav = globalThis.navigator, doc = globalThis.document, urls = globalThis.URL, name } = {}) {
+  const file = name ? shareFile(blob, name) : shareFile(blob)
   if (canShareFile(file, nav)) {
     try {
       await nav.share({ files: [file] })
@@ -248,4 +248,139 @@ export async function sharePicture(blob, { nav = globalThis.navigator, doc = glo
   }
   download(file, doc, urls)
   return 'downloaded'
+}
+
+// ---- Generic share pictures (engagement P9a) ----
+// The recap, and later Wrapped, DNA and the Showcase, draw a title plus a stack of blocks (a big
+// number, a card image, a line of text) in a story (1080x1920) or square (1080x1080) frame. The
+// layout is data (`blocksSpec`) so it is unit-tested without a browser; `renderBlocksImage` draws
+// it and `sharePicture` shares or downloads the result. Amounts are masked here when the trainer
+// has hide-values on, so a hidden amount can never end up in a picture. Card images must be
+// same-origin (the image proxy), so the canvas is not tainted.
+export const SQUARE_SIZE = 1080
+export const FORMATS = {
+  story: { width: SHARE_WIDTH, height: SHARE_HEIGHT, top: 300, bottom: 250 },
+  square: { width: SQUARE_SIZE, height: SQUARE_SIZE, top: 90, bottom: 90 },
+}
+export const HIDDEN_AMOUNT = '••••'
+const BLOCK_HEIGHT = { number: 190, card: 560, line: 90 }
+const HEADER_HEIGHT = 190
+
+/**
+ * `blocks`: { type: 'number', value, label, amount? } | { type: 'card', url, label?, amount? } |
+ * { type: 'line', text, amount? }. A block flagged `amount` shows •••• for its value (number),
+ * label (card) or text (line) while `hideValues` is on. Blocks shrink together to fit the frame.
+ */
+export function blocksSpec({
+  format = 'story', appName, title, subtitle = '', blocks = [], hideValues = false, accent, fontFamily,
+}) {
+  const frame = FORMATS[format] || FORMATS.story
+  const mask = (block, text) => (hideValues && block.amount ? HIDDEN_AMOUNT : text)
+  const items = blocks.map(block => {
+    if (block.type === 'card') return { type: 'card', url: block.url || null, label: mask(block, block.label || '') }
+    if (block.type === 'line') return { type: 'line', text: mask(block, block.text || '') }
+    return { type: 'number', value: mask(block, String(block.value ?? '')), label: block.label || '' }
+  })
+  const natural = items.reduce((sum, block) => sum + BLOCK_HEIGHT[block.type], 0)
+  const available = frame.height - frame.top - frame.bottom - HEADER_HEIGHT
+  const scale = natural > available && natural > 0 ? available / natural : 1
+  let y = frame.top + HEADER_HEIGHT
+  const placed = items.map(block => {
+    const height = BLOCK_HEIGHT[block.type] * scale
+    const entry = { ...block, y, height }
+    y += height
+    return entry
+  })
+  return {
+    format,
+    width: frame.width,
+    height: frame.height,
+    accent: accent || FALLBACK_ACCENT,
+    fontFamily: fontFamily || DEFAULT_FONT,
+    appName: appName || '',
+    title,
+    subtitle,
+    headerY: frame.top,
+    scale,
+    blocks: placed,
+  }
+}
+
+/** Draws a `blocksSpec`. `images` maps a block's index to a loaded image (or nothing). */
+export function drawBlocksImage(ctx, spec, images = {}) {
+  const { width, height, fontFamily, scale } = spec
+  const centre = width / 2
+  ctx.fillStyle = spec.accent
+  ctx.fillRect(0, 0, width, height)
+  const shade = ctx.createLinearGradient(0, 0, 0, height)
+  shade.addColorStop(0, 'rgba(0,0,0,0.15)')
+  shade.addColorStop(1, 'rgba(0,0,0,0.78)')
+  ctx.fillStyle = shade
+  ctx.fillRect(0, 0, width, height)
+
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = 'rgba(255,255,255,0.8)'
+  ctx.font = `600 40px ${fontFamily}`
+  ctx.fillText(spec.appName, centre, spec.headerY + 40)
+  ctx.fillStyle = '#FFFFFF'
+  ctx.font = `800 72px ${fontFamily}`
+  ctx.fillText(spec.title, centre, spec.headerY + 125)
+  if (spec.subtitle) {
+    ctx.fillStyle = 'rgba(255,255,255,0.8)'
+    ctx.font = `500 38px ${fontFamily}`
+    ctx.fillText(spec.subtitle, centre, spec.headerY + 180)
+  }
+
+  spec.blocks.forEach((block, index) => {
+    if (block.type === 'number') {
+      ctx.fillStyle = '#FFFFFF'
+      ctx.font = `800 ${Math.round(110 * scale)}px ${fontFamily}`
+      ctx.fillText(block.value, centre, block.y + 110 * scale)
+      ctx.fillStyle = 'rgba(255,255,255,0.8)'
+      ctx.font = `500 ${Math.round(42 * scale)}px ${fontFamily}`
+      ctx.fillText(block.label, centre, block.y + 165 * scale)
+    } else if (block.type === 'card') {
+      const labelSpace = block.label ? 70 * scale : 0
+      const cardHeight = block.height - labelSpace - 20 * scale
+      const cardWidth = cardHeight * 5 / 7
+      const x = centre - cardWidth / 2
+      roundedRect(ctx, x, block.y, cardWidth, cardHeight, 24 * scale)
+      ctx.fillStyle = 'rgba(0,0,0,0.3)'
+      ctx.fill()
+      if (images[index]) {
+        ctx.save()
+        roundedRect(ctx, x, block.y, cardWidth, cardHeight, 24 * scale)
+        ctx.clip()
+        ctx.drawImage(images[index], x, block.y, cardWidth, cardHeight)
+        ctx.restore()
+      }
+      if (block.label) {
+        ctx.fillStyle = '#FFFFFF'
+        ctx.font = `700 ${Math.round(44 * scale)}px ${fontFamily}`
+        ctx.fillText(block.label, centre, block.y + block.height - 14 * scale)
+      }
+    } else {
+      ctx.fillStyle = '#FFFFFF'
+      ctx.font = `600 ${Math.round(44 * scale)}px ${fontFamily}`
+      ctx.fillText(block.text, centre, block.y + 58 * scale)
+    }
+  })
+}
+
+/** Draws the blocks picture and returns a PNG Blob, or null. Card images that fail are left blank. */
+export async function renderBlocksImage(spec, { createCanvas = defaultCanvas, load = loadImage } = {}) {
+  const loaded = await Promise.all(spec.blocks.map(block => (block.type === 'card' && block.url ? load(block.url) : null)))
+  const attempts = loaded.some(Boolean) ? [loaded, []] : [[]]
+  for (const set of attempts) {
+    try {
+      const canvas = createCanvas(spec.width, spec.height)
+      drawBlocksImage(canvas.getContext('2d'), spec, set)
+      const blob = await toBlob(canvas)
+      if (blob) return blob
+    } catch {
+      // a tainted canvas: try again without the card images
+    }
+  }
+  return null
 }
