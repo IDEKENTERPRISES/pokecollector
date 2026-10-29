@@ -7,7 +7,7 @@ from unittest.mock import patch
 try:
     from models import (
         CollectionItem, NotificationQueue, PortfolioSnapshot, Trade, UserAchievement, UserDailyActivity,
-        UserSetting,
+        UserEvent, UserSetting, UserXpLedger,
     )
     from services import notifications, recap
     from test_progress import ProgressTestBase
@@ -280,12 +280,45 @@ class WrappedTests(RecapBase):
         self.assertEqual(result["history_starts"], "2026-02-01")
         self.assertTrue(result["partial_history"])
 
+    def test_redesign_fields_months_cards_sets_level_and_value_series(self):
+        self.own("tst-001", acquired_at=datetime.datetime(2026, 3, 5))
+        self.own("tst-002", acquired_at=datetime.datetime(2026, 3, 9))
+        self.own("big-001", acquired_at=datetime.datetime(2026, 8, 1))
+        self.db.add(UserEvent(user_id=self.user.id, kind="set_completed", occurred_at=datetime.datetime(2026, 3, 9),
+                              subject_key="tst_en", payload={"set_name": "Test Set"}, dedupe_key="set_completed:tst_en"))
+        self.db.add(UserEvent(user_id=self.user.id, kind="set_completed", occurred_at=datetime.datetime(2025, 3, 9),
+                              subject_key="old_en", payload={"set_name": "Old"}, dedupe_key="set_completed:old_en"))
+        self.db.add(UserXpLedger(user_id=self.user.id, source="quest", source_key="a", amount=60,
+                                 created_at=datetime.datetime(2026, 4, 1)))
+        self.db.add(UserXpLedger(user_id=self.user.id, source="quest", source_key="b", amount=40,
+                                 created_at=datetime.datetime(2025, 4, 1)))
+        self.db.commit()
+        self.snapshot(datetime.datetime(2026, 3, 1), 10.0)
+        self.snapshot(datetime.datetime(2026, 3, 20), 12.0)
+        self.snapshot(datetime.datetime(2026, 8, 2), 40.0)
+        result = recap.wrapped(self.db, self.user.id, 2026, today=self.DECEMBER)
+        self.assertEqual(result["monthly"], [0, 0, 2, 0, 0, 0, 0, 1, 0, 0, 0, 0])
+        self.assertEqual(result["first_card"]["set_name"], "Test Set")
+        self.assertEqual(result["first_card"]["number"], "001")
+        self.assertEqual(result["first_card"]["acquired_on"], "2026-03-05")
+        self.assertIsNone(result["best_pull"]["set_name"])  # no Set row for "big"
+        self.assertEqual(result["completed_sets"], [{"set_id": "tst_en", "name": "Test Set"}])
+        self.assertEqual(result["totals"]["sets_completed"], 1)
+        self.assertEqual(result["xp_year"], 60)
+        self.assertEqual(result["level"], 2)  # 100 XP in all
+        self.assertEqual(result["value"]["start_date"], "2026-03-01")
+        self.assertEqual(result["value"]["series"], [{"month": 3, "value": 12.0}, {"month": 8, "value": 40.0}])
+        self.assertIn("closest_set", result)
+
     def test_an_empty_year_is_empty_not_an_error(self):
         result = recap.wrapped(self.db, self.user.id, 2026, today=self.DECEMBER)
         self.assertEqual(result["totals"]["cards"], 0)
         self.assertIsNone(result["first_card"])
         self.assertIsNone(result["value"])
         self.assertIsNone(result["history_starts"])
+        self.assertEqual(result["monthly"], [0] * 12)
+        self.assertEqual(result["completed_sets"], [])
+        self.assertIsNone(result["closest_set"])
 
 
 @unittest.skipUnless(DEPS_AVAILABLE, "FastAPI is not installed")
