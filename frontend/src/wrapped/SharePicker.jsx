@@ -90,7 +90,7 @@ export default function SharePicker({ source, onClose }) {
     >
       <div className="wp-sheet" style={{
         width: '100%', maxWidth: 480, boxSizing: 'border-box', borderRadius: '28px 28px 0 0', background: '#1C1C1E', color: '#FFFFFF',
-        padding: '10px 16px calc(env(safe-area-inset-bottom, 0px) + 16px)', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif',
+        padding: '10px 16px calc(env(safe-area-inset-bottom, 0px) + 16px)', lineHeight: 'normal', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif',
       }}>
         <div aria-hidden="true" style={{ width: 36, height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.3)', margin: '0 auto 14px' }} />
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, textAlign: 'center' }}>{fill(t('wrapped.shareSheetTitle'), { year: data.year })}</h2>

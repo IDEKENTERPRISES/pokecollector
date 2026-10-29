@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 // The 2026 Wrapped story (engagement P9b): Home banner, tapping through, back, a skipped empty slide,
-// Reduce Motion, hide-values and the share button. Runs on desktop and mobile Chromium, and on iPhone
+// Reduce Motion, hide-values and the share picker. Runs on desktop and mobile Chromium, and on iPhone
 // WebKit through playwright.webkit.config.js. The API is mocked.
 
 const USER = { id: 1, username: 'Ash', role: 'admin', is_active: true, must_change_password: false }
@@ -98,13 +98,13 @@ test('the Home banner opens the story, and it taps through and back', async ({ p
   await page.getByTestId('wrapped-banner').click()
   await expect(page).toHaveURL(/\/wrapped\/2026$/)
   await expect(story(page)).toHaveAttribute('data-slide', 'cover')
-  await expect(story(page)).toContainText('in cards')
-  await expect(story(page)).toContainText('Counting from 12 March')
+  await expect(story(page)).toContainText('YOUR YEAR IN CARDS')
+  await expect(story(page)).toContainText('Collected since 12 March')
 
   await page.getByRole('button', { name: 'Next slide' }).click()
   await expect(story(page)).toHaveAttribute('data-slide', 'cards')
   await expect(story(page)).toContainText('486')
-  await expect(story(page)).toContainText('June was your biggest month: 88 cards.')
+  await expect(story(page)).toContainText('June · 88')
 
   await page.getByRole('button', { name: 'Next slide' }).click()
   await expect(story(page)).toHaveAttribute('data-slide', 'first')
@@ -172,21 +172,26 @@ test('hide-values masks every amount in the story', async ({ page }) => {
 
   for (let i = 0; i < 3; i += 1) await page.getByRole('button', { name: 'Next slide' }).click()
   await expect(story(page)).toHaveAttribute('data-slide', 'pull')
-  await expect(page.getByTestId('wrapped-pull-value')).toHaveText('••••')
+  await expect(page.getByTestId('wrapped-pull-value')).toHaveText('€•••')
   for (let i = 0; i < 3; i += 1) await page.getByRole('button', { name: 'Next slide' }).click()
   await expect(story(page)).toHaveAttribute('data-slide', 'value')
-  await expect(page.getByTestId('wrapped-value')).toHaveText('••••')
+  await expect(page.getByTestId('wrapped-value')).toHaveText('€•••')
+  await expect(story(page)).not.toContainText('1.4k')
   await expect(story(page)).not.toContainText('1,400')
   await expect(story(page)).not.toContainText('1.400')
 })
 
-test('Share picture hands a picture to the share sheet', async ({ page }) => {
+test('Share my trainer card opens the picker, and a tap shares that picture', async ({ page }) => {
   await install(page)
   await page.goto('/wrapped')
 
   await playToEnd(page)
-  await page.getByRole('button', { name: 'Share picture' }).click()
-  await expect.poll(() => page.evaluate(() => window.__shared)).toEqual([['wrapped.png']])
+  await page.getByRole('button', { name: 'Share my trainer card' }).click()
+  await expect(page.getByTestId('wrapped-share-sheet')).toBeVisible()
+  await expect(page.getByTestId('wrapped-share-card')).toHaveAttribute('data-ready', 'true', { timeout: 15000 })
+  await page.getByTestId('wrapped-share-card').click()
+  await expect.poll(() => page.evaluate(() => window.__shared)).toEqual([['pokecollector-wrapped-2026-trainer-card.png']])
+  await expect(page.getByTestId('wrapped-share-sheet')).toHaveCount(0)
 })
 
 test('Profile has a Wrapped row', async ({ page }) => {

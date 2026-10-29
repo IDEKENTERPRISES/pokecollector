@@ -90,7 +90,7 @@ export const GLYPHS = {
   fire: { fill: [FLAME] },
   water: { fill: [DROP] },
   lightning: { fill: [BOLT] },
-  psychic: { stroke: [EYE], circles: [[12, 12, 3]], width: 2.4 },
+  psychic: { stroke: [EYE], circles: [[12, 12, 3]], width: 2.4, big: ['M12 8.6a3.4 3.4 0 0 1 3.4 3.4'] },
   fighting: {
     stroke: ['M7 11V8a2 2 0 0 1 4 0v3M11 10V7a2 2 0 0 1 4 0v4M15 10.5V9a2 2 0 0 1 4 0v4.5a7 7 0 0 1-7 7h-.5A6.5 6.5 0 0 1 5 14v-1.5a2 2 0 0 1 2-2h4.5'],
     width: 2.2,

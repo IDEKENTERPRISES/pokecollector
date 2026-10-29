@@ -9,14 +9,15 @@ import { TYPE_COLOURS } from '../components/ios/pokemon'
 import { DARK_INK, FOIL_COIN_STOPS, FOIL_FRAME_STOPS, FOIL_SMALL_STOPS, GLYPHS, SPARKLE } from './theme'
 import { CARD_H, CARD_W, cardColours, cssFont, fitText, trainerCardLabel, trainerCardLayout, trainerCardModel } from './trainerCard'
 import { loadDisplayFont, largeImage } from './pieces'
-import { monthCells, rarityOf, thousands, typePercent } from './wrapped'
+import { dayMonth, monthCells, personaKey, rarityOf, thousands, typePercent } from './wrapped'
 
 export const PICTURE_W = 1080
 export const PICTURE_H = 1920
 const UNIT = 3 // mockup units (360 × 640) to pixels
 export const PICTURE_KINDS = ['card', 'poster']
 
-export const pictureFileName = (kind, year) => `pokecollector-wrapped-${year}-${kind === 'card' ? 'trainer-card' : 'stats'}.png`
+const FILE_PARTS = { card: 'trainer-card', poster: 'stats', pull: 'top-pull' }
+export const pictureFileName = (kind, year) => `pokecollector-wrapped-${year}-${FILE_PARTS[kind] || kind}.png`
 
 // ── Canvas helpers ─────────────────────────────────────────────────────────
 export function roundRect(ctx, x, y, w, h, r) {
@@ -168,12 +169,17 @@ export function text(ctx, item, fillStyle) {
   ctx.textBaseline = 'alphabetic'
   const spacing = font.spacing || 0
   const align = item.align || 'left'
-  if (!spacing) {
+  if (!spacing || 'letterSpacing' in ctx) {
+    // Native letter spacing keeps the font's kerning, as CSS letter-spacing does.
+    if ('letterSpacing' in ctx) ctx.letterSpacing = `${spacing}px`
     ctx.textAlign = align
-    ctx.fillText(item.text, item.x, baseline)
+    // Canvas puts the spacing after the last letter too; CSS centring and right alignment do not count it.
+    const shift = spacing && align === 'center' ? spacing / 2 : spacing && align === 'right' ? spacing : 0
+    ctx.fillText(item.text, item.x + shift, baseline)
+    if ('letterSpacing' in ctx) ctx.letterSpacing = '0px'
     return baseline
   }
-  // Letter spacing by hand, so it works where ctx.letterSpacing does not (older Safari).
+  // Letter spacing by hand where ctx.letterSpacing is missing (older Safari).
   const width = ctx.measureText(item.text).width + spacing * item.text.length
   let x = align === 'right' ? item.x - width : align === 'center' ? item.x - width / 2 : item.x
   ctx.textAlign = 'left'
@@ -467,7 +473,9 @@ export function drawStatPoster(ctx, o, image) {
   ctx.fill()
   text(ctx, { text: chipText, x: 344 - cw + 8, y: 89, lh: 16, font: chipFont }, '#FFE56E')
 
-  let y = 124
+  // The full grid (rows 190, 100, 96 and 52) fills y 124–586; with rows missing it sits centred there.
+  const gridH = 190 + 8 + 100 + (plan.streak || plan.sets ? 8 + 96 : 0) + (plan.rail.length ? 8 + 52 : 0)
+  let y = 124 + Math.max(0, (462 - gridH) / 2)
   // Row 1: cards added (with the month bars) and the top pull.
   const cardsW = plan.top ? 160 : 328
   tile(ctx, 16, y, cardsW, 190, STAT_TILES.cards)
@@ -547,12 +555,16 @@ export function drawStatPoster(ctx, o, image) {
   ctx.fillStyle = p.bg[1]
   ctx.fill()
   glyph(ctx, model.key, cx - 13, cy - 13, 26, ink, model.key === 'colorless' ? 2.6 : 2.2)
-  const personaLine = [
-    data.top_type && percent > 0 && `${percent}% ${t(`wrapped.types.${model.key}`)}`,
-    data.top_pokemon && fill(t('wrapped.ofTheYear'), { name: data.top_pokemon.name }),
-  ].filter(Boolean).join(' · ')
-  text(ctx, { text: t('wrapped.trainerTypeShort'), x: 108, y: y + 17, lh: 15, font: { size: 12, weight: 700 } }, model.light ? '#3A3220' : p.soft)
-  text(ctx, { text: fitText(model.persona, { size: 38, weight: 900, display: true }, 222), x: 108, y: y + 32, lh: 36, font: { size: 38, weight: 900, display: true } }, ink)
+  // Without a persona (§6) the tile leads with the Pokémon of the year.
+  const hasPersona = Boolean(personaKey(data))
+  const pokemon = data.top_pokemon
+  const personaLine = hasPersona
+    ? [percent > 0 && `${percent}% ${t(`wrapped.types.${model.key}`)}`, pokemon && fill(t('wrapped.ofTheYear'), { name: pokemon.name })].filter(Boolean).join(' · ')
+    : pokemon ? fill(t(pokemon.count === 1 ? 'wrapped.pokemonCardsOne' : 'wrapped.pokemonCards'), { count: thousands(pokemon.count, locale) }) : ''
+  const heading = hasPersona || !pokemon ? t('wrapped.trainerTypeShort') : t('wrapped.pokemonOfTheYear')
+  const big = hasPersona || !pokemon ? model.persona : pokemon.name
+  text(ctx, { text: heading, x: 108, y: y + 17, lh: 15, font: { size: 12, weight: 700 } }, model.light ? '#3A3220' : p.soft)
+  text(ctx, { text: fitText(big, { size: 38, weight: 900, display: true }, 222), x: 108, y: y + 32, lh: 36, font: { size: 38, weight: 900, display: true } }, ink)
   if (personaLine) text(ctx, { text: fitText(personaLine, { size: 12, weight: 700 }, 222), x: 108, y: y + 68, lh: 15, font: { size: 12, weight: 700 } }, model.light ? '#3A3220' : p.soft)
   y += 108
 
@@ -598,6 +610,48 @@ export function drawStatPoster(ctx, o, image) {
   brandFooter(ctx, 590, '#FFFFFF')
 }
 
+/** C: the top-pull card (W2bSharePull), shared from the share button on slide 004. */
+export function drawPullPoster(ctx, { data, t, locale, money, name }, image) {
+  const pull = data.best_pull
+  ctx.fillStyle = cssLinear(ctx, 160, 0, 0, 360, 640, [[0, '#FFE56E'], [1, '#F2A600']])
+  ctx.fillRect(0, 0, 360, 640)
+  burst(ctx, -215, -40, 790, 680, 'rgba(255,255,255,0.5)', 6, 18, 25)
+  glow(ctx, -20, 140, 400, 340, 'rgba(255,255,255,0.75)')
+  text(ctx, { text: fill(t('wrapped.ownerTopPull'), { name: name || t('wrapped.trainer') }), x: 180, y: 58, lh: 18, font: { size: 15, weight: 800 }, align: 'center' }, DARK_INK)
+  text(ctx, { text: fill(t('wrapped.ofYear'), { year: data.year }), x: 180, y: 76, lh: 43.7, font: { size: 46, weight: 900, display: true } , align: 'center' }, DARK_INK)
+  withShadow(ctx, { y: 22, blur: 44, colour: 'rgba(90,60,0,0.45)' }, () => {
+    roundRect(ctx, 70, 142, 220, 308, 15)
+    ctx.fillStyle = cssLinear(ctx, 135, 70, 142, 220, 308, [[0, '#FFF6C8'], [0.3, '#FF9BD2'], [0.55, '#9BE7FF'], [0.75, '#B4F5A8'], [1, '#FFF6C8']])
+    ctx.fill()
+  })
+  cardPicture(ctx, image, 74, 146, 212, 300, 11, pull.name)
+  ctx.save()
+  roundRect(ctx, 74, 146, 212, 300, 11)
+  ctx.clip()
+  ctx.fillStyle = cssLinear(ctx, 115, 74, 146, 212, 300, [[0.18, 'rgba(255,155,210,0)'], [0.36, 'rgba(255,155,210,0.38)'], [0.5, 'rgba(155,231,255,0.38)'], [0.6, 'rgba(255,246,200,0.3)'], [0.76, 'rgba(255,246,200,0)']])
+  ctx.fillRect(74, 146, 212, 300)
+  ctx.restore()
+  if (pull.price > 0) {
+    const font = { size: 34, weight: 900, display: true }
+    const price = money(pull.price)
+    const w = textWidth(ctx, price, font) + 36
+    withShadow(ctx, { y: 8, blur: 18, colour: 'rgba(60,40,0,0.4)' }, () => {
+      roundRect(ctx, 180 - w / 2, 430, w, 44, 13)
+      ctx.fillStyle = DARK_INK
+      ctx.fill()
+    })
+    text(ctx, { text: price, x: 180, y: 436, lh: 34, font, align: 'center' }, '#FFCB05')
+  }
+  sparkle(ctx, 36, 162, 26, '#FFFFFF')
+  sparkle(ctx, 302, 242, 18, DARK_INK)
+  const nameFont = { size: 38, weight: 900, display: true }
+  text(ctx, { text: fitText(pull.name, nameFont, 330), x: 180, y: 498, lh: 38, font: nameFont, align: 'center' }, DARK_INK)
+  const detail = [[pull.set_name, pull.number].filter(Boolean).join(' '),
+    pull.acquired_on && fill(t('wrapped.pulledOn'), { date: dayMonth(pull.acquired_on, locale) })].filter(Boolean).join(' · ')
+  if (detail) text(ctx, { text: fitText(detail, { size: 13, weight: 700 }, 330), x: 180, y: 540, lh: 16, font: { size: 13, weight: 700 }, align: 'center' }, '#3A2E00')
+  brandFooter(ctx, 590, DARK_INK, true)
+}
+
 // ── Rendering ──────────────────────────────────────────────────────────────
 function makeCanvas(width, height) {
   try {
@@ -637,6 +691,10 @@ export function pictureOptions({ data, t, locale, name, money, showDaily }) {
 /** Alt text for a picture: what it shows, never an amount. */
 export function pictureAlt(kind, o) {
   const { t } = o
+  if (kind === 'pull') {
+    const pull = o.data.best_pull
+    return fill(t('wrapped.altPull'), { year: o.data.year, name: pull.name, set: pull.set_name || '' })
+  }
   const label = trainerCardLabel(o.model, t, { withAmounts: false })
   return fill(t(kind === 'card' ? 'wrapped.altCard' : 'wrapped.altPoster'), { details: label })
 }
@@ -645,7 +703,7 @@ export function pictureAlt(kind, o) {
 export async function drawPicture(kind, o, { load = loadImage } = {}) {
   await loadDisplayFont()
   const card = o.data.best_pull || o.data.first_card
-  const imageUrl = kind === 'poster' ? o.data.best_pull?.image : card?.image
+  const imageUrl = kind === 'card' ? card?.image : o.data.best_pull?.image
   const image = await load(largeImage(imageUrl))
   for (const attempt of image ? [image, null] : [null]) {
     const canvas = makeCanvas(PICTURE_W, PICTURE_H)
@@ -653,6 +711,7 @@ export async function drawPicture(kind, o, { load = loadImage } = {}) {
     if (!ctx) return null
     ctx.scale(UNIT, UNIT)
     if (kind === 'card') drawCardPoster(ctx, o, attempt)
+    else if (kind === 'pull') drawPullPoster(ctx, o, attempt)
     else drawStatPoster(ctx, o, attempt)
     try {
       ctx.getImageData(0, 0, 1, 1) // throws on a tainted canvas: draw again without the image

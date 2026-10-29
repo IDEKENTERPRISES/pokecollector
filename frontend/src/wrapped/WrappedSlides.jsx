@@ -43,7 +43,8 @@ const hexAlpha = (hex, alpha) => {
 }
 const pill = (ctx, id, coin, glyph, background) => ({ n: ctx.n, total: ctx.total, name: ctx.t(`wrapped.pill.${id}`), coin, glyph, background })
 const lines = text => String(text).split('\n').map((line, i, all) => (
-  <span key={line}>{line}{i < all.length - 1 && <br />}</span>
+  // The space before the break keeps the words apart for VoiceOver and text search.
+  <span key={line}>{line}{i < all.length - 1 && <>{' '}<br /></>}</span>
 ))
 const cardLine = card => [card.set_name, card.number].filter(Boolean).join(' · ')
 const chip = { padding: '7px 12px', borderRadius: 16, background: 'rgba(0,0,0,0.25)', fontSize: 15, fontWeight: 700 }
@@ -500,7 +501,11 @@ function Value({ ctx }) {
   const change = value.end - value.start
   const from = startMonth(data)
   const since = from ? fill(t('wrapped.sinceMonth'), { month: monthName(from, locale) }) : t('wrapped.thisYear')
-  const short = m => monthName(m, locale, 'short')
+  // The mockups' three-letter months ("Sep", not en-GB's "Sept").
+  const short = m => {
+    const name = monthName(m, locale, 'short')
+    return String(locale || '').startsWith('en') ? name.slice(0, 3) : name
+  }
   const peakMonth = value.peak_date ? Number(String(value.peak_date).split('-')[1]) : peak.month
   const startM = value.start_date ? Number(String(value.start_date).split('-')[1]) : chart.first
   const bubbleText = fill(t('wrapped.peakBubble'), { amount: money(value.peak), month: short(peakMonth) })

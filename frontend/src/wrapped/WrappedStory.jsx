@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams } from 'react-router-dom'
+import toast from 'react-hot-toast'
 import { useHideValues } from '../components/ios/hideValues'
 import { useAuth } from '../contexts/AuthContext'
 import { useSettings } from '../contexts/SettingsContext'
 import { fill } from '../delights/delights'
 import { useBack } from '../navigation/useBack'
 import { readShowDaily } from '../progress/daily'
+import { sharePicture } from '../progress/shareImage'
 import PokeBallLoader from '../components/PokeBallLoader'
 import { StageContext, loadDisplayFont } from './pieces'
 import SharePicker from './SharePicker'
-import { DARK_INK, STAGE_H, STAGE_W } from './theme'
+import { pictureFileName, pictureOptions, renderPicture } from './shareWrapped'
+import { DARK_INK, SHARE, STAGE_H, STAGE_W } from './theme'
 import Slide, { slideInk } from './WrappedSlides'
 import { useWrapped } from './useWrapped'
 import { parseYear, selectSlides, wrappedMoney, wrappedYearFor } from './wrapped'
@@ -95,6 +98,31 @@ function Story() {
   }, [next, prev, back, sharing])
 
   const money = useMemo(() => wrappedMoney({ symbol: currencySymbol || '€', rate: exchangeRate || 1, hidden }), [currencySymbol, exchangeRate, hidden])
+
+  // Share picture C (the top pull) is drawn as soon as its slide shows, so a tap shares at once.
+  const onPull = slides[at] === 'pull'
+  const pullPicture = useRef(null)
+  const [pullReady, setPullReady] = useState(false)
+  useEffect(() => {
+    if (!onPull || !data) return undefined
+    let live = true
+    pullPicture.current = null
+    setPullReady(false)
+    renderPicture('pull', pictureOptions({ data, t, locale, name, money, showDaily })).then(blob => {
+      if (!live) return
+      pullPicture.current = blob
+      setPullReady(Boolean(blob))
+    })
+    return () => { live = false }
+  }, [onPull, data, money]) // the rest of the options only change with the data
+  const sharePull = async () => {
+    if (!pullPicture.current) return
+    try {
+      if (await sharePicture(pullPicture.current, { name: pictureFileName('pull', data.year) }) === 'downloaded') toast.success(t('wrapped.shareDownloaded'))
+    } catch {
+      toast.error(t('wrapped.shareFailed'))
+    }
+  }
 
   const onPointerDown = event => {
     gesture.current = { x: event.clientX, y: event.clientY, at: Date.now(), swiped: false }
@@ -211,6 +239,15 @@ function Story() {
             }}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
             </button>
+            {id === 'pull' && (
+              <button type="button" onClick={sharePull} disabled={!pullReady} aria-label={t('wrapped.shareThisCard')} data-testid="wrapped-share-pull"
+                data-ready={pullReady ? 'true' : 'false'} style={{
+                  position: 'absolute', right: 8, top: 106, width: 44, height: 44, border: 0, borderRadius: 22, background: 'rgba(29,22,0,0.12)',
+                  color: DARK_INK, display: 'grid', placeItems: 'center', padding: 0, cursor: 'pointer',
+                }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={SHARE} /></svg>
+              </button>
+            )}
           </div>
         </StageContext.Provider>
       </div>

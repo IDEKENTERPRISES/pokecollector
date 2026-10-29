@@ -45,7 +45,7 @@ export function Sparkle({ size, fill = '#FFFFFF', style }) {
 }
 
 /** An original energy glyph (§3.2) in a 24 grid. */
-export function TypeGlyph({ type, size, color = '#FFFFFF', width }) {
+export function TypeGlyph({ type, size, color = '#FFFFFF', width, detail = false }) {
   const glyph = GLYPHS[type] || GLYPHS.colorless
   const strokeWidth = width ?? glyph.width
   return (
@@ -54,6 +54,7 @@ export function TypeGlyph({ type, size, color = '#FFFFFF', width }) {
       {(glyph.stroke || []).map(d => (
         <path key={d} d={d} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
       ))}
+      {detail && (glyph.big || []).map(d => <path key={d} d={d} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />)}
       {(glyph.circles || []).map(([cx, cy, r]) => (
         <circle key={`${cx}-${r}`} cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth={strokeWidth} />
       ))}
@@ -65,7 +66,7 @@ export function TypeGlyph({ type, size, color = '#FFFFFF', width }) {
 export function SlideFrame({ background, texture = 0.05, ink = '#FFFFFF', decor, pill, children, label }) {
   const { offX, offY } = useContext(StageContext)
   return (
-    <div aria-label={label} style={{ position: 'absolute', inset: 0, overflow: 'hidden', color: ink, fontFamily: TEXT_FONT, background }}>
+    <div aria-label={label} style={{ position: 'absolute', inset: 0, overflow: 'hidden', color: ink, fontFamily: TEXT_FONT, lineHeight: 'normal', background }}>
       {texture > 0 && (
         <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: `repeating-linear-gradient(115deg, rgba(255,255,255,${texture}) 0 2px, transparent 2px 16px)` }} />
       )}
@@ -209,7 +210,7 @@ export function TypeCoin({ palette, type, percent, size = 240, ring = 18, childr
         width: '100%', height: '100%', borderRadius: '50%', background: `radial-gradient(circle at 50% 35%, ${palette.coin[0]}, ${palette.coin[1]})`,
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
       }}>
-        {type && <TypeGlyph type={type} size={58} color={palette.ink} width={type === 'psychic' ? 1.8 : undefined} />}
+        {type && <TypeGlyph type={type} size={58} color={palette.ink} width={type === 'psychic' ? 1.8 : undefined} detail />}
         {children}
       </div>
     </div>
@@ -263,8 +264,9 @@ export function FoilCoin({ size = 22, sparkle = 12 }) {
 }
 
 const textStyle = (item, colour) => ({
-  position: 'absolute', top: item.y, height: item.lh, lineHeight: `${item.lh}px`, margin: 0, whiteSpace: 'nowrap',
-  font: cssFont(item.font), letterSpacing: item.font.spacing || 0, color: colour,
+  // `font` first: the shorthand would reset a line height set before it.
+  font: cssFont(item.font), position: 'absolute', top: item.y, height: item.lh, lineHeight: `${item.lh}px`, margin: 0,
+  whiteSpace: 'nowrap', letterSpacing: item.font.spacing || 0, color: colour,
   ...(item.align === 'right' ? { right: CARD_W - item.x, textAlign: 'right' } : { left: item.x }),
 })
 

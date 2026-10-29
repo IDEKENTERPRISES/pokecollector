@@ -161,7 +161,7 @@ export function trainerCardLayout(model) {
     y = chip.y + chip.h + 12
   }
   const grid = model.stats.length > 2 ? 2 : 1
-  const rowsH = grid * 49 + (grid - 1) * 10
+  const rowsH = grid * 48 + (grid - 1) * 10
   let art
   let statsTop
   if (grid === 2) {
@@ -183,12 +183,12 @@ export function trainerCardLayout(model) {
     const textX = mini.x + mini.w + pad
     const width = art.x + art.w - 3 - pad - textX
     const nameFont = big ? F.artNameBig : F.artName
-    const nameLh = Math.round(nameFont.size * 1.1)
+    const nameLh = nameFont.size * 1.1
     const names = wrapText(model.art.name, nameFont, width, 2)
-    const blockH = 16 + 2 + names.length * nameLh + (model.art.price ? 4 + 34 : 0)
+    const blockH = 15 + 2 + names.length * nameLh + (model.art.price ? 4 + 34 : 0)
     let ty = art.y + (art.h - blockH) / 2
-    artItems.push({ role: 'label', text: model.art.label, x: textX, y: ty, lh: 16, font: model.light ? F.artLabelThin : F.artLabel })
-    ty += 18
+    artItems.push({ role: 'label', text: model.art.label, x: textX, y: ty, lh: 15, font: model.light ? F.artLabelThin : F.artLabel })
+    ty += 17
     names.forEach(text => {
       artItems.push({ role: 'name', text, x: textX, y: ty, lh: nameLh, font: nameFont })
       ty += nameLh
@@ -200,10 +200,10 @@ export function trainerCardLayout(model) {
   const colW = (316 - 12) / 2
   const stats = model.stats.map((stat, i) => {
     const x = X0 + (i % 2) * (colW + 12)
-    const top = statsTop + Math.floor(i / 2) * 59
+    const top = statsTop + Math.floor(i / 2) * 58
     return {
-      dt: { text: fitText(stat.label, F.dt, colW), x, y: top, lh: 16, font: model.light ? F.dtThin : F.dt },
-      dd: { text: fitText(stat.value, F.dd, colW), x, y: top + 17, lh: 32, font: F.dd },
+      dt: { text: fitText(stat.label, F.dt, colW), x, y: top, lh: 15, font: model.light ? F.dtThin : F.dt },
+      dd: { text: fitText(stat.value, F.dd, colW), x, y: top + 16, lh: 32, font: F.dd },
     }
   })
   return {
