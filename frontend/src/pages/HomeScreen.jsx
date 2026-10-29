@@ -25,6 +25,7 @@ import PokeBall from '../components/ios/PokeBall'
 import { TYPE_COLOURS } from '../components/ios/pokemon'
 import TodayCard from '../components/splash/TodayCard'
 import DailyTodayCard from '../progress/TodayCard'
+import GreetingStreak from '../progress/GreetingStreak'
 import { readShowDaily } from '../progress/daily'
 import OnThisDayCard from '../delights/OnThisDayCard'
 import { useNavBar } from '../navigation/useNavBar'
@@ -267,6 +268,7 @@ export default function HomeScreen() {
             <p className="text-subheadline text-text-secondary">{t('home.hello')},</p>
             <p className="break-words text-title-1 font-display text-text-primary">{trainerName}</p>
           </div>
+          {showDaily && <GreetingStreak />}
         </div>
       </LargeTitle>
       </div>

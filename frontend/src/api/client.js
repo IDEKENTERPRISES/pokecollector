@@ -483,7 +483,11 @@ export const getUnseenUnlocks = () => api.get('/progress/unlocks/unseen')
 export const getTodaySummary = (date) => api.get('/progress/today', { params: date ? { date } : {} }).then(r => r.data)
 export const postViewedPokemon = (date) => api.post('/progress/daily/view', { date }).then(r => r.data)
 export const postWtpAnswer = (date, dexId) => api.post('/progress/wtp/answer', { date, dex_id: dexId }).then(r => r.data)
-export const markUnlocksSeen = (ids) => api.post('/progress/unlocks/seen', ids ? { ids } : {})
+// Badge ids and/or quest keys ("<date>:<quest id>"); with neither, everything unseen is marked.
+export const markUnlocksSeen = (ids, questKeys) => api.post('/progress/unlocks/seen', {
+  ...(ids ? { ids } : {}),
+  ...(questKeys ? { quest_keys: questKeys } : {}),
+})
 
 // Web push (docs/PWA_OFFLINE_DESIGN.md §6.7)
 export const getVapidPublicKey = () => api.get('/push/vapid-public-key').then(r => r.data)

@@ -280,6 +280,43 @@ class DailyLoopTests(ProgressTestBase):
         self.assertEqual(info["owned_printings"], 1)
         self.assertIsNone(info["cheapest"])
 
+    def test_pokemon_of_day_names_the_most_expensive_print_owned_or_not(self):
+        from models import Set
+
+        dex_id = species_for_date(self.today)
+        self.db.add_all([
+            Set(id="spc_en", tcg_set_id="spc", name="Species Set", lang="en", total=3),
+            _species_card("spc-001", dex_id, 3.0),
+            _species_card("spc-002", dex_id, 41.256),
+            _species_card("spc-003", dex_id, 41.256),  # ties go to the lowest id
+            _species_card("spc-004", dex_id, 0),  # unpriced printings never win
+        ])
+        self.db.commit()
+        info = daily.pokemon_of_day_info(self.db, self.user.id, self.today)
+        top = info["most_expensive"]
+        self.assertEqual((top["card_id"], top["price"]), ("spc-002_en", 41.26))
+        self.assertEqual((top["set_name"], top["number"], top["lang"]), ("Species Set", "002", "en"))
+        self.assertEqual(info["cheapest"]["card_id"], "spc-001_en")
+
+        self.own("spc-001")  # owning a printing hides the cheapest line, not the most expensive
+        info = daily.pokemon_of_day_info(self.db, self.user.id, self.today)
+        self.assertIsNone(info["cheapest"])
+        self.assertEqual(info["most_expensive"]["card_id"], "spc-002_en")
+
+    def test_most_expensive_print_follows_the_trainers_price_field(self):
+        dex_id = species_for_date(self.today)
+        cheap_trend = _species_card("spd-001", dex_id, 5.0)
+        cheap_trend.price_avg7 = 99.0
+        self.db.add_all([cheap_trend, _species_card("spd-002", dex_id, 20.0)])
+        self.db.add(UserSetting(user_id=self.user.id, key="price_primary", value="avg7"))
+        self.db.commit()
+        info = daily.pokemon_of_day_info(self.db, self.user.id, self.today)
+        self.assertEqual((info["most_expensive"]["card_id"], info["most_expensive"]["price"]), ("spd-001_en", 99.0))
+
+    def test_pokemon_of_day_has_no_prints_to_show_when_nothing_is_priced(self):
+        info = daily.pokemon_of_day_info(self.db, self.user.id, self.today)
+        self.assertIsNone(info["most_expensive"])
+
     def test_new_table_is_in_a_backup_group(self):
         self.assertIn("user_xp_ledger", BACKUP_GROUPS["users"])
 
@@ -308,6 +345,67 @@ class DailyApiTests(ProgressTestBase):
         self.client = TestClient(main.app)
         self.today = datetime.datetime.utcnow().date()
         self.client.post("/api/progress/checkin", json={"time_zone": "UTC", "dates": [self.today.isoformat()]})
+
+    def force_quests(self, *ids):
+        original = quests.select_quests
+        quests.select_quests = lambda user_id, day: list(ids)
+        self.addCleanup(setattr, quests, "select_quests", original)
+
+    def unseen_quests(self):
+        return self.client.get("/api/progress/unlocks/unseen").json()["quests"]
+
+    def test_completed_quest_is_unseen_once_then_seen(self):
+        self.force_quests("view_pokemon", "play_wtp", "add_card")
+        self.client.post("/api/progress/daily/view", json={})
+        key = f"{self.today.isoformat()}:view_pokemon"
+        self.assertEqual(self.unseen_quests(), [{
+            "key": key, "date": self.today.isoformat(), "quest_id": "view_pokemon",
+            "xp": xp.QUEST_XP, "bonus_xp": 0, "completed_at": self.unseen_quests()[0]["completed_at"],
+        }])
+
+        # syncing again must not bring a celebrated quest back
+        marked = self.client.post("/api/progress/unlocks/seen", json={"quest_keys": [key]}).json()
+        self.assertEqual(marked["quests_marked"], 1)
+        self.client.get("/api/progress/today")
+        self.client.post("/api/progress/daily/view", json={})
+        self.assertEqual(self.unseen_quests(), [])
+        row = self.db.query(UserXpLedger).filter_by(user_id=self.user.id, source="quest", source_key=key).one()
+        self.assertIsNotNone(row.seen_at)
+
+    def test_marking_only_badges_leaves_quests_and_marking_everything_clears_both(self):
+        self.force_quests("view_pokemon", "play_wtp", "add_card")
+        self.client.post("/api/progress/daily/view", json={})
+        self.client.post("/api/progress/unlocks/seen", json={"ids": []})
+        self.assertEqual(len(self.unseen_quests()), 1)
+        self.assertEqual(self.client.post("/api/progress/unlocks/seen", json={"quest_keys": []}).json()["quests_marked"], 0)
+        self.assertEqual(len(self.unseen_quests()), 1)
+        everything = self.client.post("/api/progress/unlocks/seen", json={}).json()
+        self.assertEqual(everything["quests_marked"], 1)
+        self.assertEqual(self.unseen_quests(), [])
+
+    def test_the_all_quests_bonus_rides_on_the_last_quest_of_the_day(self):
+        self.force_quests("view_pokemon", "play_wtp", "add_card")
+        self.client.post("/api/progress/daily/view", json={})
+        self.client.post("/api/progress/wtp/answer", json={"date": self.today.isoformat(), "dex_id": wtp_species(self.today)})
+        self.own("tst-001")
+        self.client.get("/api/progress/today")
+        found = self.unseen_quests()
+        self.assertEqual([q["quest_id"] for q in found], ["view_pokemon", "play_wtp", "add_card"])
+        self.assertEqual([q["bonus_xp"] for q in found], [0, 0, xp.ALL_QUESTS_XP])
+        self.assertEqual(sum(q["xp"] + q["bonus_xp"] for q in found), xp.total_xp(self.db, self.user.id))
+
+    def test_old_and_other_peoples_quests_are_not_celebrated(self):
+        long_ago = (self.today - datetime.timedelta(days=5)).isoformat()
+        yesterday = (self.today - datetime.timedelta(days=1)).isoformat()
+        self.db.add_all([
+            UserXpLedger(user_id=self.user.id, source="quest", source_key=f"{long_ago}:add_card", amount=10),
+            UserXpLedger(user_id=self.user.id, source="quest", source_key=f"{yesterday}:add_card", amount=10),
+            UserXpLedger(user_id=self.other.id, source="quest", source_key=f"{yesterday}:play_wtp", amount=10),
+            UserXpLedger(user_id=self.user.id, source="streak", source_key=yesterday, amount=5),
+            UserXpLedger(user_id=self.user.id, source="quest", source_key=f"{yesterday}:retired_quest", amount=10),
+        ])
+        self.db.commit()
+        self.assertEqual([q["key"] for q in self.unseen_quests()], [f"{yesterday}:add_card"])
 
     def test_wtp_puzzle_endpoint_is_public_and_deterministic(self):
         main.app.dependency_overrides.clear()

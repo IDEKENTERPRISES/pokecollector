@@ -1,4 +1,5 @@
 import { useSettings } from '../../contexts/SettingsContext'
+import XpBar from '../../progress/XpBar'
 import GymBadges from './GymBadges'
 import ShowcaseStrip from '../../delights/ShowcaseStrip'
 import PokeBall from './PokeBall'
@@ -52,6 +53,8 @@ export default function TrainerCard({ user = {}, stats = {}, badges, level, show
           )}
         </div>
       </div>
+
+      {level && <XpBar info={level} tone="onAccent" testId="trainer-xp-bar" className="relative mt-3" />}
 
       <dl className="relative mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-black/20 px-3 py-2.5 text-center">
         {statItems.map(item => (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { TRACKS, gymBadgeStates, groupByTrack, isBusy, mergeQueue } from './achievements'
+import { TRACKS, gymBadgeStates, groupByTrack, isBusy, mergeQueue, unseenItems } from './achievements'
 
 describe('gymBadgeStates', () => {
   it('always gives the eight tracks in order, unlit when the server sends nothing', () => {
@@ -49,6 +49,23 @@ describe('mergeQueue', () => {
   it('ignores malformed input', () => {
     expect(mergeQueue([], null)).toEqual([])
     expect(mergeQueue([], [{}, null])).toEqual([])
+  })
+})
+
+describe('unseenItems', () => {
+  it('lists badges first and then quests, and keeps their ids apart', () => {
+    const items = unseenItems({
+      unlocks: [{ id: 'first_card', track: 'collection' }],
+      quests: [{ key: '2026-10-28:add_card', quest_id: 'add_card', xp: 10, bonus_xp: 0 }],
+    })
+    expect(items.map(item => [item.kind, item.id])).toEqual([['badge', 'first_card'], ['quest', 'quest:2026-10-28:add_card']])
+    expect(mergeQueue(items, unseenItems({ quests: [{ key: '2026-10-28:add_card', quest_id: 'add_card' }] }))).toBe(items)
+  })
+
+  it('works with an older server that only sends badges, and ignores malformed rows', () => {
+    expect(unseenItems({ unlocks: [{ id: 'a' }] })).toHaveLength(1)
+    expect(unseenItems(undefined)).toEqual([])
+    expect(unseenItems({ unlocks: [{}], quests: [{ quest_id: 'x' }, null] })).toEqual([])
   })
 })
 

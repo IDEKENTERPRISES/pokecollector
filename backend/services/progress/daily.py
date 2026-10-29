@@ -83,6 +83,67 @@ def sync_daily(db: Session, user_id: int, day: datetime.date | None = None) -> d
     return {"date": day, "chosen": chosen, "done": done}
 
 
+QUEST_CELEBRATION_DAYS = 2  # today and yesterday: older quests are never celebrated late
+
+
+def unseen_quest_completions(db: Session, user_id: int, today: datetime.date) -> list[dict]:
+    """Quests completed but not yet celebrated, oldest first: [{key, date, quest_id, xp, bonus_xp}].
+
+    The key is "<date>:<quest_id>", the ledger's own source key. When the day's last quest finished
+    all of them, `bonus_xp` carries the all-quests bonus on that final quest."""
+    from models import UserXpLedger
+
+    oldest = (today - datetime.timedelta(days=QUEST_CELEBRATION_DAYS - 1)).isoformat()
+    rows = db.query(UserXpLedger).filter(
+        UserXpLedger.user_id == user_id, UserXpLedger.source == xp_module.SOURCE_QUEST,
+        UserXpLedger.seen_at.is_(None), UserXpLedger.source_key >= f"{oldest}:",
+    ).order_by(UserXpLedger.created_at.asc(), UserXpLedger.id.asc()).all()
+    if not rows:
+        return []
+    bonuses = {row.source_key: row for row in db.query(UserXpLedger).filter(
+        UserXpLedger.user_id == user_id, UserXpLedger.source == xp_module.SOURCE_QUEST_ALL,
+        UserXpLedger.source_key.in_({row.source_key.split(":", 1)[0] for row in rows}))}
+    # The bonus rides on the quest that finished the day: the latest award of that day.
+    latest = {}
+    for row in db.query(UserXpLedger).filter(
+        UserXpLedger.user_id == user_id, UserXpLedger.source == xp_module.SOURCE_QUEST,
+        UserXpLedger.source_key.in_([f"{day}:{quest}" for day in bonuses for quest in quest_module.QUEST_IDS]),
+    ).order_by(UserXpLedger.created_at.asc(), UserXpLedger.id.asc()):
+        latest[row.source_key.split(":", 1)[0]] = row.source_key
+    items = []
+    for row in rows:
+        day, _, quest_id = row.source_key.partition(":")
+        if quest_id not in quest_module.QUEST_IDS:
+            continue
+        bonus = bonuses.get(day)
+        items.append({
+            "key": row.source_key,
+            "date": day,
+            "quest_id": quest_id,
+            "xp": int(row.amount),
+            "bonus_xp": int(bonus.amount) if bonus and latest.get(day) == row.source_key else 0,
+            "completed_at": row.created_at.isoformat() if row.created_at else None,
+        })
+    return items
+
+
+def mark_quests_seen(db: Session, user_id: int, keys=None) -> int:
+    """Celebrated: the given quest keys, or every unseen quest award when `keys` is None."""
+    from models import UserXpLedger
+
+    query = db.query(UserXpLedger).filter(
+        UserXpLedger.user_id == user_id, UserXpLedger.source == xp_module.SOURCE_QUEST,
+        UserXpLedger.seen_at.is_(None))
+    if keys is not None:
+        query = query.filter(UserXpLedger.source_key.in_(list(keys)))
+    now = datetime.datetime.utcnow()
+    count = 0
+    for row in query.all():
+        row.seen_at = now
+        count += 1
+    return count
+
+
 def award_streak_xp(db: Session, user_id: int, streak: dict) -> None:
     for day in streak["run_days"]:
         xp_module.award(db, user_id, xp_module.SOURCE_STREAK, day.isoformat(), xp_module.STREAK_DAY_XP)
@@ -138,8 +199,19 @@ def _species_cards(db: Session, dex_id: int):
     return [card for card in query.all() if dex_id in normalize_dex_ids(card.dex_ids)]
 
 
+def _print_summary(price, card, with_set: bool = False) -> dict:
+    entry = {"card_id": card.id, "name": card.name, "price": round(float(price), 2)}
+    if with_set:
+        set_ref = getattr(card, "set_ref", None)
+        entry["set_name"] = getattr(set_ref, "name", None) or card.set_id
+        entry["number"] = card.number
+        entry["lang"] = card.lang
+    return entry
+
+
 def pokemon_of_day_info(db: Session, user_id: int, day: datetime.date) -> dict:
-    """How many printings of the day's Pokémon the trainer owns, else the cheapest printing."""
+    """How many printings of the day's Pokémon the trainer owns, the cheapest printing when they own
+    none, and the most expensive printing (owned or not), both by the trainer's price field."""
     from models import CollectionItem
     from services.card_values import effective_market_price
     from services.pokedex_splash import species_for_date
@@ -152,14 +224,16 @@ def pokemon_of_day_info(db: Session, user_id: int, day: datetime.date) -> dict:
     if ids:
         owned = {card_id for (card_id,) in db.query(CollectionItem.card_id).filter(
             CollectionItem.user_id == user_id, CollectionItem.card_id.in_(ids)).distinct()}
-    info = {"dex_id": dex_id, "owned_printings": len(owned), "cheapest": None}
-    if not owned:
-        field = _user_price_field(db, user_id)
-        priced = [(effective_market_price(card, None, field), card) for card in cards]
-        priced = [(price, card) for price, card in priced if price and price > 0]
-        if priced:
+    info = {"dex_id": dex_id, "owned_printings": len(owned), "cheapest": None, "most_expensive": None}
+    field = _user_price_field(db, user_id)
+    priced = [(effective_market_price(card, None, field), card) for card in cards]
+    priced = [(price, card) for price, card in priced if price and price > 0]
+    if priced:
+        if not owned:
             price, card = min(priced, key=lambda pair: (pair[0], pair[1].id))
-            info["cheapest"] = {"card_id": card.id, "name": card.name, "price": round(float(price), 2)}
+            info["cheapest"] = _print_summary(price, card)
+        price, card = min(priced, key=lambda pair: (-pair[0], pair[1].id))
+        info["most_expensive"] = _print_summary(price, card, with_set=True)
     return info
 
 

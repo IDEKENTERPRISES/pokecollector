@@ -59,6 +59,7 @@ def list_events(
 
 class SeenRequest(BaseModel):
     ids: Optional[List[str]] = None
+    quest_keys: Optional[List[str]] = None
 
 
 def _unseen_query(db: Session, user_id: int):
@@ -72,7 +73,8 @@ def unseen_unlocks(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Badges earned but not yet celebrated, oldest first. Works in single-user mode."""
+    """Badges earned and daily quests completed but not yet celebrated, oldest first. Works in
+    single-user mode."""
     from services.achievements import registry_by_id
 
     known = registry_by_id()
@@ -91,7 +93,8 @@ def unseen_unlocks(
             "badge_id": config.get("badge_id"),
             "unlocked_at": row.unlocked_at.isoformat() if row.unlocked_at else None,
         })
-    return {"unlocks": items}
+    today = daily.local_today(daily.user_zone(db, current_user.id))
+    return {"unlocks": items, "quests": daily.unseen_quest_completions(db, current_user.id, today)}
 
 
 @router.post("/unlocks/seen")
@@ -100,17 +103,23 @@ def mark_unlocks_seen(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Mark badges as celebrated: the given ids, or every unseen one when `ids` is omitted."""
-    query = _unseen_query(db, current_user.id)
-    if body.ids is not None:
-        query = query.filter(UserAchievement.achievement_id.in_(body.ids))
+    """Mark celebrations as seen. `ids` are badges and `quest_keys` are quest completions; with
+    neither given, every unseen badge and quest is marked. Naming only one kind leaves the other."""
+    everything = body.ids is None and body.quest_keys is None
     now = datetime.datetime.utcnow()
     count = 0
-    for row in query.all():
-        row.seen_at = now
-        count += 1
+    if everything or body.ids is not None:
+        query = _unseen_query(db, current_user.id)
+        if body.ids is not None:
+            query = query.filter(UserAchievement.achievement_id.in_(body.ids))
+        for row in query.all():
+            row.seen_at = now
+            count += 1
+    quests_marked = 0
+    if everything or body.quest_keys is not None:
+        quests_marked = daily.mark_quests_seen(db, current_user.id, None if everything else body.quest_keys)
     db.commit()
-    return {"marked": count}
+    return {"marked": count, "quests_marked": quests_marked}
 
 
 def _requested_day(db: Session, user_id: int, value):

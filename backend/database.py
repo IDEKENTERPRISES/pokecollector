@@ -708,6 +708,18 @@ def _run_migrations(conn):
         "CREATE INDEX IF NOT EXISTS ix_push_subscriptions_user_id ON push_subscriptions(user_id)",
         # Push details: what each queued notification was about (card, prices, badge id).
         "ALTER TABLE notification_queue ADD COLUMN IF NOT EXISTS details JSON",
+        # Quest celebrations: awards already in the ledger when the column is added count as seen.
+        """DO $$
+        BEGIN
+            IF to_regclass('public.user_xp_ledger') IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = 'user_xp_ledger' AND column_name = 'seen_at'
+               ) THEN
+                ALTER TABLE user_xp_ledger ADD COLUMN seen_at TIMESTAMP;
+                UPDATE user_xp_ledger SET seen_at = NOW();
+            END IF;
+        END$$""",
     ]
     for stmt in migrations:
         try:

@@ -45,28 +45,57 @@ const puzzleFor = date => ({
   ],
 })
 
+const PRICIEST = {
+  card_id: 'sv8pt5-075_en', name: 'Eevee', set_name: 'Prismatic Evolutions', number: '075', lang: 'en', price: 41.26,
+}
+
 const summaryFor = (date, state) => ({
   date,
-  streak: { current: 12, best: 12, freeze_available: true, active_today: true },
+  streak: { current: state.streak, best: 12, freeze_available: true, active_today: true },
   quests: [
     { id: 'view_pokemon', done: true },
     { id: 'play_wtp', done: state.answers.length > 0 },
     { id: 'add_card', done: false },
   ],
   xp: { xp: 120, level: 3, level_start: 87, next_level_at: 150 },
-  pokemon: { dex_id: 133, owned_printings: 3, cheapest: null },
+  pokemon: { dex_id: 133, owned_printings: 3, cheapest: null, most_expensive: PRICIEST },
   wtp: { played: state.answers.length > 0, correct: state.answers.some(a => a.dex_id === 25) },
 })
 
-async function install(page, { showDaily = true, answerFails = false } = {}) {
-  const state = { answers: [], answerFails, views: 0, refused: 0 }
-  await page.addInitScript(({ user, show }) => {
+async function install(page, { showDaily = true, answerFails = false, streak = 12, quests = [], share = 'files' } = {}) {
+  const state = { answers: [], answerFails, views: 0, streak, quests, seen: [], refused: 0 }
+  await page.addInitScript(({ user, show, shareMode }) => {
     localStorage.setItem('token', 'today-test-token')
     localStorage.setItem('user', JSON.stringify(user))
     localStorage.setItem('app_language', 'en')
     localStorage.setItem('pc.splash.enabled', '0')
     if (!show) localStorage.setItem('pc.progress.showDaily.v1', '0')
-  }, { user: USER, show: showDaily })
+    // The share sheet itself cannot be driven in a test: record what the page hands to it.
+    window.__shared = []
+    if (shareMode === 'files' || shareMode === 'text') {
+      Object.defineProperty(navigator, 'canShare', { configurable: true, value: data => shareMode === 'files' && Boolean(data?.files?.length) })
+      Object.defineProperty(navigator, 'share', {
+        configurable: true,
+        value: async (data) => {
+          const file = data.files?.[0]
+          const bytes = file ? new Uint8Array(await file.arrayBuffer()) : null
+          const view = bytes && new DataView(bytes.buffer)
+          window.__shared.push({
+            text: data.text ?? null,
+            name: file?.name ?? null,
+            type: file?.type ?? null,
+            size: bytes?.length ?? 0,
+            png: bytes ? Array.from(bytes.slice(0, 4)) : null,
+            width: view ? view.getUint32(16) : null,
+            height: view ? view.getUint32(20) : null,
+          })
+        },
+      })
+    } else {
+      Object.defineProperty(navigator, 'share', { configurable: true, value: undefined })
+      Object.defineProperty(navigator, 'canShare', { configurable: true, value: undefined })
+    }
+  }, { user: USER, show: showDaily, shareMode: share })
   await page.route('**/api/**', async (route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -90,7 +119,16 @@ async function install(page, { showDaily = true, answerFails = false } = {}) {
       state.answers.push(body)
       return route.fulfill({ json: { correct: body.dex_id === 25, answer: 25, chosen: body.dex_id, today: summaryFor(today(), state) } })
     }
-    if (path === '/api/progress/unlocks/unseen') return route.fulfill({ json: { unlocks: [] } })
+    if (path === '/api/progress/unlocks/unseen') return route.fulfill({ json: { unlocks: [], quests: state.quests } })
+    if (path === '/api/progress/unlocks/seen') {
+      const body = request.postDataJSON()
+      state.seen.push(body)
+      state.quests = state.quests.filter(quest => !(body.quest_keys ?? []).includes(quest.key))
+      return route.fulfill({ json: { marked: 0, quests_marked: (body.quest_keys ?? []).length } })
+    }
+    if (path === '/api/achievements' || path.startsWith('/api/social/achievements/')) {
+      return route.fulfill({ json: { earned: 0, total: 20, achievements: [], tracks: [] } })
+    }
     const responses = {
       '/api/auth/mode': { multi_user: false },
       '/api/auth/me': USER,
@@ -176,4 +214,151 @@ test('with "Show streaks and quests" off Home shows only the Pokémon of the day
   await expect(page.getByTestId('today-card')).toHaveCount(0)
   await expect(page.getByTestId('streak-chip')).toHaveCount(0)
   await expect(page.getByTestId('wtp-tile')).toHaveCount(0)
+})
+
+test('the Pokémon of the day also shows its most expensive print and links to it', async ({ page }) => {
+  await install(page)
+  await page.goto('/')
+  const priciest = page.getByTestId('pokemon-priciest')
+  await expect(priciest).toContainText('Most expensive print')
+  await expect(priciest).toContainText(/41[.,]26/)
+  await expect(priciest).toContainText('Eevee · Prismatic Evolutions 075')
+  await expect(priciest).toHaveAttribute('href', '/pokedex/133?sort=price_desc')
+  // It sits beside the ownership line, not instead of it.
+  await expect(page.getByTestId('pokemon-owned')).toBeVisible()
+})
+
+test('the streak sits next to the greeting and brings the Today card into view', async ({ page }) => {
+  await install(page)
+  await page.goto('/')
+  const chip = page.getByTestId('greeting-streak')
+  await expect(chip).toBeVisible()
+  await expect(chip).toHaveAttribute('data-streak', '12')
+  await expect(chip).toHaveAccessibleName(/12-day streak/)
+
+  const hello = await page.getByText('Hello,').first().boundingBox()
+  const box = await chip.boundingBox()
+  expect(Math.abs((box.y + box.height / 2) - (hello.y + hello.height))).toBeLessThan(60)
+  expect(box.x).toBeGreaterThan(hello.x)
+
+  // Tapping it scrolls the Today card into view (a short desktop page may already show it).
+  await page.evaluate(() => {
+    const original = Element.prototype.scrollIntoView
+    window.__scrolledTo = []
+    Element.prototype.scrollIntoView = function scrollIntoView(...args) {
+      window.__scrolledTo.push(this.id)
+      return original.apply(this, args)
+    }
+  })
+  await chip.click()
+  await expect.poll(() => page.evaluate(() => window.__scrolledTo)).toEqual(['today-card'])
+  const card = await page.getByTestId('today-card').boundingBox()
+  const viewport = page.viewportSize()
+  expect(card.y).toBeLessThan(viewport.height - 100)
+})
+
+test('the greeting streak is hidden at a streak of 0', async ({ page }) => {
+  await install(page, { streak: 0 })
+  await page.goto('/')
+  await expect(page.getByTestId('today-card')).toBeVisible()
+  await expect(page.getByTestId('greeting-streak')).toHaveCount(0)
+})
+
+test('with "Show streaks and quests" off there is no streak beside the greeting', async ({ page }) => {
+  await install(page, { showDaily: false })
+  await page.goto('/')
+  await expect(page.getByTestId('pokemon-of-the-day')).toBeVisible()
+  await expect(page.getByTestId('greeting-streak')).toHaveCount(0)
+})
+
+test('a completed quest gets a sheet naming it and the XP, once, one after another', async ({ page }) => {
+  const day = today()
+  const state = await install(page, {
+    quests: [
+      { key: `${day}:add_card`, date: day, quest_id: 'add_card', xp: 10, bonus_xp: 0, completed_at: `${day}T08:00:00` },
+      { key: `${day}:play_wtp`, date: day, quest_id: 'play_wtp', xp: 10, bonus_xp: 15, completed_at: `${day}T09:00:00` },
+    ],
+  })
+  await page.goto('/')
+
+  const sheet = page.getByTestId('quest-sheet')
+  await expect(sheet).toBeVisible()
+  await expect(sheet).toHaveAttribute('data-quest-id', 'add_card')
+  await expect(page.getByTestId('quest-sheet-name')).toHaveText('Add a card to your collection')
+  await expect(page.getByTestId('quest-sheet-xp')).toHaveText('+10 XP')
+  await expect(page.getByTestId('quest-sheet-bonus')).toHaveCount(0)
+  await expect(page.getByTestId('unlock-more')).toContainText('1 more')
+
+  await page.getByRole('button', { name: 'Next' }).click()
+  await expect(sheet).toHaveAttribute('data-quest-id', 'play_wtp')
+  await expect(page.getByTestId('quest-sheet-name')).toHaveText("Play Who's That Pokémon")
+  await expect(page.getByTestId('quest-sheet-bonus')).toContainText('+15 XP bonus')
+
+  await page.getByRole('button', { name: 'Done' }).click()
+  await expect(sheet).toHaveCount(0)
+  expect(state.seen).toEqual([{ quest_keys: [`${day}:add_card`] }, { quest_keys: [`${day}:play_wtp`] }])
+
+  // Once per quest: coming back to the app does not bring them back.
+  await page.reload()
+  await expect(page.getByTestId('today-card')).toBeVisible()
+  await expect(page.getByTestId('quest-sheet')).toHaveCount(0)
+})
+
+test('Share opens a choice of text or picture, and the picture is a 1080 by 1920 PNG', async ({ page }) => {
+  await install(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Play' }).click()
+  await page.getByTestId('wtp-choice-25').click()
+  await expect(page.getByTestId('wtp-result')).toBeVisible()
+
+  await page.getByTestId('wtp-share').click()
+  const choice = page.getByRole('dialog', { name: 'Share your result' })
+  await expect(choice.getByRole('button', { name: 'Share as text' })).toBeVisible()
+  await expect(choice.getByRole('button', { name: 'Share as picture' })).toBeVisible()
+
+  await choice.getByRole('button', { name: 'Share as text' }).click()
+  await expect.poll(() => page.evaluate(() => window.__shared.length)).toBe(1)
+  const text = await page.evaluate(() => window.__shared[0])
+  expect(text.text).toContain('🔥 12-day streak')
+  expect(text.name).toBeNull()
+
+  await page.getByTestId('wtp-share').click()
+  await page.getByRole('dialog', { name: 'Share your result' }).getByRole('button', { name: 'Share as picture' }).click()
+  await expect.poll(() => page.evaluate(() => window.__shared.length)).toBe(2)
+  const picture = await page.evaluate(() => window.__shared[1])
+  expect(picture).toMatchObject({ name: 'whos-that-pokemon.png', type: 'image/png', width: 1080, height: 1920 })
+  expect(picture.png).toEqual([0x89, 0x50, 0x4e, 0x47])
+  expect(picture.size).toBeGreaterThan(5000)
+})
+
+test('Share as picture downloads the PNG when the device cannot share files', async ({ page }) => {
+  await install(page, { share: 'none' })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Play' }).click()
+  await page.getByTestId('wtp-choice-7').click()
+  await expect(page.getByTestId('wtp-result')).toBeVisible()
+  await page.getByTestId('wtp-share').click()
+  const download = page.waitForEvent('download')
+  await page.getByRole('dialog', { name: 'Share your result' }).getByRole('button', { name: 'Share as picture' }).click()
+  expect((await download).suggestedFilename()).toBe('whos-that-pokemon.png')
+})
+
+test('Profile shows the XP bar toward the next level on the trainer card, without motion when asked', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await install(page)
+  await page.goto('/profile')
+
+  const bar = page.getByTestId('trainer-xp-bar')
+  await expect(bar).toBeVisible()
+  await expect(bar).toHaveAttribute('data-level', '3')
+  await expect(bar).toHaveAttribute('data-percent', '52')
+  await expect(bar).toContainText('Level 3')
+  await expect(bar).toContainText('33 / 63 XP')
+  await expect(bar).toContainText('30 XP to level 4')
+  const progress = bar.getByRole('progressbar')
+  await expect(progress).toHaveAttribute('aria-valuenow', '33')
+  await expect(progress).toHaveAttribute('aria-valuemax', '63')
+  // Reduce Motion: the fill is at its width straight away and nothing transitions.
+  await expect(page.getByTestId('trainer-xp-bar-fill')).not.toHaveCSS('width', '0px')
+  await expect(page.getByTestId('trainer-xp-bar-fill')).toHaveCSS('transition-duration', '0s')
 })
