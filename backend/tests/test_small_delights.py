@@ -129,6 +129,21 @@ class ShowcaseTests(ApiBase):
         self.assertIsNone(rows[self.user.id]["showcase"][0]["market_value"])
         self.assertEqual(rows[self.other.id]["showcase"], [])
 
+    def test_leaderboard_shows_each_trainers_current_streak(self):
+        from models import UserDailyActivity
+        from services.progress.daily import local_today, user_zone
+
+        today = local_today(user_zone(self.db, self.user.id))
+        self.db.add_all([
+            UserDailyActivity(user_id=self.user.id, local_date=today - datetime.timedelta(days=offset),
+                              first_seen_at=datetime.datetime.utcnow(), last_seen_at=datetime.datetime.utcnow())
+            for offset in range(3)
+        ])
+        self.db.commit()
+        rows = {row["user_id"]: row for row in self.client.get("/api/social/leaderboard").json()}
+        self.assertEqual(rows[self.user.id]["streak"], 3)
+        self.assertEqual(rows[self.other.id]["streak"], 0)
+
     def test_nothing_is_exposed_while_the_profile_is_not_public(self):
         item = self.own("tst-001")
         self.client.put("/api/profile/showcase", json={"ids": [item.id]})
