@@ -394,12 +394,14 @@ def get_leaderboard(
 ):
     stats = _load_user_stats(db, price_field=price_field)
     from services import delights
+    from services.progress.daily import local_today, user_streak, user_zone
     from services.progress.xp import level_info, totals_for
 
     totals = totals_for(db, list(stats))
     for user_id, entry in stats.items():
         info = level_info(totals.get(user_id, 0))
         entry["xp"], entry["level"] = info["xp"], info["level"]
+        entry["streak"] = user_streak(db, user_id, local_today(user_zone(db, user_id)))["current"]
         # Signed-in trainers always see each other's Showcase 6; public profiles don't gate it.
         entry["showcase"] = delights.serialize_showcase(delights.showcase_items(db, user_id), False)
     leaderboard = sorted(
