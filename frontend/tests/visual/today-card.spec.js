@@ -222,10 +222,35 @@ test('the Pokémon of the day also shows its most expensive print and links to i
   const priciest = page.getByTestId('pokemon-priciest')
   await expect(priciest).toContainText('Most expensive print')
   await expect(priciest).toContainText(/41[.,]26/)
-  await expect(priciest).toContainText('Eevee · Prismatic Evolutions 075')
   await expect(priciest).toHaveAttribute('href', '/pokedex/133?sort=price_desc')
+  await expect(page.getByTestId('pokemon-priciest-card')).toHaveText('Eevee · Prismatic Evolutions 075')
   // It sits beside the ownership line, not instead of it.
   await expect(page.getByTestId('pokemon-owned')).toBeVisible()
+})
+
+test('tapping the most expensive print\'s name opens that card, owned or not', async ({ page }) => {
+  await install(page)
+  await page.route('**/api/cards/sv8pt5-075_en', route => route.fulfill({
+    json: {
+      id: 'sv8pt5-075_en', name: 'Eevee', set_id: 'sv8pt5', set_name: 'Prismatic Evolutions', number: '075', lang: 'en', price_market: 41.26,
+    },
+  }))
+  await page.goto('/')
+  const open = page.getByRole('button', { name: 'Open card: Eevee · Prismatic Evolutions 075' })
+  const box = await open.boundingBox()
+  expect(box.height).toBeGreaterThanOrEqual(44)
+  await open.click()
+  await expect(page.getByRole('heading', { name: 'Eevee' }).last()).toBeVisible()
+  await expect(page.getByText('Prismatic Evolutions').last()).toBeVisible()
+  await expect(page).toHaveURL(/\/$/)
+})
+
+test('a failed card load shows a toast and opens nothing', async ({ page }) => {
+  await install(page)
+  await page.route('**/api/cards/sv8pt5-075_en', route => route.fulfill({ status: 500, json: { detail: 'down' } }))
+  await page.goto('/')
+  await page.getByTestId('pokemon-priciest-card').click()
+  await expect(page.getByText("Couldn't open that card")).toBeVisible()
 })
 
 test('the streak sits next to the greeting and brings the Today card into view', async ({ page }) => {

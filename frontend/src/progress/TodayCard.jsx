@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, ChevronRight, Flame } from 'lucide-react'
+import { Check, ChevronRight, Flame, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { addToWishlist, getTodaySummary, postViewedPokemon } from '../api/client'
+import { addToWishlist, getCard, getTodaySummary, postViewedPokemon } from '../api/client'
+import { CardModal } from '../components/CardItem'
 import { useAuth } from '../contexts/AuthContext'
 import { useSettings } from '../contexts/SettingsContext'
 import { useOffline } from '../offline/useOffline'
@@ -82,8 +83,10 @@ function Quests({ quests, t }) {
   )
 }
 
-function PokemonRow({ entry, pokemon, t, formatPrice }) {
+export function PokemonRow({ entry, pokemon, t, formatPrice }) {
   const [added, setAdded] = useState(false)
+  const [card, setCard] = useState(null)
+  const [opening, setOpening] = useState(false)
   const cheapest = pokemon?.cheapest
   const priciest = pokemon?.most_expensive
   const owned = pokemon?.owned_printings
@@ -95,6 +98,20 @@ function PokemonRow({ entry, pokemon, t, formatPrice }) {
       toast.success(t('today.addedWishlist'))
     } catch {
       toast.error(t('today.wishlistFailed'))
+    }
+  }
+
+  // CardModal fetches nothing, so load the whole card (it may not be owned) before opening it.
+  const openPriciest = async () => {
+    if (opening) return
+    setOpening(true)
+    try {
+      const { data } = await getCard(priciest.card_id)
+      setCard({ ...data, id: data.id ?? priciest.card_id })
+    } catch {
+      toast.error(t('today.openCardFailed'))
+    } finally {
+      setOpening(false)
     }
   }
 
@@ -123,18 +140,30 @@ function PokemonRow({ entry, pokemon, t, formatPrice }) {
           </p>
         )}
         {priciest && (
-          <Link
-            to={`/pokedex/${entry.dex_id}?sort=price_desc`}
-            className="ios-press -mx-1 mt-0.5 block min-h-[44px] rounded-lg px-1 py-1 text-footnote"
-            data-testid="pokemon-priciest"
-          >
-            <span className="block text-text-secondary">
+          <>
+          <div className="mt-0.5" data-testid="pokemon-priciest-block">
+            <Link
+              to={`/pokedex/${entry.dex_id}?sort=price_desc`}
+              className="ios-press -mx-1 flex min-h-[44px] items-end rounded-lg px-1 text-footnote text-text-secondary"
+              data-testid="pokemon-priciest"
+            >
               {fill(t('today.priciest'), { price: formatPrice(priciest.price) })}
-            </span>
-            <span className="block break-words font-semibold text-tint">
-              {priciestLabel(priciest)}
-            </span>
-          </Link>
+            </Link>
+            <button
+              type="button"
+              onClick={openPriciest}
+              disabled={opening}
+              aria-busy={opening}
+              aria-label={fill(t('today.openCard'), { name: priciestLabel(priciest) })}
+              className="ios-press -mx-1 block min-h-[44px] w-full rounded-lg px-1 text-left text-footnote font-semibold text-tint disabled:opacity-60"
+              data-testid="pokemon-priciest-card"
+            >
+              <span className="break-words">{priciestLabel(priciest)}</span>
+              {opening && <Loader2 size={14} aria-hidden="true" className="ml-1.5 inline animate-spin align-[-2px]" />}
+            </button>
+          </div>
+          {card && <CardModal card={card} onClose={() => setCard(null)} />}
+          </>
         )}
       </div>
       {owned === 0 && cheapest && !added && (
