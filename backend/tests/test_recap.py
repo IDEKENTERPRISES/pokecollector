@@ -174,6 +174,16 @@ class PushTests(RecapBase):
         self.own("tst-002", acquired_at=datetime.datetime(2026, 11, 4))
         self.assertEqual(recap.queue_weekly_recaps(self.db, datetime.datetime(2026, 11, 8, 18, 0)), 1)
 
+    def test_a_second_run_the_same_evening_neither_recomputes_nor_logs_a_duplicate(self):
+        self.enable()
+        self.own("tst-001", acquired_at=IN_WEEK)
+        self.assertEqual(recap.queue_weekly_recaps(self.db, SUNDAY_1800), 1)
+        with patch.object(recap, "weekly_recap") as compute, self.assertLogs("services.notifications", "INFO") as logs:
+            notifications.logger.info("marker")  # assertLogs needs one record
+            self.assertEqual(recap.queue_weekly_recaps(self.db, SUNDAY_1800 + datetime.timedelta(minutes=1)), 0)
+        compute.assert_not_called()
+        self.assertFalse([line for line in logs.output if "duplicate" in line])
+
     def test_an_empty_week_sends_nothing(self):
         self.enable()
         self.assertEqual(recap.queue_weekly_recaps(self.db, SUNDAY_1800), 0)

@@ -240,7 +240,7 @@ def build_recap_push(details: dict | None) -> tuple[str, str]:
 def queue_weekly_recaps(db: Session, now: datetime.datetime | None = None) -> int:
     """Queue the Sunday push for every user whose local time is Sunday 18:00 or later and whose
     week had activity. One per user per ISO week (the subject key is the week)."""
-    from models import User
+    from models import NotificationQueue, User
     from services import notifications
 
     now = now or datetime.datetime.utcnow()
@@ -253,6 +253,11 @@ def queue_weekly_recaps(db: Session, now: datetime.datetime | None = None) -> in
             local = now.replace(tzinfo=datetime.timezone.utc).astimezone(zone)
             if local.weekday() != 6 or local.hour < RECAP_FROM_HOUR:
                 continue
+            subject = f"week:{iso_week_key(recap_week(now, zone)['monday'])}"
+            if db.query(NotificationQueue.id).filter_by(
+                user_id=user_id, category="weekly_recap", subject_key=subject
+            ).first() is not None:
+                continue  # already queued this week: skip before loading the collection
             recap = weekly_recap(db, user_id, now)
             if not recap["has_activity"]:
                 continue
