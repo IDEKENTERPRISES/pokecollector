@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 
 /**
  * Holo-card tilt: finger/mouse drag and (after a tap) device motion, eased with a spring.
@@ -8,6 +8,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  *   -center (0..1), --background-x / --background-y (%), --card-opacity (0..1).
  * Nothing runs while the card is at rest: the animation frame loop starts on input and stops
  * once the card has settled back. Under prefers-reduced-motion nothing moves (a static sheen).
+ *
+ * The zoom overlay opens over the sheet, so it cannot read the sheet's tilt state: whether the trainer
+ * turned "Tilt with your phone" on (permission already granted) is shared through a tiny store, and
+ * `useTilt({ enabled: false, followMotion: true })` lets the overlay's card follow the phone with the
+ * foil and glare only (no 3D rotation, no permission prompt, touch stays pan/pinch).
  *
  * Returns { ref, bind, motion } where `bind` is spread on the stage element and `motion` is
  * { supported, active, toggle } for the "Tilt with your phone" control.
@@ -24,6 +29,20 @@ export const prefersReducedMotion = () => (
 )
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
+
+// Whether the sheet's "Tilt with your phone" is on. Set by the hook instance that owns the toggle.
+let sharedMotionOn = false
+const sharedMotionListeners = new Set()
+function setSharedMotion(on) {
+  if (sharedMotionOn === on) return
+  sharedMotionOn = on
+  sharedMotionListeners.forEach(listener => listener())
+}
+const subscribeSharedMotion = (listener) => {
+  sharedMotionListeners.add(listener)
+  return () => sharedMotionListeners.delete(listener)
+}
+const getSharedMotion = () => sharedMotionOn
 
 export function motionSupported() {
   if (typeof window === 'undefined' || typeof window.DeviceOrientationEvent === 'undefined') return false
@@ -47,7 +66,7 @@ function writeVars(el, c) {
   style.setProperty('--card-opacity', c.op.toFixed(3))
 }
 
-export function useTilt({ enabled = true } = {}) {
+export function useTilt({ enabled = true, followMotion = false } = {}) {
   const ref = useRef(null)
   const frame = useRef(null)
   const lastTime = useRef(0)
@@ -57,9 +76,11 @@ export function useTilt({ enabled = true } = {}) {
   const hovering = useRef(false)
   const motionOn = useRef(false)
   const motionBase = useRef(null)
+  const ownsMotion = useRef(false)
   const [reduced] = useState(prefersReducedMotion)
   const [motion, setMotion] = useState({ supported: false, active: false })
   const active = enabled && !reduced
+  const sharedMotion = useSyncExternalStore(subscribeSharedMotion, getSharedMotion, () => false)
 
   const tick = useCallback((now) => {
     frame.current = null
@@ -176,6 +197,7 @@ export function useTilt({ enabled = true } = {}) {
     window.removeEventListener('deviceorientation', handleOrientation)
     motionOn.current = false
     motionBase.current = null
+    if (ownsMotion.current) { ownsMotion.current = false; setSharedMotion(false) }
     setMotion(m => ({ ...m, active: false }))
     rest()
   }, [handleOrientation, rest])
@@ -190,9 +212,25 @@ export function useTilt({ enabled = true } = {}) {
     }
     motionBase.current = null
     motionOn.current = true
+    ownsMotion.current = true
     window.addEventListener('deviceorientation', handleOrientation)
+    setSharedMotion(true)
     setMotion(m => ({ ...m, active: true }))
   }, [handleOrientation, stopMotion])
+
+  // Follower (the zoom overlay): ride the sheet's already-granted motion, never ask again.
+  useEffect(() => {
+    if (!followMotion || !sharedMotion || reduced) return undefined
+    motionBase.current = null
+    motionOn.current = true
+    window.addEventListener('deviceorientation', handleOrientation)
+    return () => {
+      window.removeEventListener('deviceorientation', handleOrientation)
+      motionOn.current = false
+      motionBase.current = null
+      rest()
+    }
+  }, [followMotion, sharedMotion, reduced, handleOrientation, rest])
 
   useEffect(() => {
     setMotion(m => ({ ...m, supported: active && motionSupported() }))
@@ -205,7 +243,9 @@ export function useTilt({ enabled = true } = {}) {
 
   useEffect(() => () => {
     if (frame.current !== null) cancelAnimationFrame(frame.current)
+    frame.current = null // a remount (StrictMode) must be able to schedule frames again
     window.removeEventListener('deviceorientation', handleOrientation)
+    if (ownsMotion.current) { ownsMotion.current = false; setSharedMotion(false) }
   }, [handleOrientation])
 
   return { ref, bind, reduced, motion: { ...motion, toggle } }
