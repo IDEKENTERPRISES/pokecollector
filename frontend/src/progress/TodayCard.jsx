@@ -12,6 +12,8 @@ import { HOME_FACTS } from '../components/splash/config'
 import { factLabelKey, fill, typeColour } from '../components/splash/format'
 import { ensureDay } from '../components/splash/prefetch'
 import WhosThatPokemon from './WhosThatPokemon'
+import { priciestLabel } from './daily'
+import { xpProgress } from './xp'
 
 const viewedKey = (userId, date) => `pc.daily.viewed.${userId}.${date}`
 
@@ -83,6 +85,7 @@ function Quests({ quests, t }) {
 function PokemonRow({ entry, pokemon, t, formatPrice }) {
   const [added, setAdded] = useState(false)
   const cheapest = pokemon?.cheapest
+  const priciest = pokemon?.most_expensive
   const owned = pokemon?.owned_printings
 
   const wishlist = async () => {
@@ -118,6 +121,20 @@ function PokemonRow({ entry, pokemon, t, formatPrice }) {
           <p className="text-footnote text-text-secondary" data-testid="pokemon-cheapest">
             {fill(t('today.cheapest'), { price: formatPrice(cheapest.price) })}
           </p>
+        )}
+        {priciest && (
+          <Link
+            to={`/pokedex/${entry.dex_id}?sort=price_desc`}
+            className="ios-press -mx-1 mt-0.5 block min-h-[44px] rounded-lg px-1 py-1 text-footnote"
+            data-testid="pokemon-priciest"
+          >
+            <span className="block text-text-secondary">
+              {fill(t('today.priciest'), { price: formatPrice(priciest.price) })}
+            </span>
+            <span className="block break-words font-semibold text-tint">
+              {priciestLabel(priciest)}
+            </span>
+          </Link>
         )}
       </div>
       {owned === 0 && cheapest && !added && (
@@ -180,7 +197,7 @@ export default function DailyTodayCard() {
   const xp = summary?.xp
   const tint = entry ? typeColour(entry.types) : 'var(--type-colorless)'
   return (
-    <section aria-labelledby="today-card-title" className="space-y-2" data-testid="today-card">
+    <section id="today-card" aria-labelledby="today-card-title" className="scroll-mt-20 space-y-2" data-testid="today-card">
       <div className="flex items-center justify-between gap-2 px-1">
         <h2 id="today-card-title" className="text-title-3 font-display text-text-primary">{t('today.title')}</h2>
         {summary && <Streak streak={summary.streak} t={t} />}
@@ -201,7 +218,7 @@ export default function DailyTodayCard() {
               <span aria-hidden="true" className="relative h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-fill-tertiary">
                 <span
                   className="absolute inset-y-0 left-0 rounded-full bg-tint motion-safe:transition-[width]"
-                  style={{ width: `${Math.round(((xp.xp - xp.level_start) / Math.max(1, xp.next_level_at - xp.level_start)) * 100)}%` }}
+                  style={{ width: `${xpProgress(xp)?.percent ?? 0}%` }}
                 />
               </span>
             )}

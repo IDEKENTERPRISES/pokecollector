@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  markSent, pendingResults, readResults, readShowDaily, recordResult, resultGrid, shareText, shiftDate, writeShowDaily,
+  markSent, pendingResults, priciestLabel, readResults, readShowDaily, recordResult, resultGrid, shareText, shiftDate, streakLabel,
+  writeShowDaily,
 } from './daily'
 
 const memoryStorage = () => {
@@ -35,6 +36,18 @@ describe('Show streaks and quests', () => {
 
   it('stays on when storage throws', () => {
     expect(readShowDaily({ getItem: () => { throw new Error('blocked') } })).toBe(true)
+  })
+})
+
+describe('priciestLabel', () => {
+  it('names the card, its set and its number', () => {
+    expect(priciestLabel({ name: 'Eevee', set_name: 'Prismatic Evolutions', number: '075' })).toBe('Eevee · Prismatic Evolutions 075')
+  })
+
+  it('copes with a missing set or number', () => {
+    expect(priciestLabel({ name: 'Eevee', set_name: 'Base Set' })).toBe('Eevee · Base Set')
+    expect(priciestLabel({ name: 'Eevee' })).toBe('Eevee')
+    expect(priciestLabel(null)).toBe('')
   })
 })
 
@@ -89,5 +102,12 @@ describe('share text', () => {
     ])
     expect(shareText({ t, date: '2026-10-26', results, streak: 0 })).toContain('Missed it')
     expect(shareText({ t, date: '2026-10-26', results, streak: 0 })).not.toContain('🔥')
+  })
+
+  it('says "1-day streak" for a streak of one and counts the days otherwise', () => {
+    const words = key => ({ 'today.streakDays': '{count}-day streak', 'today.streakOne': 'One day streak' }[key] ?? key)
+    expect(streakLabel(words, 1)).toBe('One day streak')
+    expect(streakLabel(words, 30)).toBe('30-day streak')
+    expect(shareText({ t: words, date: '2026-10-28', results, streak: 1 }).split('\n')[2]).toBe('🔥 One day streak')
   })
 })
