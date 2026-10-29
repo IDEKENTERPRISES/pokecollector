@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from models import (
     Card, CollectionItem, PortfolioSnapshot, ProductPurchase, Set as CardSet, Trade, UserAchievement,
-    UserDailyActivity, UserEvent,
+    UserDailyActivity, UserEvent, UserXpLedger,
 )
 from services.card_values import effective_market_price
 from services.card_visibility import visible_any_card_filter
@@ -29,6 +29,7 @@ from services.digital_sets import digital_sets_enabled
 from services.progress import daily
 from services.progress.evaluator import EVENT_SET_COMPLETED
 from services.progress.streak import compute_streak
+from services.progress.xp import level_for_xp, total_xp
 
 RECAP_FROM_HOUR = 18  # Sunday, local time
 RECAP_SHOW_DAYS = (6, 0, 1)  # Sunday (from 18:00), Monday, Tuesday
@@ -352,8 +353,11 @@ def wrapped(db: Session, user_id: int, year: int, today: datetime.date | None = 
             best = (price, item)
 
     def card_ref(item, price=None):
+        set_row = item.card.set_ref
         ref = {"item_id": item.id, "card_id": item.card.id, "name": item.card.name,
-               "variant": item.variant, "image": _image(item.card.id)}
+               "variant": item.variant, "image": _image(item.card.id),
+               "set_name": set_row.name if set_row else None, "number": item.card.number or None,
+               "acquired_on": _local_date(_acquired(item), zone).isoformat()}
         if price is not None:
             ref["price"] = round(price, 2)
         return ref
@@ -375,7 +379,16 @@ def wrapped(db: Session, user_id: int, year: int, today: datetime.date | None = 
 
     events = db.query(UserEvent).filter(
         UserEvent.user_id == user_id, UserEvent.occurred_at >= start_utc, UserEvent.occurred_at < end_utc)
-    sets_completed = events.filter(UserEvent.kind == EVENT_SET_COMPLETED).count()
+    set_events = events.filter(UserEvent.kind == EVENT_SET_COMPLETED).order_by(
+        UserEvent.occurred_at.asc(), UserEvent.id.asc()).all()
+    sets_completed = len(set_events)
+    completed_sets = [
+        {"set_id": e.subject_key, "name": (e.payload or {}).get("set_name") or e.subject_key} for e in set_events
+    ]
+    xp_year = int(db.query(func.coalesce(func.sum(UserXpLedger.amount), 0)).filter(
+        UserXpLedger.user_id == user_id, UserXpLedger.created_at >= start_utc,
+        UserXpLedger.created_at < end_utc).scalar() or 0)
+    level = level_for_xp(total_xp(db, user_id))
     badges = db.query(UserAchievement).filter(
         UserAchievement.user_id == user_id, UserAchievement.backfilled == False,  # noqa: E712
         UserAchievement.unlocked_at >= start_utc, UserAchievement.unlocked_at < end_utc).count()
@@ -398,6 +411,10 @@ def wrapped(db: Session, user_id: int, year: int, today: datetime.date | None = 
             "end": round(float(snaps[-1].total_value or 0), 2),
             "peak": round(float(peak.total_value or 0), 2),
             "peak_date": peak.date.date().isoformat(),
+            "start_date": snaps[0].date.date().isoformat(),
+            # The last snapshot of each month that has one, so the chart follows the year.
+            "series": [{"month": m, "value": v} for m, v in sorted(
+                {_local_date(snap.date, zone).month: round(float(snap.total_value or 0), 2) for snap in snaps}.items())],
         }
 
     trades = db.query(Trade).filter(Trade.user_id == user_id, Trade.trade_date >= year_start,
@@ -427,6 +444,9 @@ def wrapped(db: Session, user_id: int, year: int, today: datetime.date | None = 
         "first_card": card_ref(first) if first else None,
         "best_pull": card_ref(best[1], best[0]) if best else None,
         "biggest_month": biggest,
+        "monthly": [months.get(m, 0) for m in range(1, 13)],
+        "completed_sets": completed_sets,
+        "closest_set": _closest_set(db, user_id),
         "top_pokemon": top_pokemon,
         "top_type": top(types, "type"),
         "top_illustrator": top(artists, "name"),
@@ -435,6 +455,8 @@ def wrapped(db: Session, user_id: int, year: int, today: datetime.date | None = 
         "wtp_wins": wtp_wins,
         "quests_done": quests_done,
         "badges_earned": badges,
+        "level": level,
+        "xp_year": xp_year,
         "trades": {
             "count": len(trades),
             "incoming_value": round(sum(float(t.incoming_value or 0) for t in trades), 2),
