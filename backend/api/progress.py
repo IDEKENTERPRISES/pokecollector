@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from api.auth import get_current_user
 from database import get_db
 from models import User, UserAchievement, UserEvent
+from services import delights
 from services.progress import daily
 from services.progress.checkin import CheckinError, record_checkin
 from services.progress.state import mark_users_dirty
@@ -175,3 +176,9 @@ def answer_wtp(
     mark_users_dirty(db, [current_user.id])
     summary = daily.today_summary(db, current_user.id, day)
     return {"correct": bool(stored.get("correct")), "answer": answer, "chosen": stored.get("dex_id"), "today": summary}
+
+
+@router.get("/on-this-day")
+def on_this_day(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Cards acquired on today's month and day in earlier years (the user's local time)."""
+    return delights.on_this_day(db, current_user.id)

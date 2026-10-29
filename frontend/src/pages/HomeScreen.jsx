@@ -26,6 +26,7 @@ import { TYPE_COLOURS } from '../components/ios/pokemon'
 import TodayCard from '../components/splash/TodayCard'
 import DailyTodayCard from '../progress/TodayCard'
 import { readShowDaily } from '../progress/daily'
+import OnThisDayCard from '../delights/OnThisDayCard'
 import { useNavBar } from '../navigation/useNavBar'
 import {
   SCAN_JOBS_QUERY_KEY,
@@ -372,7 +373,8 @@ export default function HomeScreen() {
       {/* The Today card (progress/TodayCard); with streaks and quests off, just the Pokémon of the day. */}
       {showDaily ? <DailyTodayCard /> : <TodayCard />}
 
-      {/* On this day (P8) goes here. */}
+      {/* Shows only when cards were acquired on this day in earlier years. */}
+      <OnThisDayCard />
 
       {yourSets.length > 0 && (
         <section>

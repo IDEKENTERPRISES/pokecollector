@@ -6,6 +6,8 @@ from api.auth import get_current_user
 from database import get_db
 from models import User
 from schemas import ProfileUpdate
+from pydantic import BaseModel
+from services import delights
 from services import public_profile as pp
 from services.public_profile_feature import public_profiles_enabled
 
@@ -81,3 +83,23 @@ def update_profile(payload: ProfileUpdate, db: Session = Depends(get_db),
         raise HTTPException(status_code=409, detail="Another public profile already uses this trainer name") from None
     db.refresh(current_user)
     return _serialize_owner(db, current_user, public_profiles_enabled(db))
+
+
+class ShowcaseUpdate(BaseModel):
+    ids: list
+
+
+@router.get("/showcase")
+def get_showcase(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return {"max": delights.SHOWCASE_MAX, "cards": delights.serialize_showcase(
+        delights.showcase_items(db, current_user.id), True)}
+
+
+@router.put("/showcase")
+def put_showcase(payload: ShowcaseUpdate, db: Session = Depends(get_db),
+                 current_user: User = Depends(get_current_user)):
+    try:
+        delights.save_showcase(db, current_user.id, payload.ids)
+    except delights.ShowcaseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return get_showcase(db, current_user)

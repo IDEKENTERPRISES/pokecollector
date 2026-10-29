@@ -6,6 +6,7 @@ from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.orm import joinedload
 
 from models import User, Binder, BinderCard, Card, Set as CardSet, Setting, WishlistItem
+from services import delights
 from services.card_numbers import natural_card_number_key
 from services.card_values import effective_market_price
 
@@ -509,4 +510,5 @@ def serialize_profile(db, user: User) -> dict:
             for binder in binders
         ],
         "decks": [serialize_deck_summary(deck) for deck in decks],
+        "showcase": delights.serialize_showcase(delights.showcase_items(db, user.id), show_values),
     }
