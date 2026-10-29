@@ -278,12 +278,12 @@ class UnlockApiTests(AchievementTestBase):
         self.assertIn("track", unseen[0])
 
         one = self.client.post("/api/progress/unlocks/seen", json={"ids": ["first_holo"]})
-        self.assertEqual(one.json(), {"marked": 1})
+        self.assertEqual(one.json(), {"marked": 1, "quests_marked": 0})
         self.assertNotIn("first_holo", [u["id"] for u in self.client.get("/api/progress/unlocks/unseen").json()["unlocks"]])
 
         rest = self.client.post("/api/progress/unlocks/seen", json={}).json()["marked"]
         self.assertEqual(rest, len(ids) - 1)
-        self.assertEqual(self.client.get("/api/progress/unlocks/unseen").json(), {"unlocks": []})
+        self.assertEqual(self.client.get("/api/progress/unlocks/unseen").json(), {"unlocks": [], "quests": []})
 
     def test_achievements_response_adds_tier_track_and_dates_and_keeps_old_fields(self):
         data = self.client.get(f"/api/social/achievements/{self.user.id}").json()
@@ -305,7 +305,7 @@ class UnlockApiTests(AchievementTestBase):
         main.app.dependency_overrides[get_current_user] = lambda: other
         data = self.client.get(f"/api/social/achievements/{self.user.id}").json()
         self.assertTrue(all(a["seen_at"] is None for a in data["achievements"]))
-        self.assertEqual(self.client.get("/api/progress/unlocks/unseen").json(), {"unlocks": []})
+        self.assertEqual(self.client.get("/api/progress/unlocks/unseen").json(), {"unlocks": [], "quests": []})
 
 
 if __name__ == "__main__":

@@ -77,13 +77,24 @@ export function resultGrid(results, date, days = 7) {
   }).join('')
 }
 
-/** The text the Share button sends. `t` is the app's translator. */
+/** "Eevee · Prismatic Evolutions 075": the Pokémon of the day's most expensive print, from the server. */
+export function priciestLabel(print) {
+  const where = [print?.set_name, print?.number].filter(Boolean).join(' ')
+  return [print?.name, where].filter(Boolean).join(' · ')
+}
+
+/** "12-day streak" (or "1-day streak"). `t` is the app's translator. */
+export function streakLabel(t, count) {
+  return count === 1 ? t('today.streakOne') : t('today.streakDays').replace('{count}', count)
+}
+
+/** The text "Share as text" sends: title and date, the week's squares with the verdict, the streak. */
 export function shareText({ t, date, results, streak = 0 }) {
   const entry = results[date]
   const lines = [
     `${t('wtp.shareTitle')} ${date}`,
     `${resultGrid(results, date)} ${entry?.correct ? t('wtp.shareWon') : t('wtp.shareLost')}`,
   ]
-  if (streak > 0) lines.push(`🔥 ${t('today.streakDays').replace('{count}', streak)}`)
+  if (streak > 0) lines.push(`🔥 ${streakLabel(t, streak)}`)
   return lines.join('\n')
 }

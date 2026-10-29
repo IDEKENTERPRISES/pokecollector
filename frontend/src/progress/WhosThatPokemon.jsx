@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, HelpCircle, Share2, X } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -6,7 +6,9 @@ import { useSettings } from '../contexts/SettingsContext'
 import { ensurePuzzle, spriteSource } from '../components/splash/prefetch'
 import { readPuzzle } from '../components/splash/wtp'
 import { fill } from '../components/splash/format'
+import ActionSheet from '../components/ios/ActionSheet'
 import { readResults, recordResult, shareText } from './daily'
+import { currentAccent, currentFont, renderShareImage, shareImageSpec, sharePicture } from './shareImage'
 import { flushWtpResults } from './wtpResults'
 
 /**
@@ -15,9 +17,11 @@ import { flushWtpResults } from './wtpResults'
  * locally first and sent to the server when there is a connection.
  */
 export default function WhosThatPokemon({ date, userId, language, serverPlayed = false, streak = 0 }) {
-  const { t } = useSettings()
+  const { t, language: locale } = useSettings()
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
+  const picture = useRef(null)
   const [results, setResults] = useState(() => readResults(userId))
   const result = results[date]
 
@@ -69,7 +73,24 @@ export default function WhosThatPokemon({ date, userId, language, serverPlayed =
     sync()
   }
 
-  const share = async () => {
+  const buildPicture = useCallback(() => renderShareImage(shareImageSpec({
+    t,
+    date,
+    result: results[date],
+    results,
+    streak,
+    accent: currentAccent(),
+    fontFamily: currentFont(),
+    locale: locale || undefined,
+  }), image), [t, date, results, streak, image, locale])
+
+  // Draw the picture as soon as the choice opens, so sharing it happens inside the tap.
+  const openShare = () => {
+    picture.current = buildPicture()
+    setShareOpen(true)
+  }
+
+  const shareAsText = async () => {
     const text = shareText({ t, date, results, streak })
     try {
       if (navigator.share) await navigator.share({ text })
@@ -79,6 +100,19 @@ export default function WhosThatPokemon({ date, userId, language, serverPlayed =
       }
     } catch {
       // the trainer closed the share sheet
+    }
+  }
+
+  const shareAsPicture = async () => {
+    try {
+      const blob = await (picture.current ?? buildPicture())
+      if (!blob) {
+        toast.error(t('wtp.shareImageFailed'))
+        return
+      }
+      if (await sharePicture(blob) === 'downloaded') toast.success(t('wtp.shareDownloaded'))
+    } catch {
+      toast.error(t('wtp.shareImageFailed'))
     }
   }
 
@@ -160,12 +194,22 @@ export default function WhosThatPokemon({ date, userId, language, serverPlayed =
               {!result.sent && <p className="text-footnote text-text-secondary">{t('wtp.pending')}</p>}
               <button
                 type="button"
-                onClick={share}
+                onClick={openShare}
+                data-testid="wtp-share"
                 className="ios-press inline-flex min-h-[44px] items-center gap-2 rounded-full bg-fill-tertiary px-4 text-subheadline font-semibold text-tint"
               >
                 <Share2 size={16} aria-hidden="true" />
                 {t('wtp.share')}
               </button>
+              <ActionSheet
+                isOpen={shareOpen}
+                onClose={() => setShareOpen(false)}
+                title={t('wtp.shareChoose')}
+                actions={[
+                  { label: t('wtp.shareAsText'), onSelect: shareAsText },
+                  { label: t('wtp.shareAsPicture'), onSelect: shareAsPicture },
+                ]}
+              />
             </div>
           )}
         </div>

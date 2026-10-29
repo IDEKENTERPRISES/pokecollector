@@ -1014,6 +1014,8 @@ class UserXpLedger(Base):
     source_key = Column(String(160), nullable=False)
     amount = Column(Integer, nullable=False)
     created_at = Column(DateTime, nullable=False, default=func.now())
+    # When the trainer saw the celebration for this award (quest awards only); NULL until then.
+    seen_at = Column(DateTime, nullable=True)
 
     __table_args__ = (UniqueConstraint("user_id", "source", "source_key", name="uq_user_xp_ledger_source"),)
 

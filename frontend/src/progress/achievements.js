@@ -50,6 +50,18 @@ export function mergeQueue(queue, incoming, handled = new Set()) {
 }
 
 /**
+ * The unseen response as one list for the unlock queue: badges first, then completed quests (each
+ * with a `kind`, and quests with an `id` of "quest:<date>:<quest id>" so the two never collide).
+ */
+export function unseenItems(response) {
+  const badges = (response?.unlocks ?? []).filter(item => item?.id).map(item => ({ ...item, kind: 'badge' }))
+  const quests = (response?.quests ?? []).filter(item => item?.key && item?.quest_id).map(item => ({
+    ...item, kind: 'quest', id: `quest:${item.key}`,
+  }))
+  return [...badges, ...quests]
+}
+
+/**
  * Whether the app is in the middle of something the unlock sheet must not interrupt: the scan
  * screens, or any other open dialog (a sheet, the camera, an alert). The unlock sheet itself,
  * marked `data-unlock-sheet`, does not count.
