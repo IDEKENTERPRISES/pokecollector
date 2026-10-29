@@ -2430,6 +2430,8 @@ const en = {
     bigMoversDesc: 'Cards that moved by your price-alert percentage. In the daily digest.',
     badges: 'Badges',
     badgesDesc: 'When you earn a badge. Sent right away, naming the badge.',
+    weeklyRecap: 'Weekly recap',
+    weeklyRecapDesc: 'Sunday at 18:00, only after a week with something in it. Off by default.',
     digestTime: 'Daily digest time',
     digestTimeDesc: 'One notification a day, in your time zone.',
     quietHours: 'Quiet hours',
@@ -2682,7 +2684,6 @@ const en = {
     wrongMark: 'Your answer',
   },
 
-  // Shared iPhone UI pieces (components/ios). Other languages show English until translated.
   // Wrapped, the year in review (engagement P9b).
   wrapped: {
     title: 'Wrapped',
@@ -2767,6 +2768,22 @@ const en = {
     sharedStreak: '{count}-day streak',
     sharedValue: 'Collection {amount}',
     sharedBadges: '{count} badges',
+    shareFailed: "Couldn't make the picture.",
+    shareDownloaded: 'Picture saved.',
+  },
+
+  // Shared iPhone UI pieces (components/ios). Other languages show English until translated.
+  recap: {
+    title: 'Your week',
+    cardsAdded: 'Cards added',
+    valueChange: 'Value change',
+    bestPull: 'Best pull',
+    closestSet: '{set}: {missing} to go',
+    streak: '{count}-day streak',
+    badgesOne: '1 badge unlocked',
+    badges: '{count} badges unlocked',
+    share: 'Share recap',
+    shareTitle: 'My week',
     shareFailed: "Couldn't make the picture.",
     shareDownloaded: 'Picture saved.',
   },

@@ -219,6 +219,9 @@ def run_notification_job():
 
     db = SessionLocal()
     try:
+        from services.recap import queue_weekly_recaps
+
+        queue_weekly_recaps(db)
         flush_due(db)
     except Exception:
         db.rollback()
