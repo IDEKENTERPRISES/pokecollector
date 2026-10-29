@@ -6,6 +6,7 @@ import { formatEur } from '../utils/formatEur'
 import { formatBinderCountSummary } from '../utils/binderCounts'
 import { useSettings } from '../contexts/SettingsContext'
 import PublicProfileShell from '../components/public/PublicProfileShell'
+import ShowcaseStrip from '../delights/ShowcaseStrip'
 
 export default function PublicProfile() {
   const { handle } = useParams()
@@ -45,6 +46,11 @@ export default function PublicProfile() {
           </div>
         )
       ) : <>
+        {profile.showcase?.length > 0 && (
+          <div className="mb-4 rounded-2xl border border-border bg-bg-secondary p-4 text-text-primary">
+            <ShowcaseStrip cards={profile.showcase} showValues={profile.show_values} label={t('delights.showcase')} />
+          </div>
+        )}
         {profile.binders.length === 0 && (
           <div className="rounded-2xl border border-border bg-bg-secondary p-8 text-center text-text-secondary">
             {t('publicProfiles.noSharedBinders')}

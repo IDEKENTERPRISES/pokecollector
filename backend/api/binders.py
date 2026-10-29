@@ -7,8 +7,19 @@ from typing import List
 from api.auth import get_current_user
 from database import get_db
 from models import Binder, BinderCard, Card, CollectionCardPhoto, CollectionItem, Set, User, WishlistItem
-from schemas import BinderCreate, BinderUpdate, BinderResponse, BinderCardUpdate, BinderCardSwitch, BinderPrintOptimizationApply
+from schemas import BinderCreate, BinderUpdate, BinderResponse, BinderSlotsReplace, BinderCardUpdate, BinderCardSwitch, BinderPrintOptimizationApply
 from api.collection import ensure_card_exists, _find_card_by_code, _annotate_scan_photos
+from services.binder_slots import (
+    POCKET_LAYOUTS,
+    SlotError,
+    binder_has_pockets,
+    compact_layout,
+    delete_slots_for_entries,
+    get_layout,
+    reconcile_slots,
+    replace_layout,
+    slot_positions,
+)
 from services import pokemon_api
 from services.card_fallbacks import apply_cross_language_fallbacks
 from services.card_upsert import upsert_card
@@ -50,6 +61,9 @@ BINDER_CSV_PHYSICAL_COLUMNS = [
 ]
 BINDER_CSV_COLUMNS_V1 = [*BINDER_CSV_PHYSICAL_COLUMNS_V1, "collection_item_id"]
 BINDER_CSV_COLUMNS = [*BINDER_CSV_PHYSICAL_COLUMNS, "collection_item_id"]
+# Older (P5) exports ended in page,pocket; current ones add pocket_size, the binder's pocket_layout.
+BINDER_CSV_POSITION_COLUMNS_V1 = ["page", "pocket"]
+BINDER_CSV_POSITION_COLUMNS = [*BINDER_CSV_POSITION_COLUMNS_V1, "pocket_size"]
 BINDER_CSV_MAX_BYTES = 256 * 1024
 BINDER_CSV_MAX_ROWS = 1000
 DECK_TYPES = {"deck", "physical_deck"}
@@ -75,6 +89,40 @@ def _clean_binder_format(value: str | None) -> str | None:
         if allowed.lower() == normalized.lower():
             return allowed
     raise HTTPException(status_code=422, detail="Format must be Standard, Expanded, Unlimited, or Casual")
+
+
+def _parse_csv_positions(row: dict, layout: int, required_quantity: int) -> list:
+    """Optional page / pocket columns: 1-based, '|' separated when a row holds several copies.
+
+    `layout` is the pocket size the CSV was made with. Returns one slot_index
+    ((page - 1) * layout + pocket - 1) per listed copy; a blank cell means "first free pocket".
+    """
+    page_cell = (row.get("page") or "").strip()
+    pocket_cell = (row.get("pocket") or "").strip()
+    if not page_cell and not pocket_cell:
+        return []
+    pages = [part.strip() for part in page_cell.split("|")]
+    pockets = [part.strip() for part in pocket_cell.split("|")]
+    if len(pages) != len(pockets):
+        raise ValueError("page and pocket must list the same number of copies")
+    if len(pages) > required_quantity:
+        raise ValueError("page and pocket list more copies than required_quantity")
+    indexes = []
+    for page_text, pocket_text in zip(pages, pockets):
+        if not page_text and not pocket_text:
+            indexes.append(None)
+            continue
+        try:
+            page, pocket = int(page_text), int(pocket_text)
+        except ValueError:
+            raise ValueError("page and pocket must be whole numbers")
+        if page < 1 or pocket < 1 or pocket > layout:
+            raise ValueError(f"pocket must be between 1 and {layout} and page at least 1")
+        indexes.append((page - 1) * layout + (pocket - 1))
+    listed = [index for index in indexes if index is not None]
+    if len(set(listed)) != len(listed):
+        raise ValueError("two copies share one pocket")
+    return indexes
 
 
 def _safe_required_quantity(value: int | None) -> int:
@@ -124,6 +172,7 @@ def _binder_response(binder: Binder, card_count: int = 0, unique_card_count: int
         card_count=card_count,
         unique_card_count=unique_card_count,
         is_public=binder.is_public or False,
+        pocket_layout=binder.pocket_layout or 9,
     )
 
 
@@ -730,6 +779,9 @@ def update_binder(
         binder.icon_pokemon_id = update.icon_pokemon_id
     if "is_public" in update.model_fields_set:
         binder.is_public = update.is_public
+    if update.pocket_layout is not None and update.pocket_layout in POCKET_LAYOUTS:
+        # Pages are derived from slot_index, so resizing keeps every card's pocket number.
+        binder.pocket_layout = update.pocket_layout
     if requested_type in DECK_TYPES:
         binder.target_size = binder.target_size or 60
         binder.format = binder.format or "Casual"
@@ -938,6 +990,68 @@ def delete_binder(
     return {"message": "Binder deleted"}
 
 
+def _slot_binder(db: Session, current_user: User, binder_id: int) -> Binder:
+    binder = db.query(Binder).filter(
+        Binder.id == binder_id,
+        Binder.user_id == current_user.id,
+    ).with_for_update(of=Binder).first()
+    if not binder:
+        raise HTTPException(status_code=404, detail="Binder not found")
+    return binder
+
+
+@router.get("/{binder_id}/slots")
+def get_binder_slots(
+    binder_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The binder's pockets. The first call assigns them in the default order (one pocket per copy)."""
+    binder = _slot_binder(db, current_user, binder_id)
+    try:
+        payload = get_layout(db, binder)
+    except SlotError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+    db.commit()
+    return payload
+
+
+@router.put("/{binder_id}/slots")
+def replace_binder_slots(
+    binder_id: int,
+    body: BinderSlotsReplace,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Replace the whole layout. A stale version is a 409."""
+    binder = _slot_binder(db, current_user, binder_id)
+    try:
+        payload = replace_layout(db, binder, body.version, [item.model_dump() for item in body.slots])
+    except SlotError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+    db.commit()
+    return payload
+
+
+@router.post("/{binder_id}/slots/compact")
+def compact_binder_slots(
+    binder_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Close the gaps between pockets, keeping the order."""
+    binder = _slot_binder(db, current_user, binder_id)
+    try:
+        payload = compact_layout(db, binder)
+    except SlotError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+    db.commit()
+    return payload
+
+
 @router.get("/{binder_id}/cards")
 def get_binder_cards(
     binder_id: int,
@@ -1135,6 +1249,7 @@ def get_binder_cards(
             "format": binder.format,
             "target_size": binder.target_size,
             "icon_pokemon_id": binder.icon_pokemon_id,
+            "pocket_layout": binder.pocket_layout or 9,
         },
         "cards": cards,
         "owned_count": owned_count,
@@ -1281,22 +1396,26 @@ def apply_binder_print_optimization(
                 continue
             existing.required_quantity = combined_quantity
             if binder_type == "physical_deck":
-                db.query(BinderCard).filter(
+                released_rows = db.query(BinderCard).filter(
                     BinderCard.binder_id == binder_id,
                     BinderCard.card_id == bc.card_id,
                     BinderCard.collection_item_id.isnot(None),
-                ).delete(synchronize_session=False)
+                )
+                delete_slots_for_entries(db, released_rows)
+                released_rows.delete(synchronize_session=False)
             db.delete(bc)
             applied += 1
             applied_total_savings += recommendation["total_savings"]
             continue
 
         if binder_type == "physical_deck":
-            db.query(BinderCard).filter(
+            released_rows = db.query(BinderCard).filter(
                 BinderCard.binder_id == binder_id,
                 BinderCard.card_id == bc.card_id,
                 BinderCard.collection_item_id.isnot(None),
-            ).delete(synchronize_session=False)
+            )
+            delete_slots_for_entries(db, released_rows)
+            released_rows.delete(synchronize_session=False)
         bc.card_id = target_card_id
         applied += 1
         applied_total_savings += recommendation["total_savings"]
@@ -1915,11 +2034,13 @@ def switch_binder_entry_card(
             raise HTTPException(status_code=400, detail="Switching would exceed the maximum required quantity of 99")
         existing.required_quantity = combined_quantity
         if binder_type == "physical_deck":
-            db.query(BinderCard).filter(
+            released_rows = db.query(BinderCard).filter(
                 BinderCard.binder_id == binder_id,
                 BinderCard.card_id == bc.card_id,
                 BinderCard.collection_item_id.isnot(None),
-            ).delete(synchronize_session=False)
+            )
+            delete_slots_for_entries(db, released_rows)
+            released_rows.delete(synchronize_session=False)
         db.delete(bc)
         db.commit()
         return {
@@ -1930,11 +2051,13 @@ def switch_binder_entry_card(
         }
 
     if binder_type == "physical_deck":
-        db.query(BinderCard).filter(
+        released_rows = db.query(BinderCard).filter(
             BinderCard.binder_id == binder_id,
             BinderCard.card_id == bc.card_id,
             BinderCard.collection_item_id.isnot(None),
-        ).delete(synchronize_session=False)
+        )
+        delete_slots_for_entries(db, released_rows)
+        released_rows.delete(synchronize_session=False)
     bc.card_id = target_card.id
     db.commit()
     return {
@@ -2142,6 +2265,21 @@ def add_binder_cards_to_wishlist(
     }
 
 
+def _csv_position_cells(positions: dict, entry: BinderCard, layout: int) -> dict:
+    if not positions:
+        return {}
+    indexes = [
+        positions[(entry.id, copy_index)]
+        for copy_index in range(_safe_required_quantity(entry.required_quantity))
+        if (entry.id, copy_index) in positions
+    ]
+    return {
+        "page": "|".join(str(index // layout + 1) for index in indexes),
+        "pocket": "|".join(str(index % layout + 1) for index in indexes),
+        "pocket_size": layout,
+    }
+
+
 @router.get("/{binder_id}/export-csv")
 def export_binder_csv(
     binder_id: int,
@@ -2166,8 +2304,13 @@ def export_binder_csv(
     binder_type = binder.binder_type or "collection"
     rows = _deck_plan_query(rows_query, binder_type).order_by(BinderCard.added_at.asc()).all()
 
+    positions = slot_positions(db, binder_id) if binder_type in ("collection", "wishlist") else {}
+    layout = int(binder.pocket_layout or 9)
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=BINDER_CSV_COLUMNS)
+    writer = csv.DictWriter(
+        output,
+        fieldnames=[*BINDER_CSV_COLUMNS, *BINDER_CSV_POSITION_COLUMNS] if positions else BINDER_CSV_COLUMNS,
+    )
     writer.writeheader()
     for entry in rows:
         card = entry.card
@@ -2199,6 +2342,7 @@ def export_binder_csv(
                 if entry.collection_item else ""
             ),
             "collection_item_id": entry.collection_item_id or "",
+            **_csv_position_cells(positions, entry, layout),
         })
 
     filename = f"binder-{binder_id}.csv"
@@ -2245,7 +2389,17 @@ async def import_binder_csv(
         raise HTTPException(status_code=422, detail="CSV file must be UTF-8 encoded") from exc
 
     reader = csv.DictReader(io.StringIO(text), delimiter=",")
-    if reader.fieldnames not in (
+    csv_headers = list(reader.fieldnames or [])
+    has_positions = False
+    has_size_column = False
+    if csv_headers[-len(BINDER_CSV_POSITION_COLUMNS):] == BINDER_CSV_POSITION_COLUMNS:
+        has_positions = has_size_column = True
+        csv_headers = csv_headers[:-len(BINDER_CSV_POSITION_COLUMNS)]
+    elif csv_headers[-len(BINDER_CSV_POSITION_COLUMNS_V1):] == BINDER_CSV_POSITION_COLUMNS_V1:
+        has_positions = True
+        csv_headers = csv_headers[:-len(BINDER_CSV_POSITION_COLUMNS_V1)]
+    pocket_layout_size = int(binder.pocket_layout or 9)
+    if csv_headers not in (
         BINDER_CSV_COLUMNS,
         BINDER_CSV_COLUMNS_V1,
         BINDER_CSV_PHYSICAL_COLUMNS,
@@ -2264,6 +2418,33 @@ async def import_binder_csv(
             ),
         )
 
+    csv_rows = list(reader)
+    # Pockets are numbered with the size the CSV was made with. A new (empty) binder adopts that
+    # size so pages look identical; a binder that already holds cards keeps its own layout and the
+    # page / pocket numbers are read against it. Older files without pocket_size use the binder's.
+    csv_pocket_size = pocket_layout_size
+    if has_size_column:
+        listed_sizes = {
+            (row.get("pocket_size") or "").strip() for row in csv_rows if (row.get("pocket_size") or "").strip()
+        }
+        if len(listed_sizes) > 1:
+            raise HTTPException(status_code=422, detail="pocket_size must be the same on every row")
+        if listed_sizes:
+            try:
+                csv_pocket_size = int(next(iter(listed_sizes)))
+            except ValueError:
+                csv_pocket_size = 0
+            if csv_pocket_size not in POCKET_LAYOUTS:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"pocket_size must be one of: {', '.join(str(size) for size in POCKET_LAYOUTS)}",
+                )
+    binder_was_empty = db.query(BinderCard.id).filter(BinderCard.binder_id == binder_id).first() is None
+    adopt_pocket_size = (
+        has_size_column and binder_was_empty and binder_has_pockets(binder) and csv_pocket_size != pocket_layout_size
+    )
+    position_layout = csv_pocket_size if binder_was_empty else pocket_layout_size
+
     added = 0
     updated = 0
     skipped = 0
@@ -2274,7 +2455,7 @@ async def import_binder_csv(
     planned_card_rows: dict[str, dict] = {}
     planned_collection_rows: dict[int, dict] = {}
     collection_item_usage_counts = _collection_binder_usage_counts(db, current_user)
-    for row_number, row in enumerate(reader, start=2):
+    for row_number, row in enumerate(csv_rows, start=2):
         if None in row:
             failed += 1
             errors.append(f"row {row_number}: too many columns")
@@ -2303,6 +2484,16 @@ async def import_binder_csv(
                 failed += 1
                 errors.append(f"row {row_number}: required_quantity must be a number between 1 and 99")
                 continue
+            row_positions = []
+            if has_positions:
+                try:
+                    row_positions = _parse_csv_positions(row, position_layout, required_quantity)
+                except ValueError as exc:
+                    failed += 1
+                    errors.append(f"row {row_number}: {exc}")
+                    continue
+                # One entry per copy this row adds; unlisted copies take the first free pocket.
+                row_positions = [*row_positions, *([None] * (required_quantity - len(row_positions)))]
             try:
                 card = _find_card_by_code(db, set_code, number, lang)
             except ValueError:
@@ -2383,6 +2574,7 @@ async def import_binder_csv(
                     else:
                         planned["increment"] = next_increment
                         planned["required_quantity"] = next_quantity
+                        planned["positions"] = [*planned.get("positions", []), *row_positions]
                     continue
                 existing_entry = db.query(BinderCard).filter(
                     BinderCard.binder_id == binder_id,
@@ -2400,6 +2592,7 @@ async def import_binder_csv(
                     "entry": existing_entry,
                     "increment": required_quantity,
                     "required_quantity": next_quantity,
+                    "positions": row_positions,
                 }
                 planned_collection_rows[item_to_add.id] = planned
                 validated_rows.append(planned)
@@ -2413,6 +2606,7 @@ async def import_binder_csv(
                         required_quantity,
                     )
                     planned_row["increment"] += required_quantity
+                    planned_row["positions"] = [*planned_row.get("positions", []), *row_positions]
                 except ValueError:
                     failed += 1
                     errors.append(f"row {row_number}: {BINDER_CSV_DUPLICATE_QUANTITY_ERROR}")
@@ -2438,6 +2632,7 @@ async def import_binder_csv(
                     "entry": existing,
                     "increment": required_quantity - _safe_required_quantity(existing.required_quantity),
                     "required_quantity": required_quantity,
+                    "positions": row_positions,
                 }
             else:
                 planned_row = {
@@ -2445,6 +2640,7 @@ async def import_binder_csv(
                     "card": card,
                     "increment": required_quantity,
                     "required_quantity": required_quantity,
+                    "positions": row_positions,
                 }
             planned_card_rows[card.id] = planned_row
             validated_rows.append(planned_row)
@@ -2537,33 +2733,51 @@ async def import_binder_csv(
             validated_rows.append(planned)
 
     try:
+        wanted_pockets = {}
         for item in validated_rows:
             action = item["action"]
+            base_copies = 0
             if action == "add_collection_item":
                 collection_item = item["item"]
-                db.add(BinderCard(
+                entry = BinderCard(
                     binder_id=binder_id,
                     card_id=collection_item.card_id,
                     collection_item_id=collection_item.id,
                     required_quantity=item["required_quantity"],
                     added_at=datetime.datetime.utcnow(),
-                ))
+                )
+                db.add(entry)
                 added += 1
-            elif action == "update_collection_item":
-                item["entry"].required_quantity = item["required_quantity"]
-                updated += 1
-            elif action == "update":
-                item["entry"].required_quantity = item["required_quantity"]
+            elif action in ("update_collection_item", "update"):
+                entry = item["entry"]
+                base_copies = _safe_required_quantity(entry.required_quantity)
+                entry.required_quantity = item["required_quantity"]
                 updated += 1
             elif action == "add_card":
                 card = item["card"]
-                db.add(BinderCard(
+                entry = BinderCard(
                     binder_id=binder_id,
                     card_id=card.id,
                     required_quantity=item["required_quantity"],
                     added_at=datetime.datetime.utcnow(),
-                ))
+                )
+                db.add(entry)
                 added += 1
+            else:
+                continue
+            requested = list(item.get("positions", []))
+            if any(index is not None for index in requested):
+                db.flush()
+                for offset, index in enumerate(requested):
+                    if index is not None:
+                        wanted_pockets[(entry.id, base_copies + offset)] = index
+        if adopt_pocket_size and validated_rows:
+            binder.pocket_layout = csv_pocket_size
+            binder.updated_at = datetime.datetime.utcnow()
+        if wanted_pockets:
+            # Place the listed copies first; every other new copy takes the first free pocket.
+            db.flush()
+            reconcile_slots(db, binder, preferred=wanted_pockets)
         db.commit()
     except Exception:
         db.rollback()

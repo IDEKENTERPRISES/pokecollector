@@ -286,6 +286,9 @@ export const createBinder = (data) => api.post('/binders/', data)
 export const updateBinder = (id, data) => api.put(`/binders/${id}`, data)
 export const deleteBinder = (id) => api.delete(`/binders/${id}`)
 export const getBinderCards = (id, params = {}) => api.get(`/binders/${id}/cards`, { params })
+export const getBinderSlots = (id) => api.get(`/binders/${id}/slots`).then(r => r.data)
+export const replaceBinderSlots = (id, body) => api.put(`/binders/${id}/slots`, body).then(r => r.data)
+export const compactBinderSlots = (id) => api.post(`/binders/${id}/slots/compact`).then(r => r.data)
 export const addCardToBinder = (binderId, cardId, requiredQuantity = 1) => api.post(`/binders/${binderId}/cards`, null, { params: { card_id: cardId, required_quantity: requiredQuantity } })
 export const addCollectionItemToBinder = (binderId, collectionItemId, quantity = 1) => api.post(`/binders/${binderId}/collection-items`, null, { params: { collection_item_id: collectionItemId, quantity } })
 export const addOwnedSetToBinder = (binderId, setId) => api.post(`/binders/${binderId}/add-owned-set?set_id=${encodeURIComponent(setId)}`).then(r => r.data)
@@ -428,10 +431,12 @@ export const restoreBackup = async (file, password) => {
   await appendUpload(formData, 'file', file)
   // Required by the server whenever logins are enabled.
   if (password) formData.append('password', password)
+  // Answers 202 at once; the restore itself runs in the background (see getRestoreStatus).
   return api.post('/backup/restore', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
 }
+export const getRestoreStatus = () => api.get('/backup/restore/status', { timeout: 15000 }).then(r => r.data)
 
 // Settings
 export const getSettings = () => api.get('/settings/')
@@ -474,11 +479,26 @@ export const getRescueDonations = () => api.get('/github/rescue-donations').then
 export const getLeaderboard = (params = {}) => api.get('/social/leaderboard', { params })
 export const compareUsers = (userId, params = {}) => api.get(`/social/compare/${userId}`, { params })
 export const getAchievements = (userId, params = {}) => api.get(`/social/achievements/${userId}`, { params })
+export const getUnseenUnlocks = () => api.get('/progress/unlocks/unseen')
+export const getTodaySummary = (date) => api.get('/progress/today', { params: date ? { date } : {} }).then(r => r.data)
+export const postViewedPokemon = (date) => api.post('/progress/daily/view', { date }).then(r => r.data)
+export const postWtpAnswer = (date, dexId) => api.post('/progress/wtp/answer', { date, dex_id: dexId }).then(r => r.data)
+// Badge ids and/or quest keys ("<date>:<quest id>"); with neither, everything unseen is marked.
+export const markUnlocksSeen = (ids, questKeys) => api.post('/progress/unlocks/seen', {
+  ...(ids ? { ids } : {}),
+  ...(questKeys ? { quest_keys: questKeys } : {}),
+})
 
 // Web push (docs/PWA_OFFLINE_DESIGN.md §6.7)
 export const getVapidPublicKey = () => api.get('/push/vapid-public-key').then(r => r.data)
 export const subscribePush = (subscription) => api.post('/push/subscribe', subscription).then(r => r.data)
 export const unsubscribePush = (endpoint) => api.delete('/push/subscribe', { data: { endpoint } })
 export const sendTestPush = () => api.post('/push/test').then(r => r.data)
+
+// Small delights (engagement P8)
+export const getOnThisDay = () => api.get('/progress/on-this-day').then(r => r.data)
+export const getCollectionDna = () => api.get('/analytics/dna').then(r => r.data)
+export const getShowcase = () => api.get('/profile/showcase').then(r => r.data)
+export const putShowcase = (ids) => api.put('/profile/showcase', { ids }).then(r => r.data)
 
 export default api

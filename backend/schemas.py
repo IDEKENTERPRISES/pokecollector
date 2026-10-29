@@ -171,6 +171,8 @@ class CollectionItemUpdate(BaseModel):
     lang: Optional[str] = None
     # Owner-editable acquisition date. Send null to fall back to the date added.
     acquired_at: Optional[datetime] = None
+    # Holo viewer foil pattern id; null means automatic.
+    foil_pattern: Optional[str] = None
 
 
 class BulkCollectionAddRequest(BaseModel):
@@ -209,6 +211,7 @@ class CollectionItemResponse(BaseModel):
     added_at: Optional[datetime] = None
     # Defaults to added_at until the owner sets their own date.
     acquired_at: Optional[datetime] = None
+    foil_pattern: Optional[str] = None
     standard_legal: bool = False
     # True when the owner has their own private photo of this card. A flag rather
     # than the image: bytes use a separate authenticated endpoint so collection
@@ -287,6 +290,18 @@ class BinderUpdate(BaseModel):
     target_size: Optional[Literal[20, 40, 60]] = None
     icon_pokemon_id: Optional[int] = None
     is_public: Optional[bool] = None
+    pocket_layout: Optional[Literal[4, 9, 12]] = None
+
+
+class BinderSlotItem(BaseModel):
+    slot_index: int
+    binder_card_id: int
+    copy_index: int
+
+
+class BinderSlotsReplace(BaseModel):
+    version: str
+    slots: List[BinderSlotItem]
 
 
 class BinderCardUpdate(BaseModel):
@@ -316,6 +331,7 @@ class BinderResponse(BaseModel):
     card_count: int = 0
     unique_card_count: int = 0
     is_public: bool = False
+    pocket_layout: int = 9
 
     class Config:
         from_attributes = True

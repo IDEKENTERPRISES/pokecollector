@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from models import Card, Set, CollectionItem, WishlistItem, BinderCard, PriceHistory, SyncLog, PortfolioSnapshot, CustomCardMatch, User, UserSetting
-from services import pokemon_api, push, telegram
+from services import notifications, pokemon_api, push, telegram
 from services.card_fallbacks import apply_cross_language_fallbacks, build_missing_language_cards_for_set
 from services.card_metadata import count_cards_missing_metadata, enrich_cards_metadata, enrich_missing_card_metadata
 from services.card_numbers import candidate_card_ids, number_matches_candidate
@@ -24,6 +24,7 @@ from services.portfolio_valuation import calculate_portfolio_valuation, portfoli
 from services.price_utils import PRICE_FIELDS, has_valid_price
 from services.sync_retry import RetryQueue, TransientSyncError, is_transient_error
 from services.tcgdex_languages import with_lang_suffix
+from services.progress.state import mark_all_users_dirty_safely
 from services import sync_progress
 
 logger = logging.getLogger(__name__)
@@ -743,9 +744,11 @@ def check_wishlist_alerts(db: Session, updated_card_ids: list):
                 card.name, current_price, threshold, alert_type, db=db, user_id=item.user_id
             )
             try:
-                push.send_price_alert(db, item.user_id, card.name, current_price, threshold, alert_type)
+                notifications.notify_wishlist_alert(
+                    db, item.user_id, card.id, price=current_price, threshold=threshold, alert_type=alert_type
+                )
             except Exception:
-                logger.exception("Web push price alert failed for user %s", item.user_id)
+                logger.exception("Could not queue the web push price alert for user %s", item.user_id)
             item.notified_at = now
 
     db.commit()
@@ -962,10 +965,12 @@ def _perform_full_sync_locked(db: Session) -> dict:
             )
         known_set_ids = {s.id for s in db.query(Set.id).all()}
 
+        newly_marked_set_ids = []
         for parsed in parsed_sets:
             is_new = parsed["id"] not in known_set_ids
             upsert_set(db, parsed)
             if is_new:
+                newly_marked_set_ids.append(parsed["id"])
                 # Mark as new
                 s = db.query(Set).filter(Set.id == parsed["id"]).first()
                 if s:
@@ -974,6 +979,10 @@ def _perform_full_sync_locked(db: Session) -> dict:
 
         db.commit()
         logger.info(f"Synced {sets_updated} sets")
+
+        # A first sync starts from an empty catalogue: every set would be "new".
+        if known_set_ids:
+            notifications.on_new_sets_safely(db, newly_marked_set_ids)
 
         pinned_sets_updated = _ensure_pinned_set_rows(db, pinned_set_pairs)
         if pinned_sets_updated:
@@ -1131,9 +1140,11 @@ def _perform_full_sync_locked(db: Session) -> dict:
 
         # 3. Check wishlist alerts
         check_wishlist_alerts(db, updated_card_ids)
+        notifications.queue_price_events_safely(db, updated_card_ids)
 
         # 4. Take portfolio snapshot
         take_portfolio_snapshot(db)
+        mark_all_users_dirty_safely(db)
 
         # 5. Check if any custom cards now have API equivalents
         try:
@@ -1245,9 +1256,11 @@ def perform_price_sync(db: Session, *, force: bool = False) -> dict:
 
         # Check wishlist alerts
         check_wishlist_alerts(db, updated_card_ids)
+        notifications.queue_price_events_safely(db, updated_card_ids)
 
         # Take portfolio snapshot
         take_portfolio_snapshot(db)
+        mark_all_users_dirty_safely(db)
 
         # Update sync log
         log.finished_at = datetime.datetime.utcnow()

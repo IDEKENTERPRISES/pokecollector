@@ -1,0 +1,34 @@
+# Nonprod test stack overrides for a second Portainer Git stack on garage-server.
+# Track the `nonprod` branch. Merge order in Portainer:
+#   docker-compose.yml -> docker-compose.build.yml -> docker-compose.portainer.yml -> this file
+#
+# The test stack runs next to production on the same Docker host, so it needs:
+# - its own container names: the base file's fixed names would clash with prod's;
+# - its own image tags: the build file tags pokelocal-*:local, which prod uses;
+# - its own data folders: sharing prod's would share the sign-in and push keys and the backups,
+#   and the scan queue's cleanup deletes upload folders its own database does not know, which
+#   would be prod's scan photos;
+# - Telegram switched off: a prod backup restored here carries the users' Telegram settings.
+# Name the Portainer stack differently from prod so its database volume is separate too.
+# See docs/NONPROD.md.
+
+services:
+  postgres:
+    container_name: pokemonlocal-nonprod-postgres
+
+  backend:
+    image: pokelocal-backend:nonprod
+    container_name: pokemonlocal-nonprod-backend
+    environment:
+      TELEGRAM_ENABLED: "false"
+    # Same container paths as the base and Portainer files, so these replace their mounts.
+    volumes:
+      - /home/rage/Documents/docker/pokelocal-nonprod/backups:/app/backups
+      - /home/rage/Documents/docker/pokelocal-nonprod/data/auth:/app/data/auth
+      - /home/rage/Documents/docker/pokelocal-nonprod/data/pokedex-images:/app/data/pokedex-images
+      - /home/rage/Documents/docker/pokelocal-nonprod/data/scan-uploads:/app/data/scan-uploads
+      - /home/rage/Documents/docker/pokelocal-nonprod/data/scan-traces:/app/data/scan-traces
+
+  frontend:
+    image: pokelocal-frontend:nonprod
+    container_name: pokemonlocal-nonprod-frontend

@@ -66,6 +66,8 @@ export function buildPrefetchPlan({ pricePrimaryField, language, userId, multiUs
     fetchTask('rarity-stats', TIER.pages, ['rarity-stats', field], () => rows(client.getRarityStats(price))),
     fetchTask('top-movers', TIER.pages, ['top-movers', 7, field, 'percentage'], () => rows(client.getTopMovers(7, { ...price, sort_by: 'percentage' }))),
     fetchTask('tracker-max', TIER.pages, ['investment-tracker', 'MAX', field], () => rows(client.getInvestmentTracker({ period: portfolioApiPeriod('MAX'), ...price }))),
+    fetchTask('showcase', TIER.pages, ['showcase'], () => client.getShowcase()),
+    fetchTask('collection-dna', TIER.pages, ['collection-dna'], () => client.getCollectionDna()),
     fetchTask('new-sets', TIER.pages, ['analytics-new-sets'], () => rows(client.getAnalyticsNewSets())),
     fetchTask('sets-language', TIER.pages, ['sets', language || 'en'], () => rows(client.getSets())),
     copyTask('collection-all', ['collection']),
@@ -73,7 +75,7 @@ export function buildPrefetchPlan({ pricePrimaryField, language, userId, multiUs
     copyTask('collection-trades', ['collection', 'trades']),
     copyTask('collection-products', ['collection', 'products-linking']),
   ]
-  if (multiUser && userId != null) {
+  if (userId != null) {
     plan.push(fetchTask('achievements', TIER.pages, ['achievements', userId, field], () => rows(client.getAchievements(userId, price))))
   }
   return plan.sort((a, b) => a.tier - b.tier)

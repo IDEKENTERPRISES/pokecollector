@@ -412,6 +412,23 @@ self.addEventListener('message', event => {
 // body are used, anything else falls back to a generic notification.
 const DEFAULT_NOTIFICATION_TITLE = 'PokéCollector'
 
+// Icon number: only actionable pushes carry one (`app_badge`, a whole number; 0 clears it).
+function badgeCount(data) {
+  const n = data && typeof data === 'object' ? data.app_badge : null
+  return Number.isInteger(n) && n >= 0 && n <= 99999 ? n : null
+}
+
+async function applyBadge(count) {
+  const nav = self.navigator
+  try {
+    if (count === null || !nav) return
+    if (count === 0 && typeof nav.clearAppBadge === 'function') await nav.clearAppBadge()
+    else if (count > 0 && typeof nav.setAppBadge === 'function') await nav.setAppBadge(count)
+  } catch {
+    // No badge support or no permission: the notification still shows.
+  }
+}
+
 function pushPayload(event) {
   try {
     const data = event.data ? event.data.json() : null
@@ -421,12 +438,13 @@ function pushPayload(event) {
         title: note.title.slice(0, 120),
         body: typeof note.body === 'string' ? note.body.slice(0, 300) : '',
         navigate: typeof note.navigate === 'string' ? note.navigate : '',
+        badge: badgeCount(data),
       }
     }
   } catch {
     // Not JSON: fall through to the generic notification.
   }
-  return { title: DEFAULT_NOTIFICATION_TITLE, body: '', navigate: '' }
+  return { title: DEFAULT_NOTIFICATION_TITLE, body: '', navigate: '', badge: null }
 }
 
 // Same-origin target only; anything else opens the app root.
@@ -455,9 +473,9 @@ async function focusOrOpen(target) {
 }
 
 self.addEventListener('push', event => {
-  const { title, body, navigate } = pushPayload(event)
+  const { title, body, navigate, badge } = pushPayload(event)
   const options = { body, data: { navigate: navigate || '/' } }
-  event.waitUntil(self.registration.showNotification(title, options))
+  event.waitUntil(Promise.all([self.registration.showNotification(title, options), applyBadge(badge)]))
 })
 
 self.addEventListener('notificationclick', event => {
@@ -466,5 +484,5 @@ self.addEventListener('notificationclick', event => {
 })
 
 if (self.__PC_SW_TEST_MODE__) {
-  self.__PC_SW_TEST__ = { classify, validatePrecache, validateShell, isCacheableImage, trimCache, smallImagePath }
+  self.__PC_SW_TEST__ = { pushPayload, safeNavigateUrl, classify, validatePrecache, validateShell, isCacheableImage, trimCache, smallImagePath }
 }

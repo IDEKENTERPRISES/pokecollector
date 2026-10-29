@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Award, Download, Globe, Package, ArrowLeftRight, Trophy, BarChart3, RefreshCw, Settings as SettingsIcon, Users } from 'lucide-react'
+import { Award, Dna, Download, Globe, Sparkles, Package, ArrowLeftRight, Trophy, BarChart3, RefreshCw, Settings as SettingsIcon, Users } from 'lucide-react'
 import {
   getAchievements,
   getCustomMatches,
@@ -8,7 +8,10 @@ import {
   getInvestmentTracker,
   getPokedexSummary,
   getProfile,
+  getShowcase,
+  getTodaySummary,
 } from '../api/client'
+import { localDateString } from '../progress/checkin'
 import GymBadges from '../components/ios/GymBadges'
 import HideValuesToggle from '../components/ios/HideValuesToggle'
 import LargeTitle from '../components/ios/LargeTitle'
@@ -25,6 +28,8 @@ import { isStandalone } from '../offline/capabilities'
 import { useOffline } from '../offline/useOffline'
 import { useOutbox } from '../offline/useOutbox'
 import { readPwaFlags } from '../pwa/flags'
+import ShowcasePicker from '../delights/ShowcasePicker'
+import { SHOWCASE_MAX, fill } from '../delights/delights'
 
 const NAV_BAR = { trailing: <HideValuesToggle /> }
 
@@ -39,6 +44,7 @@ export default function Profile() {
   const offline = useOffline()
   const { items } = useOutbox()
   const [installOpen, setInstallOpen] = useState(false)
+  const [showcaseOpen, setShowcaseOpen] = useState(false)
   const isAdmin = user?.role === 'admin'
   const publicProfilesEnabled = settings.public_profiles_enabled === 'true'
   const queue = readPwaFlags().queue
@@ -71,7 +77,20 @@ export default function Profile() {
   const { data: achievements } = useQuery({
     queryKey: ['achievements', user?.id, pricePrimaryField],
     queryFn: () => getAchievements(user.id, { price_field: pricePrimaryField }).then(r => r.data),
-    enabled: multiUser && Boolean(user?.id),
+    enabled: Boolean(user?.id),
+  })
+  const { data: todaySummary } = useQuery({
+    queryKey: ['today-card', user?.id, localDateString()],
+    queryFn: () => getTodaySummary(localDateString()),
+    enabled: Boolean(user?.id),
+    staleTime: 30 * 1000,
+    retry: false,
+  })
+  const { data: showcase } = useQuery({
+    queryKey: ['showcase'],
+    queryFn: getShowcase,
+    enabled: Boolean(user?.id),
+    retry: false,
   })
   const { data: customMatches = [] } = useQuery({
     queryKey: ['custom-matches'],
@@ -81,9 +100,8 @@ export default function Profile() {
   })
 
   const handle = profile?.is_profile_public ? profile?.public_handle : ''
-  const unlocked = (achievements?.achievements ?? []).map(item => Boolean(item.unlocked))
-  const badges = multiUser
-    ? { earned: unlocked, total: Number(achievements?.total ?? 20), to: '/achievements' }
+  const badges = achievements
+    ? { earned: Number(achievements.earned ?? 0), total: Number(achievements.total ?? 20), to: '/achievements', tracks: achievements.tracks }
     : undefined
 
   const first = Number(tracker[0]?.value)
@@ -115,6 +133,8 @@ export default function Profile() {
           }}
           stats={stats}
           badges={badges}
+          level={todaySummary?.xp}
+          showcase={showcase?.cards}
           className="mt-1"
         />
       </LargeTitle>
@@ -131,9 +151,22 @@ export default function Profile() {
         />
         <StatTile type="grass" icon={ArrowLeftRight} label={t('nav.trades')} value={tileIcon(ArrowLeftRight)} to="/trades" />
         {multiUser && <StatTile type="psychic" icon={Trophy} label={t('nav.leaderboard')} value={tileIcon(Trophy)} to="/leaderboard" />}
-        {multiUser && <StatTile type="fairy" icon={Award} label={t('profile.badges')} value={tileIcon(Award)} to="/achievements" />}
+        <StatTile type="fairy" icon={Award} label={t('profile.badges')} value={tileIcon(Award)} to="/achievements" />
         {multiUser && handle && <StatTile type="dragon" icon={Globe} label={t('profile.publicPage')} value={tileIcon(Users)} to={`/u/${handle}`} />}
       </div>
+
+      <ListSection>
+        <ListRow
+          icon={Sparkles}
+          iconColor="#FF9F0A"
+          title={t('delights.showcaseRow')}
+          value={fill(t('delights.showcaseCount'), { count: showcase?.cards?.length ?? 0, max: SHOWCASE_MAX })}
+          onClick={() => setShowcaseOpen(true)}
+          chevron
+          testId="profile-showcase"
+        />
+        <ListRow icon={Dna} iconColor="#BF5AF2" title={t('delights.dna')} to="/dna" testId="profile-dna" />
+      </ListSection>
 
       <ListSection>
         <ListRow icon={SettingsIcon} iconColor="#8E8E93" title={t('nav.settings')} to="/settings" testId="profile-settings" />
@@ -166,6 +199,14 @@ export default function Profile() {
       <p className="px-4 text-center text-footnote text-text-muted">
         {t('profile.version').replace('{version}', __APP_VERSION__)}
       </p>
+
+      {showcaseOpen && (
+        <ShowcasePicker
+          isOpen
+          onClose={() => setShowcaseOpen(false)}
+          saved={(showcase?.cards ?? []).map(card => card.id)}
+        />
+      )}
 
       <PageSheet
         isOpen={installOpen}

@@ -24,6 +24,10 @@ import SetTile from '../components/ios/SetTile'
 import PokeBall from '../components/ios/PokeBall'
 import { TYPE_COLOURS } from '../components/ios/pokemon'
 import TodayCard from '../components/splash/TodayCard'
+import DailyTodayCard from '../progress/TodayCard'
+import GreetingStreak from '../progress/GreetingStreak'
+import { readShowDaily } from '../progress/daily'
+import OnThisDayCard from '../delights/OnThisDayCard'
 import { useNavBar } from '../navigation/useNavBar'
 import {
   SCAN_JOBS_QUERY_KEY,
@@ -140,6 +144,7 @@ export default function HomeScreen() {
   const offline = useOffline()
   const { enabled: queueEnabled, items: outboxItems } = useOutbox()
   const [syncOpen, setSyncOpen] = useState(false)
+  const [showDaily] = useState(() => readShowDaily())
 
   useNavBar(NAV_BAR)
 
@@ -263,9 +268,17 @@ export default function HomeScreen() {
             <p className="text-subheadline text-text-secondary">{t('home.hello')},</p>
             <p className="break-words text-title-1 font-display text-text-primary">{trainerName}</p>
           </div>
+          {showDaily && <GreetingStreak />}
         </div>
       </LargeTitle>
       </div>
+
+      <section aria-label={t('home.quickActions')} className="grid grid-cols-4 gap-2">
+        <QuickAction to="/wishlist" icon={Heart} label={t('nav.wishlist')} type="fairy" />
+        <QuickAction to="/binders" icon={Layers3} label={t('nav.binders')} type="water" />
+        <QuickAction to="/sets" icon={Grid2X2} label={t('nav.sets')} type="grass" />
+        <QuickAction to="/analytics" icon={BarChart3} label={t('nav.analytics')} type="lightning" />
+      </section>
 
       <div className="-mx-4 -my-3 empty:hidden"><InstallHint /></div>
 
@@ -359,15 +372,11 @@ export default function HomeScreen() {
       )}
       {syncOpen && <SyncSheet isOpen onClose={() => setSyncOpen(false)} />}
 
-      {/* The splash's Pokémon of the day (components/splash). */}
-      <TodayCard />
+      {/* The Today card (progress/TodayCard); with streaks and quests off, just the Pokémon of the day. */}
+      {showDaily ? <DailyTodayCard /> : <TodayCard />}
 
-      <section aria-label={t('home.quickActions')} className="grid grid-cols-4 gap-2">
-        <QuickAction to="/wishlist" icon={Heart} label={t('nav.wishlist')} type="fairy" />
-        <QuickAction to="/binders" icon={Layers3} label={t('nav.binders')} type="water" />
-        <QuickAction to="/sets" icon={Grid2X2} label={t('nav.sets')} type="grass" />
-        <QuickAction to="/analytics" icon={BarChart3} label={t('nav.analytics')} type="lightning" />
-      </section>
+      {/* Shows only when cards were acquired on this day in earlier years. */}
+      <OnThisDayCard />
 
       {yourSets.length > 0 && (
         <section>

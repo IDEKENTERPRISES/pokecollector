@@ -6,6 +6,7 @@ import PokeBallLoader from './components/PokeBallLoader'
 import AuthStartupScreen from './components/AuthStartupScreen'
 import { SettingsProvider } from './contexts/SettingsContext'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+import AppBadgeSync from './components/pwa/AppBadgeSync'
 import { forceChangePassword } from './api/client'
 import Layout from './components/Layout'
 import { useSettings } from './contexts/SettingsContext'
@@ -32,6 +33,7 @@ const BinderDetail = lazy(() => import('./pages/BinderDetail'))
 const DeckEditor = lazy(() => import('./pages/DeckEditor'))
 const DeckCompare = lazy(() => import('./pages/DeckCompare'))
 const Analytics = lazy(() => import('./pages/Analytics'))
+const CollectionDna = lazy(() => import('./pages/CollectionDna'))
 const Products = lazy(() => import('./pages/Products'))
 const Trades = lazy(() => import('./pages/Trades'))
 const Settings = lazy(() => import('./pages/Settings'))
@@ -231,6 +233,7 @@ function ProtectedRoutes() {
         <Route path="decks/:deckId" element={lazyRoute(<DeckEditor />)} />
         <Route path="decks/:deckId/build" element={<LegacyDeckBuildRedirect />} />
         <Route path="analytics" element={lazyRoute(<Analytics />)} />
+        <Route path="dna" element={lazyRoute(<CollectionDna />)} />
         <Route path="products" element={lazyRoute(<Products />)} />
         <Route path="trades" element={lazyRoute(<Trades />)} />
         <Route path="leaderboard" element={lazyRoute(<Leaderboard />)} />
@@ -279,6 +282,7 @@ export default function App() {
           <LaunchSplash />
           {/* Keeps the offline card database up to date in the background (Settings > Data & sync). */}
           <CardDbAutoSync />
+          <AppBadgeSync />
         </ConfirmDialogProvider>
         </OfflineProvider>
       </SettingsProvider>

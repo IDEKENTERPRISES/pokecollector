@@ -46,6 +46,18 @@ def _get_telegram_credentials(db=None, user_id=None):
     return token, chat_id
 
 
+def telegram_enabled() -> bool:
+    """TELEGRAM_ENABLED (default true) stops every Telegram message when off.
+
+    A test stack restored from a production backup carries the users' bot settings, so it would
+    otherwise message their real chats.
+    """
+    value = os.getenv("TELEGRAM_ENABLED")
+    if value is None or not value.strip():
+        return True
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
 def is_configured(db=None, user_id=None) -> bool:
     """Check if Telegram is configured (from DB or env)."""
     token, chat_id = _get_telegram_credentials(db, user_id=user_id)
@@ -54,6 +66,10 @@ def is_configured(db=None, user_id=None) -> bool:
 
 def send_message(text: str, db=None, user_id=None) -> bool:
     """Send a message via Telegram Bot API."""
+    if not telegram_enabled():
+        logger.info("Telegram is switched off (TELEGRAM_ENABLED), skipping notification")
+        return False
+
     token, chat_id = _get_telegram_credentials(db, user_id=user_id)
     if not token or not chat_id:
         logger.warning("Telegram not configured, skipping notification")

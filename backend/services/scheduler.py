@@ -1,4 +1,5 @@
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.date import DateTrigger
 import logging
@@ -8,6 +9,9 @@ logger = logging.getLogger(__name__)
 # Give the persistent scan queue a short recovery window without changing other jobs.
 scheduler = BackgroundScheduler()
 _SCAN_QUEUE_MISFIRE_GRACE_SECONDS = 60
+# Progress evaluation and the notification flush only act on dirty users / due rows,
+# so a short interval is cheap and makes a badge or push land within seconds.
+_PROGRESS_NOTIFICATION_INTERVAL_SECONDS = 30
 
 _DEFAULT_FULL_SYNC_DAYS = 5
 _DEFAULT_PRICE_SYNC_MINUTES = 30
@@ -181,6 +185,48 @@ def run_sync():
     run_full_sync()
 
 
+def run_progress_dirty_job():
+    """Evaluate users whose data changed (at most 25 a run)."""
+    from database import SessionLocal
+    from services.progress.evaluator import evaluate_dirty_users
+
+    db = SessionLocal()
+    try:
+        evaluate_dirty_users(db)
+    except Exception:
+        db.rollback()
+        logger.exception("Progress dirty job failed")
+    finally:
+        db.close()
+
+
+def run_progress_nightly_job():
+    """Mark every active user dirty: the safety net for anything the listeners missed."""
+    from database import SessionLocal
+    from services.progress.state import mark_all_users_dirty_safely
+
+    db = SessionLocal()
+    try:
+        mark_all_users_dirty_safely(db)
+    finally:
+        db.close()
+
+
+def run_notification_job():
+    """Send due notifications: instant ones after quiet hours, and the daily digest."""
+    from database import SessionLocal
+    from services.notifications import flush_due
+
+    db = SessionLocal()
+    try:
+        flush_due(db)
+    except Exception:
+        db.rollback()
+        logger.exception("Notification job failed")
+    finally:
+        db.close()
+
+
 def start_scheduler():
     """Start the background scheduler with separate full and small price sync jobs."""
     if not scheduler.running:
@@ -244,6 +290,39 @@ def start_scheduler():
             name="Idempotency Key Cleanup",
             replace_existing=True,
             next_run_time=now_utc + datetime.timedelta(minutes=5),
+        )
+
+        scheduler.add_job(
+            run_progress_dirty_job,
+            trigger=IntervalTrigger(seconds=_PROGRESS_NOTIFICATION_INTERVAL_SECONDS),
+            id="progress_dirty_job",
+            name="Progress Evaluation",
+            replace_existing=True,
+            next_run_time=now_utc + datetime.timedelta(seconds=_PROGRESS_NOTIFICATION_INTERVAL_SECONDS),
+            misfire_grace_time=_SCAN_QUEUE_MISFIRE_GRACE_SECONDS,
+            coalesce=True,
+            max_instances=1,
+        )
+
+        scheduler.add_job(
+            run_notification_job,
+            trigger=IntervalTrigger(seconds=_PROGRESS_NOTIFICATION_INTERVAL_SECONDS),
+            id="notification_job",
+            name="Notifications and Daily Digest",
+            replace_existing=True,
+            next_run_time=now_utc + datetime.timedelta(seconds=_PROGRESS_NOTIFICATION_INTERVAL_SECONDS),
+            misfire_grace_time=_SCAN_QUEUE_MISFIRE_GRACE_SECONDS,
+            coalesce=True,
+            max_instances=1,
+        )
+
+        scheduler.add_job(
+            run_progress_nightly_job,
+            trigger=CronTrigger(hour=3, minute=30),
+            id="progress_nightly_job",
+            name="Progress Nightly Safety Net",
+            replace_existing=True,
+            coalesce=True,
         )
 
         if needs_pokedex_backfill:

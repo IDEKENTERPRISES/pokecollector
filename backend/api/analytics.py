@@ -7,6 +7,7 @@ from database import get_db
 from services.card_values import effective_market_price, normalize_price_field
 from services.card_visibility import visible_any_card_filter, visible_set_filter
 from services.analytics import sort_top_movers
+from services.delights import collection_dna
 from services.portfolio_valuation import (
     calculate_portfolio_valuation,
     portfolio_snapshot_fields,
@@ -394,3 +395,9 @@ def get_new_sets(
         }
         for s in new_sets
     ]
+
+
+@router.get("/dna")
+def get_collection_dna(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Collection DNA: type wheel, top illustrators, eras by release year and most-collected Pokémon."""
+    return collection_dna(db, current_user.id)

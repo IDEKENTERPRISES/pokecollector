@@ -114,6 +114,9 @@ def _run_migrations(conn):
         "ALTER TABLE collection ADD COLUMN IF NOT EXISTS grade VARCHAR DEFAULT 'raw'",
         # Owner-editable acquisition date; NULL falls back to added_at
         "ALTER TABLE collection ADD COLUMN IF NOT EXISTS acquired_at TIMESTAMP",
+        # Engagement P1: foil pattern for the holo viewer, pockets a page for book view
+        "ALTER TABLE collection ADD COLUMN IF NOT EXISTS foil_pattern VARCHAR",
+        "ALTER TABLE binders ADD COLUMN IF NOT EXISTS pocket_layout INTEGER NOT NULL DEFAULT 9",
         # v32: Add ebay_app_id to settings table
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS ebay_app_id VARCHAR",
         # v41: Add Pokemon avatar selection to users
@@ -703,6 +706,20 @@ def _run_migrations(conn):
             CONSTRAINT uq_push_subscription_endpoint UNIQUE (endpoint)
         )""",
         "CREATE INDEX IF NOT EXISTS ix_push_subscriptions_user_id ON push_subscriptions(user_id)",
+        # Push details: what each queued notification was about (card, prices, badge id).
+        "ALTER TABLE notification_queue ADD COLUMN IF NOT EXISTS details JSON",
+        # Quest celebrations: awards already in the ledger when the column is added count as seen.
+        """DO $$
+        BEGIN
+            IF to_regclass('public.user_xp_ledger') IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = 'user_xp_ledger' AND column_name = 'seen_at'
+               ) THEN
+                ALTER TABLE user_xp_ledger ADD COLUMN seen_at TIMESTAMP;
+                UPDATE user_xp_ledger SET seen_at = NOW();
+            END IF;
+        END$$""",
     ]
     for stmt in migrations:
         try:

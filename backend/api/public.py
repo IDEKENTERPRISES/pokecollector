@@ -67,6 +67,16 @@ class PublicDeckSummary(BaseModel):
     unique_card_count: int
 
 
+class PublicShowcaseCard(BaseModel):
+    id: int
+    card_id: str
+    name: str
+    image: str
+    set_name: Optional[str] = None
+    variant: Optional[str] = None
+    market_value: Optional[float] = None
+
+
 class PublicProfile(BaseModel):
     handle: str
     trainer_name: str
@@ -76,6 +86,7 @@ class PublicProfile(BaseModel):
     wishlist_count: int
     binders: List[PublicBinderSummary]
     decks: List[PublicDeckSummary]
+    showcase: List[PublicShowcaseCard] = []
 
 
 class PublicProfileSummary(BaseModel):

@@ -3,6 +3,10 @@ import { createPortal } from 'react-dom'
 import { Minus, Plus, RotateCcw, X } from 'lucide-react'
 import { useDialogBehavior } from './ui/dialogBehavior'
 import { useSettings } from '../contexts/SettingsContext'
+import { useTilt } from '../hooks/useTilt'
+import { holoEngine } from './holo/holoEngine'
+import { useHoloScale } from './holo/useHoloScale'
+import './holo/holo.css'
 
 const MIN_SCALE = 1
 const MAX_SCALE = 4
@@ -30,8 +34,14 @@ function midpoint(touches) {
  * controls exist both as a fallback for devices without wheel/pinch input
  * and as the visual hint that the image is zoomable.
  */
-export default function ImageZoomOverlay({ src, alt = '', onClose }) {
+export default function ImageZoomOverlay({ src, alt = '', onClose, foil = null, supertype = '' }) {
   const { t } = useSettings()
+  // The zoomed card carries the same foil as the sheet's artwork. Panning and pinching own the touch
+  // gestures here, so it never rotates or reacts to drags: it rests as a still sheen, and when the
+  // trainer already turned on "Tilt with your phone" on the sheet, the foil and glare follow the phone.
+  const { ref: foilRef } = useTilt({ enabled: false, followMotion: true })
+  // Textures scale with the card's layout width (the pinch/+/- transform scales them by itself).
+  useHoloScale(foilRef, Boolean(foil))
   const [scale, setScale] = useState(MIN_SCALE)
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [showHint, setShowHint] = useState(true)
@@ -198,20 +208,46 @@ export default function ImageZoomOverlay({ src, alt = '', onClose }) {
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
-        <img
-          ref={imgRef}
-          src={src}
-          alt={alt}
-          draggable={false}
-          className="absolute left-1/2 top-1/2 select-none object-contain"
-          style={{
-            width: 'min(80vw, 480px)',
-            maxHeight: 'calc(100dvh - 9rem)',
-            cursor: scale > MIN_SCALE ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in',
-            transform: `translate(-50%, -50%) translate(${position.x}px, ${position.y}px) scale(${scale})`,
-            transition: isDragging || pinchState.current ? 'none' : 'transform 120ms ease-out',
-          }}
-        />
+        {foil ? (
+          <div
+            ref={foilRef}
+            className="holo holo--zoom"
+            data-testid="zoom-holo"
+            data-foil={foil}
+            data-engine={holoEngine}
+            data-supertype={String(supertype || '').toLowerCase()}
+            style={{
+              transform: `translate(-50%, -50%) translate(${position.x}px, ${position.y}px) scale(${scale})`,
+              transition: isDragging || pinchState.current ? 'none' : 'transform 120ms ease-out',
+            }}
+          >
+            <img
+              ref={imgRef}
+              src={src}
+              alt={alt}
+              draggable={false}
+              className="select-none"
+              style={{ cursor: scale > MIN_SCALE ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in' }}
+            />
+            <span className="holo-shine" aria-hidden="true" />
+            <span className="holo-glare" aria-hidden="true" />
+          </div>
+        ) : (
+          <img
+            ref={imgRef}
+            src={src}
+            alt={alt}
+            draggable={false}
+            className="absolute left-1/2 top-1/2 select-none object-contain"
+            style={{
+              width: 'min(80vw, 480px)',
+              maxHeight: 'calc(100dvh - 9rem)',
+              cursor: scale > MIN_SCALE ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in',
+              transform: `translate(-50%, -50%) translate(${position.x}px, ${position.y}px) scale(${scale})`,
+              transition: isDragging || pinchState.current ? 'none' : 'transform 120ms ease-out',
+            }}
+          />
+        )}
 
         {showHint && (
           <div className="pointer-events-none absolute bottom-20 left-1/2 -translate-x-1/2 rounded-full bg-black/70 px-4 py-2 text-xs font-medium text-white shadow-lg">

@@ -1,0 +1,476 @@
+/*
+  Holo foil styles for the card sheet viewer.
+
+  Adapted from simeydotme/pokemon-cards-css (https://github.com/simeydotme/pokemon-cards-css,
+  demo https://poke-holo.simey.me), public/css/cards/*.css, licensed GPL-3.0. This adaptation is
+  distributed under the AGPL-3.0 of this project (GPL-3.0 section 13 allows the combination).
+  Changes: selectors keyed on [data-foil] instead of rarity/subtype attributes, one file for every
+  style, layers driven by the CSS variables written by hooks/useTilt.js, and no image files:
+  every texture (galaxy, glitter, grain, illusion, metal, geometric, ...) is a CSS gradient or a
+  small generated SVG tile of our own, defined below as --tex-*.
+
+  Layering (see also holoEngine.js): the 3D rotation lives on .holo__rotator only. Inside it the
+  card face (.holo__front > the artwork) is one flat, isolated stacking context: no preserve-3d,
+  will-change or backface-visibility between the face and the shine/glare layers that blend with
+  the art. WebKit still drops mix-blend-mode inside a 3D-composited card, so there the foil is
+  built from plain translucent layers instead (the data-engine="webkit" block at the end).
+
+  Nothing here animates by itself. Layers move only when the variables change (finger drag,
+  device motion, mouse hover) and the flip has a one-shot transition.
+*/
+
+.holo {
+  --red: #f80e7b;
+  --yellow: #eedf10;
+  --green: #21e985;
+  --blue: #0dbde9;
+  --violet: #c929f1;
+
+  --pointer-x: 30%;
+  --pointer-y: 20%;
+  --pointer-from-left: 0.3;
+  --pointer-from-top: 0.2;
+  --pointer-from-center: 0.4;
+  --background-x: 45%;
+  --background-y: 40%;
+  --rotate-x: 0deg;
+  --rotate-y: 0deg;
+  --card-opacity: 0.5;
+  --flip: 0deg;
+
+  /* Rendered card width / HOLO_REFERENCE_WIDTH, written by useHoloScale.js. Every texture size,
+     line width and parallax offset below is multiplied by it, so a bigger card (the zoom overlay,
+     a wider sheet) shows the same number of repeats as a small one instead of more of them.
+     It is the layout width: the zoom overlay's transform: scale() (pinch, +/-) already enlarges
+     the textures with the card, so it must not be counted a second time. */
+  --holo-scale: 1;
+
+  /* The dark end of the gradients. The blend-mode foil needs real black; the WebKit foil (see
+     the data-engine block at the end) swaps it for transparent so it can never paint over the art. */
+  --dark: #000;
+
+  /* Where the artwork sits on a Pokémon card and on a trainer card (reverse holo and plain holo
+     only shine inside / outside this window). */
+  --window-pokemon: polygon(8% 11%, 92% 11%, 92% 53%, 8% 53%);
+  --window-trainer: polygon(8% 12%, 92% 12%, 92% 62%, 8% 62%);
+  --window-pokemon-out: polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, 8% 11%, 92% 11%, 92% 53%, 8% 53%, 8% 11%);
+  --window-trainer-out: polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, 8% 12%, 92% 12%, 92% 62%, 8% 62%, 8% 12%);
+  --window: var(--window-pokemon);
+  --window-out: var(--window-pokemon-out);
+
+  /* Generated textures (our own; replace upstream's galaxy/glitter/grain/illusion/metal images). */
+  --tex-grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1.4 -.35'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  --tex-glitter: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='1' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 11 0 0 0 -7.6'/></filter><rect width='100%' height='100%' filter='url(%23g)'/></svg>");
+  --tex-galaxy: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='320' height='320'><filter id='x'><feTurbulence type='fractalNoise' baseFrequency='.014' numOctaves='4' seed='3' stitchTiles='stitch'/><feColorMatrix values='1.6 0 0 0 -.1 0 .9 0 0 0 .2 0 2 0 -.2 0 0 0 0 1'/></filter><rect width='100%' height='100%' filter='url(%23x)'/></svg>");
+  --tex-stars: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='s'><feTurbulence type='fractalNoise' baseFrequency='.5' numOctaves='1' seed='11' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 14 0 0 0 -11'/></filter><rect width='100%' height='100%' filter='url(%23s)'/></svg>");
+  --tex-cracks: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160' fill='none' stroke='white' stroke-width='1.2' stroke-linecap='round'><path d='M0 30 L38 52 L64 18 L100 44 L132 12 L160 36 M38 52 L30 96 L74 118 L64 18 M74 118 L112 100 L100 44 M112 100 L150 124 L160 98 M30 96 L0 120 M74 118 L66 160 M150 124 L132 160 M132 12 L136 0'/></svg>");
+  --tex-pokeball: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='44' height='44'><g fill='none' stroke='white' stroke-width='2.4'><circle cx='22' cy='22' r='12'/><path d='M10 22 H34'/><circle cx='22' cy='22' r='3.6'/></g></svg>");
+  --tex-etch: repeating-linear-gradient(45deg, #fff 0 calc(1px * var(--holo-scale)), #000 calc(1px * var(--holo-scale)) calc(3px * var(--holo-scale))), repeating-linear-gradient(-45deg, #fff 0 calc(1px * var(--holo-scale)), #000 calc(1px * var(--holo-scale)) calc(3px * var(--holo-scale)));
+  --tex-illusion: repeating-radial-gradient(circle at 30% 25%, #fff 0 calc(2px * var(--holo-scale)), #222 calc(2px * var(--holo-scale)) calc(7px * var(--holo-scale)), #aaa calc(7px * var(--holo-scale)) calc(11px * var(--holo-scale)));
+  --tex-geometric: repeating-linear-gradient(60deg, #fff 0 calc(1px * var(--holo-scale)), #000 calc(1px * var(--holo-scale)) calc(14px * var(--holo-scale))), repeating-linear-gradient(-60deg, #fff 0 calc(1px * var(--holo-scale)), #000 calc(1px * var(--holo-scale)) calc(14px * var(--holo-scale)));
+  --tex-metal: linear-gradient(115deg, #555, #eee 25%, #666 45%, #fff 62%, #555 80%, #ddd);
+  --tex-ribs: repeating-linear-gradient(90deg, #fff 0 calc(2px * var(--holo-scale)), #333 calc(2px * var(--holo-scale)) calc(6px * var(--holo-scale)));
+  --tex-diamonds: repeating-conic-gradient(from 45deg at 50% 50%, #fff 0 25%, #222 0 50%);
+
+  --rainbow: repeating-linear-gradient(110deg, var(--violet), var(--blue), var(--green), var(--yellow), var(--red), var(--violet), var(--blue), var(--green), var(--yellow), var(--red), var(--violet), var(--blue), var(--green), var(--yellow), var(--red));
+}
+
+.holo[data-supertype="trainer"] {
+  --window: var(--window-trainer);
+  --window-out: var(--window-trainer-out);
+}
+
+/* ---------- Stage and flip ---------- */
+
+.holo {
+  position: relative;
+  width: 100%;
+  perspective: 700px;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.holo__rotator {
+  position: relative;
+  /* Flat while the card rests or tilts, so the foil blends with the art in one flat context.
+     Only a flip needs the two faces in a shared 3D space. */
+  transform-style: flat;
+  transform: rotateY(calc(var(--flip) + var(--rotate-x))) rotateX(var(--rotate-y));
+}
+.holo.is-flipping .holo__rotator,
+.holo[data-flipped="true"] .holo__rotator { transform-style: preserve-3d; }
+
+.holo.is-flipping .holo__rotator { transition: transform 0.55s cubic-bezier(0.3, 0.8, 0.3, 1); }
+
+.holo__front { position: relative; isolation: isolate; }
+/* The artwork is the stacking context the foil blends inside. */
+.holo .unified-card-art { isolation: isolate; }
+
+/* Back-face culling only while a flip needs it; at rest the hidden face is simply not painted. */
+.holo.is-flipping .holo__front,
+.holo.is-flipping .holo__back,
+.holo[data-flipped="true"] .holo__front,
+.holo[data-flipped="true"] .holo__back {
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+.holo[data-flipped="false"]:not(.is-flipping) .holo__back { visibility: hidden; }
+
+.holo__back {
+  position: absolute;
+  inset: 0;
+  transform: rotateY(180deg);
+  border-radius: var(--pc-card-frame-radius, 12px);
+  overflow: hidden;
+  background: #0b3a7a;
+}
+
+.holo__back img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.holo[data-flipped="true"] { --flip: 180deg; }
+/* WebKit hit-tests a hidden back face; keep it out of the way until the card is flipped. */
+.holo[data-flipped="false"] .holo__back { pointer-events: none; }
+
+.holo__edge {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: var(--pc-card-frame-radius, 12px);
+  box-shadow: 0 0 0 0 transparent;
+}
+
+/* ---------- Shine and glare layers (children of the artwork) ---------- */
+
+.holo-shine,
+.holo-shine::before,
+.holo-shine::after,
+.holo-glare {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.holo-shine { z-index: 12; overflow: hidden; opacity: calc(var(--card-opacity) * 0.7); mix-blend-mode: color-dodge; filter: brightness(0.85) contrast(2.2) saturate(0.7); }
+.holo-shine::before,
+.holo-shine::after { content: ""; }
+.holo-glare {
+  z-index: 13;
+  overflow: hidden;
+  opacity: var(--card-opacity);
+  mix-blend-mode: overlay;
+  background-image: radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(0, 0%, 100%, 0.8) 10%, hsla(0, 0%, 100%, 0.55) 20%, hsla(0, 0%, 0%, 0.5) 90%);
+}
+
+.holo-shine, .holo-shine::before, .holo-shine::after { background-repeat: repeat; }
+
+/* ---------- holo (regular-holo.css) ---------- */
+
+.holo[data-foil="holo"] .holo-shine {
+  --scan: calc(1px * var(--holo-scale));
+  clip-path: var(--window);
+  background-image: var(--rainbow), repeating-linear-gradient(90deg, var(--dark) 0 calc(var(--scan) * 2), #666 calc(var(--scan) * 2) calc(var(--scan) * 4));
+  background-position: calc(((50% - var(--background-x)) * 2.6) + 50%) calc(((50% - var(--background-y)) * 3.5) + 50%), center;
+  background-size: 400% 400%, cover;
+  background-blend-mode: overlay;
+  filter: brightness(1.1) contrast(1.1) saturate(1.2);
+}
+.holo[data-foil="holo"] .holo-shine::before {
+  --bars: 3%;
+  background-image: repeating-linear-gradient(90deg, var(--dark) calc(var(--bars) * 2), hsl(0 0% 70%) calc(var(--bars) * 3), var(--dark) calc(var(--bars) * 3.5), hsl(0 0% 70%) calc(var(--bars) * 4), var(--dark) calc(var(--bars) * 5), var(--dark) calc(var(--bars) * 14));
+  background-position: calc(((50% - var(--background-x)) * 1.65) + 50%) var(--background-x);
+  background-size: 200% 200%;
+  mix-blend-mode: hard-light;
+  filter: brightness(1.15) contrast(1.1);
+}
+.holo[data-foil="holo"] .holo-shine::after {
+  background-image: radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(0, 0%, 90%, 0.8) 0%, hsla(0, 0%, 78%, 0.1) 25%, var(--dark) 90%);
+  mix-blend-mode: luminosity;
+  filter: brightness(0.6) contrast(4);
+}
+.holo[data-foil="holo"] .holo-glare { clip-path: var(--window); opacity: calc(var(--card-opacity) * 0.8); filter: brightness(0.8) contrast(1.5); }
+
+/* ---------- reverse and pokeball-reverse (reverse-holo.css) ---------- */
+
+.holo[data-foil="reverse"] .holo-shine,
+.holo[data-foil="pokeball-reverse"] .holo-shine {
+  clip-path: var(--window-out);
+  background-image:
+    radial-gradient(circle at var(--pointer-x) var(--pointer-y), #fff 5%, var(--dark) 50%, #fff 80%),
+    linear-gradient(-45deg, var(--dark) 15%, #fff, var(--dark) 85%),
+    var(--tex-metal);
+  background-blend-mode: soft-light, difference;
+  background-size: 120% 120%, 200% 200%, cover;
+  background-position: center, calc(100% * var(--pointer-from-left)) calc(100% * var(--pointer-from-top)), center;
+  filter: brightness(0.55) contrast(1.5);
+  opacity: calc((1.5 * var(--card-opacity)) - var(--pointer-from-center));
+}
+.holo[data-foil="reverse"] .holo-glare,
+.holo[data-foil="pokeball-reverse"] .holo-glare {
+  clip-path: var(--window-out);
+  filter: brightness(0.7) contrast(1.5);
+}
+/* Poké Ball reverse: the same foil, but only the printed Poké Ball pattern shows through. */
+.holo[data-foil="pokeball-reverse"] .holo-shine {
+  -webkit-mask-image: var(--tex-pokeball);
+  mask-image: var(--tex-pokeball);
+  -webkit-mask-size: calc(44px * var(--holo-scale)) calc(44px * var(--holo-scale));
+  mask-size: calc(44px * var(--holo-scale)) calc(44px * var(--holo-scale));
+  filter: brightness(0.9) contrast(1.4);
+}
+
+/* ---------- cracked-ice (no upstream equivalent: shards over rainbow) ---------- */
+
+.holo[data-foil="cracked-ice"] .holo-shine {
+  background-image: var(--tex-cracks), var(--rainbow), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(190, 100%, 90%, 0.9), hsla(200, 40%, 50%, 0.2) 45%, var(--dark) 120%);
+  background-size: calc(130px * var(--holo-scale)) calc(130px * var(--holo-scale)), 300% 300%, cover;
+  background-position: calc(var(--pointer-from-left) * 40px * var(--holo-scale)) calc(var(--pointer-from-top) * 40px * var(--holo-scale)), calc(((50% - var(--background-x)) * 2) + 50%) calc(((50% - var(--background-y)) * 2) + 50%), center;
+  background-blend-mode: overlay, soft-light, normal;
+  filter: brightness(1.05) contrast(1.6) saturate(0.9);
+}
+.holo[data-foil="cracked-ice"] .holo-shine::before {
+  background-image: var(--tex-cracks);
+  background-size: calc(90px * var(--holo-scale)) calc(90px * var(--holo-scale));
+  background-position: calc(var(--pointer-from-left) * -60px * var(--holo-scale)) calc(var(--pointer-from-top) * -60px * var(--holo-scale));
+  mix-blend-mode: screen;
+  opacity: 0.6;
+}
+
+/* ---------- cosmos (cosmos-holo.css: three parallax galaxy layers) ---------- */
+
+.holo[data-foil="cosmos"] .holo-shine,
+.holo[data-foil="cosmos"] .holo-shine::before,
+.holo[data-foil="cosmos"] .holo-shine::after {
+  --space: 4%;
+  background-image:
+    var(--tex-galaxy),
+    repeating-linear-gradient(82deg, hsl(53, 65%, 60%) calc(var(--space) * 1), hsl(93, 56%, 50%) calc(var(--space) * 2), hsl(176, 54%, 49%) calc(var(--space) * 3), hsl(228, 59%, 55%) calc(var(--space) * 4), hsl(283, 60%, 55%) calc(var(--space) * 5), hsl(326, 59%, 51%) calc(var(--space) * 6), hsl(326, 59%, 51%) calc(var(--space) * 7), hsl(283, 60%, 55%) calc(var(--space) * 8), hsl(228, 59%, 55%) calc(var(--space) * 9), hsl(176, 54%, 49%) calc(var(--space) * 10), hsl(93, 56%, 50%) calc(var(--space) * 11), hsl(53, 65%, 60%) calc(var(--space) * 12)),
+    radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(180, 100%, 89%, 0.5) 5%, hsla(180, 14%, 57%, 0.3) 40%, var(--dark) 130%);
+  background-size: calc(320px * var(--holo-scale)) calc(320px * var(--holo-scale)), 400% 900%, cover;
+  background-blend-mode: color-burn, multiply;
+}
+.holo[data-foil="cosmos"] .holo-shine {
+  background-position: calc(var(--pointer-from-left) * -90px * var(--holo-scale)) calc(var(--pointer-from-top) * -90px * var(--holo-scale)), calc(10% + (var(--pointer-from-left) * 80%)) calc(10% + (var(--pointer-from-top) * 80%)), center;
+  filter: brightness(1) contrast(1) saturate(0.8);
+}
+.holo[data-foil="cosmos"] .holo-shine::before {
+  background-position: calc(var(--pointer-from-left) * -50px * var(--holo-scale)) calc(var(--pointer-from-top) * -50px * var(--holo-scale)), calc(15% + (var(--pointer-from-left) * 70%)) calc(15% + (var(--pointer-from-top) * 70%)), center;
+  background-blend-mode: lighten, multiply;
+  filter: brightness(1.25) contrast(1.75) saturate(0.8);
+  mix-blend-mode: overlay;
+}
+.holo[data-foil="cosmos"] .holo-shine::after {
+  background-position: calc(var(--pointer-from-left) * -20px * var(--holo-scale)) calc(var(--pointer-from-top) * -20px * var(--holo-scale)), calc(20% + (var(--pointer-from-left) * 60%)) calc(20% + (var(--pointer-from-top) * 60%)), center;
+  filter: brightness(1.25) contrast(1.75) saturate(0.8);
+  mix-blend-mode: multiply;
+}
+
+/* ---------- etched (trainer-full-art.css: ridged texture over rainbow) ---------- */
+
+.holo[data-foil="etched"] .holo-shine {
+  background-image: var(--tex-etch), var(--rainbow), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(0, 0%, 100%, 0.85), hsla(0, 0%, 40%, 0.2) 50%, var(--dark) 120%);
+  background-size: calc(6px * var(--holo-scale)) calc(6px * var(--holo-scale)), 300% 300%, cover;
+  background-position: center, calc(((50% - var(--background-x)) * 1.8) + 50%) calc(((50% - var(--background-y)) * 1.8) + 50%), center;
+  background-blend-mode: soft-light, overlay, normal;
+  filter: brightness(0.95) contrast(1.7) saturate(0.7);
+}
+
+/* ---------- rainbow (rainbow-holo.css) ---------- */
+
+.holo[data-foil="rainbow"] .holo-shine {
+  background-image: var(--tex-glitter), var(--rainbow), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(0, 0%, 100%, 0.7), hsla(0, 0%, 30%, 0.2) 50%, var(--dark) 120%);
+  background-size: calc(180px * var(--holo-scale)) calc(180px * var(--holo-scale)), 360% 360%, cover;
+  background-position: calc(var(--pointer-from-left) * 50px * var(--holo-scale)) calc(var(--pointer-from-top) * 50px * var(--holo-scale)), calc(((50% - var(--background-x)) * 2.4) + 50%) calc(((50% - var(--background-y)) * 2.4) + 50%), center;
+  background-blend-mode: overlay, soft-light, normal;
+  filter: brightness(1) contrast(1.6) saturate(1.2);
+}
+
+/* ---------- gold (secret-rare.css: gold with glitter and geometric lines) ---------- */
+
+.holo[data-foil="gold"] .holo-shine {
+  background-image: var(--tex-glitter), var(--tex-geometric), linear-gradient(115deg, #7a5600, #ffe27a 30%, #b88300 50%, #fff3b0 70%, #8a6000), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(45, 80%, 50%, 0.2) 45%, var(--dark) 130%);
+  background-size: calc(180px * var(--holo-scale)) calc(180px * var(--holo-scale)), calc(90px * var(--holo-scale)) calc(90px * var(--holo-scale)), 260% 260%, cover;
+  background-position: calc(var(--pointer-from-left) * 60px * var(--holo-scale)) calc(var(--pointer-from-top) * 60px * var(--holo-scale)), center, calc(var(--pointer-from-left) * 100%) calc(var(--pointer-from-top) * 100%), center;
+  background-blend-mode: overlay, soft-light, multiply, normal;
+  filter: brightness(1) contrast(1.5) saturate(1.1);
+}
+.holo[data-foil="gold"] .holo-glare { filter: sepia(0.8) saturate(2) brightness(0.9); }
+
+/* ---------- radiant (radiant-holo.css) ---------- */
+
+.holo[data-foil="radiant"] .holo-shine {
+  background-image: var(--tex-ribs), repeating-linear-gradient(90deg, hsl(2, 100%, 73%), hsl(53, 100%, 69%), hsl(93, 100%, 69%), hsl(176, 100%, 76%), hsl(228, 100%, 74%), hsl(283, 100%, 73%), hsl(2, 100%, 73%)), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(0, 0%, 40%, 0.2) 50%, var(--dark) 120%);
+  background-size: calc(8px * var(--holo-scale)) calc(8px * var(--holo-scale)), 200% 100%, cover;
+  background-position: center, calc(var(--pointer-from-left) * 100%) 0, center;
+  background-blend-mode: soft-light, overlay, normal;
+  filter: brightness(1) contrast(1.8) saturate(0.9);
+}
+
+/* ---------- amazing (amazing-rare.css: swirling rainbow) ---------- */
+
+.holo[data-foil="amazing"] .holo-shine {
+  background-image: var(--tex-glitter), conic-gradient(from calc(var(--pointer-from-left) * 360deg) at var(--pointer-x) var(--pointer-y), #ff5c8a, #ffd45c, #5cffb0, #5cb8ff, #b05cff, #ff5c8a), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(0, 0%, 30%, 0.2) 50%, var(--dark) 120%);
+  background-size: calc(160px * var(--holo-scale)) calc(160px * var(--holo-scale)), cover, cover;
+  background-position: calc(var(--pointer-from-left) * 40px * var(--holo-scale)) calc(var(--pointer-from-top) * 40px * var(--holo-scale)), center, center;
+  background-blend-mode: overlay, soft-light, normal;
+  filter: brightness(1) contrast(1.5) saturate(1.2);
+}
+
+/* ---------- v-full-art (v-full-art.css: rainbow over an illusion pattern) ---------- */
+
+.holo[data-foil="v-full-art"] .holo-shine {
+  background-image: var(--tex-illusion), var(--rainbow), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(0, 0%, 100%, 0.8), hsla(0, 0%, 30%, 0.2) 50%, var(--dark) 120%);
+  background-size: calc(240px * var(--holo-scale)) calc(240px * var(--holo-scale)), 300% 300%, cover;
+  background-position: calc(var(--pointer-from-left) * 120px * var(--holo-scale)) calc(var(--pointer-from-top) * 120px * var(--holo-scale)), calc(((50% - var(--background-x)) * 2) + 50%) calc(((50% - var(--background-y)) * 2) + 50%), center;
+  background-blend-mode: soft-light, overlay, normal;
+  filter: brightness(0.95) contrast(1.7) saturate(1);
+}
+
+/* ---------- vmax (v-max.css) ---------- */
+
+.holo[data-foil="vmax"] .holo-shine {
+  background-image: var(--tex-stars), var(--tex-ribs), linear-gradient(160deg, #1d2a7a, #7a3cff 45%, #ff5cae 70%, #2a2fa0), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(280, 60%, 50%, 0.2) 50%, var(--dark) 120%);
+  background-size: calc(200px * var(--holo-scale)) calc(200px * var(--holo-scale)), calc(10px * var(--holo-scale)) calc(10px * var(--holo-scale)), 220% 220%, cover;
+  background-position: calc(var(--pointer-from-left) * 80px * var(--holo-scale)) calc(var(--pointer-from-top) * 80px * var(--holo-scale)), center, calc(var(--pointer-from-left) * 100%) calc(var(--pointer-from-top) * 100%), center;
+  background-blend-mode: overlay, soft-light, multiply, normal;
+  filter: brightness(1) contrast(1.6) saturate(1.2);
+}
+
+/* ---------- vstar (v-star.css: gold-pink with a diamond pattern) ---------- */
+
+.holo[data-foil="vstar"] .holo-shine {
+  background-image: var(--tex-stars), var(--tex-diamonds), linear-gradient(115deg, #fff3b0, #ffb84d 35%, #d98cff 65%, #fff3b0), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(40, 70%, 50%, 0.2) 50%, var(--dark) 120%);
+  background-size: calc(200px * var(--holo-scale)) calc(200px * var(--holo-scale)), calc(28px * var(--holo-scale)) calc(28px * var(--holo-scale)), 260% 260%, cover;
+  background-position: calc(var(--pointer-from-left) * 60px * var(--holo-scale)) calc(var(--pointer-from-top) * 60px * var(--holo-scale)), center, calc(var(--pointer-from-left) * 100%) calc(var(--pointer-from-top) * 100%), center;
+  background-blend-mode: overlay, soft-light, multiply, normal;
+  filter: brightness(1) contrast(1.6) saturate(1.1);
+}
+
+/* ---------- trainer-gallery (trainer-gallery-holo.css: softer rainbow inside the art window) ---------- */
+
+.holo[data-foil="trainer-gallery"] .holo-shine {
+  clip-path: var(--window);
+  background-image: var(--tex-glitter), var(--rainbow), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(0, 0%, 30%, 0.2) 50%, var(--dark) 120%);
+  background-size: calc(160px * var(--holo-scale)) calc(160px * var(--holo-scale)), 300% 300%, cover;
+  background-position: calc(var(--pointer-from-left) * 40px * var(--holo-scale)) calc(var(--pointer-from-top) * 40px * var(--holo-scale)), calc(((50% - var(--background-x)) * 2) + 50%) calc(((50% - var(--background-y)) * 2) + 50%), center;
+  background-blend-mode: overlay, soft-light, normal;
+  filter: brightness(0.95) contrast(1.4) saturate(0.9);
+}
+
+/* ---------- shiny (shiny-rare.css: illusion rings and sparkles) ---------- */
+
+.holo[data-foil="shiny"] .holo-shine {
+  background-image: var(--tex-stars), var(--tex-illusion), linear-gradient(135deg, #bfe9ff, #fff6c8 45%, #ffc8f4 75%, #bfe9ff), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), #fff, hsla(0, 0%, 40%, 0.2) 50%, var(--dark) 120%);
+  background-size: calc(180px * var(--holo-scale)) calc(180px * var(--holo-scale)), calc(200px * var(--holo-scale)) calc(200px * var(--holo-scale)), 240% 240%, cover;
+  background-position: calc(var(--pointer-from-left) * 70px * var(--holo-scale)) calc(var(--pointer-from-top) * 70px * var(--holo-scale)), calc(var(--pointer-from-left) * -80px * var(--holo-scale)) calc(var(--pointer-from-top) * -80px * var(--holo-scale)), calc(var(--pointer-from-left) * 100%) calc(var(--pointer-from-top) * 100%), center;
+  background-blend-mode: overlay, soft-light, multiply, normal;
+  filter: brightness(1) contrast(1.6) saturate(1.1);
+}
+
+/* ---------- illustration-rare and special-illustration (textured, no rainbow) ---------- */
+
+.holo[data-foil="illustration-rare"] .holo-shine,
+.holo[data-foil="special-illustration"] .holo-shine {
+  background-image: var(--tex-grain), var(--tex-etch), radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(40, 80%, 92%, 0.9), hsla(40, 20%, 40%, 0.2) 50%, var(--dark) 120%);
+  background-size: calc(160px * var(--holo-scale)) calc(160px * var(--holo-scale)), calc(5px * var(--holo-scale)) calc(5px * var(--holo-scale)), cover;
+  background-position: calc(var(--pointer-from-left) * 30px * var(--holo-scale)) calc(var(--pointer-from-top) * 30px * var(--holo-scale)), center, center;
+  background-blend-mode: overlay, soft-light, normal;
+  filter: brightness(0.95) contrast(1.5) saturate(0.6);
+}
+.holo[data-foil="special-illustration"] .holo-shine::before {
+  background-image: var(--tex-stars), var(--rainbow);
+  background-size: calc(160px * var(--holo-scale)) calc(160px * var(--holo-scale)), 300% 300%;
+  background-position: calc(var(--pointer-from-left) * 60px * var(--holo-scale)) calc(var(--pointer-from-top) * 60px * var(--holo-scale)), calc(((50% - var(--background-x)) * 2) + 50%) calc(((50% - var(--background-y)) * 2) + 50%);
+  background-blend-mode: overlay;
+  mix-blend-mode: overlay;
+  filter: brightness(1) contrast(1.4) saturate(0.8);
+  opacity: 0.75;
+}
+
+/* ---------- WebKit: a translucent sheen that needs no backdrop blending ----------
+   WebKit paints blended layers inside a 3D-composited card as ordinary opaque layers (that was
+   the "everything looks opaque" report). So with data-engine="webkit" no layer uses mix-blend-mode
+   or filter: the pattern keeps its own internal background-blend-modes (those only mix the
+   layer's own gradients and work everywhere), every black stop is transparent, and the whole
+   layer is a low-opacity normal overlay, so the artwork always shows through. The light still
+   follows the finger, tilt and device motion because the same variables drive it. */
+
+.holo[data-engine="webkit"] {
+  --dark: transparent;
+  --foil-alpha: 0.5; /* shine opacity = --card-opacity (0.5 at rest, up to 0.75 while tilting) x this */
+  --glare-alpha: 0.5;
+  --tex-etch: repeating-linear-gradient(45deg, #fff 0 calc(1px * var(--holo-scale)), transparent calc(1px * var(--holo-scale)) calc(3px * var(--holo-scale))), repeating-linear-gradient(-45deg, #fff 0 calc(1px * var(--holo-scale)), transparent calc(1px * var(--holo-scale)) calc(3px * var(--holo-scale)));
+  --tex-illusion: repeating-radial-gradient(circle at 30% 25%, #fff 0 calc(2px * var(--holo-scale)), transparent calc(2px * var(--holo-scale)) calc(7px * var(--holo-scale)), #aaa calc(7px * var(--holo-scale)) calc(11px * var(--holo-scale)));
+  --tex-geometric: repeating-linear-gradient(60deg, #fff 0 calc(1px * var(--holo-scale)), transparent calc(1px * var(--holo-scale)) calc(14px * var(--holo-scale))), repeating-linear-gradient(-60deg, #fff 0 calc(1px * var(--holo-scale)), transparent calc(1px * var(--holo-scale)) calc(14px * var(--holo-scale)));
+  --tex-metal: linear-gradient(115deg, #999, #eee 25%, #aaa 45%, #fff 62%, #999 80%, #ddd);
+  --tex-ribs: repeating-linear-gradient(90deg, #fff 0 calc(2px * var(--holo-scale)), transparent calc(2px * var(--holo-scale)) calc(6px * var(--holo-scale)));
+  --tex-diamonds: repeating-conic-gradient(from 45deg at 50% 50%, #fff 0 25%, transparent 0 50%);
+}
+
+.holo[data-engine="webkit"][data-foil] .holo-shine {
+  mix-blend-mode: normal;
+  filter: none;
+  opacity: calc(var(--card-opacity) * var(--foil-alpha));
+}
+.holo[data-engine="webkit"][data-foil] .holo-shine::before,
+.holo[data-engine="webkit"][data-foil] .holo-shine::after {
+  mix-blend-mode: normal;
+  filter: none;
+  opacity: 0.6;
+}
+/* The window-clipped and printed-pattern foils keep their clip and mask; just no blending. */
+.holo[data-engine="webkit"][data-foil] .holo-glare {
+  mix-blend-mode: normal;
+  filter: none;
+  background-image: radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(0, 0%, 100%, 0.9) 0%, hsla(0, 0%, 100%, 0.3) 30%, hsla(0, 0%, 100%, 0) 65%);
+  opacity: calc(var(--card-opacity) * var(--glare-alpha));
+}
+.holo[data-engine="webkit"][data-foil="gold"] .holo-glare {
+  background-image: radial-gradient(farthest-corner circle at var(--pointer-x) var(--pointer-y), hsla(45, 100%, 85%, 0.9) 0%, hsla(45, 90%, 60%, 0.3) 30%, hsla(45, 90%, 60%, 0) 65%);
+}
+
+/* ---------- Zoom overlay card: the same foil on the enlarged image, resting sheen only ---------- */
+
+.holo--zoom {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(80vw, 480px, calc((100dvh - 9rem) * 0.714));
+  aspect-ratio: 2.5 / 3.5;
+  perspective: none;
+  isolation: isolate;
+  border-radius: 4.5% / 3.2%;
+  overflow: hidden;
+}
+.holo--zoom > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+
+/* ---------- Controls ---------- */
+
+.holo-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.holo-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.holo-button[aria-pressed="true"] { background: rgba(227, 0, 11, 0.18); border-color: rgba(227, 0, 11, 0.5); }
+
+/* ---------- Reduce motion: a static sheen, flip without the animation ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .holo { touch-action: auto; }
+  .holo.is-flipping .holo__rotator { transition: none; }
+  .holo__rotator { transform: rotateY(var(--flip)); }
+}

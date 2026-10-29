@@ -14,7 +14,7 @@ try:
 
     from api import push as push_api
     from database import Base
-    from models import Card, PushSubscription, User, WishlistItem
+    from models import Card, NotificationQueue, PushSubscription, User, WishlistItem
     from services import push as push_service
     from services import sync_service
     DEPS_AVAILABLE = push_service.webpush is not None
@@ -220,6 +220,22 @@ class PushSendOutcomeTests(PushDatabaseTestCase):
         self.assertEqual(result["removed"], 1)
         self.assertEqual(self.subs(), [])
 
+    def test_every_non_2xx_status_is_logged_without_endpoint_or_payload(self):
+        for status in (403, 429, 410, 500):
+            with self.subTest(status=status):
+                self.add_sub(endpoint=f"{APPLE}/log{status}")
+                with self.assertLogs("services.push", level="WARNING") as logs:
+                    self.send(web_push_error(status))
+                text = "\n".join(logs.output)
+                self.assertIn(f"HTTP {status}", text)
+                self.assertNotIn("web.push.apple.com", text)
+                self.assertNotIn('"x"', text)
+                # Delete through the ORM: SQLite reuses the row id, and a bulk delete would leave the
+                # old instance in the identity map to clash with the next subtest's subscription.
+                for sub in self.subs():
+                    self.db.delete(sub)
+                self.db.commit()
+
     def test_only_the_users_own_subscriptions_are_used(self):
         self.add_sub()
         self.add_sub(user=self.other, endpoint=FCM)
@@ -320,17 +336,23 @@ class PushAlertHookTests(PushDatabaseTestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def test_alert_sends_telegram_and_push(self):
-        with patch.object(sync_service.telegram, "send_price_alert") as telegram_alert, \
-                patch.object(sync_service.push, "send_price_alert") as push_alert:
+    def test_alert_sends_telegram_and_queues_push(self):
+        with patch.object(sync_service.telegram, "send_price_alert") as telegram_alert,                 patch.object(sync_service.push, "send_price_alert") as push_alert:
             sync_service.check_wishlist_alerts(self.db, [self.card.id])
         telegram_alert.assert_called_once()
-        push_alert.assert_called_once_with(self.db, self.user.id, "Sprigatito", 5.0, 1.0, "above")
+        push_alert.assert_not_called()  # the push goes through the notification queue now
+        rows = self.db.query(NotificationQueue).all()
+        self.assertEqual([(r.user_id, r.category, r.subject_key) for r in rows],
+                         [(self.user.id, "wishlist_alerts", "card:" + self.card.id)])
+        details = rows[0].details
+        self.assertEqual(details["name"], self.card.name)
+        self.assertIsNotNone(details["price"])
+        self.assertIsNotNone(details["threshold"])
+        self.assertIn(details["alert_type"], ("above", "below"))
         self.assertIsNotNone(self.db.get(WishlistItem, self.item.id).notified_at)
 
-    def test_push_failure_does_not_break_telegram_or_notified_at(self):
-        with patch.object(sync_service.telegram, "send_price_alert") as telegram_alert, \
-                patch.object(sync_service.push, "send_price_alert", side_effect=RuntimeError("boom")):
+    def test_queue_failure_does_not_break_telegram_or_notified_at(self):
+        with patch.object(sync_service.telegram, "send_price_alert") as telegram_alert,                 patch.object(sync_service.notifications, "notify_wishlist_alert", side_effect=RuntimeError("boom")):
             sync_service.check_wishlist_alerts(self.db, [self.card.id])
         telegram_alert.assert_called_once()
         self.assertIsNotNone(self.db.get(WishlistItem, self.item.id).notified_at)

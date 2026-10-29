@@ -106,6 +106,35 @@ composition, rules validation, analytics, and probability calculations, but
 omits collection ownership, shortages, exact allocations, conditions, purchase
 prices, and collection-row IDs.
 
+## Pockets (Book view)
+
+A Binder or Planned Binder in Book view mirrors the physical binder: one pocket per copy
+(a row with `required_quantity` 3 takes 3 pockets; Planned Binder copies not owned yet show
+as ghosts). `binder_slots` stores where each copy sits; `binder_cards` stays the source of truth.
+
+- `GET /api/binders/{id}/slots` returns `{pocket_layout, version, slots: [{slot_index, binder_card_id, copy_index}]}`.
+  The first call assigns pockets in the binder's default order (newest first).
+- `PUT /api/binders/{id}/slots` replaces the whole layout with `{version, slots}`. Every copy must be
+  placed exactly once, indexes are not negative, and no two copies share a pocket (422).
+  A stale `version` is a 409. The version is a fingerprint of the layout, so any change makes it stale.
+- `POST /api/binders/{id}/slots/compact` closes the gaps and keeps the order.
+- `pocket_layout` (4, 9 or 12 pockets a page) changes through the binder update. Pockets keep their
+  `slot_index`; page = `slot_index // pocket_layout`.
+- A new copy or a raised quantity takes the first free pocket. A removed copy or lowered quantity
+  leaves an empty pocket (a gap); the other cards do not shift.
+- CSV export of a binder that has pockets gains the optional columns `page`, `pocket` (1-based) and
+  `pocket_size` (the binder's `pocket_layout`: 4, 9 or 12, repeated on every row). A row with several
+  copies lists page and pocket separated by `|`, for example `2|1` and `3|5`. Import accepts the
+  columns when present: page and pocket must list the same number of copies (at most
+  `required_quantity`), each pocket must be within the page size, and a pocket already taken is filled
+  by the first free one. Files without the columns import as before.
+- Import reads the positions with the CSV's `pocket_size`: slot = `(page - 1) * size + pocket - 1`,
+  and the pocket is checked against that size. When the target binder has no cards yet it takes over
+  the CSV's size, so a 4-pocket binder comes back as a 4-pocket binder with the same pages. A binder
+  that already holds cards keeps its own layout and reads page and pocket against it. Older files that
+  end in `page,pocket` (no `pocket_size`) are still accepted and use the target binder's layout. Rows
+  that disagree on `pocket_size`, or a size other than 4, 9 or 12, reject the whole file (422).
+
 ## Printing identity and details
 
 A list entry points to a specific localized printing, not just a translated

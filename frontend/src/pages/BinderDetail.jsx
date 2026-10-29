@@ -6,8 +6,9 @@ import HpBar from '../components/ios/HpBar'
 import IconButton from '../components/ios/IconButton'
 import Menu from '../components/ios/Menu'
 import PageSheet from '../components/ios/PageSheet'
-import { MoreHorizontal, Sparkles, Plus, Trash2, Package, Star, Download, Upload, X, Heart, HelpCircle } from 'lucide-react'
-import { getBinderCards, removeCardFromBinder, removeBinderEntry, addCardToBinder, addCollectionItemToBinder, getCollection, updateBinderEntry, getBinderEntryEquivalentPrints, getBinderPrintOptimization, applyBinderPrintOptimization, switchBinderEntryCard, addBinderEntryToWishlist, addBinderCardsToWishlist, convertWishlistBinderToCollection, convertCollectionBinderToWishlist, importBinderCsv, exportBinderCsv, getApiErrorMessage } from '../api/client'
+import { MoreHorizontal, Sparkles, Plus, Minus, Trash2, Package, Star, Download, Upload, X, Heart, HelpCircle, BookOpen, Grid2X2 } from 'lucide-react'
+import { getBinderCards, removeCardFromBinder, removeBinderEntry, addCardToBinder, addCollectionItemToBinder, getCollection, updateBinderEntry, getBinderEntryEquivalentPrints, getBinderPrintOptimization, applyBinderPrintOptimization, switchBinderEntryCard, addBinderEntryToWishlist, addBinderCardsToWishlist, convertWishlistBinderToCollection, convertCollectionBinderToWishlist, importBinderCsv, exportBinderCsv, getApiErrorMessage, getBinderSlots, replaceBinderSlots, compactBinderSlots, updateBinder } from '../api/client'
+import { isOffline } from '../offline/offlineStatus'
 import { useSettings } from '../contexts/SettingsContext'
 import toast from 'react-hot-toast'
 import { hasCatalogueImage, resolveCardImageUrl } from '../utils/imageUrl'
@@ -18,13 +19,19 @@ import { BINDER_SORT_OPTIONS, sortBinderCards } from '../utils/binderCards'
 import { partitionSettledResults } from '../utils/settledResults'
 import { formatBinderCountSummary } from '../utils/binderCounts'
 import { binderPickerItemsWithQuantities, binderPickerQuantitiesAreValid, canConvertWishlistBinder } from '../utils/binderQuantity'
-import { CardDialog, CardLegend } from '../components/card-system'
+import { CardDialog, CardDisplay, CardLegend } from '../components/card-system'
 import { CollectionCardDisplay, OwnPhotoOverlayBadge, showsOwnPhoto, useCollectionPhotoUrl } from '../components/CollectionCardImage'
 import Modal from '../components/ui/Modal'
 import BinderCsvImportModal, { downloadBinderCsvTemplate } from '../components/binders/BinderCsvImportModal'
 import CardSelectionQuantityModal from '../components/card-system/CardSelectionQuantityModal'
 import CardListPicker from '../components/card-lists/CardListPicker'
 import CardListGallery from '../components/card-lists/CardListGallery'
+import BookView from '../components/book/BookView'
+import BookViewSwitch from '../components/book/BookViewSwitch'
+import MovePocketSheet from '../components/book/MovePocketSheet'
+import Sheet from '../components/ui/Sheet'
+import { moveSlot, pocketsFromSlots, slotPageCount, slotsRequestBody } from '../components/book/slotLayout'
+import { readViewPreference, writeViewPreference } from '../components/book/bookPages'
 import { useDynamicFilterUrlState } from '../hooks/useDynamicFilterUrlState'
 import PrintingDetailBadges from '../components/PrintingDetailBadges'
 
@@ -69,6 +76,11 @@ export default function BinderDetail() {
   const [showSearch, setShowSearch] = useState(false)
   const [binderFilterQuery, setBinderFilterQuery] = useState('')
   const [binderSortBy, setBinderSortBy] = useState('recent')
+  const [viewMode, setViewMode] = useState(() => readViewPreference('binder'))
+  const changeViewMode = mode => {
+    setViewMode(mode)
+    writeViewPreference('binder', mode)
+  }
   const {
     filters: binderFilters,
     updateFilter: updateBinderFilter,
@@ -77,6 +89,10 @@ export default function BinderDetail() {
   const { binderFilterSet, binderFilterStatus } = binderFilters
   const [badgeLegendOpen, setBadgeLegendOpen] = useState(false)
   const [selectedCard, setSelectedCard] = useState(null)
+  const [selectedSlot, setSelectedSlot] = useState(null)
+  const [moveTarget, setMoveTarget] = useState(null)
+  const [closeGapsOpen, setCloseGapsOpen] = useState(false)
+  const [pocketSizeOpen, setPocketSizeOpen] = useState(false)
   const [selectedImageSource, setSelectedImageSource] = useState('catalogue')
   const [selectedCardTab, setSelectedCardTab] = useState('binder')
   const selectedCardPhotoItem = selectedCard
@@ -124,6 +140,107 @@ export default function BinderDetail() {
     queryFn: () => getCollection({}).then(r => r.data),
     enabled: Boolean(binder),
   })
+
+
+  // Book view: the pockets (P5). The server assigns them lazily and keeps them in step with the cards.
+  const slotsKey = ['binder-slots', binderId]
+  const slotsEnabled = viewMode === 'book' && Boolean(binder) && (isWishlist || isCollection)
+  const { data: slotData, isError: slotsFailed } = useQuery({
+    queryKey: slotsKey,
+    queryFn: () => getBinderSlots(parseInt(binderId)),
+    enabled: slotsEnabled,
+  })
+  // A card added, removed or re-counted on this page changes the pockets on the server: load them again.
+  const cardsRevision = useRef(data)
+  useEffect(() => {
+    if (cardsRevision.current === data) return
+    cardsRevision.current = data
+    if (slotsEnabled) queryClient.invalidateQueries({ queryKey: ['binder-slots', binderId] })
+  }, [data, slotsEnabled, binderId, queryClient])
+
+  const bookItems = useMemo(() => {
+    if (!slotData) return []
+    const entries = new Map((Array.isArray(data?.cards) ? data.cards : []).map(entry => [entry.binder_card_id, entry]))
+    const pockets = pocketsFromSlots(slotData.slots, slotData.pocket_layout, slotPageCount(slotData.slots, slotData.pocket_layout))
+    return pockets.map(slot => {
+      if (!slot) return null
+      const key = `${slot.binder_card_id}:${slot.copy_index}`
+      const entry = entries.get(slot.binder_card_id)
+      if (!entry) return { key, slotIndex: slot.slot_index, card: { id: key, name: '' }, source: null, number: '', name: '', ghost: true, hidden: true }
+      const card = entry.card || entry
+      const ownedQuantity = Number(entry.available_quantity ?? entry.owned_quantity ?? card.owned_quantity) || 0
+      // A planned card is a ghost for every copy the trainer does not own yet.
+      const ghost = isWishlist && slot.copy_index >= ownedQuantity
+      return {
+        key,
+        slotIndex: slot.slot_index,
+        copyIndex: slot.copy_index,
+        card: { ...card, owned: !ghost, owned_quantity: ownedQuantity },
+        source: entry,
+        number: card.number ?? '',
+        name: card.name ?? '',
+        ghost,
+      }
+    })
+  }, [slotData, data, isWishlist])
+
+  const requireConnection = () => {
+    if (!isOffline()) return true
+    toast.error(t('book.needsConnection'))
+    return false
+  }
+  const slotErrorMessage = (error, fallback) => {
+    if (error?.isOfflineRefusal) return t('book.needsConnection')
+    if (error?.response?.status === 409) return t('book.layoutChanged')
+    return fallback
+  }
+
+  const slotMutation = useMutation({
+    mutationFn: ({ nextSlots, version }) => replaceBinderSlots(parseInt(binderId), slotsRequestBody(version, nextSlots)),
+    // Optimistic: the card lands at once; a failed save puts the old layout back.
+    onMutate: async ({ nextSlots }) => {
+      await queryClient.cancelQueries({ queryKey: ['binder-slots', binderId] })
+      const previous = queryClient.getQueryData(['binder-slots', binderId])
+      queryClient.setQueryData(['binder-slots', binderId], old => (old ? { ...old, slots: nextSlots } : old))
+      return { previous }
+    },
+    onError: (error, _variables, context) => {
+      if (context?.previous) queryClient.setQueryData(['binder-slots', binderId], context.previous)
+      toast.error(slotErrorMessage(error, t('book.moveFailed')))
+    },
+    onSuccess: payload => queryClient.setQueryData(['binder-slots', binderId], payload),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['binder-slots', binderId] }),
+  })
+
+  const compactMutation = useMutation({
+    mutationFn: () => compactBinderSlots(parseInt(binderId)),
+    onSuccess: payload => {
+      queryClient.setQueryData(['binder-slots', binderId], payload)
+      toast.success(t('book.closeGapsDone'))
+    },
+    onError: error => toast.error(slotErrorMessage(error, t('book.closeGapsFailed'))),
+  })
+
+  const pocketSizeMutation = useMutation({
+    mutationFn: pocketLayout => updateBinder(parseInt(binderId), { pocket_layout: pocketLayout }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['binder-slots', binderId] })
+      queryClient.invalidateQueries({ queryKey: ['binder-cards'] })
+    },
+    onError: error => toast.error(slotErrorMessage(error, t('book.pocketSizeFailed'))),
+  })
+
+  const moveSlotTo = (from, to) => {
+    if (!slotData || slotMutation.isPending || !requireConnection()) return
+    const nextSlots = moveSlot(slotData.slots, from, to)
+    if (nextSlots === slotData.slots) return
+    slotMutation.mutate({ nextSlots, version: slotData.version })
+  }
+  // Releasing a lifted card without moving it opens Move to…
+  const holdSlot = index => {
+    const item = bookItems[index]
+    if (item && !item.hidden) setMoveTarget({ name: item.name, slotIndex: index })
+  }
 
   const pickerSelectionMutation = useMutation({
     mutationFn: async ({ items }) => {
@@ -379,6 +496,12 @@ export default function BinderDetail() {
     if (isWishlist) {
       items.push({ id: 'missing', label: t('binderTypes.addMissingToWishlist'), icon: Heart, disabled: bulkWishlistMutation.isPending || !hasCards, onSelect: () => bulkWishlistMutation.mutate() })
     }
+    if (viewMode === 'book' && (isCollection || isWishlist)) {
+      items.push(
+        { id: 'close-gaps', label: t('book.closeGaps'), icon: Grid2X2, disabled: !hasCards || compactMutation.isPending, onSelect: () => setCloseGapsOpen(true) },
+        { id: 'pocket-size', label: t('book.pocketSize'), icon: BookOpen, disabled: !hasCards, onSelect: () => setPocketSizeOpen(true) },
+      )
+    }
     return {
       title: binder?.name || '',
       backLabel: t('nav.binders'),
@@ -396,7 +519,7 @@ export default function BinderDetail() {
         />
       ),
     }
-  }, [t, binder?.name, isCollection, isWishlist, hasCards, convertCollectionMutation, bulkWishlistMutation, importMutation, exportMutation])
+  }, [t, binder?.name, isCollection, isWishlist, hasCards, viewMode, compactMutation.isPending, convertCollectionMutation, bulkWishlistMutation, importMutation, exportMutation])
   useNavBar(navOptions)
 
   useEffect(() => {
@@ -597,6 +720,7 @@ export default function BinderDetail() {
 
       {cards.length > 0 && (
         <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+          {viewMode !== 'book' && <>
           <input
             type="text"
             value={binderFilterQuery}
@@ -625,8 +749,10 @@ export default function BinderDetail() {
                 <option key={option} value={option}>{t(`binderTypes.sort.${option}`)}</option>
               ))}
           </select>
-          <div className="col-span-2 flex flex-wrap items-center lg:col-span-4">
-            <button type="button" className="btn-ghost" onClick={clearBinderFilters}>{t('common.clear')}</button>
+          </>}
+          <div className="col-span-2 flex flex-wrap items-center justify-between gap-2 lg:col-span-4">
+            {viewMode === 'book' ? <p className="book-gap-hint text-footnote">{t('book.holdHint')}</p> : <button type="button" className="btn-ghost" onClick={clearBinderFilters}>{t('common.clear')}</button>}
+            <BookViewSwitch value={viewMode} onChange={changeViewMode} />
           </div>
         </div>
       )}
@@ -640,18 +766,105 @@ export default function BinderDetail() {
             {isWishlist ? t('binderTypes.addAnyCard') : t('binderTypes.addFromCollection')}
           </p>
         </div>
-      ) : visibleCards.length === 0 ? (
+      ) : visibleCards.length === 0 && viewMode !== 'book' ? (
         <div className="card text-center py-12 text-text-muted">{t('common.noResults')}</div>
+      ) : viewMode === 'book' ? (
+        !(isCollection || isWishlist) ? null : !slotData && slotsFailed ? (
+          <div className="card space-y-3 py-10 text-center" role="alert" data-testid="book-slots-failed">
+            <p className="text-sm text-text-secondary">{isOffline() ? t('book.needsConnection') : t('book.slotsFailed')}</p>
+            <button type="button" className="btn-primary" onClick={() => changeViewMode('grid')}>{t('book.gridView')}</button>
+          </div>
+        ) : !slotData ? (
+          <div className="skeleton h-64 rounded-xl" />
+        ) : (
+          <BookView
+            items={bookItems}
+            pocketLayout={slotData.pocket_layout}
+            resetKey={String(binderId)}
+            onMoveSlot={slotMutation.isPending ? undefined : moveSlotTo}
+            onHold={holdSlot}
+            renderPocket={item => (
+              <CardDisplay
+                variant="artwork"
+                card={item.card}
+                image={resolveCardImageUrl(item.card)}
+                alt={item.name || t('book.emptyPocket')}
+                interactive={!item.hidden}
+                dimmed={item.ghost}
+                onClick={() => {
+                  if (item.hidden) return
+                  setSelectedSlot(item.slotIndex)
+                  setSelectedCard(item.source)
+                }}
+              />
+            )}
+          />
+        )
       ) : (
         <CardListGallery
           entries={visibleCards}
           mode={isWishlist ? 'planned' : 'physical'}
-          onOpen={card => setSelectedCard(card)}
+          onOpen={card => { setSelectedSlot(null); setSelectedCard(card) }}
           t={t}
           formatPrice={formatPrice}
           pricePrimaryField={pricePrimaryField}
         />
       )}
+
+
+      <MovePocketSheet
+        item={moveTarget}
+        slots={slotData?.slots || []}
+        layout={slotData?.pocket_layout ?? binder?.pocket_layout}
+        nameFor={slot => bookItems[slot.slot_index]?.name || ''}
+        onConfirm={to => moveSlotTo(moveTarget.slotIndex, to)}
+        onClose={() => setMoveTarget(null)}
+      />
+
+      <Modal isOpen={closeGapsOpen} onClose={() => setCloseGapsOpen(false)} title={t('book.closeGapsTitle')} size="md" mobileSheet={false}>
+        <div className="space-y-4 p-5">
+          <p className="text-sm text-text-secondary">{t('book.closeGapsBody')}</p>
+          <div className="flex flex-col gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end">
+            <button type="button" className="btn-ghost w-full sm:w-auto" onClick={() => setCloseGapsOpen(false)}>{t('common.cancel')}</button>
+            <button
+              type="button"
+              className="btn-primary w-full px-5 sm:w-auto"
+              disabled={compactMutation.isPending}
+              onClick={() => {
+                if (!requireConnection()) return
+                setCloseGapsOpen(false)
+                compactMutation.mutate()
+              }}
+            >
+              {t('book.closeGaps')}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Sheet isOpen={pocketSizeOpen} onClose={() => setPocketSizeOpen(false)} title={t('book.pocketSizeTitle')}>
+        <div className="space-y-3 p-4">
+          <p className="text-footnote text-text-secondary">{t('book.pocketSizeHelp')}</p>
+          <div className="grid grid-cols-3 gap-2" role="group" aria-label={t('book.pocketSizeTitle')}>
+            {[4, 9, 12].map(count => (
+              <button
+                key={count}
+                type="button"
+                aria-pressed={(slotData?.pocket_layout ?? binder?.pocket_layout ?? 9) === count}
+                className={`min-h-[44px] rounded-xl px-2 text-sm font-semibold ${(slotData?.pocket_layout ?? binder?.pocket_layout ?? 9) === count ? 'bg-accent text-on-accent' : 'bg-fill-tertiary'}`}
+                disabled={pocketSizeMutation.isPending}
+                onClick={() => {
+                  if (!requireConnection()) return
+                  setPocketSizeOpen(false)
+                  if (count !== (slotData?.pocket_layout ?? binder?.pocket_layout ?? 9)) pocketSizeMutation.mutate(count)
+                }}
+              >
+                {t('book.pocketSizeOption').replace('{count}', count)}
+              </button>
+            ))}
+          </div>
+        </div>
+      </Sheet>
 
       {showCsvImportModal && (
         <BinderCsvImportModal
@@ -827,6 +1040,7 @@ export default function BinderDetail() {
             </div>
           ) : null}
           variantEffectSource={selectedCard.variant}
+          holo
           price={selectedCard.price_market > 0 ? formatPrice(selectedCard.price_market) : null}
           tabs={[
             { id: 'binder', label: t('cardTabs.binder') },
@@ -865,6 +1079,19 @@ export default function BinderDetail() {
                   {(selectedCard.variant || selectedCard.condition) && <p className="text-xs text-text-muted">{[selectedCard.variant, selectedCard.condition].filter(Boolean).join(' · ')}</p>}
                   <PrintingDetailBadges details={selectedCard.printing_details} />
                 </div>
+
+              {viewMode === 'book' && slotData && selectedSlot != null && (
+                <button
+                  type="button"
+                  className="btn-ghost w-full justify-center"
+                  onClick={() => {
+                    setMoveTarget({ name: selectedCard.name, slotIndex: selectedSlot })
+                    setSelectedCard(null)
+                  }}
+                >
+                  {t('book.moveTo')}
+                </button>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <button className="btn-ghost justify-center" onClick={() => {

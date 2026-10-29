@@ -11,6 +11,7 @@ from api.auth import get_current_user
 from sqlalchemy.orm import Session
 from database import get_db
 from models import CollectionCardPhoto, Setting, UserSetting, User
+from services import notifications
 from services.audit import record_audit
 from services.debug_logging import configure_debug_logging, get_debug_log_path
 from services.digital_sets import DIGITAL_SETS_SETTING_KEY, refresh_digital_catalogue_flags
@@ -205,6 +206,10 @@ def _normalize_tcgdex_sync_languages(value) -> str:
 
 
 def _coerce_setting_value(key: str, value) -> str:
+    if key in notifications.boolean_keys():
+        return "true" if str(value).lower() in {"true", "1", "yes", "on"} else "false"
+    if key == notifications.DIGEST_HOUR_KEY:
+        return notifications.normalize_digest_hour(value)
     if key == "tcgdex_sync_languages":
         return _normalize_tcgdex_sync_languages(value)
     if key in {
@@ -268,6 +273,8 @@ def _get_user_settings(db: Session, user_id: int) -> dict:
                 result["telegram_chat_id"] = env_chat_id
 
     for key, value in DEFAULT_SETTINGS.items():
+        result.setdefault(key, value)
+    for key, value in notifications.default_settings().items():
         result.setdefault(key, value)
     if global_scanner_config_enabled():
         if _is_admin(db, user_id):

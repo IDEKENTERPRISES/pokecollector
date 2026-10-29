@@ -3,6 +3,7 @@
 // holding only today's, tomorrow's and the starter's, never all 1025.
 import { STARTER } from './config'
 import { isSplashEntry, localDate, readDay, writeDay } from './entryStore'
+import { fetchPuzzle, readPuzzle, writePuzzle } from './wtp'
 
 // Not "pc-…": resetServiceWorker() deletes those whenever the service worker is switched off.
 export const SPRITE_CACHE = 'pokecollector-splash-v1'
@@ -97,6 +98,18 @@ export async function ensureDay(date, options = {}) {
   return entry
 }
 
+/** A day's Who's That Pokémon puzzle with its image cached: from the device, else the server. */
+export async function ensurePuzzle(date, options = {}) {
+  const { language = 'en', storage = defaults().storage } = options
+  const stored = readPuzzle(date, language, storage)
+  if (stored) return stored
+  const puzzle = await fetchPuzzle(date, options)
+  if (!puzzle) return null
+  if (!(await cacheSprite(puzzle.sprite_url, options))) return null
+  writePuzzle(puzzle, storage, localDate(0, options.now))
+  return puzzle
+}
+
 /** After a splash: today's and tomorrow's entries and sprites, then drop every other sprite.
  * Returns 'stored', 'failed' or 'skipped'. Never throws. */
 export async function prefetchDays(options = {}) {
@@ -106,11 +119,14 @@ export async function prefetchDays(options = {}) {
   const tomorrow = localDate(1, settings.now)
   const entries = []
   for (const date of [today, tomorrow]) entries.push(await ensureDay(date, settings))
+  // Who's That Pokémon rides along, so tomorrow's puzzle is playable offline too.
+  const puzzles = []
+  for (const date of [today, tomorrow]) puzzles.push(await ensurePuzzle(date, settings))
   // The starter is the fallback whenever nothing is stored; keep its sprite too.
   await cacheSprite(STARTER.sprite_url, settings)
   const cache = await openCache(settings.cacheStorage)
   if (cache) {
-    const keep = new Set([STARTER.sprite_url, ...entries.filter(Boolean).map(entry => entry.sprite_url)].map(pathOf))
+    const keep = new Set([STARTER.sprite_url, ...entries.filter(Boolean).map(entry => entry.sprite_url), ...puzzles.filter(Boolean).map(puzzle => puzzle.sprite_url)].map(pathOf))
     try {
       for (const request of await cache.keys()) {
         if (!keep.has(pathOf(request.url))) await cache.delete(request)

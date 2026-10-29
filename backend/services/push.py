@@ -208,6 +208,18 @@ def _encode_payload(title: str, body: str, navigate: str) -> str:
     )
 
 
+def encode_payload_fitted(title: str, body: str, navigate: str) -> str:
+    """`_encode_payload` that never exceeds MAX_PAYLOAD_BYTES: a long body is cut with an ellipsis."""
+    title = title[:120]
+    navigate = navigate[:512]
+    while True:
+        payload = _encode_payload(title, body, navigate)
+        if len(payload.encode("utf-8")) <= MAX_PAYLOAD_BYTES or not body:
+            return payload
+        body = body[: max(0, min(len(body) - 1, len(body) * 3 // 4))].rstrip()
+        body = (body.rstrip("…") + "…") if body else ""
+
+
 def build_price_alert_payload(card_name: str) -> str:
     """Declarative Web Push JSON, at most 4096 bytes UTF-8. Only the card name is included."""
     name = (card_name or "").strip() or "Card"
@@ -239,12 +251,14 @@ def _send_one(db: Session, sub: PushSubscription, payload: str, vapid, now: date
     except WebPushException as exc:
         status = _status_of(exc)
         if status in (404, 410):
+            logger.warning("Push service answered HTTP %s for subscription %s; removing it (gone)", status, sub.id)
             db.delete(sub)
             return "removed"
         if status == 403:
-            logger.warning("Push service rejected VAPID credentials for subscription %s (403)", sub.id)
+            logger.warning("Push service answered HTTP 403 for subscription %s: VAPID credentials rejected", sub.id)
             return "skipped"
         if status == 429:
+            logger.warning("Push service answered HTTP 429 for subscription %s: rate limited, not sent", sub.id)
             return "skipped"
         return _record_failure(db, sub, f"HTTP {status}" if status else "no response")
     except Exception as exc:  # network errors, timeouts, malformed keys

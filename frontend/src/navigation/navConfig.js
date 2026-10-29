@@ -43,6 +43,7 @@ export const ROUTES = Object.freeze([
   { path: '/scans/:jobId', section: 'scan', kind: 'pushed', parent: '/scans', titleKey: 'scanner.queueTitle' },
   { path: '/profile', section: 'profile', kind: 'root', titleKey: 'nav.profile' },
   { path: '/analytics', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.analytics' },
+  { path: '/dna', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'delights.dna' },
   { path: '/products', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.products' },
   { path: '/trades', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.trades' },
   { path: '/leaderboard', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.leaderboard' },
@@ -232,7 +233,7 @@ export const PROFILE_LINKS = Object.freeze([
   { key: 'products', to: '/products', labelKey: 'nav.products', icon: 'Package' },
   { key: 'trades', to: '/trades', labelKey: 'nav.trades', icon: 'ArrowLeftRight' },
   { key: 'leaderboard', to: '/leaderboard', labelKey: 'nav.leaderboard', icon: 'Trophy', multiUser: true },
-  { key: 'achievements', to: '/achievements', labelKey: 'nav.achievements', icon: 'Award', multiUser: true },
+  { key: 'achievements', to: '/achievements', labelKey: 'nav.achievements', icon: 'Award' },
   { key: 'settings', to: '/settings', labelKey: 'nav.settings', icon: 'Settings' },
   { key: 'sync', to: '/offline', labelKey: 'profile.syncOffline', icon: 'RefreshCw', queue: true },
 ])

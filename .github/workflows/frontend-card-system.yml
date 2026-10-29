@@ -15,6 +15,7 @@ on:
     branches:
       - main
       - feature/ios-ui
+      - nonprod
       - deploy
   workflow_dispatch:
 
@@ -106,6 +107,17 @@ jobs:
       - name: Run desktop and mobile visual regression tests
         run: npm run test:visual
 
+      - name: Upload visual diffs (chromium)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-diffs-chromium
+          path: |
+            frontend/test-results*/**/*-actual.png
+            frontend/test-results*/**/*-diff.png
+            frontend/test-results*/**/*-expected.png
+          retention-days: 7
+
   visual-webkit:
     name: Visual (WebKit)
     runs-on: ubuntu-latest
@@ -143,6 +155,17 @@ jobs:
 
       - name: Run WebKit card-list regression test
         run: npm run test:visual:webkit
+
+      - name: Upload visual diffs (webkit)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-diffs-webkit
+          path: |
+            frontend/test-results-webkit/**/*-actual.png
+            frontend/test-results-webkit/**/*-diff.png
+            frontend/test-results-webkit/**/*-expected.png
+          retention-days: 7
 
   pwa:
     name: PWA ${{ matrix.shard }}/4

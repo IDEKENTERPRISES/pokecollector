@@ -22,6 +22,9 @@ import PokeBall from '../components/ios/PokeBall'
 import SearchField from '../components/ios/SearchField'
 import { colourFor } from '../components/ios/pokemon'
 import { useNavBar } from '../navigation/useNavBar'
+import BookView from '../components/book/BookView'
+import BookViewSwitch from '../components/book/BookViewSwitch'
+import { readViewPreference, setBookItems, writeViewPreference } from '../components/book/bookPages'
 import { masterSetStats, splitVariantCards } from '../utils/setDetailStats'
 import { tcgdexLanguageLabel } from '../utils/tcgdexLanguages'
 import { setBackPath } from '../utils/setsLanguage'
@@ -132,6 +135,11 @@ export default function SetDetail() {
   const [selectedCardTab, setSelectedCardTab] = useState('add')
   const [binderPickerOpen, setBinderPickerOpen] = useState(false)
   const [badgeLegendOpen, setBadgeLegendOpen] = useState(false)
+  const [viewMode, setViewMode] = useState(() => readViewPreference('set'))
+  const changeViewMode = mode => {
+    setViewMode(mode)
+    writeViewPreference('set', mode)
+  }
 
   const { data, isLoading, error, source: dataSource, pricesUpdatedAt } = useCatalogQuery({
     queryKey: ['set-checklist', setId],
@@ -222,7 +230,14 @@ export default function SetDetail() {
     [filteredCards, splitVariants],
   )
 
+  const bookItems = useMemo(() => (viewMode === 'book' ? setBookItems(tiles) : []), [tiles, viewMode])
+
   const shownTiles = useProgressiveCount(tiles.length, { resetKey: `${setId}|${filter}|${sortBy}|${rarityFilter}|${query}|${splitVariants}` })
+
+  const openCard = source => {
+    setSelectedCardTab('add')
+    setSelectedCard(source)
+  }
 
   if (isLoading) {
     return (
@@ -372,7 +387,8 @@ export default function SetDetail() {
       </div>
 
       <div className="flex items-center justify-between gap-2 text-footnote text-text-secondary">
-        <span>{t('setDetail.showingCards').replace('{count}', tiles.length).replace('{total}', cards.length)}</span>
+        <span className="min-w-0 flex-1 truncate">{t('setDetail.showingCards').replace('{count}', tiles.length).replace('{total}', cards.length)}</span>
+        <BookViewSwitch value={viewMode} onChange={changeViewMode} />
         <button
           type="button"
           role="switch"
@@ -393,9 +409,27 @@ export default function SetDetail() {
         </div>
       )}
 
+      {viewMode === 'book' && (
+        <BookView
+          items={bookItems}
+          resetKey={`${setId}|${filter}|${rarityFilter}|${query}|${splitVariants}`}
+          renderPocket={item => (
+            <CardDisplay
+              variant="artwork"
+              card={item.card}
+              image={resolveCardImageUrl(item.source)}
+              alt={item.name}
+              interactive
+              dimmed={item.ghost}
+              onClick={() => openCard(item.source)}
+            />
+          )}
+        />
+      )}
+
       {/* Card Grid */}
-      <div className="grid grid-cols-3 gap-2">
-        {tiles.slice(0, shownTiles).map(({ key, card, source }) => (
+      <div className={clsx('grid grid-cols-3 gap-2', viewMode === 'book' && 'hidden')}>
+        {viewMode !== 'book' && tiles.slice(0, shownTiles).map(({ key, card, source }) => (
           <CardDisplay
             key={key}
             card={card}

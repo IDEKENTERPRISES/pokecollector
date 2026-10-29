@@ -361,6 +361,7 @@ If you are already locked out of multi-user mode, set `USER_MODE=single` in the 
 | `PRE_UPGRADE_BACKUP_ENABLED` | Create an automatic SQL backup before startup migrations when an existing install starts on a new app version | `true` |
 | `PRE_UPGRADE_BACKUP_REQUIRED` | Stop startup if the automatic pre-upgrade backup fails. Set to `false` only if you have another verified backup process. | `true` |
 | `PRE_UPGRADE_BACKUP_KEEP` | Number of automatic pre-upgrade backups to retain in `/app/backups`; minimum `1` | `10` |
+| `RESTORE_TIMEOUT_SECONDS` | How long one backup restore from Settings may run before it is stopped and rolled back. Raise it for very large databases. | `3600` |
 | `BACKEND_PORT` | Host port the backend is published on, bound to `127.0.0.1` (this machine only; the web UI reaches the API through the frontend container). Change it if another stack on the same host already uses `8000`, and edit the `ports:` line in `docker-compose.yml` if another machine must reach the raw API. | `8000` |
 | `FRONTEND_PORT` | Host port the frontend is published on. Change it if another stack on the same host already uses `3000`. The container port is unaffected. | `3000` |
 

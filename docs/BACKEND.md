@@ -162,7 +162,9 @@ responses.
 | GET | `/api/analytics/new-sets` | Analytics new sets |
 | GET | `/api/social/leaderboard` | Multi-user leaderboard |
 | GET | `/api/social/compare/{user_id}` | Multi-user comparison |
-| GET | `/api/social/achievements/{user_id}` | Achievement progress |
+| GET | `/api/social/achievements/{user_id}` | Achievement progress; each entry also has `tier`, `track`, `art`, `unlocked_at`, `seen_at` (own user only), and the response has `tracks` (per gym-badge track: `earned`, `total`, highest `tier`). Works in single-user mode |
+| GET | `/api/progress/unlocks/unseen` | Badges earned but not yet celebrated, oldest first |
+| POST | `/api/progress/unlocks/seen` | Marks `{ids: [...]}` (or all, when omitted) as seen |
 | GET | `/api/github/contributors` | Public GitHub contributors feed |
 | GET | `/api/community/supporters` | Fresh, strictly validated public supporter registry projection; returns `503` with `Cache-Control: no-store` on any upstream or validation failure |
 | GET | `/api/github/rescue-donations` | Rescue donation total from `RESCUE_DONATIONS.csv` |
@@ -209,7 +211,8 @@ responses.
 | GET | `/api/export/csv` | CSV export |
 | GET | `/api/export/pdf` | PDF export |
 | GET | `/api/backup/download` | Admin-only SQL backup |
-| POST | `/api/backup/restore` | Admin-only SQL restore |
+| POST | `/api/backup/restore` | Admin-only SQL restore; starts a background job and returns 202 (409 while one runs) |
+| GET | `/api/backup/restore/status` | Admin-only restore status: `{state: idle\|running\|done\|failed, started_at, finished_at, error}` |
 | POST | `/api/backup/clear-image-cache` | Admin-only image cache clear |
 | POST | `/api/sync/` | Admin-only full sync |
 | POST | `/api/sync/prices` | Admin-only small price sync |
@@ -448,8 +451,14 @@ and queued-photo files remain filesystem data and are not part of SQL backups.
 ### Manual restore
 
 `POST /api/backup/restore` accepts only a non-empty `.sql` upload, streams it to
-a temporary file, and invokes `psql` with `ON_ERROR_STOP=1`, `--no-psqlrc`, and
-`--single-transaction`. Any SQL error rolls back the whole restore. The
+a temporary file, checks it, and starts `psql` (`ON_ERROR_STOP=1`, `--no-psqlrc`,
+`--single-transaction`) in a background thread, answering 202 at once. The job
+is limited by `RESTORE_TIMEOUT_SECONDS` (default 3600); on timeout `psql` is
+killed and PostgreSQL rolls the transaction back. `GET /api/backup/restore/status`
+reports the state, kept in memory and in `restore_status.json` under the backup
+directory; while a restore runs it authenticates the starting admin from the
+signed token alone, because the restore holds locks on `users`. Any SQL error
+rolls back the whole restore. The
 temporary file is removed whether the operation succeeds or fails. After a
 successful restore the endpoint also deletes every row in `idempotency_keys`
 (best effort): an older dump would otherwise leave keys whose business rows no
@@ -591,7 +600,9 @@ All routes need a signed-in user (`backend/api/push.py`, prefix `/api/push`):
 - **SSRF allow-list.** The server POSTs to the stored endpoint, so `subscribe` accepts only `https` URLs up to 2048 characters on port 443 whose host is `fcm.googleapis.com` or ends in `.push.apple.com`, `.push.services.mozilla.com` or `.notify.windows.com`. IP literals, credentials and every other host return `422`.
 - **Keys.** `VAPID_PRIVATE_KEY` (PEM, `
 ` escapes allowed) overrides the key file, which defaults to `/app/data/auth/vapid_private.pem` (`VAPID_PRIVATE_KEY_FILE` changes the path). Without either, a P-256 key is created once with mode `0600`. The stock `docker-compose.yml` does not pass these variables to the backend, so Compose installs use the key file (add them under `environment:` in an override if needed). `VAPID_SUBJECT` is the contact URL or `mailto:` sent to the push services (default: the project URL). The private key is never logged.
-- **Payload.** At most 4096 bytes: only the card name and `/wishlist`, no prices or collection data; encrypted end to end.
+- **Payload.** Declarative Web Push JSON, at most 4096 bytes (`encode_payload_fitted` cuts an over-long body), encrypted end to end. Wishlist price alerts, the daily digest, scans-ready and badge pushes carry the texts built in `services/notifications.py` (see below); the `/test` push and the plain `build_price_alert_payload` ("<card> price alert") carry no prices.
+- **Details per notification.** `notification_queue.details` (nullable JSON, added by `ALTER TABLE notification_queue ADD COLUMN IF NOT EXISTS details JSON`) is written by `enqueue(..., details=...)` as the event was: wishlist dips (`card_id`, `name`, `set`, `set_code`, `number`, `price`, `avg30`, `drop_pct`), big movers (same card fields, `price`, `baseline`, `change_pct`), wishlist price alerts (card fields, `price`, `threshold`, `alert_type`), new sets (`name`, `series`), scans ready (`job_id`, `count`) and badges (`badge_id`). `flush_due` builds the push from it: `build_detail_digest_payload`, `build_wishlist_alert_payload`, `build_scans_payload`, `build_badge_payload`. Rows without details (queued before the column) fall back to counts.
+- **Privacy switch.** The per-user setting `notify_show_details` (default `true`, a boolean key of the settings API) selects the detailed texts. When it is `false`, `flush_due` sends the earlier content-light texts. Prices are shown in EUR (the stored market currency); there is no per-user conversion helper at send time.
 - **Outcomes.** `404`/`410` delete the row; `403` is logged and kept; `429` is skipped; any other failure adds one to `failure_count` and the tenth deletes the row.
 - **Dependency.** `pywebpush==2.5.0` (MPL-2.0, used unmodified).
 
@@ -601,3 +612,9 @@ All routes need a signed-in user (`backend/api/push.py`, prefix `/api/push`):
 - They are idempotent and run on startup
 - Automatic pre-upgrade backups run before `init_db()` migrations on existing installs when the app version changes
 - Legacy migration comments still mention older columns like `grade` or removed integrations, but the current runtime model and routers do not include eBay functionality
+
+## Achievements registry (engagement P6)
+
+`services/achievements.py` lists every badge: the 20 from `api/social.py` (unchanged, placed on a track and tier by `_LEGACY_PLACEMENT`) plus the new ones in `_NEW`, one place to trim. A tiered family is a run of entries sharing a `family`; each step is its own entry and its own `user_achievements` row. There are eight gym-badge tracks (`TRACKS`); `daily` is empty until P7 adds streak badges. Extra metrics (`extra_stats`) come from one pass over the owned cards plus small counts; they are merged with `_load_user_stats`.
+
+`REGISTRY_VERSION` is stored in `progress_state.state_version`. Each entry has `since`; on an evaluation, badges with `since` above the user's stored version unlock silently (`backfilled`, already seen), so a release that adds badges never floods existing trainers. Genuine unlocks queue one `badges` push each (instant, titled "Badge unlocked" with the badge's English `name` and tier, for example "Species Seeker 50 · Bronze"; "You earned a badge" when the trainer turned off card details), skipped if the trainer sees the sheet first. Every entry carries an English `name` that matches `achievements.*` in `frontend/src/i18n/en.js` (`_LEGACY_NAMES` for the first 20, an argument of `_entry` for the new ones); a unit test fails for an entry without one, and a badge without a name is announced as "a new badge".

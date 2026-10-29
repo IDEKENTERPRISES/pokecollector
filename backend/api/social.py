@@ -393,6 +393,15 @@ def get_leaderboard(
     current_user: User = Depends(get_current_user),
 ):
     stats = _load_user_stats(db, price_field=price_field)
+    from services import delights
+    from services.progress.xp import level_info, totals_for
+
+    totals = totals_for(db, list(stats))
+    for user_id, entry in stats.items():
+        info = level_info(totals.get(user_id, 0))
+        entry["xp"], entry["level"] = info["xp"], info["level"]
+        # Signed-in trainers always see each other's Showcase 6; public profiles don't gate it.
+        entry["showcase"] = delights.serialize_showcase(delights.showcase_items(db, user_id), False)
     leaderboard = sorted(
         stats.values(),
         key=lambda entry: (entry["total_value"], entry["total_cards"], entry["unique_cards"]),
@@ -529,6 +538,12 @@ def compare_users(
     }
 
 
+def _shown_progress(progress, target, unlocked):
+    if unlocked:
+        progress = max(progress, target)
+    return min(progress, target) if target == 1 else progress
+
+
 @router.get("/achievements/{user_id}")
 def get_achievements(
     user_id: int,
@@ -544,17 +559,33 @@ def get_achievements(
     if not stats:
         raise HTTPException(status_code=404, detail="User stats not found")
 
+    from models import UserAchievement
+    from services.achievements import metrics_for, registry, track_summary
+
+    stats = metrics_for(db, user_id, stats)
+    rows = {
+        row.achievement_id: row
+        for row in db.query(UserAchievement).filter(UserAchievement.user_id == user_id)
+    }
+    is_self = user_id == current_user.id
     achievements = []
-    for config in ACHIEVEMENTS:
+    for config in registry():
         progress = stats.get(config["metric"], 0)
-        unlocked = progress >= config["target"]
+        row = rows.get(config["id"])
+        # A badge once earned stays earned, even if the number later drops (a sold card).
+        unlocked = row is not None or progress >= config["target"]
         achievements.append({
             "id": config["id"],
             "name_key": config["name_key"],
             "description_key": config["description_key"],
             "badge_id": config["badge_id"],
+            "art": config.get("art"),
+            "tier": config["tier"],
+            "track": config["track"],
             "unlocked": unlocked,
-            "progress": min(progress, config["target"]) if config["target"] == 1 else progress,
+            "unlocked_at": row.unlocked_at.isoformat() if row and row.unlocked_at else None,
+            "seen_at": row.seen_at.isoformat() if row and row.seen_at and is_self else None,
+            "progress": _shown_progress(progress, config["target"], unlocked),
             "target": config["target"],
         })
 
@@ -565,4 +596,5 @@ def get_achievements(
         "earned": sum(1 for achievement in achievements if achievement["unlocked"]),
         "total": len(achievements),
         "achievements": achievements,
+        "tracks": track_summary(a["id"] for a in achievements if a["unlocked"]),
     }

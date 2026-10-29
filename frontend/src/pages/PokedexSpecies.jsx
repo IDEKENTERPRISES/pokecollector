@@ -75,7 +75,7 @@ export default function PokedexSpecies() {
   const { t, settings, pricePrimary, pricePrimaryField } = useSettings()
   const language = settings.language === 'de' ? 'de' : 'en'
   const [cardLanguage, setCardLanguage] = useState('all')
-  const [cardSort, setCardSort] = useState('price_asc')
+  const [cardSort, setCardSort] = useState(() => (searchParams.get('sort') === 'price_desc' ? 'price_desc' : 'price_asc'))
   const visibleLanguages = useVisibleTcgdexLanguages()
   const cardLanguageCodes = useMemo(() => [...new Set(
     visibleLanguages

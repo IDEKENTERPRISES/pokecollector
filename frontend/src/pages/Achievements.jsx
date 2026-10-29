@@ -1,18 +1,63 @@
-import { Navigate, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Award } from 'lucide-react'
 import { getAchievements } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { useSettings } from '../contexts/SettingsContext'
 import { useNavBar } from '../navigation/useNavBar'
+import BadgeMedal from '../components/ios/BadgeMedal'
 import HpBar from '../components/ios/HpBar'
+import { groupByTrack, tierLabelKey, trackLabelKey } from '../progress/achievements'
 import { TrainerAvatar } from './socialParts'
 
 const NAV_BAR = {}
 
+function AchievementCard({ achievement, t }) {
+  const progress = Number(achievement.progress ?? 0)
+  const target = Number(achievement.target ?? 1)
+  const shown = Math.min(progress, target)
+  const name = t(achievement.name_key)
+  const status = achievement.unlocked ? t('achievements.earned') : t('achievements.locked')
+  const unlockedOn = achievement.unlocked && achievement.unlocked_at
+    ? t('achievements.unlockedOn').replace('{date}', new Date(achievement.unlocked_at).toLocaleDateString())
+    : null
+  return (
+    <li
+      data-testid={`achievement-${achievement.id}`}
+      className={`rounded-xl bg-card p-4 ${achievement.unlocked ? 'shadow-[inset_0_0_0_1px_rgba(255,203,5,0.45),0_0_24px_rgba(255,203,5,0.1)]' : ''}`}
+    >
+      <div className="flex items-start gap-3">
+        <span className="flex-shrink-0">
+          <BadgeMedal track={achievement.track} tier={achievement.tier} earned={Boolean(achievement.unlocked)} size={52} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <h3 className="text-headline text-text-primary">{name}</h3>
+            <span className={`badge flex-shrink-0 ${achievement.unlocked ? 'badge-yellow' : 'badge-gray'}`}>{status}</span>
+          </div>
+          <p className="mt-0.5 text-caption-1 font-semibold uppercase tracking-wide text-text-secondary">{t(tierLabelKey(achievement.tier))}</p>
+          <p className="mt-1 text-footnote text-text-secondary">{t(achievement.description_key)}</p>
+        </div>
+      </div>
+
+      <div className="mt-3 space-y-1.5">
+        <div className="flex items-center justify-between text-footnote text-text-secondary">
+          <span>{unlockedOn ?? t('achievements.progress')}</span>
+          <span className="tabular-nums">{shown}/{target}</span>
+        </div>
+        <HpBar
+          value={shown}
+          max={target}
+          label={`${name}: ${t('achievements.progressLabel').replace('{progress}', shown).replace('{target}', target)}`}
+        />
+      </div>
+    </li>
+  )
+}
+
 export default function Achievements() {
   const { userId } = useParams()
-  const { user, multiUser } = useAuth()
+  const { user } = useAuth()
   const { t, pricePrimaryField } = useSettings()
   useNavBar(NAV_BAR)
   const activeUserId = userId || user?.id
@@ -22,10 +67,6 @@ export default function Achievements() {
     queryFn: () => getAchievements(activeUserId, { price_field: pricePrimaryField }).then((response) => response.data),
     enabled: Boolean(activeUserId),
   })
-
-  if (!multiUser) {
-    return <Navigate to="/" replace />
-  }
 
   const earned = Number(data?.earned ?? 0)
   const total = Number(data?.total ?? 20)
@@ -60,49 +101,24 @@ export default function Achievements() {
       ) : error ? (
         <div className="card text-sm text-red" role="alert">{t('achievements.loadFailed')}</div>
       ) : (
-        <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {data.achievements.map((achievement) => {
-            const progress = Number(achievement.progress ?? 0)
-            const target = Number(achievement.target ?? 1)
-            const name = t(achievement.name_key)
-            const status = achievement.unlocked ? t('achievements.earned') : t('achievements.locked')
+        <div className="space-y-5">
+          {groupByTrack(data.achievements).map(({ track, items }) => {
+            const heading = t(trackLabelKey(track))
             return (
-              <li
-                key={achievement.id}
-                className={`rounded-xl bg-card p-4 ${achievement.unlocked ? 'shadow-[inset_0_0_0_1px_rgba(255,203,5,0.45),0_0_24px_rgba(255,203,5,0.1)]' : ''}`}
-              >
-                <div className="flex items-start gap-3">
-                  <img
-                    src={`https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/badges/${achievement.badge_id}.png`}
-                    alt=""
-                    aria-hidden="true"
-                    className={`h-14 w-14 flex-shrink-0 object-contain ${achievement.unlocked ? '' : 'grayscale opacity-50'}`}
-                    loading="lazy"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-2">
-                      <h2 className="text-headline text-text-primary">{name}</h2>
-                      <span className={`badge flex-shrink-0 ${achievement.unlocked ? 'badge-yellow' : 'badge-gray'}`}>{status}</span>
-                    </div>
-                    <p className="mt-1 text-footnote text-text-secondary">{t(achievement.description_key)}</p>
-                  </div>
-                </div>
-
-                <div className="mt-3 space-y-1.5">
-                  <div className="flex items-center justify-between text-footnote text-text-secondary">
-                    <span>{t('achievements.progress')}</span>
-                    <span className="tabular-nums">{progress}/{target}</span>
-                  </div>
-                  <HpBar
-                    value={Math.min(progress, target)}
-                    max={target}
-                    label={`${name}: ${t('achievements.progressLabel').replace('{progress}', progress).replace('{target}', target)}`}
-                  />
-                </div>
-              </li>
+              <section key={track} aria-label={heading} data-testid={`track-${track}`} className="space-y-2">
+                <h2 className="flex items-baseline justify-between px-1 text-headline text-text-primary">
+                  {heading}
+                  <span className="text-footnote font-normal tabular-nums text-text-secondary">
+                    {items.filter(item => item.unlocked).length}/{items.length}
+                  </span>
+                </h2>
+                <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {items.map(achievement => <AchievementCard key={achievement.id} achievement={achievement} t={t} />)}
+                </ul>
+              </section>
             )
           })}
-        </ul>
+        </div>
       )}
     </div>
   )

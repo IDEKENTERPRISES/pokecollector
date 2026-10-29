@@ -1,17 +1,21 @@
 import { useSettings } from '../../contexts/SettingsContext'
+import XpBar from '../../progress/XpBar'
 import GymBadges from './GymBadges'
+import ShowcaseStrip from '../../delights/ShowcaseStrip'
 import PokeBall from './PokeBall'
 
 /**
  * Profile trainer card (design doc §5.5, §7.12): an accent gradient card with holo shine and a
  * Poké Ball watermark, the trainer's sprite in a white ring, name, "@handle" (only when the
  * public profile is on), "ID No." padded to five digits, three stats and, in multi-user mode,
- * a row of gym badges.
+ * a row of gym badges (single-user mode too).
  *
  * user: { name, handle, id, sprite }; stats: { cards, sets, pokedex } (display strings);
- * badges: { earned, total, to } or omitted (single-user mode).
+ * badges: { earned, total, to, tracks } or omitted until the achievements have loaded;
+ * level: { level, xp, level_start, next_level_at } from the Today summary, or omitted;
+ * showcase: the Showcase 6 cards (engagement P8), or omitted.
  */
-export default function TrainerCard({ user = {}, stats = {}, badges, className = '' }) {
+export default function TrainerCard({ user = {}, stats = {}, badges, level, showcase, className = '' }) {
   const { t } = useSettings()
   const idText = user.id != null && user.id !== '' ? String(user.id).padStart(5, '0') : null
   const statItems = [
@@ -42,8 +46,15 @@ export default function TrainerCard({ user = {}, stats = {}, badges, className =
           <p className="break-words text-title-1 font-display">{user.name}</p>
           {user.handle && <p className="break-words text-subheadline opacity-90">@{user.handle}</p>}
           {idText && <p className="text-footnote tabular-nums opacity-80">{t('ios.idNo')} {idText}</p>}
+          {level && (
+            <p className="text-footnote font-semibold tabular-nums" data-testid="trainer-level">
+              {t('ios.level').replace('{level}', level.level)} · {t('ios.xpProgress').replace('{xp}', level.xp)}
+            </p>
+          )}
         </div>
       </div>
+
+      {level && <XpBar info={level} tone="onAccent" testId="trainer-xp-bar" className="relative mt-3" />}
 
       <dl className="relative mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-black/20 px-3 py-2.5 text-center">
         {statItems.map(item => (
@@ -55,9 +66,15 @@ export default function TrainerCard({ user = {}, stats = {}, badges, className =
         ))}
       </dl>
 
+      {showcase?.length > 0 && (
+        <div className="relative mt-3">
+          <ShowcaseStrip cards={showcase} label={t('delights.showcase')} />
+        </div>
+      )}
+
       {badges && (
         <div className="relative mt-3">
-          <GymBadges earned={badges.earned} total={badges.total} to={badges.to} label={t('ios.gymBadges')} />
+          <GymBadges earned={badges.earned} total={badges.total} to={badges.to} tracks={badges.tracks} label={t('ios.gymBadges')} />
         </div>
       )}
     </div>

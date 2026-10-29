@@ -1,129 +1,252 @@
-import { useRef, useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 
 /**
- * Spring-physics tilt hook.
+ * Holo-card tilt: finger/mouse drag and (after a tap) device motion, eased with a spring.
  *
- * Features:
- * - Lerp (spring) loop: entry, tracking and exit are all eased — no hard snaps.
- * - Entry seeding: on mouseenter the target is set from the real cursor position
- *   so the lerp always starts from flat (0,0) and glides to the actual tilt.
- * - Scale lerp: scale is also interpolated, so the hit-box never suddenly
- *   expands and triggers the mouseleave flicker loop.
- * - Edge dead-zone: tilt is attenuated near the card edges so the scaled card
- *   never pushes past its original bounding box at corners.
+ * The hook writes CSS variables on the element in `ref` (see components/holo/holo.css):
+ *   --rotate-x / --rotate-y (deg), --pointer-x / --pointer-y (%), --pointer-from-left / -top /
+ *   -center (0..1), --background-x / --background-y (%), --card-opacity (0..1).
+ * Nothing runs while the card is at rest: the animation frame loop starts on input and stops
+ * once the card has settled back. Under prefers-reduced-motion nothing moves (a static sheen).
  *
- * Returns { ref, onMouseMove, onMouseEnter, onMouseLeave }.
- * Callers must wire up all four handlers (onMouseEnter is new).
+ * The zoom overlay opens over the sheet, so it cannot read the sheet's tilt state: whether the trainer
+ * turned "Tilt with your phone" on (permission already granted) is shared through a tiny store, and
+ * `useTilt({ enabled: false, followMotion: true })` lets the overlay's card follow the phone with the
+ * foil and glare only (no 3D rotation, no permission prompt, touch stays pan/pinch).
+ *
+ * Returns { ref, bind, motion } where `bind` is spread on the stage element and `motion` is
+ * { supported, active, toggle } for the "Tilt with your phone" control.
  */
-export function useTilt(maxTilt = 10, lerpFactor = 0.1) {
+
+const MAX_TILT = 14 // degrees at the card edge
+const EASE_MS = 70 // time constant of the ease; frame-rate independent
+const REST_SHEEN = { px: 30, py: 20, op: 0.5 }
+const ACTIVE_OPACITY = 0.75 // foil strength while dragging or tilting; never fully opaque, the art must show through
+const DRAG_SLOP = 6 // px before a press counts as a drag (and swallows the click that follows)
+
+export const prefersReducedMotion = () => (
+  typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+)
+
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
+
+// Whether the sheet's "Tilt with your phone" is on. Set by the hook instance that owns the toggle.
+let sharedMotionOn = false
+const sharedMotionListeners = new Set()
+function setSharedMotion(on) {
+  if (sharedMotionOn === on) return
+  sharedMotionOn = on
+  sharedMotionListeners.forEach(listener => listener())
+}
+const subscribeSharedMotion = (listener) => {
+  sharedMotionListeners.add(listener)
+  return () => sharedMotionListeners.delete(listener)
+}
+const getSharedMotion = () => sharedMotionOn
+
+export function motionSupported() {
+  if (typeof window === 'undefined' || typeof window.DeviceOrientationEvent === 'undefined') return false
+  if (typeof window.DeviceOrientationEvent.requestPermission === 'function') return true // iOS
+  return Boolean(window.matchMedia?.('(pointer: coarse)').matches) && 'ondeviceorientation' in window
+}
+
+function writeVars(el, c) {
+  const style = el.style
+  const left = c.px / 100
+  const top = c.py / 100
+  style.setProperty('--rotate-x', `${c.rx.toFixed(2)}deg`)
+  style.setProperty('--rotate-y', `${c.ry.toFixed(2)}deg`)
+  style.setProperty('--pointer-x', `${c.px.toFixed(1)}%`)
+  style.setProperty('--pointer-y', `${c.py.toFixed(1)}%`)
+  style.setProperty('--pointer-from-left', left.toFixed(3))
+  style.setProperty('--pointer-from-top', top.toFixed(3))
+  style.setProperty('--pointer-from-center', clamp(Math.hypot(top - 0.5, left - 0.5) * 2, 0, 1).toFixed(3))
+  style.setProperty('--background-x', `${(37 + (c.px / 100) * 26).toFixed(1)}%`)
+  style.setProperty('--background-y', `${(33 + (c.py / 100) * 34).toFixed(1)}%`)
+  style.setProperty('--card-opacity', c.op.toFixed(3))
+}
+
+export function useTilt({ enabled = true, followMotion = false } = {}) {
   const ref = useRef(null)
+  const frame = useRef(null)
+  const lastTime = useRef(0)
+  const cur = useRef({ rx: 0, ry: 0, px: REST_SHEEN.px, py: REST_SHEEN.py, op: REST_SHEEN.op })
+  const tgt = useRef({ rx: 0, ry: 0, px: REST_SHEEN.px, py: REST_SHEEN.py, op: REST_SHEEN.op })
+  const drag = useRef({ id: null, startX: 0, startY: 0, moved: false })
+  const hovering = useRef(false)
+  const motionOn = useRef(false)
+  const motionBase = useRef(null)
+  const ownsMotion = useRef(false)
+  const [reduced] = useState(prefersReducedMotion)
+  const [motion, setMotion] = useState({ supported: false, active: false })
+  const active = enabled && !reduced
+  const sharedMotion = useSyncExternalStore(subscribeSharedMotion, getSharedMotion, () => false)
 
-  // Disable tilt on touch devices; no visual benefit and worse scroll performance.
-  const isTouchDevice =
-    typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0)
-
-  if (isTouchDevice) {
-    return { ref, onMouseMove: () => {}, onMouseEnter: () => {}, onMouseLeave: () => {} }
-  }
-
-  const rafRef    = useRef(null)
-  const hovered   = useRef(false)
-
-  // Interpolated state (what's actually rendered)
-  const cur = useRef({ x: 0, y: 0, scale: 1 })
-  // Desired state (driven by mouse)
-  const tgt = useRef({ x: 0, y: 0, scale: 1 })
-
-  // Compute target rotation from a MouseEvent, with edge attenuation.
-  const computeTarget = useCallback((e) => {
+  const tick = useCallback((now) => {
+    frame.current = null
     const el = ref.current
     if (!el) return
-    const rect = el.getBoundingClientRect()
-    const mx = e.clientX - rect.left
-    const my = e.clientY - rect.top
-    const cx = rect.width  / 2
-    const cy = rect.height / 2
-
-    // Edge attenuation: scale tilt down within `edgePct` of any edge
-    // so the 1.04-scaled card never exceeds the original bounding box.
-    const edgePct = 0.18          // 18% of half-width/height dead-zone
-    const edgeW   = cx * edgePct
-    const edgeH   = cy * edgePct
-    const attX = Math.min(1, Math.min(mx, rect.width  - mx) / edgeW)
-    const attY = Math.min(1, Math.min(my, rect.height - my) / edgeH)
-    const att  = Math.min(attX, attY)
-
-    tgt.current.x = -((my - cy) / cy) * maxTilt * att
-    tgt.current.y =  ((mx - cx) / cx) * maxTilt * att
-    tgt.current.scale = 1.04
-  }, [maxTilt])
-
-  const tick = useCallback(() => {
-    const el = ref.current
-    if (!el) { rafRef.current = null; return }
-
+    const dt = lastTime.current ? Math.min(100, now - lastTime.current) : 16
+    lastTime.current = now
+    const spring = 1 - Math.exp(-dt / EASE_MS)
     const c = cur.current
     const t = tgt.current
-
-    c.x     += (t.x     - c.x)     * lerpFactor
-    c.y     += (t.y     - c.y)     * lerpFactor
-    c.scale += (t.scale - c.scale) * lerpFactor
-
-    el.style.transition = 'none'
-    el.style.transform  =
-      `perspective(700px) rotateX(${c.x}deg) rotateY(${c.y}deg) scale(${c.scale})`
-
-    // Keep looping while hovered OR while values are still settling
-    const settling =
-      Math.abs(c.x)         > 0.03 ||
-      Math.abs(c.y)         > 0.03 ||
-      Math.abs(c.scale - 1) > 0.001
-
-    if (hovered.current || settling) {
-      rafRef.current = requestAnimationFrame(tick)
+    let delta = 0
+    for (const key of ['rx', 'ry', 'px', 'py', 'op']) {
+      const diff = t[key] - c[key]
+      c[key] += diff * spring
+      delta += Math.abs(diff) * (key === 'op' ? 100 : 1)
+    }
+    writeVars(el, c)
+    const interacting = drag.current.id !== null || hovering.current || motionOn.current
+    if (interacting || delta > 0.05) {
+      frame.current = requestAnimationFrame(tick)
     } else {
-      // Snap exactly to rest and stop
-      el.style.transform = 'perspective(700px) rotateX(0deg) rotateY(0deg) scale(1)'
-      rafRef.current = null
-    }
-  }, [lerpFactor])
-
-  const startLoop = useCallback(() => {
-    if (!rafRef.current) {
-      rafRef.current = requestAnimationFrame(tick)
-    }
-  }, [tick])
-
-  const onMouseEnter = useCallback((e) => {
-    hovered.current     = true
-    tgt.current.scale   = 1.04
-    // Seed the target from the real cursor position so the lerp starts from
-    // flat (0,0) and glides toward the correct tilt — never jumps.
-    computeTarget(e)
-    startLoop()
-  }, [computeTarget, startLoop])
-
-  const onMouseMove = useCallback((e) => {
-    computeTarget(e)
-    // Ensure loop is running (it may have been stopped after a fast leave+re-enter)
-    startLoop()
-  }, [computeTarget, startLoop])
-
-  const onMouseLeave = useCallback(() => {
-    hovered.current   = false
-    tgt.current.x     = 0
-    tgt.current.y     = 0
-    tgt.current.scale = 1
-    // The tick loop will lerp back to 0 and stop itself.
-    startLoop()
-  }, [startLoop])
-
-  // Clean up RAF on unmount
-  useEffect(() => {
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      Object.assign(c, t)
+      writeVars(el, c)
+      lastTime.current = 0
     }
   }, [])
 
-  return { ref, onMouseMove, onMouseEnter, onMouseLeave }
+  const wake = useCallback(() => {
+    if (frame.current === null) frame.current = requestAnimationFrame(tick)
+  }, [tick])
+
+  const aim = useCallback((fx, fy) => {
+    // fx, fy: 0..1 across the card
+    const x = clamp(fx, 0, 1)
+    const y = clamp(fy, 0, 1)
+    const t = tgt.current
+    t.px = x * 100
+    t.py = y * 100
+    t.rx = (x - 0.5) * 2 * MAX_TILT
+    t.ry = -(y - 0.5) * 2 * MAX_TILT
+    t.op = ACTIVE_OPACITY
+    wake()
+  }, [wake])
+
+  const rest = useCallback(() => {
+    Object.assign(tgt.current, { rx: 0, ry: 0, px: REST_SHEEN.px, py: REST_SHEEN.py, op: REST_SHEEN.op })
+    wake()
+  }, [wake])
+
+  const aimFromPointer = useCallback((event) => {
+    const rect = ref.current?.getBoundingClientRect()
+    if (!rect || !rect.width || !rect.height) return
+    aim((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height)
+  }, [aim])
+
+  const bind = {
+    onPointerDown(event) {
+      if (!active || (event.pointerType === 'mouse' && event.button !== 0)) return
+      drag.current = { id: event.pointerId, startX: event.clientX, startY: event.clientY, moved: false }
+      aimFromPointer(event)
+    },
+    onPointerMove(event) {
+      if (!active) return
+      const d = drag.current
+      if (d.id === event.pointerId) {
+        if (!d.moved && Math.hypot(event.clientX - d.startX, event.clientY - d.startY) > DRAG_SLOP) {
+          d.moved = true
+          // Capture only once it is a drag, so a plain tap still reaches the zoom button.
+          try { event.currentTarget.setPointerCapture?.(event.pointerId) } catch { /* not capturable */ }
+        }
+        aimFromPointer(event)
+      } else if (event.pointerType === 'mouse' && d.id === null) {
+        hovering.current = true
+        aimFromPointer(event)
+      }
+    },
+    onPointerUp(event) {
+      const d = drag.current
+      if (d.id !== event.pointerId) return
+      drag.current = { ...d, id: null }
+      if (!motionOn.current) rest()
+      else wake()
+    },
+    onPointerCancel(event) {
+      if (drag.current.id === event.pointerId) {
+        drag.current = { ...drag.current, id: null, moved: false }
+        if (!motionOn.current) rest()
+      }
+    },
+    onPointerLeave(event) {
+      if (event.pointerType !== 'mouse' || drag.current.id !== null) return
+      hovering.current = false
+      if (!motionOn.current) rest()
+    },
+    // A drag that ends over the artwork must not also open the zoom overlay.
+    onClickCapture(event) {
+      if (drag.current.moved) {
+        drag.current = { ...drag.current, moved: false }
+        event.preventDefault()
+        event.stopPropagation()
+      }
+    },
+  }
+
+  const handleOrientation = useCallback((event) => {
+    if (event.gamma == null || event.beta == null) return
+    const base = motionBase.current || (motionBase.current = { beta: event.beta, gamma: event.gamma })
+    const fx = 0.5 + clamp(event.gamma - base.gamma, -30, 30) / 60
+    const fy = 0.5 + clamp(event.beta - base.beta, -30, 30) / 60
+    aim(fx, fy)
+  }, [aim])
+
+  const stopMotion = useCallback(() => {
+    window.removeEventListener('deviceorientation', handleOrientation)
+    motionOn.current = false
+    motionBase.current = null
+    if (ownsMotion.current) { ownsMotion.current = false; setSharedMotion(false) }
+    setMotion(m => ({ ...m, active: false }))
+    rest()
+  }, [handleOrientation, rest])
+
+  const toggle = useCallback(async () => {
+    if (motionOn.current) { stopMotion(); return }
+    const Orientation = window.DeviceOrientationEvent
+    if (typeof Orientation?.requestPermission === 'function') {
+      try {
+        if (await Orientation.requestPermission() !== 'granted') return
+      } catch { return }
+    }
+    motionBase.current = null
+    motionOn.current = true
+    ownsMotion.current = true
+    window.addEventListener('deviceorientation', handleOrientation)
+    setSharedMotion(true)
+    setMotion(m => ({ ...m, active: true }))
+  }, [handleOrientation, stopMotion])
+
+  // Follower (the zoom overlay): ride the sheet's already-granted motion, never ask again.
+  useEffect(() => {
+    if (!followMotion || !sharedMotion || reduced) return undefined
+    motionBase.current = null
+    motionOn.current = true
+    window.addEventListener('deviceorientation', handleOrientation)
+    return () => {
+      window.removeEventListener('deviceorientation', handleOrientation)
+      motionOn.current = false
+      motionBase.current = null
+      rest()
+    }
+  }, [followMotion, sharedMotion, reduced, handleOrientation, rest])
+
+  useEffect(() => {
+    setMotion(m => ({ ...m, supported: active && motionSupported() }))
+  }, [active])
+
+  // Initial / static sheen.
+  useEffect(() => {
+    if (ref.current) writeVars(ref.current, cur.current)
+  })
+
+  useEffect(() => () => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current)
+    frame.current = null // a remount (StrictMode) must be able to schedule frames again
+    window.removeEventListener('deviceorientation', handleOrientation)
+    if (ownsMotion.current) { ownsMotion.current = false; setSharedMotion(false) }
+  }, [handleOrientation])
+
+  return { ref, bind, reduced, motion: { ...motion, toggle } }
 }
