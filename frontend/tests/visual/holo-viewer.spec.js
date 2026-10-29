@@ -490,3 +490,126 @@ test('foil textures scale with the card: the sheet and the zoom show the same nu
   expect(after.scale).toBe(before.scale)
   expect(after.tile).toBeCloseTo(before.tile, 1)
 })
+
+// ---------------------------------------------------------------------------------------------
+// Phone tilt in the zoom: once "Tilt with your phone" is on in the sheet, the zoomed card's foil and
+// glare keep following the phone's orientation. The card itself never rotates (pinch and pan own
+// the touch), nothing asks for permission again, and the listener goes away with the overlay.
+// Computed styles only.
+// ---------------------------------------------------------------------------------------------
+
+// Pretend to be iOS (a permission API, already granted) so the "Tilt with your phone" button shows,
+// and count the deviceorientation listeners so tidy-up can be checked.
+async function installOrientationStubs(page) {
+  await page.addInitScript(() => {
+    window.__permissionRequests = 0
+    window.DeviceOrientationEvent.requestPermission = async () => {
+      window.__permissionRequests += 1
+      return 'granted'
+    }
+    // A Set, like the DOM's own listener list: adding twice or removing a stranger changes nothing.
+    const handlers = new Set()
+    Object.defineProperty(window, '__orientationListeners', { get: () => handlers.size })
+    const add = window.addEventListener.bind(window)
+    const remove = window.removeEventListener.bind(window)
+    window.addEventListener = (type, handler, ...rest) => {
+      if (type === 'deviceorientation') handlers.add(handler)
+      return add(type, handler, ...rest)
+    }
+    window.removeEventListener = (type, handler, ...rest) => {
+      if (type === 'deviceorientation') handlers.delete(handler)
+      return remove(type, handler, ...rest)
+    }
+  })
+}
+
+// WebKit's DeviceOrientationEvent has no public constructor (the app only reads beta and gamma), so
+// fall back to a plain event that carries them.
+const tilt = (page, beta, gamma) => page.evaluate(([b, g]) => {
+  let event
+  try {
+    event = new DeviceOrientationEvent('deviceorientation', { beta: b, gamma: g })
+  } catch {
+    event = new Event('deviceorientation')
+    Object.defineProperties(event, { beta: { value: b }, gamma: { value: g } })
+  }
+  window.dispatchEvent(event)
+}, [beta, gamma])
+
+async function openZoomWithTilt(page, { reduceMotionAfterEnable = false } = {}) {
+  await installOrientationStubs(page)
+  await installFixtures(page)
+  const { dialog, stage } = await openSheet(page)
+  await settledBox(stage)
+  await dialog.getByTestId('holo-motion').click()
+  await expect(dialog.getByTestId('holo-motion')).toHaveAttribute('aria-pressed', 'true')
+  if (reduceMotionAfterEnable) await page.emulateMedia({ reducedMotion: 'reduce' })
+  await stage.getByRole('button', { name: /Zoom image/ }).click()
+  const zoom = page.getByRole('dialog', { name: /Zoom image/ })
+  const card = zoom.getByTestId('zoom-holo')
+  await expect(card).toBeVisible()
+  return { zoom, card }
+}
+
+test('the zoomed card follows the phone tilt when it is on, as foil only', async ({ page }) => {
+  const { zoom, card } = await openZoomWithTilt(page)
+  // Resting sheen until the phone moves.
+  expect(await cssVar(card, '--pointer-x')).toBe('30.0%')
+
+  // The first reading is the reference pose; later readings move the sheen away from it.
+  await tilt(page, 40, 0)
+  await tilt(page, 40, 25)
+  await expect.poll(async () => parseFloat(await cssVar(card, '--pointer-x'))).toBeGreaterThan(70)
+  await tilt(page, 40, -25)
+  await expect.poll(async () => parseFloat(await cssVar(card, '--pointer-x'))).toBeLessThan(30)
+  await tilt(page, 65, -25)
+  await expect.poll(async () => parseFloat(await cssVar(card, '--pointer-y'))).toBeGreaterThan(70)
+  expect(parseFloat(await cssVar(card, '--pointer-from-left'))).toBeLessThan(0.3)
+  expect(parseFloat(await cssVar(card, '--background-y'))).toBeGreaterThan(55)
+
+  // Strongest foil, still translucent (the opacity cap and the WebKit path from the still sheen).
+  const strength = parseFloat(await cssVar(card, '--card-opacity'))
+  expect(strength).toBeGreaterThan(0.7)
+  expect(strength).toBeLessThan(0.9)
+  const shine = parseFloat(await card.locator('.holo-shine').evaluate(el => getComputedStyle(el).opacity))
+  expect(shine).toBeGreaterThan(0)
+  expect(shine).toBeLessThan(0.9)
+
+  // Foil only: the zoomed card is never rotated, and no second permission prompt.
+  expect(await card.evaluate(el => el.style.transform)).not.toMatch(/rotate/)
+  expect(await page.evaluate(() => window.__permissionRequests)).toBe(1)
+
+  // The +/- zoom still works while it follows.
+  await zoom.getByRole('button', { name: /Zoom in/ }).click()
+  await expect.poll(() => card.evaluate(el => el.style.transform)).toContain('scale(1.75)')
+
+  // Closing the zoom removes its listener; the sheet's own stays until Tilt is turned off.
+  const before = await page.evaluate(() => window.__orientationListeners)
+  await page.keyboard.press('Escape')
+  await expect(zoom).toHaveCount(0)
+  expect(await page.evaluate(() => window.__orientationListeners)).toBe(before - 1)
+})
+
+test('the zoom stays a still sheen when Tilt with your phone is off', async ({ page }) => {
+  await installOrientationStubs(page)
+  await installFixtures(page)
+  const { stage } = await openSheet(page)
+  await settledBox(stage)
+  await stage.getByRole('button', { name: /Zoom image/ }).click()
+  const card = page.getByRole('dialog', { name: /Zoom image/ }).getByTestId('zoom-holo')
+  await expect(card).toBeVisible()
+  await tilt(page, 40, 0)
+  await tilt(page, 40, 25)
+  await page.waitForTimeout(300)
+  expect(await cssVar(card, '--pointer-x')).toBe('30.0%')
+  expect(await page.evaluate(() => window.__orientationListeners)).toBe(0)
+})
+
+test('Reduce Motion: the zoomed foil ignores the phone tilt', async ({ page }) => {
+  const { card } = await openZoomWithTilt(page, { reduceMotionAfterEnable: true })
+  await tilt(page, 40, 0)
+  await tilt(page, 40, 25)
+  await page.waitForTimeout(300)
+  expect(await cssVar(card, '--pointer-x')).toBe('30.0%')
+  expect(parseFloat(await cssVar(card, '--card-opacity'))).toBeLessThan(0.6)
+})

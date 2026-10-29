@@ -36,9 +36,10 @@ function midpoint(touches) {
  */
 export default function ImageZoomOverlay({ src, alt = '', onClose, foil = null, supertype = '' }) {
   const { t } = useSettings()
-  // The zoomed card carries the same foil as the sheet's artwork, as a resting sheen: panning and
-  // pinching own the gestures here, so there is no tilt, only the variables the layers read.
-  const { ref: foilRef } = useTilt({ enabled: false })
+  // The zoomed card carries the same foil as the sheet's artwork. Panning and pinching own the touch
+  // gestures here, so it never rotates or reacts to drags: it rests as a still sheen, and when the
+  // trainer already turned on "Tilt with your phone" on the sheet, the foil and glare follow the phone.
+  const { ref: foilRef } = useTilt({ enabled: false, followMotion: true })
   // Textures scale with the card's layout width (the pinch/+/- transform scales them by itself).
   useHoloScale(foilRef, Boolean(foil))
   const [scale, setScale] = useState(MIN_SCALE)
