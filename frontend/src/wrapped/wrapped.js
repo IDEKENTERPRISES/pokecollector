@@ -1,9 +1,9 @@
-// Pure helpers for the Wrapped story (engagement P9b): which slides show, formatting and the share picture.
-import { fill } from '../delights/delights'
-import { blocksSpec } from '../progress/shareImage'
+// Pure helpers for the Wrapped story (engagement P9b, redesigned in P9c): which slides show, the
+// persona and rarity, and the numbers behind the charts. Both the slides and the share pictures use them.
+import { typeKeyFor } from '../components/ios/pokemon'
+import { PERSONA_MIN_CARDS, rarityFor } from './theme'
 
 export const SLIDE_MS = 6000
-export const WRAPPED_SHARE_FILE = 'wrapped.png'
 
 /** Slide ids in story order. */
 export const SLIDE_ORDER = [
@@ -52,19 +52,6 @@ export function selectSlides(data, { showDaily = true } = {}) {
   return SLIDE_ORDER.filter(id => has[id])
 }
 
-/** Bars for the month chart. Needs the 12 monthly counts; without them the chart is left out. */
-export function monthBars(data) {
-  const counts = data?.monthly
-  if (!Array.isArray(counts) || counts.length !== 12) return null
-  const values = counts.map(num)
-  const max = Math.max(...values)
-  if (max <= 0) return null
-  const biggest = data.biggest_month?.month ? data.biggest_month.month - 1 : values.indexOf(max)
-  return values.map((count, index) => ({
-    index, count, height: Math.max(3, Math.round((count / max) * 100)), top: index === biggest,
-  }))
-}
-
 const localDate = iso => {
   const [year, month, day] = String(iso || '').split('-').map(Number)
   return year && month && day ? new Date(year, month - 1, day) : null
@@ -96,56 +83,95 @@ export function typePercent(data) {
   return top && total > 0 ? Math.round((num(top.count) / total) * 100) : 0
 }
 
-/** Points (0..1) for the value chart: the real series when the API sends one, else start, peak and end. */
-export function valuePoints(value) {
-  const series = Array.isArray(value?.series) ? value.series.map(point => num(point.value)) : []
-  const values = series.length >= 2 ? series : [num(value?.start), num(value?.peak), num(value?.end)]
+/** The collection's top energy type as a palette key, or null. */
+export function topTypeKey(data) {
+  return data?.top_type ? (typeKeyFor(data.top_type.type) || 'colorless') : null
+}
+
+/** The trainer type (§3.5): the top type once the year has at least 10 cards, else null. */
+export function personaKey(data) {
+  return num(data?.totals?.cards) >= PERSONA_MIN_CARDS ? topTypeKey(data) : null
+}
+
+export const rarityOf = data => rarityFor(data?.totals?.cards)
+
+/** "004" for the collector strip. */
+export const pad3 = n => String(Math.max(0, Math.floor(num(n)))).padStart(3, '0')
+
+/** The month the history starts in (1–12) when it starts inside the year, else null. */
+export function startMonth(data) {
+  return startsInYear(data) ? Number(String(data.history_starts).split('-')[1]) : null
+}
+
+/**
+ * The 12 month columns of the cards chart. Months before the history starts are `untracked`
+ * (drawn as dashed outlines, §6), the rest scale to the biggest month. `few` is true below 12
+ * cards, when the chart becomes a row of one pip per card (§6). Null without monthly counts.
+ */
+export function monthCells(data) {
+  const counts = data?.monthly
+  if (!Array.isArray(counts) || counts.length !== 12) return null
+  const values = counts.map(num)
+  const max = Math.max(...values)
+  if (max <= 0) return null
+  const from = startMonth(data)
+  const biggest = data.biggest_month?.month ? data.biggest_month.month - 1 : values.indexOf(max)
+  const cells = values.map((count, index) => ({
+    index,
+    count,
+    untracked: Boolean(from && index + 1 < from && count === 0),
+    top: index === biggest,
+    ratio: count / max,
+  }))
+  return { cells, max, few: values.reduce((a, b) => a + b, 0) < 12 }
+}
+
+/** "5 weeks and 6 days" parts of a streak. */
+export const weeksAndDays = days => ({ weeks: Math.floor(num(days) / 7), days: num(days) % 7 })
+
+/**
+ * Money the way the mockups write it: whole amounts under 1,000 ("£182"), then three significant
+ * figures ("£1.4k", "£1.52k", "£12.3k", "£1.2M"). With hide-values on every amount is "£•••".
+ */
+export function wrappedMoney({ symbol = '€', rate = 1, hidden = false } = {}) {
+  return amount => {
+    if (hidden) return `${symbol}•••`
+    const value = Math.abs(num(amount) * rate)
+    const trim = text => (text.includes('.') ? text.replace(/\.?0+$/, '') : text)
+    if (value < 1000) return `${symbol}${Math.round(value)}`
+    if (value < 1e6) return `${symbol}${trim((value / 1000).toPrecision(3))}k`
+    return `${symbol}${trim((value / 1e6).toPrecision(3))}M`
+  }
+}
+
+/**
+ * The value chart in the mockup's 344 × 310 box: points from the first tracked month to the
+ * last (x 10–334, y 270 at the lowest value up to 50 at the highest), month ticks every other
+ * month, and the peak. Uses `series` when the API sends it, else start, peak and end.
+ */
+export function valueChart(value) {
+  const series = Array.isArray(value?.series) && value.series.length
+    ? value.series.map(point => ({ month: num(point.month), value: num(point.value) }))
+    : null
+  const monthOf = iso => Number(String(iso || '').split('-')[1]) || null
+  const points = series || [
+    { month: monthOf(value?.start_date) || 1, value: num(value?.start) },
+    { month: monthOf(value?.peak_date) || 6, value: num(value?.peak) },
+    { month: 12, value: num(value?.end) },
+  ].sort((a, b) => a.month - b.month)
+  const first = points[0].month
+  const last = Math.max(points.at(-1).month, first + 1)
+  const values = points.map(p => p.value)
   const min = Math.min(...values)
   const span = Math.max(...values) - min || 1
-  return values.map((v, index) => ({ x: values.length === 1 ? 0 : index / (values.length - 1), y: (v - min) / span }))
-}
-
-/** The picture's blocks, as for the weekly recap (progress/shareImage blocksSpec). Amounts are flagged for masking. */
-export function wrappedBlocks({ data, t, money, locale, showDaily }) {
-  const totals = data.totals || {}
-  const blocks = [{ type: 'number', value: thousands(totals.cards, locale), label: t('wrapped.sharedCards') }]
-  if (data.best_pull) {
-    blocks.push({
-      type: 'card',
-      url: data.best_pull.image,
-      label: num(data.best_pull.price) > 0 ? `${data.best_pull.name} · ${money(data.best_pull.price)}` : data.best_pull.name,
-      amount: num(data.best_pull.price) > 0,
-    })
-  }
-  if (data.top_pokemon) {
-    blocks.push({ type: 'line', text: fill(t('wrapped.sharedPokemon'), { name: data.top_pokemon.name }) })
-  }
-  const sets = num(totals.sets_completed)
-  const streak = showDaily ? num(data.longest_streak) : 0
-  if (sets > 0 || streak > 0) {
-    const parts = []
-    if (sets > 0) parts.push(fill(t(sets === 1 ? 'wrapped.sharedSetsOne' : 'wrapped.sharedSets'), { count: sets }))
-    if (streak > 0) parts.push(fill(t('wrapped.sharedStreak'), { count: streak }))
-    blocks.push({ type: 'line', text: parts.join(' · ') })
-  }
-  if (data.value) {
-    blocks.push({ type: 'line', text: fill(t('wrapped.sharedValue'), { amount: money(data.value.end) }), amount: true })
-  }
-  if (num(data.badges_earned) > 0) {
-    blocks.push({ type: 'line', text: fill(t('wrapped.sharedBadges'), { count: data.badges_earned }) })
-  }
-  return blocks
-}
-
-export function wrappedShareSpec({ data, t, money, locale, showDaily, hideValues, name, accent, fontFamily }) {
-  return blocksSpec({
-    format: 'story',
-    appName: t('wtp.shareApp'),
-    title: fill(t('wrapped.shareTitle'), { year: data.year }),
-    subtitle: name || '',
-    blocks: wrappedBlocks({ data, t, money, locale, showDaily }),
-    hideValues,
-    accent,
-    fontFamily,
-  })
+  const xy = points.map(p => ({
+    ...p,
+    x: Math.round(10 + ((p.month - first) / (last - first)) * 324),
+    y: Math.round(270 - ((p.value - min) / span) * 220),
+  }))
+  if (xy.length === 1) xy.push({ ...xy[0], x: 334 })
+  const peak = xy.reduce((best, p, i) => (p.value > xy[best].value ? i : best), 0)
+  const ticks = []
+  for (let m = first; m <= last; m += 2) ticks.push({ month: m, x: Math.round(10 + ((m - first) / (last - first)) * 324) })
+  return { points: xy, peak, ticks, first, last }
 }

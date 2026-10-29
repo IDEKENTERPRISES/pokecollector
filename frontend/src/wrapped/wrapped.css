@@ -1,0 +1,44 @@
+/* Wrapped v2 (engagement P9c). The display face is Archivo (SIL OFL 1.1, fonts/OFL.txt), cut to the
+   mockups' condensed width (wdth 70) and to weights 800–900, latin and latin-ext only. It ships in
+   the bundle and is precached with it, so Wrapped and its share pictures work offline and no font is
+   fetched from a third party. The rest of the app keeps its own fonts. */
+@font-face {
+  font-family: 'Archivo Wrapped';
+  font-style: normal;
+  font-weight: 800 900;
+  font-display: swap;
+  src: url('./fonts/archivo-wrapped-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Archivo Wrapped';
+  font-style: normal;
+  font-weight: 800 900;
+  font-display: swap;
+  src: url('./fonts/archivo-wrapped-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* Motion (§2.5) runs on transforms and opacity only, and only without Reduce Motion: there the
+   final frame shows at once. */
+@keyframes wp-pop { from { opacity: 0; transform: scale(0.82); } to { opacity: 1; transform: none; } }
+@keyframes wp-grow { from { transform: scaleY(0); } to { transform: none; } }
+@keyframes wp-grow-x { from { transform: scaleX(0); } to { transform: none; } }
+@keyframes wp-flip { from { opacity: 0; transform: perspective(900px) rotateY(80deg) scale(0.9); } to { opacity: 1; transform: none; } }
+@keyframes wp-sheen { 0%, 100% { opacity: 0.75; transform: translateX(-6%); } 50% { opacity: 1; transform: translateX(6%); } }
+@keyframes wp-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes wp-fan { from { opacity: 0; transform: translateY(40px); } to { opacity: 1; transform: none; } }
+@keyframes wp-sheet { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes wp-shimmer { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+
+@media (prefers-reduced-motion: no-preference) {
+  .wp-pop { animation: wp-pop 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+  .wp-grow { transform-origin: bottom; animation: wp-grow 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+  .wp-grow-x { transform-origin: left; animation: wp-grow-x 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+  .wp-flip { animation: wp-flip 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+  .wp-sheen { animation: wp-sheen 4s ease-in-out infinite; }
+  .wp-draw { stroke-dasharray: 1; animation: wp-draw 1.2s ease-out both; }
+  .wp-fan { animation: wp-fan 0.6s ease-out both; }
+  .wp-sheet { animation: wp-sheet 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
+  .wp-shimmer { animation: wp-shimmer 1.2s ease-in-out infinite; }
+}
