@@ -11,7 +11,12 @@ export function useWrapped(year) {
   const { user } = useAuth()
   return useQuery({
     queryKey: ['wrapped', user?.id, year],
-    queryFn: () => getWrapped(year),
+    queryFn: async () => {
+      const data = await getWrapped(year)
+      // Anything but a real year in review (an empty body, say) counts as not available.
+      if (!data?.year || !data.totals) throw new Error('Wrapped is not available')
+      return data
+    },
     enabled: Boolean(user?.id),
     staleTime: 10 * 60 * 1000,
     retry: false,
