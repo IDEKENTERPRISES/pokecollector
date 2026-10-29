@@ -65,7 +65,7 @@ def on_this_day(db: Session, user_id: int, now: datetime.datetime | None = None)
         rows.append({
             "year": year,
             "count": sum(int(i.quantity or 1) for i in group),
-            "cards": [_card_summary(i.card) for i in group[:OTD_THUMBS_PER_YEAR]],
+            "cards": [{**_card_summary(i.card), "item_id": i.id} for i in group[:OTD_THUMBS_PER_YEAR]],
         })
     return {
         "date": today.isoformat(),

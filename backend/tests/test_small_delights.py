@@ -50,6 +50,7 @@ class OnThisDayTests(ProgressTestBase):
         self.assertEqual([y["year"] for y in result["years"]], [2024])
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["years"][0]["cards"][0]["card_id"], "tst-001_en")
+        self.assertEqual(result["years"][0]["cards"][0]["item_id"], self.db.query(CollectionItem).filter_by(card_id="tst-001_en").one().id)
 
     def test_falls_back_to_added_at_and_acquired_at_wins(self):
         self.own("tst-001", added_at=datetime.datetime(2023, 10, 28, 8))
