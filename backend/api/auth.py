@@ -425,6 +425,7 @@ def delete_user(
         UserAchievement,
         UserDailyActivity,
         UserEvent,
+        UserGoal,
         UserSetting,
         UserXpLedger,
         WishlistItem,
@@ -458,7 +459,7 @@ def delete_user(
     db.query(PortfolioSnapshot).filter(PortfolioSnapshot.user_id == user_id).delete()
     db.query(UserSetting).filter(UserSetting.user_id == user_id).delete()
     for progress_model in (
-        UserAchievement, UserDailyActivity, UserEvent, UserXpLedger, ProgressState, NotificationQueue,
+        UserAchievement, UserDailyActivity, UserEvent, UserGoal, UserXpLedger, ProgressState, NotificationQueue,
     ):
         db.query(progress_model).filter(progress_model.user_id == user_id).delete(
             synchronize_session=False

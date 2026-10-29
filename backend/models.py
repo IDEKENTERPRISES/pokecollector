@@ -972,6 +972,23 @@ class UserEvent(Base):
     __table_args__ = (UniqueConstraint("user_id", "dedupe_key", name="uq_user_event_dedupe"),)
 
 
+class UserGoal(Base):
+    """A chase goal: a rule over the catalogue (a set, a generation, a family, an artist, a card list)."""
+
+    __tablename__ = "user_goals"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String(24), nullable=False)
+    params = Column(JSON, nullable=False, default=dict)
+    pinned = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    updated_at = Column(DateTime, nullable=False, default=func.now(), onupdate=func.now())
+    completed_at = Column(DateTime, nullable=True)
+    # Milestone thresholds (50/75/90/100) already recorded; NULL until the first evaluation backfills them silently.
+    milestones = Column(JSON, nullable=True)
+
+
 class UserDailyActivity(Base):
     """One row per user per local day the app was opened."""
 
