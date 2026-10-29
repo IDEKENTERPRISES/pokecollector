@@ -21,6 +21,8 @@ services:
     container_name: pokemonlocal-nonprod-backend
     environment:
       TELEGRAM_ENABLED: "false"
+      # Wrapped opens outside 1 December to 15 January here, for testing (docs/NONPROD.md).
+      WRAPPED_PREVIEW: "1"
     # Same container paths as the base and Portainer files, so these replace their mounts.
     volumes:
       - /home/rage/Documents/docker/pokelocal-nonprod/backups:/app/backups
