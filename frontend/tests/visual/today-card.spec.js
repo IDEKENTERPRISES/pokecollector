@@ -59,7 +59,7 @@ const summaryFor = (date, state) => ({
 })
 
 async function install(page, { showDaily = true, answerFails = false } = {}) {
-  const state = { answers: [], answerFails, views: 0 }
+  const state = { answers: [], answerFails, views: 0, refused: 0 }
   await page.addInitScript(({ user, show }) => {
     localStorage.setItem('token', 'today-test-token')
     localStorage.setItem('user', JSON.stringify(user))
@@ -82,7 +82,10 @@ async function install(page, { showDaily = true, answerFails = false } = {}) {
       return route.fulfill({ json: summaryFor(today(), state) })
     }
     if (path === '/api/progress/wtp/answer') {
-      if (state.answerFails) return route.fulfill({ status: 502, json: { detail: 'down' } })
+      if (state.answerFails) {
+        state.refused += 1
+        return route.fulfill({ status: 502, json: { detail: 'down' } })
+      }
       const body = request.postDataJSON()
       state.answers.push(body)
       return route.fulfill({ json: { correct: body.dex_id === 25, answer: 25, chosen: body.dex_id, today: summaryFor(today(), state) } })
@@ -157,6 +160,9 @@ test('an answer given while the server is unreachable is kept and sent when it i
   await expect(page.getByText('Saved. It will be sent when you are back online.')).toBeVisible()
   expect(state.answers).toEqual([])
 
+  // The refused send must have finished: an online event during a running send is ignored by design.
+  await expect.poll(() => state.refused).toBeGreaterThan(0)
+  await page.waitForTimeout(300)
   state.answerFails = false
   await page.evaluate(() => window.dispatchEvent(new Event('online')))
   await expect.poll(() => state.answers).toEqual([{ date: today(), dex_id: 7 }])
