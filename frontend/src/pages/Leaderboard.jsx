@@ -10,6 +10,7 @@ import { typeVar } from '../components/ios/pokemon'
 import { resolveCardImageUrl } from '../utils/imageUrl'
 import { CardIdentity } from '../components/card-system'
 import { CardModal } from '../components/CardItem'
+import ShowcaseStrip from '../delights/ShowcaseStrip'
 import { TrainerAvatar, countLabel, PODIUM_TYPES } from './socialParts'
 
 const NAV_BAR = {}
@@ -84,6 +85,7 @@ export default function Leaderboard() {
           {rows.map((trainer, index) => {
             const rank = index + 1
             const bestCard = trainer.most_valuable_card
+            const showcase = trainer.showcase ?? []
             const pnl = Number(trainer.pnl ?? 0)
             const positive = pnl >= 0
             const isSelf = trainer.user_id === currentUser?.id
@@ -152,7 +154,7 @@ export default function Leaderboard() {
                   </div>
                 </dl>
 
-                {(bestCard || !isSelf || trainer.public_handle) && (
+                {(bestCard || showcase.length > 0 || !isSelf || trainer.public_handle) && (
                   <div className="space-y-2 border-t border-border px-4 py-3">
                     {bestCard && (
                       <div>
@@ -167,6 +169,7 @@ export default function Leaderboard() {
                         />
                       </div>
                     )}
+                    <ShowcaseStrip cards={showcase} label={t('delights.showcase')} />
                     {(!isSelf || trainer.public_handle) && (
                       <div className="flex flex-wrap items-center gap-2">
                         {!isSelf && (

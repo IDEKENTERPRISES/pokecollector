@@ -120,6 +120,14 @@ class ShowcaseTests(ApiBase):
         self.db.commit()
         self.assertEqual(self.client.get("/api/public/profiles/ash").json()["showcase"][0]["market_value"], 5.0)
 
+    def test_leaderboard_shows_every_trainers_showcase_without_public_profiles(self):
+        mine = self.own("tst-001")
+        self.client.put("/api/profile/showcase", json={"ids": [mine.id]})
+        rows = {row["user_id"]: row for row in self.client.get("/api/social/leaderboard").json()}
+        self.assertEqual([c["id"] for c in rows[self.user.id]["showcase"]], [mine.id])
+        self.assertIsNone(rows[self.user.id]["showcase"][0]["market_value"])
+        self.assertEqual(rows[self.other.id]["showcase"], [])
+
     def test_nothing_is_exposed_while_the_profile_is_not_public(self):
         item = self.own("tst-001")
         self.client.put("/api/profile/showcase", json={"ids": [item.id]})
