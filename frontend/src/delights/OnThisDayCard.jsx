@@ -5,12 +5,14 @@ import { getOnThisDay } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { useSettings } from '../contexts/SettingsContext'
 import { localDateString } from '../progress/checkin'
+import { collectionItemTargetUrl } from '../utils/navigation'
 import { fill, hasOnThisDay } from './delights'
 
 /**
  * Home's On this day card (engagement P8): cards acquired on today's month and day in earlier years.
  * It renders nothing until there is something to show, so it never leaves an empty slot. The query
  * key carries the local date, so a new day fetches again and the read cache serves it offline.
+ * Each thumbnail opens that copy in the Collection.
  */
 export default function OnThisDayCard() {
   const { t } = useSettings()
@@ -44,13 +46,18 @@ export default function OnThisDayCard() {
             </p>
             <div className="flex gap-2">
               {group.cards.map(card => (
-                <img
-                  key={card.card_id}
-                  src={card.image}
-                  alt={card.name}
-                  loading="lazy"
-                  className="aspect-[5/7] w-[22%] max-w-[84px] rounded-md bg-fill-tertiary object-cover"
-                />
+                <Link
+                  key={card.item_id ?? card.card_id}
+                  to={collectionItemTargetUrl(card)}
+                  className="ios-press block aspect-[5/7] w-[22%] max-w-[84px] rounded-md focus-visible:outline-2 focus-visible:outline-tint"
+                >
+                  <img
+                    src={card.image}
+                    alt={card.name}
+                    loading="lazy"
+                    className="h-full w-full rounded-md bg-fill-tertiary object-cover"
+                  />
+                </Link>
               ))}
             </div>
           </li>

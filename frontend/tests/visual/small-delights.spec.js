@@ -22,8 +22,8 @@ const ON_THIS_DAY = {
   day: 28,
   total: 3,
   years: [
-    { year: 2025, count: 2, cards: [{ card_id: 'a_en', name: 'Charizard', image: '/api/images/card/a_en/small' }, { card_id: 'b_en', name: 'Pikachu', image: '/api/images/card/b_en/small' }] },
-    { year: 2023, count: 1, cards: [{ card_id: 'c_en', name: 'Eevee', image: '/api/images/card/c_en/small' }] },
+    { year: 2025, count: 2, cards: [{ card_id: 'a_en', item_id: 11, name: 'Charizard', image: '/api/images/card/a_en/small' }, { card_id: 'b_en', item_id: 12, name: 'Pikachu', image: '/api/images/card/b_en/small' }] },
+    { year: 2023, count: 1, cards: [{ card_id: 'c_en', item_id: 13, name: 'Eevee', image: '/api/images/card/c_en/small' }] },
   ],
 }
 
@@ -127,6 +127,7 @@ test('On this day shows the years and thumbnails, and is absent when nothing was
   await expect(card).toContainText('3 cards joined your collection on this day')
   await expect(page.getByTestId('on-this-day-2025')).toContainText('2 cards')
   await expect(page.getByTestId('on-this-day-2023').getByRole('img', { name: 'Eevee' })).toBeVisible()
+  await expect(page.getByTestId('on-this-day-2023').getByRole('link', { name: 'Eevee' })).toHaveAttribute('href', '/collection?itemId=13')
   await expect(card.getByRole('link', { name: 'See them' })).toHaveAttribute('href', /\/collection\?sort=acquired_at/)
 })
 
