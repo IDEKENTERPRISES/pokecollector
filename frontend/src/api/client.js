@@ -497,6 +497,7 @@ export const sendTestPush = () => api.post('/push/test').then(r => r.data)
 
 // Small delights (engagement P8)
 export const getOnThisDay = () => api.get('/progress/on-this-day').then(r => r.data)
+export const getWeeklyRecap = () => api.get('/progress/recap/weekly').then(r => r.data)
 export const getCollectionDna = () => api.get('/analytics/dna').then(r => r.data)
 export const getShowcase = () => api.get('/profile/showcase').then(r => r.data)
 export const putShowcase = (ids) => api.put('/profile/showcase', { ids }).then(r => r.data)

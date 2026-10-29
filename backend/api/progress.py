@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from api.auth import get_current_user
 from database import get_db
 from models import User, UserAchievement, UserEvent
-from services import delights
+from services import delights, recap
 from services.progress import daily
 from services.progress.checkin import CheckinError, record_checkin
 from services.progress.state import mark_users_dirty
@@ -185,6 +185,30 @@ def answer_wtp(
     mark_users_dirty(db, [current_user.id])
     summary = daily.today_summary(db, current_user.id, day)
     return {"correct": bool(stored.get("correct")), "answer": answer, "chosen": stored.get("dex_id"), "today": summary}
+
+
+@router.get("/recap/weekly")
+def weekly_recap(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The last complete Monday–Sunday week (the ending week from Sunday 18:00 local time)."""
+    return recap.weekly_recap(db, current_user.id)
+
+
+@router.get("/wrapped")
+def wrapped(
+    year: int = Query(..., ge=2000, le=2100),
+    preview_date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """A year in review, available 1 December to 15 January. `preview_date` pretends it is that day
+    and works only when the WRAPPED_PREVIEW environment variable is set."""
+    today = None
+    if preview_date and recap.preview_enabled():
+        today = datetime.date.fromisoformat(preview_date)
+    try:
+        return recap.wrapped(db, current_user.id, year, today)
+    except recap.WrappedUnavailable:
+        raise HTTPException(status_code=404, detail="Wrapped is not available yet")
 
 
 @router.get("/on-this-day")

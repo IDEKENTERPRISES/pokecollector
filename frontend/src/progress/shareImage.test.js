@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   SHARE_HEIGHT, SHARE_WIDTH, canShareFile, dateLabel, drawShareImage, renderShareImage, shareFile, shareImageSpec,
-  sharePicture, silhouetteOf,
+  blocksSpec, drawBlocksImage, renderBlocksImage, sharePicture, silhouetteOf,
 } from './shareImage'
 
 const words = key => ({
@@ -224,5 +224,65 @@ describe('sharing the picture', () => {
     const { doc, link } = documentWithLink()
     expect(await sharePicture(blob, { nav, doc, urls })).toBe('downloaded')
     expect(link.click).toHaveBeenCalled()
+  })
+})
+
+describe('blocksSpec (generic share pictures)', () => {
+  const blocks = [
+    { type: 'number', value: '12', label: 'cards added' },
+    { type: 'number', value: '+€4.20', label: 'value change', amount: true },
+    { type: 'card', url: '/api/images/card/a_en/small', label: 'Charizard · €30.00', amount: true },
+    { type: 'line', text: 'Base Set: 2 missing' },
+  ]
+  const build = extra => blocksSpec({ appName: 'PokéCollector', title: 'My week', blocks, accent: '#112233', ...extra })
+
+  it('is 1080x1920 as a story and 1080x1080 as a square', () => {
+    expect([build().width, build().height]).toEqual([1080, 1920])
+    expect([build({ format: 'square' }).width, build({ format: 'square' }).height]).toEqual([1080, 1080])
+  })
+
+  it('keeps every block inside the frame, shrinking them in the square', () => {
+    for (const format of ['story', 'square']) {
+      const picture = build({ format })
+      const last = picture.blocks[picture.blocks.length - 1]
+      expect(last.y + last.height).toBeLessThanOrEqual(picture.height)
+      expect(picture.blocks[0].y).toBeGreaterThan(0)
+    }
+    expect(build().scale).toBe(1)
+    expect(build({ format: 'square' }).scale).toBeLessThan(1)
+  })
+
+  it('masks amounts, and only amounts, when hide-values is on', () => {
+    const shown = build()
+    expect(shown.blocks[1].value).toBe('+€4.20')
+    expect(shown.blocks[2].label).toBe('Charizard · €30.00')
+    const hidden = build({ hideValues: true })
+    expect(hidden.blocks[0].value).toBe('12')
+    expect(hidden.blocks[1].value).toBe('••••')
+    expect(hidden.blocks[2].label).toBe('••••')
+    expect(hidden.blocks[3].text).toBe('Base Set: 2 missing')
+    expect(JSON.stringify(hidden)).not.toContain('4.20')
+  })
+
+  it('draws the title, the numbers and the card image on a canvas', () => {
+    const ctx = recordingContext()
+    const image = { id: 'img' }
+    drawBlocksImage(ctx, build(), { 2: image })
+    const texts = ctx.calls.filter(call => call[0] === 'fillText').map(call => call[1])
+    expect(texts).toEqual(expect.arrayContaining(['My week', '12', 'cards added', 'Base Set: 2 missing']))
+    expect(ctx.calls.some(call => call[0] === 'drawImage' && call[1] === image)).toBe(true)
+  })
+
+  it('renders a PNG blob, and retries without card images when the canvas is tainted', async () => {
+    const blob = new Blob(['x'], { type: 'image/png' })
+    let drawn = 0
+    const createCanvas = () => ({
+      getContext: () => recordingContext(),
+      toBlob: (done) => { drawn += 1; done(drawn === 1 ? null : blob) },
+    })
+    const load = vi.fn().mockResolvedValue({ id: 'img' })
+    expect(await renderBlocksImage(build(), { createCanvas, load })).toBe(blob)
+    expect(load).toHaveBeenCalledWith('/api/images/card/a_en/small')
+    expect(drawn).toBe(2)
   })
 })

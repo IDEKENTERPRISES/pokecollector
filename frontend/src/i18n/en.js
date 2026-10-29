@@ -2430,6 +2430,8 @@ const en = {
     bigMoversDesc: 'Cards that moved by your price-alert percentage. In the daily digest.',
     badges: 'Badges',
     badgesDesc: 'When you earn a badge. Sent right away, naming the badge.',
+    weeklyRecap: 'Weekly recap',
+    weeklyRecapDesc: 'Sunday at 18:00, only after a week with something in it. Off by default.',
     digestTime: 'Daily digest time',
     digestTimeDesc: 'One notification a day, in your time zone.',
     quietHours: 'Quiet hours',
@@ -2683,6 +2685,21 @@ const en = {
   },
 
   // Shared iPhone UI pieces (components/ios). Other languages show English until translated.
+  recap: {
+    title: 'Your week',
+    cardsAdded: 'Cards added',
+    valueChange: 'Value change',
+    bestPull: 'Best pull',
+    closestSet: '{set}: {missing} to go',
+    streak: '{count}-day streak',
+    badgesOne: '1 badge unlocked',
+    badges: '{count} badges unlocked',
+    share: 'Share recap',
+    shareTitle: 'My week',
+    shareFailed: "Couldn't make the picture.",
+    shareDownloaded: 'Picture saved.',
+  },
+
   delights: {
     onThisDay: 'On this day',
     onThisDayTotalOne: '1 card joined your collection on this day',
