@@ -53,7 +53,7 @@
 
 ## Previewing Wrapped
 
-`GET /api/progress/wrapped?year=2026` only answers from 1 December to 15 January (otherwise 404). To look at it on nonprod before then, set `WRAPPED_PREVIEW=1` in the backend's environment:
+`GET /api/progress/wrapped?year=2026` only answers from 1 December to 15 January (otherwise 404). To look at it on nonprod before then, set `WRAPPED_PREVIEW=1` in the backend's environment. `docker-compose.nonprod.yml` already sets it for the nonprod stack:
 
 - With it set, the date window is skipped.
 - `preview_date=YYYY-MM-DD` pretends it is that day (`/api/progress/wrapped?year=2026&preview_date=2026-12-05`) and still enforces the window for that date.
