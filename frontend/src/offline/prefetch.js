@@ -76,6 +76,7 @@ export function buildPrefetchPlan({ pricePrimaryField, language, userId, multiUs
     copyTask('collection-products', ['collection', 'products-linking']),
   ]
   if (userId != null) {
+    plan.push(fetchTask('goals', TIER.pages, ['goals', userId], () => client.getGoals()))
     plan.push(fetchTask('achievements', TIER.pages, ['achievements', userId, field], () => rows(client.getAchievements(userId, price))))
   }
   return plan.sort((a, b) => a.tier - b.tier)

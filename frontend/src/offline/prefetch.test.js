@@ -8,7 +8,7 @@ function fakeClient(overrides = {}) {
   const names = [
     'getCollection', 'getWishlist', 'getBinderCards', 'getDeck', 'getSets',
     'getDashboard', 'getInvestmentTracker', 'getProducts', 'getProductsSummary', 'getCustomCards',
-    'getTradeStats', 'getDuplicates', 'getRarityStats', 'getTopMovers', 'getAnalyticsNewSets', 'getAchievements',
+    'getTradeStats', 'getDuplicates', 'getRarityStats', 'getTopMovers', 'getAnalyticsNewSets', 'getAchievements', 'getGoals',
   ]
   const client = Object.fromEntries(names.map(name => [name, respond([])]))
   client.getProfile = vi.fn(async () => ({ is_profile_public: false }))
@@ -28,7 +28,7 @@ describe('buildPrefetchPlan', () => {
   it('uses the keys the pages use, including the key the offline owned state reads', () => {
     for (const key of [
       ['collection', {}], ['wishlist'], ['binders'], ['decks'], ['sets', 'all'], ['dashboard', 'market'],
-      ['investment-tracker', '1M', 'market'], ['profile'], ['products', 'market'], ['trades'], ['achievements', 7, 'market'],
+      ['investment-tracker', '1M', 'market'], ['profile'], ['products', 'market'], ['trades'], ['achievements', 7, 'market'], ['goals', 7],
       ['sets', 'en'], ['collection'], ['deck-picker-collection'], ['collection', 'trades'], ['collection', 'products-linking'],
     ]) expect(ids).toContain(JSON.stringify(key))
   })

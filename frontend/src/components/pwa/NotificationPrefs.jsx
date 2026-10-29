@@ -10,6 +10,7 @@ export const NOTIFY_CATEGORIES = [
   { id: 'big_movers', fallback: false, label: 'notifyPrefs.bigMovers', desc: 'notifyPrefs.bigMoversDesc' },
   { id: 'badges', fallback: true, label: 'notifyPrefs.badges', desc: 'notifyPrefs.badgesDesc' },
   { id: 'weekly_recap', fallback: false, label: 'notifyPrefs.weeklyRecap', desc: 'notifyPrefs.weeklyRecapDesc' },
+  { id: 'goal_milestones', fallback: true, label: 'notifyPrefs.goalMilestones', desc: 'notifyPrefs.goalMilestonesDesc' },
 ]
 export const DIGEST_HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
 

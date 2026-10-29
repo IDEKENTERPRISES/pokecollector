@@ -224,6 +224,17 @@ def _evaluate_daily(db: Session, user_id: int) -> None:
     db.flush()
 
 
+def _evaluate_goals(db: Session, user_id: int, now) -> None:
+    """Goal milestones; a failing goal never blocks the rest of the evaluation."""
+    from services import goals
+
+    try:
+        with db.begin_nested():
+            goals.evaluate_goals(db, user_id, now)
+    except Exception:
+        logger.exception("Goal evaluation failed for user %s", user_id)
+
+
 def evaluate_user(db: Session, user_id: int) -> bool:
     """Evaluate one user in a single transaction. Returns False if the user is gone."""
     from api.social import _load_user_stats  # lazy, not moved: keeps the upstream diff small
@@ -257,6 +268,7 @@ def evaluate_user(db: Session, user_id: int) -> bool:
         _evaluate_sets(db, user_id, state, first, started)
         _evaluate_big_pulls(db, user_id, state, price_field, first, started)
         _evaluate_daily(db, user_id)
+        _evaluate_goals(db, user_id, started)
 
         state.evaluated_at = started
         db.flush()
