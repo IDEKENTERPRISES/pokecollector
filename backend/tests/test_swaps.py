@@ -566,7 +566,7 @@ class NotificationTests(SwapBase):
             notifications.flush_due(self.db, now=NEXT_NOON)
         self.assertEqual([uid for uid, _ in sent], [self.misty.id])
         payload = sent[0][1]
-        self.assertEqual(payload["notification"]["body"], "ash offered Big One (BIG 1) for your Test Two (TST 2)")
+        self.assertEqual(payload["notification"]["body"], "ash offered Tst-002 (TST 002) for your Big-001 (BIG 001)")
         self.assertEqual(payload["app_badge"], 1)
 
         from models import UserSetting
@@ -642,8 +642,8 @@ class PushTextTests(SwapBase):
     def test_queued_details_hold_labels_and_no_amount(self):
         offer = self.propose(cash=2.5, payer=self.misty)
         details = self.queue(self.misty)[0].details
-        self.assertEqual(details["get_cards"], ["Big One (BIG 1)"])
-        self.assertEqual(details["give_cards"], ["Test Two (TST 2)"])
+        self.assertEqual(details["get_cards"], ["Tst-002 (TST 002)"])
+        self.assertEqual(details["give_cards"], ["Big-001 (BIG 001)"])
         self.assertTrue(details["cash"])
         self.assertNotIn("2.5", json.dumps(details))
         self.assertEqual(details["offer_id"], offer["id"])
@@ -679,14 +679,14 @@ class ChangesTests(SwapBase):
     def test_a_counter_lists_what_it_changed_from_the_viewers_side(self):
         offer = self.propose(note="Hello")
         response = self.act(self.misty, offer["id"], "counter", self.counter_body(
-            [(self.a2, 1), (self.a1, 1), (self.m2, 1)], cash=3, payer=self.ash, note="Pikachu makes it fair"))
+            [(self.a1, 1), (self.m2, 1)], cash=3, payer=self.ash, note="Pikachu makes it fair"))
         self.assertEqual(response.status_code, 200, response.text)
         by_kind = {}
         for c in response.json()["changes"]:
             by_kind.setdefault(c["change"], []).append(c)
-        # Misty (the viewer) now offers big-002 instead of the spare big-001; asks tst-001 in addition
-        self.assertEqual([(c["card_name"], c["gives"]) for c in by_kind["added"]], [("Test One", False), ("Big Two", True)])
-        self.assertEqual([(c["card_name"], c["gives"]) for c in by_kind["removed"]], [("Big One", True)])
+        # Misty (the viewer) now asks Ash's spare tst-001 and gives big-002 instead of tst-002 and the spare big-001
+        self.assertEqual([(c["card_name"], c["gives"]) for c in by_kind["added"]], [("Tst-001", False), ("Big-002", True)])
+        self.assertEqual([(c["card_name"], c["gives"]) for c in by_kind["removed"]], [("Tst-002", False), ("Big-001", True)])
         self.assertEqual(by_kind["cash"][0]["to"], {"amount": 3.0, "payer_user_id": self.ash.id})
         self.assertEqual(by_kind["note"][0]["to"], "Pikachu makes it fair")
         self.as_user(self.ash)
@@ -695,14 +695,16 @@ class ChangesTests(SwapBase):
 
     def test_quantity_changes(self):
         offer = self.propose([(self.a1, 1), (self.m1, 1)])
-        response = self.act(self.misty, offer["id"], "counter", self.counter_body([(self.a1, 2), (self.m1, 1)]))
+        response = self.act(self.misty, offer["id"], "counter", self.counter_body([(self.a1, 1), (self.m1, 2)]))
+        self.assertEqual(response.status_code, 200, response.text)
         changes = response.json()["changes"]
         self.assertEqual([(c["change"], c["from"], c["to"]) for c in changes], [("quantity", 1, 2)])
 
     def test_the_next_counter_replaces_the_changes(self):
         offer = self.propose()
-        self.act(self.misty, offer["id"], "counter", self.counter_body([(self.a2, 1)], note="x"))
-        response = self.act(self.ash, offer["id"], "counter", self.counter_body([(self.a2, 1), (self.m1, 1)]))
+        self.act(self.misty, offer["id"], "counter", self.counter_body([(self.a1, 1), (self.m1, 1)], note="x"))
+        response = self.act(self.ash, offer["id"], "counter", self.counter_body([(self.a1, 1), (self.a2, 1), (self.m1, 1)]))
+        self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual([c["change"] for c in response.json()["changes"]], ["added", "note"])
 
 
@@ -717,8 +719,8 @@ class UnavailableTests(SwapBase):
             self.as_user(user)
             problems = self.client.get(f"/api/swaps/{offer_id}").json()["unavailable"]
             self.assertEqual([(p["card_name"], p["giver_user_id"], p["needed"], p["available"]) for p in problems],
-                             [("Test Two", self.ash.id, 1, 0)])
-        self.assertEqual(self.client.get("/api/swaps").json()["outgoing"][0]["unavailable"][0]["card_name"], "Test Two")
+                             [("Tst-002", self.ash.id, 1, 0)])
+        self.assertEqual(self.client.get("/api/swaps").json()["incoming"][0]["unavailable"][0]["card_name"], "Tst-002")
 
     def test_only_accepted_offers_carry_it(self):
         offer = self.propose()
@@ -781,7 +783,7 @@ class CandidateTests(SwapBase):
         self.assertEqual(data["counts"]["wishlist"], 1)
 
     def test_search_and_values_use_your_price_field(self):
-        self.assertEqual(self.get(self.ash, side="give", q="two").json()["items"][0]["card_id"], "tst-002_en")
+        self.assertEqual(self.get(self.ash, side="give", q="002").json()["items"][0]["card_id"], "tst-002_en")
         self.assertEqual(self.get(self.ash, side="give", q="nothing").json()["items"], [])
         self.assertEqual(self.get(self.ash, side="give").json()["items"][1]["value"], 5.0)
 
