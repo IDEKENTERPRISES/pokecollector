@@ -768,6 +768,17 @@ The badge itself celebrates through the existing unlock sheet (`S3ChallengeBadge
 - Tables: `challenge_weeks (week, challenge_id, closed_at)` and `challenge_progress (week, user_id, progress, finished_at, place)`, the latter in user deletion and `BACKUP_GROUPS["users"]`.
 - The week closes in a scheduler job at 00:05 on Monday. It stores the places and writes `challenge_finished` events.
 
+### 7.8 As built (P13a)
+
+Backend in `services/challenge.py`, `GET /api/challenge`. Where it differs from §7.1 and §7.7:
+- **Podium** is the highest count by Sunday 23:59 UK time, ties to whoever reached that count first (`challenge_progress.reached_at`); everyone who reaches the target (`finished_at`) still gets the finisher XP, the `challenge_finished` event and the badge. Places go only to trainers on the board with a count above zero. In the current week `place` in `board` and `me` is the provisional standing.
+- **Week** is Monday 00:00 to Sunday 23:59 in Europe/London; `starts_at` and `ends_at` carry the UK offset.
+- **Catalogue** (effort-based, nothing a purchase wins): `binder_cards` 15, `open_days` 5, `quests_done` 8, `wtp_days` 4, `new_species` 5, `sets_touched` 3. Weeks are dealt in shuffled rounds of the whole catalogue, so none repeats two weeks running. The strings go in en.js under `challenge.<id>` with the screens.
+- **Tables** also keep `trainer_count` and `finished_count` on `challenge_weeks`, frozen at close, for the result card.
+- **Closing** is `close_due_weeks`: Monday 00:05 UK and once after every start-up; it recounts every active trainer, so downtime loses nothing. The badge family `challenge_1/5/20` counts finished challenges in closed weeks, so the evaluator grants it (unlock sheet and "badges" push) within one dirty cycle of the close.
+- `challenge_on_board` (default on) is a user setting; off-board trainers play and earn but never place and have no event.
+- No push at close yet.
+
 ## 8. Accessibility, hide-values, motion and safe areas
 
 **Hide-values** (`useHideValues`, `maskValue` → "••••") masks:

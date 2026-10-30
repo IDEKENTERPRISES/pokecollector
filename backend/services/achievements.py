@@ -19,7 +19,7 @@ TRACKS = ("collection", "sets", "value", "pokedex", "variety", "explorer", "trad
 # Stored in progress_state.state_version. Bump it when badges are added; an entry's `since` is the
 # registry version that introduced it, and badges a trainer already qualifies for when the version
 # rises unlock silently (backfilled) instead of flooding them with sheets and pushes.
-REGISTRY_VERSION = 3
+REGISTRY_VERSION = 4
 
 ENERGY_TYPES = (
     "grass", "fire", "water", "lightning", "psychic", "fighting",
@@ -135,6 +135,11 @@ _NEW = (
         _entry("quests_50", "quests50", "Quest Seeker", "quests_done", 50, "daily", "silver", "quest", family="quests", since=3),
         _entry("quests_200", "quests200", "Quest Legend", "quests_done", 200, "daily", "gold", "quest", family="quests", since=3),
     ]
+    # Weekly challenges (P13, registry version 4): the badge family counts finished challenges.
+    + [_entry(f"challenge_{n}", f"challenge{n}", name, "challenges_finished", n, "daily", tier, "trophy",
+              family="challenge", since=4)
+       for n, name, tier in ((1, "Weekly Challenger", "bronze"), (5, "Challenge Regular", "silver"),
+                             (20, "Challenge Legend", "gold"))]
 )
 
 
@@ -289,4 +294,7 @@ def _master_sets(db: Session, owned_by_set: dict, owned_variants: dict) -> int:
 def metrics_for(db: Session, user_id: int, base_stats: dict) -> dict:
     from services.progress.daily import daily_stats
 
-    return {**base_stats, **extra_stats(db, user_id), **daily_stats(db, user_id)}
+    from services.challenge import finished_count
+
+    return {**base_stats, **extra_stats(db, user_id), **daily_stats(db, user_id),
+            "challenges_finished": finished_count(db, user_id)}
