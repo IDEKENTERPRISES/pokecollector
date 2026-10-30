@@ -14,6 +14,7 @@ import ListRow from '../components/ios/ListRow'
 import ListSection from '../components/ios/ListSection'
 import PageSheet from '../components/ios/PageSheet'
 import SearchField from '../components/ios/SearchField'
+import SegmentedControl from '../components/ios/SegmentedControl'
 import GoalRing from '../goals/GoalRing'
 import { GOAL_KINDS, KIND_LABEL_KEYS, goalPercent, goalsQueryKey, isGoalComplete, setGoalParams } from '../goals/goals'
 
@@ -192,6 +193,7 @@ function CustomPicker({ onCreate, t }) {
 
 function NewGoalSheet({ isOpen, onClose, onCreate, t }) {
   const [kind, setKind] = useState(null)
+  const [familyScope, setFamilyScope] = useState('each')
   const options = useQuery({ queryKey: ['goal-options'], queryFn: () => getGoalOptions(), enabled: isOpen })
   const close = () => { setKind(null); onClose() }
   const create = (goalKind, params) => onCreate(goalKind, params, close)
@@ -230,11 +232,26 @@ function NewGoalSheet({ isOpen, onClose, onCreate, t }) {
           />
         )}
         {kind === 'family' && (
-          <ListPicker
-            items={options.data?.families || []}
-            render={item => ({ key: `family-${item.id}`, title: item.name, subtitle: t('goals.speciesCount').replace('{count}', item.dex_ids.length) })}
-            onPick={item => create('family', { family: item.id })}
-          />
+          <>
+            <SegmentedControl
+              size="md"
+              ariaLabel={t('goals.familyScope')}
+              options={[
+                { value: 'each', label: t('goals.familyOneEach') },
+                { value: 'every', label: t('goals.familyEvery') },
+              ]}
+              value={familyScope}
+              onChange={setFamilyScope}
+            />
+            <p className="px-1 text-footnote text-text-secondary">
+              {t(familyScope === 'every' ? 'goals.familyEveryDesc' : 'goals.familyOneEachDesc')}
+            </p>
+            <ListPicker
+              items={options.data?.families || []}
+              render={item => ({ key: `family-${item.id}`, title: item.name, subtitle: t('goals.speciesCount').replace('{count}', item.dex_ids.length) })}
+              onPick={item => create('family', familyScope === 'every' ? { family: item.id, every: true } : { family: item.id })}
+            />
+          </>
         )}
         {kind === 'artist' && <ArtistPicker onCreate={create} t={t} />}
         {kind === 'custom' && <CustomPicker onCreate={create} t={t} />}

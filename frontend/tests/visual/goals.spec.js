@@ -137,6 +137,19 @@ test('creating a goal from the picker adds it to the list', async ({ page }) => 
   expect(state.created).toEqual([{ kind: 'generation', params: { generation: 1 }, pinned: true }])
 })
 
+test('an evolution family goal can ask for every card', async ({ page }) => {
+  const state = await install(page, { goals: [] })
+  await page.goto('/goals')
+
+  await page.getByRole('button', { name: 'New goal' }).first().click()
+  await page.getByTestId('kind-family').click()
+  await page.getByRole('radio', { name: 'Every card' }).click()
+  await expect(page.getByText('Every print of every Pokémon in the line')).toBeVisible()
+  await page.getByTestId('pick-family-eeveelutions').click()
+
+  await expect.poll(() => state.created).toEqual([{ kind: 'family', params: { family: 'eeveelutions', every: true }, pinned: true }])
+})
+
 test('adding the missing cards to the wishlist asks with a count first', async ({ page }) => {
   const state = await install(page)
   await page.goto('/goals/7')

@@ -104,7 +104,8 @@ def clean_params(db: Session, kind: str, params: dict | None) -> dict:
         family = str(params.get("family") or "").strip()
         if family not in family_by_id():
             raise GoalError("That evolution family does not exist")
-        return {"family": family}
+        # "every": every printing of the line; otherwise one card of each Pokémon in it.
+        return {"family": family, "every": True} if params.get("every") is True else {"family": family}
     if kind == "artist":
         artist = _clean_name(params.get("artist"))
         if not artist:
@@ -207,7 +208,15 @@ def resolve_units(ctx: GoalContext, goal) -> list[tuple]:
     if kind == "generation":
         return _species_units(ctx, generations().get(int(params.get("generation") or 0), {}).get("dex_ids", []))
     if kind == "family":
-        return _species_units(ctx, (family_by_id().get(params.get("family")) or {}).get("dex_ids", []))
+        dex_ids = (family_by_id().get(params.get("family")) or {}).get("dex_ids", [])
+        if not params.get("every"):
+            return _species_units(ctx, dex_ids)
+        species = ctx.species_cards()
+        rows = {row.id: row for dex_id in dex_ids for row in species.get(dex_id, [])}
+        grouped: dict[tuple, list] = {}
+        for row in sorted(rows.values(), key=lambda row: row.id):  # the same print in two languages is one unit
+            grouped.setdefault((row.set_id, row.number), []).append((row, None))
+        return list(grouped.items())
     if kind == "artist":
         artist = str(params.get("artist") or "").lower()
         rows = ctx.card_query().filter(
@@ -332,7 +341,8 @@ def goal_title(db: Session, goal) -> str:
         region = generations().get(gen, {}).get("region")
         return f"Generation {gen}" + (f" · {region}" if region else "")
     if kind == "family":
-        return (family_by_id().get(params.get("family")) or {}).get("name") or str(params.get("family"))
+        name = (family_by_id().get(params.get("family")) or {}).get("name") or str(params.get("family"))
+        return f"{name} (every card)" if params.get("every") else name
     if kind == "artist":
         return str(params.get("artist") or "")
     return params.get("name") or "Custom goal"

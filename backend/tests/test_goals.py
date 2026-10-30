@@ -134,6 +134,22 @@ class ProgressTests(GoalBase):
         result = self.progress(goal)
         self.assertEqual((result["owned"], result["total"]), (1, 2))
 
+    def test_family_goal_for_every_card_counts_each_print(self):
+        self.species("eevee-1", [133], price=2.0)
+        self.species("eevee-2", [133], price=3.0)
+        self.species("eevee-2", [133], price=3.0, lang="de")  # the same print in another language
+        self.species("vap-1", [134], price=4.0)
+        self.species("pika-1", [25])
+        self.db.add(Setting(key="tcgdex_sync_languages", value="en,de"))
+        self.db.commit()
+        goal = self.goal("family", {"family": "eeveelutions", "every": True})
+        self.db.add(CollectionItem(card_id="eevee-2_de", user_id=self.user.id, quantity=1, variant="Normal", lang="de"))
+        self.db.commit()
+        result = self.progress(goal)
+        self.assertEqual((result["owned"], result["total"]), (1, 3))
+        self.assertEqual(result["cost_to_finish"], 6.0)
+        self.assertEqual(goals.goal_title(self.db, goal), "Eevee and all Eeveelutions (every card)")
+
     def test_artist_goal_merges_languages_and_ignores_case(self):
         self.db.add_all([
             _card("art-001", set_id="art", artist="Mitsuhiro Arita"),
@@ -199,6 +215,12 @@ class ParamTests(GoalBase):
         self.assertEqual(
             goals.clean_params(self.db, "custom", {"card_ids": ["tst-001_en", "tst-001_en", "x"], "name": " My  list "}),
             {"card_ids": ["tst-001_en"], "name": "My list"},
+        )
+        family = goals.clean_params(self.db, "family", {"family": "eeveelutions", "every": "yes"})
+        self.assertEqual(family, {"family": "eeveelutions"})  # only a real true picks every card
+        self.assertEqual(
+            goals.clean_params(self.db, "family", {"family": "eeveelutions", "every": True}),
+            {"family": "eeveelutions", "every": True},
         )
 
 
