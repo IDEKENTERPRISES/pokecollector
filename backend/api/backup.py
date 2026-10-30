@@ -63,6 +63,8 @@ BACKUP_GROUPS = {
         "user_goals",
         "user_xp_ledger",
         "notification_queue",
+        "swap_offers",
+        "swap_offer_items",
     ],
     "cards": ["cards", "sets", "price_history", "custom_card_matches"],
     "products": [

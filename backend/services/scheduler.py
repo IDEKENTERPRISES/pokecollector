@@ -230,6 +230,22 @@ def run_notification_job():
         db.close()
 
 
+def run_swap_expiry_job():
+    """Expire swap offers nobody touched for 14 days: one indexed UPDATE."""
+    from database import SessionLocal
+    from services.swaps import expire_stale
+
+    db = SessionLocal()
+    try:
+        if expire_stale(db):
+            db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Swap offer expiry job failed")
+    finally:
+        db.close()
+
+
 def start_scheduler():
     """Start the background scheduler with separate full and small price sync jobs."""
     if not scheduler.running:
@@ -312,6 +328,18 @@ def start_scheduler():
             trigger=IntervalTrigger(seconds=_PROGRESS_NOTIFICATION_INTERVAL_SECONDS),
             id="notification_job",
             name="Notifications and Daily Digest",
+            replace_existing=True,
+            next_run_time=now_utc + datetime.timedelta(seconds=_PROGRESS_NOTIFICATION_INTERVAL_SECONDS),
+            misfire_grace_time=_SCAN_QUEUE_MISFIRE_GRACE_SECONDS,
+            coalesce=True,
+            max_instances=1,
+        )
+
+        scheduler.add_job(
+            run_swap_expiry_job,
+            trigger=IntervalTrigger(seconds=_PROGRESS_NOTIFICATION_INTERVAL_SECONDS),
+            id="swap_expiry_job",
+            name="Swap Offer Expiry",
             replace_existing=True,
             next_run_time=now_utc + datetime.timedelta(seconds=_PROGRESS_NOTIFICATION_INTERVAL_SECONDS),
             misfire_grace_time=_SCAN_QUEUE_MISFIRE_GRACE_SECONDS,

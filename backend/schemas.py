@@ -705,6 +705,7 @@ class TradeResponse(BaseModel):
     outgoing_value: float
     incoming_value: float
     value_delta: float
+    swap_offer_id: Optional[int] = None
     created_at: Optional[datetime] = None
     items: List[TradeItemResponse] = Field(default_factory=list)
 

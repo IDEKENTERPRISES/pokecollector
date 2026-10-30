@@ -421,6 +421,8 @@ def delete_user(
         ProductCard,
         ProductLedgerEntry,
         ProductPurchase,
+        SwapOffer,
+        SwapOfferItem,
         Trade,
         TradeItem,
         UserAchievement,
@@ -457,6 +459,19 @@ def delete_user(
     db.query(Trade).filter(Trade.user_id == user_id).delete(
         synchronize_session=False
     )
+    # Swap offers this trainer is part of go; the other trainer's logged trade stays, unlinked.
+    user_offer_ids = db.query(SwapOffer.id).filter(
+        (SwapOffer.from_user_id == user_id) | (SwapOffer.to_user_id == user_id)
+    )
+    db.query(Trade).filter(Trade.swap_offer_id.in_(user_offer_ids)).update(
+        {"swap_offer_id": None}, synchronize_session=False
+    )
+    db.query(SwapOfferItem).filter(SwapOfferItem.offer_id.in_(user_offer_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(SwapOffer).filter(
+        (SwapOffer.from_user_id == user_id) | (SwapOffer.to_user_id == user_id)
+    ).delete(synchronize_session=False)
     db.query(PortfolioSnapshot).filter(PortfolioSnapshot.user_id == user_id).delete()
     db.query(UserSetting).filter(UserSetting.user_id == user_id).delete()
     # Reactions first: the ones this trainer gave, and everyone's reactions to this trainer's events.

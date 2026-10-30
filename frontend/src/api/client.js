@@ -517,4 +517,18 @@ export const getFeed = (params) => api.get('/feed', { params }).then(r => r.data
 export const addFeedReaction = (eventId, kind) => api.put(`/feed/${eventId}/reactions/${kind}`).then(r => r.data)
 export const removeFeedReaction = (eventId, kind) => api.delete(`/feed/${eventId}/reactions/${kind}`).then(r => r.data)
 
+// Swap offers (engagement P11). All 404 while an admin keeps the social switch off.
+export const getSwaps = () => api.get('/swaps').then(r => r.data)
+export const getSwapsWaiting = () => api.get('/swaps/waiting').then(r => r.data)
+export const getSwap = (id) => api.get(`/swaps/${id}`).then(r => r.data)
+// body: { to_user_id, items: [{ collection_item_id, quantity }], cash_amount, cash_payer_user_id, note }
+export const createSwap = (body) => api.post('/swaps', body).then(r => r.data)
+// body: { items, cash_amount, cash_payer_user_id, note, revision }
+export const counterSwap = (id, body) => api.post(`/swaps/${id}/counter`, body).then(r => r.data)
+export const acceptSwap = (id, revision) => api.post(`/swaps/${id}/accept`, revision == null ? {} : { revision }).then(r => r.data)
+export const declineSwap = (id, revision) => api.post(`/swaps/${id}/decline`, revision == null ? {} : { revision }).then(r => r.data)
+export const cancelSwap = (id) => api.post(`/swaps/${id}/cancel`).then(r => r.data)
+// The second trainer's tap completes the swap; a 409 carries `unavailable` (the cards that are gone).
+export const confirmSwapped = (id) => api.post(`/swaps/${id}/confirm-swapped`).then(r => r.data)
+
 export default api
