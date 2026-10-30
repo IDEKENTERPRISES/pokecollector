@@ -579,6 +579,7 @@ export default function Settings() {
   const [wishlistVisibility, setWishlistVisibility] = useState('private')
   const [profileDirty, setProfileDirty] = useState(false)
   const [publicFeatureSaving, setPublicFeatureSaving] = useState(false)
+  const [socialSaving, setSocialSaving] = useState(false)
 
   const { data: profileData } = useQuery({
     queryKey: ['profile'],
@@ -744,6 +745,18 @@ export default function Settings() {
       toast.error(t('settings.saveFailed'))
     } finally {
       setPublicFeatureSaving(false)
+    }
+  }
+
+  const handleSocialToggle = async (enabled) => {
+    setSocialSaving(true)
+    try {
+      await updateSettings({ social_features_enabled: enabled ? 'true' : 'false' })
+      toast.success(t('settings.saved'))
+    } catch {
+      toast.error(t('settings.saveFailed'))
+    } finally {
+      setSocialSaving(false)
     }
   }
 
@@ -1267,6 +1280,26 @@ export default function Settings() {
                 {profileMutation.isPending ? t('common.saving') : t('common.save')}
               </button>
             </div>}
+          </section>}
+
+          {/* ── SOCIAL (milestone D: swap offers, activity feed, weekly challenge) ── */}
+          {activeSection === 'account' && multiUser && user?.role === 'admin' && <section className="space-y-1">
+            <SectionHeader title={t('settings.sectionSocial')} />
+            <SettingsCard>
+              <SettingsRow
+                label={t('settings.socialGlobal')}
+                description={settings.social_features_enabled === 'true'
+                  ? t('settings.socialGlobalEnabledDesc')
+                  : t('settings.socialGlobalDisabledDesc')}
+              >
+                <Toggle
+                  value={settings.social_features_enabled === 'true'}
+                  onChange={handleSocialToggle}
+                  label={t('settings.socialGlobal')}
+                  disabled={socialSaving}
+                />
+              </SettingsRow>
+            </SettingsCard>
           </section>}
 
           {/* ── 2. THEME ── */}
