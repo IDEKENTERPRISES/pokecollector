@@ -57,6 +57,7 @@ BACKUP_GROUPS = {
         "printing_detail_tags",
         "progress_state",
         "user_events",
+        "event_reactions",
         "user_daily_activity",
         "user_achievements",
         "user_goals",

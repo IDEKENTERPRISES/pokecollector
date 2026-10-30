@@ -412,6 +412,7 @@ def delete_user(
         CollectionCardPhoto,
         CollectionItem,
         CustomCardMatch,
+        EventReaction,
         ImageCache,
         NotificationQueue,
         PortfolioSnapshot,
@@ -458,6 +459,11 @@ def delete_user(
     )
     db.query(PortfolioSnapshot).filter(PortfolioSnapshot.user_id == user_id).delete()
     db.query(UserSetting).filter(UserSetting.user_id == user_id).delete()
+    # Reactions first: the ones this trainer gave, and everyone's reactions to this trainer's events.
+    own_event_ids = db.query(UserEvent.id).filter(UserEvent.user_id == user_id)
+    db.query(EventReaction).filter(
+        (EventReaction.user_id == user_id) | EventReaction.event_id.in_(own_event_ids)
+    ).delete(synchronize_session=False)
     for progress_model in (
         UserAchievement, UserDailyActivity, UserEvent, UserGoal, UserXpLedger, ProgressState, NotificationQueue,
     ):
