@@ -461,6 +461,7 @@ Social phases may be built during B and C, because the switch keeps them dormant
   - product-linked copies handled like Trades does.
 - Then it logs a `Trade` for each side through the existing trade engine, with `partner_name` filled and a link to the other trade.
 - Push to the other trainer (category "swap offers"). The icon number counts offers waiting for you.
+- **P11a (backend, as built):** tables `swap_offers` and `swap_offer_items`, column `trades.swap_offer_id`, routes under `/api/swaps` (list, get, create, counter, accept, decline, cancel, confirm-swapped, waiting), all behind `require_social`. Logic in `services/swaps.py`; completion calls the trade engine `api.trades.create_trade_for_user` once per trainer in one transaction. Offers expire 14 days after the last change (scheduler job `swap_expiry_job`). The icon number is `notifications.icon_number` (scans plus offers whose turn it is, social on only). The UI comes in P11b.
 
 **P12 Activity feed and reactions (M).** After P6 and P11.
 - A feed of other trainers' shareable events. Each trainer picks per kind what to share (default: set completions and badges); values are hidden unless they opt in.

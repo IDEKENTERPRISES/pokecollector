@@ -197,7 +197,8 @@ def build_items(db: Session, actor_id: int, partner_id: int, requested) -> list[
             raise SwapError(404, "Card not found")
         have = int(copy.quantity or 0)
         if giver_id == partner_id:
-            spare = have - collection_item_allocated_quantity(db, giver_id, copy.id)
+            # one copy always stays with its owner; binder and deck allocations are not spare either
+            spare = have - max(collection_item_allocated_quantity(db, giver_id, copy.id), 1)
             if have <= 1 or quantity > spare:
                 raise SwapError(409, f"{card.name} has no spare copy to ask for")
         elif quantity > have:
