@@ -2620,6 +2620,12 @@ const en = {
     quests50Desc: 'Finish 50 daily quests',
     quests200: 'Quest Legend',
     quests200Desc: 'Finish 200 daily quests',
+    challenge1: 'Weekly Challenger',
+    challenge1Desc: 'Finish a weekly challenge',
+    challenge5: 'Challenge Regular',
+    challenge5Desc: 'Finish 5 weekly challenges',
+    challenge20: 'Challenge Legend',
+    challenge20Desc: 'Finish 20 weekly challenges',
   },
 
   // Home's Today card (engagement P7)

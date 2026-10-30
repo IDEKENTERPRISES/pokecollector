@@ -1131,3 +1131,34 @@ class SwapOfferItem(Base):
     offer = relationship("SwapOffer", back_populates="items")
 
     __table_args__ = (CheckConstraint("quantity >= 1", name="ck_swap_offer_items_quantity"),)
+
+
+class ChallengeWeek(Base):
+    """One weekly challenge (docs/SOCIAL_DESIGN.md §7). `week` is the ISO week of the UK-time Monday, "2026-W44"."""
+
+    __tablename__ = "challenge_weeks"
+
+    week = Column(String(10), primary_key=True)
+    challenge_id = Column(String(40), nullable=False)
+    closed_at = Column(DateTime, nullable=True)
+    # Frozen when the week closes, so the result card still reads right after trainers come and go.
+    trainer_count = Column(Integer, nullable=False, default=0)
+    finished_count = Column(Integer, nullable=False, default=0)
+
+
+class ChallengeProgress(Base):
+    """A trainer's count in one challenge week. It keeps counting past the target."""
+
+    __tablename__ = "challenge_progress"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    week = Column(String(10), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    progress = Column(Integer, nullable=False, default=0)
+    # When the current count was reached: the podium tie-break (earlier wins).
+    reached_at = Column(DateTime, nullable=True)
+    # When the target was first reached; set once, never cleared.
+    finished_at = Column(DateTime, nullable=True)
+    place = Column(Integer, nullable=True)
+
+    __table_args__ = (UniqueConstraint("week", "user_id", name="uq_challenge_progress_week_user"),)

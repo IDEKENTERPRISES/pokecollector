@@ -20,6 +20,7 @@ from models import (
     UserSetting,
 )
 from services.card_values import effective_market_price, normalize_price_field
+from services.challenge import EVENT_CHALLENGE_FINISHED
 from services.progress.evaluator import (
     EVENT_ACHIEVEMENT_UNLOCKED,
     EVENT_BIG_PULL,
@@ -33,6 +34,7 @@ FEED_KINDS = {
     EVENT_SET_COMPLETED: True,
     EVENT_ACHIEVEMENT_UNLOCKED: True,
     EVENT_GOAL_COMPLETED: False,
+    EVENT_CHALLENGE_FINISHED: True,
     EVENT_BIG_PULL: False,
 }
 
@@ -214,6 +216,11 @@ def _display(db: Session, event: UserEvent, cards: dict, set_names: dict, show_v
         }
     if event.kind == EVENT_GOAL_COMPLETED:
         return {"goal_id": payload.get("goal_id"), "goal_kind": payload.get("goal_kind"), "title": payload.get("title")}
+    if event.kind == EVENT_CHALLENGE_FINISHED:
+        return {
+            "week": payload.get("week"), "challenge_id": payload.get("challenge_id"),
+            "title_key": payload.get("title_key"), "place": payload.get("place"),
+        }
     # big_pull
     card = cards.get(payload.get("card_id"))
     display = {

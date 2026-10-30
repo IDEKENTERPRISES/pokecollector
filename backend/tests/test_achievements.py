@@ -100,7 +100,8 @@ class RegistryTests(AchievementTestBase):
 
     def test_new_badges_are_marked_with_the_current_version(self):
         self.assertTrue(all(e["since"] == 1 for e in ach.registry()[:20]))
-        self.assertTrue(all(e["since"] == ach.REGISTRY_VERSION for e in ach.registry()[20:]))
+        self.assertTrue(all(2 <= e["since"] <= ach.REGISTRY_VERSION for e in ach.registry()[20:]))
+        self.assertEqual(max(e["since"] for e in ach.registry()), ach.REGISTRY_VERSION)
 
     def test_track_summary_uses_the_highest_tier(self):
         summary = {row["track"]: row for row in ach.track_summary(["first_card", "collector_50", "dex_10"])}

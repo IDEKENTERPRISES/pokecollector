@@ -12,6 +12,7 @@ SOURCE_QUEST_ALL = "quest_all"
 SOURCE_STREAK = "streak"
 SOURCE_BADGE = "badge"
 SOURCE_SET = "set"
+SOURCE_CHALLENGE = "challenge"
 
 QUEST_XP = 10
 ALL_QUESTS_XP = 15
