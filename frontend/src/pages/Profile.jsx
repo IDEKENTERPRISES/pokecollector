@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Award, Dna, PartyPopper, Download, Globe, Sparkles, Package, ArrowLeftRight, Trophy, BarChart3, RefreshCw, Settings as SettingsIcon, Users } from 'lucide-react'
+import { Award, Dna, PartyPopper, Download, Globe, Sparkles, Package, ArrowLeftRight, Trophy, BarChart3, RefreshCw, Settings as SettingsIcon, Target, Users } from 'lucide-react'
 import {
   getAchievements,
   getCustomMatches,
@@ -160,6 +160,7 @@ export default function Profile() {
       </div>
 
       <ListSection>
+        <ListRow icon={Target} iconColor="#30D158" title={t('goals.title')} to="/goals" testId="profile-goals" />
         <ListRow
           icon={Sparkles}
           iconColor="#FF9F0A"
