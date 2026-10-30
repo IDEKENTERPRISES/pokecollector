@@ -33,6 +33,15 @@ Each has a recommendation, which the mockups show. "As built" means what #113 an
 | D9 | The note on an offer (as built: optional, 140 characters, replaced by each counter) | **Show it**: one line in the composer, quoted on the offer ("Can bring it on Saturday"). It isn't a thread, so it stays inside the "no chat" non-goal. | Hide the field; the API allows `null`. |
 | D10 | The challenge week | Monday 00:00 to Sunday 23:59 in the **server's** time zone: one deadline for everyone, shown in local time. | Each trainer's own time zone (unfair for a shared podium). |
 
+### Owner's answers (2026-10-30, mockups approved)
+
+- **D1** Offers segment on Trades, as recommended. **D2** Yes, the Home card. **D3** Both: Today card row and Leaderboard segment.
+- **D4** Changed: the podium is the **highest count by Sunday night** (UK time). Everyone who finishes still gets the finisher badge. On a tie, the trainer who reached that count first places higher.
+- **D5** As recommended.
+- **D6** Changed: your own shared events appear, marked "You", with reaction counts. The feed also gets **comments**, which reverses the "no comments" non-goal. Comments are short text under an event, readable by everyone who can see the event. They follow the same visibility rules as the event, and their author or the event's owner can delete them. They are designed in the style of the Wave 3 feed artboards, because no artboard draws them.
+- **D7** Yes, name the cards, never amounts. **D8** Yes, push on decline. **D9** Yes, show the note.
+- **D10** Changed: the week runs in **UK time** (Europe/London, so it follows BST/GMT), Monday 00:00 to Sunday 23:59.
+
 ---
 
 ## 1. What other products do
