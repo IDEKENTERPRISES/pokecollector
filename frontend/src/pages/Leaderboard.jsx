@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Navigate, useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowUpDown, ChevronRight, Flame, Globe, Trophy } from 'lucide-react'
+import SegmentedControl from '../components/ios/SegmentedControl'
 import { getLeaderboard } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import { useAuth } from '../contexts/AuthContext'
@@ -13,6 +14,8 @@ import { CardModal } from '../components/CardItem'
 import ShowcaseStrip from '../delights/ShowcaseStrip'
 import { readShowDaily, streakLabel } from '../progress/daily'
 import { TrainerAvatar, countLabel, PODIUM_TYPES } from './socialParts'
+import { LEADERBOARD_SEGMENTS, useSocialEnabled } from '../social/social'
+import ActivityFeed from '../social/feed/ActivityFeed'
 
 const NAV_BAR = {}
 const SORT_OPTIONS = ['xp', 'total_value', 'total_cards', 'unique_cards', 'sets_completed', 'pnl']
@@ -25,17 +28,20 @@ const SORT_LABEL_KEYS = {
   pnl: 'pnl',
 }
 
-export default function Leaderboard() {
+export default function Leaderboard({ segment = 'ranking' }) {
   const navigate = useNavigate()
   const { t, formatPrice, pricePrimaryField } = useSettings()
   const { multiUser, user: currentUser } = useAuth()
   const [sortBy, setSortBy] = useState('total_value')
   const [selectedCard, setSelectedCard] = useState(null)
   const [showDaily] = useState(() => readShowDaily())
+  const socialOn = useSocialEnabled()
+  const activity = segment === 'activity'
   useNavBar(NAV_BAR)
 
   const { data = [], isLoading, error } = useQuery({
     queryKey: ['leaderboard', pricePrimaryField],
+    enabled: !activity,
     queryFn: () => getLeaderboard({ price_field: pricePrimaryField }).then((response) => response.data),
   })
 
@@ -51,9 +57,36 @@ export default function Leaderboard() {
   if (!multiUser) {
     return <Navigate to="/" replace />
   }
+  // The feed belongs to the social switch: with it off the route goes back to the ranking.
+  if (activity && !socialOn) {
+    return <Navigate to="/leaderboard" replace />
+  }
+
+  const segments = socialOn && (
+    <SegmentedControl
+      size="md"
+      ariaLabel={t('leaderboard.segments')}
+      options={LEADERBOARD_SEGMENTS.map(({ value, labelKey }) => ({ value, label: t(labelKey) }))}
+      value={segment}
+      onChange={(value) => {
+        const target = LEADERBOARD_SEGMENTS.find(option => option.value === value)
+        if (target && value !== segment) navigate(target.path, { replace: true })
+      }}
+    />
+  )
+
+  if (activity) {
+    return (
+      <div className="flex flex-col gap-3">
+        {segments}
+        <ActivityFeed />
+      </div>
+    )
+  }
 
   return (
     <div className="page-container">
+      {segments}
       <div className="relative overflow-hidden rounded-xl bg-card p-4">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,203,5,0.18),transparent_45%)]" />
         <div className="relative flex items-center gap-3">
@@ -116,25 +149,28 @@ export default function Leaderboard() {
                   {rank}
                 </span>
                 <TrainerAvatar avatarId={trainer.avatar_id} size={48} />
-                <span className="min-w-0 flex-1 text-left">
-                  <span className="block break-words text-headline text-text-primary">{trainer.username}</span>
-                  <span className="block text-footnote text-text-secondary">{trainer.role}</span>
-                </span>
-                <span className="flex-shrink-0 rounded-full bg-fill-tertiary px-2 py-0.5 text-footnote font-semibold tabular-nums text-text-primary" data-testid="leaderboard-level">
-                  {t('leaderboard.levelShort').replace('{level}', trainer.level ?? 1)}
-                </span>
-                {streak > 0 && (
-                  <span
-                    aria-hidden="true"
-                    className="inline-flex flex-shrink-0 items-center gap-0.5 rounded-full bg-fill-tertiary px-2 py-0.5 text-footnote font-semibold tabular-nums text-yellow"
-                    data-testid="leaderboard-streak"
-                  >
-                    <Flame size={14} />
-                    {streak}
+                {/* The name and the value share a line; the level and streak chips sit under them (390 px fits a four-digit value). */}
+                <span className="flex min-w-0 flex-1 flex-col gap-1 text-left">
+                  <span className="flex items-baseline justify-between gap-2">
+                    <span className="min-w-0 break-words text-headline text-text-primary">{trainer.username}</span>
+                    <span className="flex-shrink-0 text-body font-semibold text-yellow tabular-nums">{value}</span>
                   </span>
-                )}
-                <span className="flex-shrink-0 text-body font-semibold text-yellow tabular-nums">{value}</span>
-                {!isSelf && <ChevronRight size={18} strokeWidth={2.25} className="flex-shrink-0 text-text-tertiary" aria-hidden="true" />}
+                  <span className="flex gap-1.5" aria-hidden="true">
+                    <span className="inline-flex items-center rounded-full bg-fill-tertiary px-1.5 py-px text-caption-1 font-semibold tabular-nums text-text-primary" data-testid="leaderboard-level">
+                      {t('leaderboard.levelShort').replace('{level}', trainer.level ?? 1)}
+                    </span>
+                    {streak > 0 && (
+                      <span
+                        className="inline-flex items-center gap-0.5 rounded-full bg-fill-tertiary px-1.5 py-px text-caption-1 font-semibold tabular-nums text-yellow"
+                        data-testid="leaderboard-streak"
+                      >
+                        <Flame size={12} strokeWidth={2.25} />
+                        {streak}
+                      </span>
+                    )}
+                  </span>
+                </span>
+                {isSelf ? <span className="w-[18px] flex-shrink-0" aria-hidden="true" /> : <ChevronRight size={18} strokeWidth={2.25} className="flex-shrink-0 text-text-tertiary" aria-hidden="true" />}
               </>
             )
             return (

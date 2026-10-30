@@ -516,6 +516,9 @@ export const putShowcase = (ids) => api.put('/profile/showcase', { ids }).then(r
 export const getFeed = (params) => api.get('/feed', { params }).then(r => r.data)
 export const addFeedReaction = (eventId, kind) => api.put(`/feed/${eventId}/reactions/${kind}`).then(r => r.data)
 export const removeFeedReaction = (eventId, kind) => api.delete(`/feed/${eventId}/reactions/${kind}`).then(r => r.data)
+export const getFeedComments = (eventId) => api.get(`/feed/${eventId}/comments`).then(r => r.data)
+export const addFeedComment = (eventId, text) => api.post(`/feed/${eventId}/comments`, { text }).then(r => r.data)
+export const deleteFeedComment = (eventId, commentId) => api.delete(`/feed/${eventId}/comments/${commentId}`).then(r => r.data)
 
 // Swap offers (engagement P11). All 404 while an admin keeps the social switch off.
 export const getSwaps = () => api.get('/swaps').then(r => r.data)

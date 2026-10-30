@@ -110,6 +110,7 @@ describe('navConfig table (design doc §4.2)', () => {
     ['/products', 'profile', 'pushed', '/profile', 'nav.products'],
     ['/trades', 'profile', 'pushed', '/profile', 'nav.trades'],
     ['/leaderboard', 'profile', 'pushed', '/profile', 'nav.leaderboard'],
+    ['/leaderboard/activity', 'profile', 'pushed', '/profile', 'nav.leaderboard'],
     ['/leaderboard/compare/3', 'profile', 'pushed', '/leaderboard', 'nav.leaderboard'],
     ['/collection/user/3', 'profile', 'pushed', '/leaderboard', 'nav.leaderboard'],
     ['/achievements', 'profile', 'pushed', '/profile', 'nav.achievements'],
