@@ -8,7 +8,7 @@ What this builds on:
 
 The backend this UI is aligned with:
 - **P12a feed**: #113, merged. `/api/feed`.
-- **P11a swaps**: #114, about to merge. `/api/swaps`.
+- **P11a swaps**: #114, merged. `/api/swaps`.
 
 §5.9 and §6.6 give their contracts as built and list the few additions the screens need.
 
@@ -180,9 +180,10 @@ All in `frontend/src/social/` (`swaps/`, `feed/`, `challenge/`), each with a uni
 |---|---|---|
 | `FairTradeMeter` | `{ gives, gets, missingPrices = 0, variant: 'full' \| 'compact' }` | §5.6. Fed by `values.you` on an offer, or by the composer's own sums. Masks amounts with `maskValue` |
 | `tradeVerdict()` | `({ gives, gets, sharedCash, missingPrices }) → { key: 'empty' \| 'missing' \| 'gain' \| 'fair' \| 'close' \| 'lose', delta, deltaPct, position }` | Pure. Today's thresholds: ≥ +15 % gain, ≥ −5 % fair, ≥ −15 % close, else lose. `position` (0–1) places the marker |
-| `SwapCardRow` | `{ item, setCode, mark: 'added' \| null, hint: 'wishlist' \| null, problem, onOpen, onRemove }` | One card in a list section: 40 × 56 art, name, "MEW 170 · Holo", value, then a remove button (composer) or a chevron (detail). `setCode` comes from the cached sets list (`ptcgo_code` or `abbreviation`, by `set_id`) |
-| `SwapSide` | `{ title, items, cash, editable, addLabel, onAdd, onRemove, onCash }` | A `ListSection` of `SwapCardRow`s, an "Add …" row and a Cash row |
-| `SwapHeader` | `{ me, partner, status, meta }` | Two avatars facing, the title, the status chip and the dates |
+| `SwapCardRow` | `{ item, setCode, hint: 'wishlist' \| null, onRemove }` | Composer only: one card in a list section. 40 × 56 art, name (Body), "MEW 170 · Holo" (Footnote, secondary), a fairy-pink "On your wishlist" line when it applies, the value (Body, secondary), and an `IconButton variant="gray" size="sm"` ✕. `setCode` comes from the cached sets list (`ptcgo_code` or `abbreviation`, by `set_id`) |
+| `SwapSide` | `{ title, items, addLabel, onAdd, onRemove }` | Composer only: a `ListSection` of `SwapCardRow`s and an "Add …" row |
+| `SwapSides` | `{ items, cash, partnerName, marks, unavailable, past }` | Offer detail: the two sides as two columns (§5.5) |
+| `SwapHeader` | `{ me, partner, status, meta, note }` | Two avatars facing, the title, the status chip with the dates beside it, and the note |
 | `SwapStatusChip` | `{ offer, variant: 'capsule' \| 'dot' }` | Capsule on the page background, a dot and text inside list rows (§5.3); the wording comes from `swapStatus(offer)` |
 | `swapStatus()` | `(offer) → { tone, label }` | Pure (§5.1 table) |
 | `SwapOfferRow` | `{ offer, to }` | A row of the Offers segment |
@@ -244,7 +245,8 @@ Avatars in the artboards are drawn placeholders (the trainer's initial). At runt
 
 ### 5.2 Compare: where a swap starts
 
-Artboard `S3SwapCompare`. The existing Compare page, scrolled to **Trade Suggestions**. Nothing else on the page changes.
+Artboard `S3SwapCompare`. The existing Compare page, scrolled to **Trade Suggestions**. The rest of the page doesn't change.
+- The suggestions become rows divided by hairlines instead of gray tiles. On the gray tile, `CardIdentity`'s muted subtext reads at 3.9:1; on the card it is 5.2:1, and the new button stands out.
 - Each suggestion keeps its `CardIdentity` and gets a full-width `Button variant="gray" size="md"` under it: an `ArrowLeftRight` icon in the tint and the label **Offer a swap**. It's a separate control from the card, which still opens the card sheet.
   - The suggestion "Misty has duplicate · Ash wants this card" opens the composer with that card on the **You get** side.
   - "Ash has duplicate · Misty wants this card" puts it on the **You give** side.
@@ -259,7 +261,7 @@ Artboard `S3SwapOffers`. `/trades/offers`.
 - **Nav bar:** Back · "Trades" · trailing `HideValuesToggle` (new on Trades; Live trade has amounts too).
 - **Subtitle** (Footnote, secondary), per segment. Live trade and History keep today's line; Offers says "Swap cards with the trainers on this server".
 - **Segmented control** (`md`): Live trade · **Offers** · History. The Offers label carries a yellow `Badge` with `waiting_count`.
-- **Sections** (`ListSection`), each listed only when it has rows. They are built from `GET /api/swaps` (`incoming`, `outgoing`, `history`):
+- **Sections** (`ListSection className="!mx-0"`, because `main` already pads 16 px, as ScanQueue does), each listed only when it has rows. They are built from `GET /api/swaps` (`incoming`, `outgoing`, `history`):
   1. "Your turn · 2": open offers with `your_turn`. The newest change first.
   2. "Accepted · swap in person": accepted offers, yours to tap first.
   3. "Waiting for others": open offers on the other trainer's turn.
@@ -281,18 +283,21 @@ Artboard `S3SwapComposer` (with a hide-values tweak), and `S3SwapPicker` for the
 
 A `PageSheet` (92 dvh, glass, grabber), over Compare, the Offers segment or an offer:
 - **Header:** leading "Cancel", title "Swap with Misty" ("Counter offer" when countering), no trailing button. `isDirty` asks "Discard changes?" before closing.
-- **Body:**
+- **Body** (16 px padding top and bottom, sections 16 px apart):
   1. `SwapSide` **You give**:
-     - a `SwapCardRow` per copy: art, name, "MEW 151 · Holo", value, and an `IconButton variant="gray" size="sm"` ✕ labelled "Remove Mew ex";
-     - "Add from your cards" (`ListRow`, green 29 px square with a plus, chevron) opens the picker on your cards;
-     - "Cash" (`ListRow`, orange square, `Wallet`, value "None" or the amount) opens an inline `MoneyInput`.
+     - a `SwapCardRow` per copy, with the ✕ labelled "Remove Mew ex";
+     - "Add from your cards" (`ListRow`, green 29 px square with a plus, chevron) opens the picker on your cards.
   2. `SwapSide` **You get from Misty**, the same, with "Add from Misty's spares".
-  3. **Matches** (`ListSection` "Misty is looking for these, and you have spares"). Each row is one button: art, name, "You have 2", and a tinted "Add" capsule. Only when Misty's wishlist is visible to you (her public profile and `wishlist_visibility`, the rule Compare uses).
-  4. **Note** (`ListSection` "Note (optional)"): a one-line field, 140 characters, placeholder "Where or when to meet" (D9).
-  5. Section footer: "Values use your price setting. Cash is settled between you; the app only records it."
+  3. **Matches**: the header "Misty is looking for these. You have spares", then one row of chips that scrolls sideways and bleeds to the sheet's edges.
+     - Each chip is a 44 px capsule button on `#1C1C1E`: a tint plus (18 px) and "Pikachu · MEW 173" (Subheadline semibold). Tapping it adds the card to You give.
+     - The row shows only when Misty's wishlist is visible to you (her public profile and `wishlist_visibility`, the rule Compare uses).
+  4. **Cash and note** (`ListSection`):
+     - "Cash" (`ListRow`, orange square with `Wallet`, value "None", "You pay £2.00" or "Misty pays £2.00", chevron) opens an inline editor: a `MoneyInput` and a `SegmentedControl size="sm"` **You pay** | **Misty pays**;
+     - a note field (one line, 140 characters, placeholder "Note: where or when to meet", D9).
+     - Footer: "Values use your price setting. Cash is settled between you; the app only records it."
 - **Footer (sticky):** `FairTradeMeter variant="compact"`, then `Button size="lg" full` **Send offer**. It is disabled until at least one card is on the table.
 
-**Cash** is one amount with a payer, as built. A Cash row sits on each side; entering an amount on one side clears the other. "You give: £2.00" sends `cash_payer_user_id` = you.
+**Cash** is one amount with a payer, as built (`cash_amount`, `cash_payer_user_id`). That is why there is one Cash row, not one per side.
 
 **The picker step** replaces the sheet's body; there is no second sheet:
 - **Header:** leading "‹ Back" (tint, back to the composer), title "Misty's spares" or "Your cards", trailing **Done**.
@@ -310,17 +315,19 @@ Sending: `POST /api/swaps`; the sheet closes, a toast "Offer sent to Misty", and
 
 ### 5.5 Offer detail
 
-`/trades/offers/:offerId`. Nav bar: Back · "Swap offer" · trailing `HideValuesToggle`. Page order:
-1. `SwapHeader`:
-   - `TrainerAvatar` 56 (partner), a 36 px fill circle with `ArrowLeftRight` in the tint, then your avatar 56;
-   - the title "Swap with Brock" (Title 3);
-   - the status chip (capsule, Footnote semibold);
-   - the meta line (Footnote, secondary): "Brock sent this 2 h ago · Expires in 14 days".
-2. The note, when there is one: a `ListSection` with one row, "Note from Brock" (Footnote, secondary) over the text (Body). The note belongs to the current revision. Revisions alternate strictly, so odd ones are by the trainer who started the offer and even ones by the other.
-3. `SwapSide` **You get from Brock**, read only; rows open the card sheet.
-4. `SwapSide` **You give**.
-5. `FairTradeMeter variant="full"` with `values.you`.
-6. The state's actions (below), from the offer's `actions`.
+`/trades/offers/:offerId`. Nav bar: Back · "Swap offer" · trailing `HideValuesToggle`. `main` is a column with 8 px on top and 12 px between blocks:
+1. `SwapHeader` (centred):
+   - `TrainerAvatar` 48 (partner), a 36 px fill circle with `ArrowLeftRight` 18 in the tint, then your avatar 48, 12 px apart;
+   - the title "Swap with Brock" (Title 3), 8 px under;
+   - 8 px under, one wrapping line: the status chip (a 24 px capsule, Footnote semibold, 10 px sides), then the dates (Footnote, secondary): "Sent 2 h ago · Expires in 14 days";
+   - the note, when there is one, 6 px under (Footnote, secondary): "Misty's note: Pikachu makes it fair for me." It belongs to the current revision. Revisions alternate strictly, so odd ones are by the trainer who started the offer and even ones by the other ("Your note: …").
+2. The state's card when it has one: What changed, Swapped, the problem, the success or the ended card (below).
+3. **`SwapSides`**: two columns, 12 px apart, each a `rounded-xl bg-card p-3` column with 10 px between its parts:
+   - its title (Footnote, secondary): "You get from Brock" / "You give";
+   - a mini row per card (min 56 px): 40 × 56 art, then the name (Subheadline semibold), "OBF 125 · Holo" (Caption 1, secondary) and the value (Footnote, secondary, tabular). It opens the card sheet;
+   - the cash, in the paying trainer's column: an orange 29 px square with `Wallet`, "Cash" (Subheadline semibold) over the amount.
+4. `FairTradeMeter variant="full"` with `values.you`, only while the offer is open. Once it is accepted the deal is settled, and the meter goes.
+5. The state's actions (below), from the offer's `actions`.
 
 There is no history list: the API keeps only the current revision.
 
@@ -336,21 +343,23 @@ Every state below has its own artboard.
 
 #### 5.5.2 Waiting for them — `S3SwapOutgoing`
 - Chip: gray "Waiting for Dawn".
-- Meta: "You sent this 2 d ago · Expires in 12 days".
+- Dates: "Sent 2 d ago · Expires in 12 days". Your note shows as "Your note: …".
 - One `Button variant="gray" size="lg" full`: **Cancel offer** (red text), confirmed in an `Alert`. It shows only for the trainer who started the offer (`cancel` in `actions`).
 - No reminder button, so nobody gets nagged.
 
 #### 5.5.3 Your turn, after a counter — `S3SwapCountered`
 - Chip: yellow "Your turn · Misty countered".
-- A **What changed** card (`rounded-xl bg-card p-4`) above the sides: "Misty changed the offer" (Headline), then one line per change:
-  - "Added Pikachu · MEW 173 to what you give";
-  - "The 14 days start again".
-- The added rows carry an "Added" capsule (tint on accent at 20 %).
+- The header's dates read "Changed 40 min ago · Expires in 14 days" (the clock restarted).
+- A **What changed** card (`rounded-xl bg-card`, 12 px × 16 px padding) above the sides:
+  - a 29 px square (accent at 20 %) with `ArrowLeftRight` in the tint;
+  - "Misty changed the offer" (Headline);
+  - one Footnote line (secondary) per change: "Added Pikachu · MEW 173 to what you give."
+- The added cards carry an "Added" capsule (Caption 2 semibold, tint on accent at 20 %) after their value.
 - This needs the previous revision's cards, which the API doesn't keep yet (§5.9, an addition). Without it, the card says "Misty changed the offer. Check both sides before you answer." and the rows carry no marks.
 - Actions as in 5.5.1 (`accept`, `counter`, `decline`). The trainer who started the offer also has `cancel`; with Decline on screen, it isn't shown.
 
 #### 5.5.4 Accepted, with Swapped — `S3SwapAccepted`
-- Chip: green "Accepted · swap in person".
+- Chip: green "Accepted · swap in person". Dates: "Accepted yesterday · Expires in 13 days".
 - `SwappedStep` card, above the sides, because it's the next thing to do:
   - "Swap the cards, then tap Swapped" (Headline);
   - "When you both have, Charizard ex moves into your collection and Greninja ex into Brock's. Each of you gets the trade in History." (Subheadline, secondary);
@@ -360,7 +369,7 @@ Every state below has its own artboard.
 - Under the sides: **Cancel swap** (`Button variant="gray"`, red text), confirmed in an `Alert`. To change the cards, cancel and send a new offer; the API has no counter after acceptance.
 
 #### 5.5.5 Completed — `S3SwapCompleted`
-- Chip: green "Swapped".
+- Chip: green "Swapped". Dates: "Today at 18:52".
 - A success card instead of the actions:
   - a 64 px green circle with a check;
   - "Swapped on 30 Oct" (`completed_at`, Title 3);
@@ -368,12 +377,13 @@ Every state below has its own artboard.
 - Two `ListRow`s:
   - "Charizard ex is in your collection" → `/collection?cardId=…`;
   - "Open the trade in History" → `/trades?trade=<trade_id>` (History segment).
-- `Button variant="gray"` **Offer another swap with Brock**.
-- Motion: the two thumbnails in the header cross once (400 ms, `--ease-ios`). Under Reduce Motion they don't move and the check fades in.
+- The sides, titled "You got from Brock" and "You gave".
+- `Button variant="gray" size="lg"` **Offer another swap with Brock**.
+- Motion: the check circle scales in once (0.6 → 1, 300 ms, `--ease-ios`). Under Reduce Motion it fades in.
 
 #### 5.5.6 Can't finish yet — `S3SwapBlocked`
 The second Swapped tap (or Accept) answered 409 with `unavailable`. Nothing changed, and the offer is still accepted.
-- Chip: red "Can't finish yet".
+- Chip: red "Can't finish yet" (red on red at 15 %, on the page background). Dates: "Misty tapped Swapped · Expires in 14 days".
 - `SwapProblemCard` (`rounded-xl bg-card p-4`, a 29 px red square with `AlertTriangle`):
   - title "This swap can't finish yet";
   - one sentence per `unavailable` entry (`card_name`, `giver_user_id`, `needed`, `available`):
@@ -391,11 +401,11 @@ As built, the problem is known only from the 409. On a reload the offer looks ac
 
 | State | Chip (gray) | Sentence | Action |
 |---|---|---|---|
-| declined | "Declined" | "Dawn declined this offer on 29 Oct." | **Send a new offer** (opens the composer with the same cards) |
-| cancelled | "Cancelled" | "You cancelled this offer on 29 Oct." or "Dawn cancelled this offer on 29 Oct." | **Send a new offer** |
-| expired | "Expired" | "This offer ended on 13 Nov after 14 days without an answer." | **Send again** |
+| declined | "Declined" | "Dawn declined this offer on 31 Oct." | **Send a new offer** (opens the composer with the same cards) |
+| cancelled | "Cancelled" | "You cancelled this offer on 31 Oct." or "Dawn cancelled this offer on 31 Oct." | **Send a new offer** |
+| expired | "Expired" | "This offer ended on 11 Nov after 14 days without an answer." | **Send again** |
 
-The sides stay visible, read only, without the meter. If a card has gone meanwhile, its row says so, and Send again leaves it out. The dates come from `updated_at`.
+The sentence and the button sit in one `rounded-xl bg-card p-4` card (Body, then a full-width `Button variant="gray" size="md"`). The sides stay visible, read only, without the meter. If a card has gone meanwhile, its row says so, and Send again leaves it out. The dates come from `updated_at`. The arrow between the avatars turns secondary instead of the tint.
 
 ### 5.6 The fair-trade meter
 
@@ -411,13 +421,10 @@ The sides stay visible, read only, without the meter. If a card has gone meanwhi
   - an 8 px `HpBar`-style track (`bg-black/45`, 0.5 px inner hairline);
   - the four zones faintly tinted at 35 %: red (you lose, < −15 %), yellow (close, −15 to −5 %), green (fair, −5 to +15 %), blue (you gain, > +15 %);
   - the delta percentage is clamped to ±30 % and mapped across the width;
-  - a 16 px white marker with a 3 px ring in the verdict colour sits at the delta.
-- **Captions** under the track (Caption 1, secondary): "You give more" on the left, "You get more" on the right.
+  - a 16 px white marker with a 3 px ring in the verdict colour sits at the delta, kept inside the track at the ends.
+- **The ends** (6 px under the track, Footnote, secondary, tabular): "You give £13.90" on the left and "You get £14.20" on the right. They name the two sides of the track and carry the totals.
 
-**Compact** (the composer footer):
-- one row with the verdict and the delta;
-- the track;
-- the totals line.
+**Compact** (the composer footer): the verdict and the delta (Headline) on one row, the track 8 px under, and the ends 8 px under that. No square.
 
 The meter never shows a score out of 100.
 
@@ -524,14 +531,21 @@ The offer, from the viewer's side:
 
 Artboards `S3FeedRanking` (social on) and `S3LeaderboardOff` (social off, as today).
 - With social on, a `SegmentedControl size="md"` is the first thing under the nav bar: **Ranking · Activity · Challenge**.
-- Ranking is today's page, unchanged: the header card, the sort, the rows.
+- Ranking is today's page: the header card, the sort, the rows.
 - With social off there is no segmented control at all.
+
+**A row fix that applies either way.** Today a row's header holds the rank, the avatar, the name, the level chip, the streak chip, the value and the chevron in one line. At 390 px, a trainer with a streak and a four-digit value overflows by about 30 px. P12b changes the header to:
+- the rank and the avatar, as today;
+- then a column: the name (Headline) with the value (Body semibold, yellow) on the right, and under them the level and streak chips (Caption 1 semibold, `px-1.5`);
+- the chevron.
+
+The role line goes; it said "user" or "admin". The artboards show the rows without their best-card and Showcase blocks, which don't change.
 
 ### 6.2 Event rows
 
 Artboard `S3Feed` (with a hide-values tweak). `/leaderboard/activity`.
 
-The newest first, `GET /api/feed` 20 at a time, loading more near the end with `before = next_before`. Day headers group the rows: "Today", "Yesterday", "Mon 26 Oct" (Footnote, secondary, `px-1`).
+The newest first, `GET /api/feed` 20 at a time, loading more near the end with `before = next_before`. Day headers group the rows: "Today", "Yesterday", "Mon 26 Oct" (Footnote, secondary, `px-1`). The first header has **What you share** on its right (Footnote semibold, tint, 44 px tall), which opens the sheet of §6.4. Artboards `S3Feed` and `S3FeedMore` (scrolled).
 
 **The row** (`FeedEventRow`, one per `items[]` entry): `rounded-xl bg-card`, padding 16 px 16 px 4 px.
 - **Header:** `TrainerAvatar` 40 (`trainer.avatar_id`), then:
@@ -553,7 +567,7 @@ The newest first, `GET /api/feed` 20 at a time, loading more near the end with `
 - Only other active trainers' events, only the kinds they share now, and never backfilled unlocks.
 - Badges about money (portfolio value) only when that trainer shares values.
 
-**D6 (recommended):** your own shared events, marked "You", with their counts. You can't react to them (as built: 400).
+**D6 (recommended):** your own shared events, marked "You", with their counts drawn as capsules that aren't buttons. You can't react to them (as built: 400).
 
 ### 6.3 Reactions
 
@@ -687,13 +701,12 @@ Artboard `S3HomeChallenge`. In `progress/TodayCard.jsx`, after the daily quests 
 
 Artboard `S3Challenge`. `/leaderboard/challenge`.
 1. Segmented control: Challenge.
-2. **`ChallengeHero`** (`rounded-[22px] p-4`, the challenge's type tile gradient at 150°, the `StatTile` shadow, the type's `EnergyIcon` 84 as a faint watermark):
-   - "Week 44 · 26 Oct – 1 Nov" (Footnote semibold, white);
-   - the title "Sort 20 cards into binders" (Title 2);
-   - "Ends Sunday 23:59 · 2 days left" (Footnote, white);
-   - your progress: the count at tile-number size "14" with "/ 20", a white bar on `bg-black/25` (like `XpBar tone="onAccent"`), and "6 more to finish";
-   - "Finish to earn the Weekly Challenger badge and 50 XP" (Footnote, white).
-   Text on the gradient is full white (4.7–5.5:1 on the stops).
+2. **`ChallengeHero`** (`rounded-[22px] p-4`, the challenge's type tile gradient at 150°, the `StatTile` shadow, the type's `EnergyIcon` 84 at 20 % as a watermark, bottom right):
+   - "Week 44 · ends Sunday 23:59 · 2 days left" (Footnote semibold);
+   - the title "Sort 20 cards into binders" (Title 2), 4 px under;
+   - 12 px under, your progress: "14" (tile number) and "/ 20" (Headline), with "6 more to finish" (Footnote) on the right;
+   - a white bar on `bg-black/25`, 8 px under (like `XpBar tone="onAccent"`).
+   All text on the gradient is full white (4.7–5.5:1 on the stops).
 3. **Podium** (Title 3 "Podium", Footnote "First three to finish"): `Podium size="md"`.
    - Three columns, 2nd, 1st, 3rd. Each has a `TrainerAvatar` 44, the name (Footnote semibold), the finish time (Caption 1, secondary: "Tue 21:14") and a block with radius 12 at the top.
    - Block heights: 1st 88, 2nd 64, 3rd 48, in the `PODIUM_TYPES` tile gradients, with the place in Title 2 in the tile text colour.
@@ -705,11 +718,14 @@ Artboard `S3Challenge`. `/leaderboard/challenge`.
    - a status line (Footnote, secondary): "Finished Tue 21:14" or "18 of 20";
    - on the right, a 64 px `HpBar` and the count (Footnote, tabular).
    Your own row gets `bg-elevated`.
-5. Footer: "Counts cards you add to a binder or deck this week. The board updates within a minute."
+5. Footer: "Counts cards you add to a binder or deck this week. Everyone who finishes earns the Weekly Challenger badge and 50 XP." The first sentence comes from the challenge's catalogue entry.
 
 ### 7.5 Podium
 
-`Podium` is shared by the board, the result card and, small, the feed's challenge medal. `size="lg"` (the result) scales the blocks to 104, 76 and 56. On the first view of a finished podium the blocks rise once (500 ms, `--ease-ios`). Under Reduce Motion they are static.
+`Podium` is shared by the board and the result card; the feed's challenge medal is a 48 px disc in the same gradient.
+- `size="md"` (the board): 40 px avatars, blocks 72, 56 and 44, the place in Title 2.
+- `size="lg"` (the result): 48 px avatars, blocks 104, 76 and 56, the place in Title 1.
+- The columns are an ordered list in place order; CSS `order` draws 2nd, 1st, 3rd. On the first view of a finished podium the blocks rise once (500 ms, `--ease-ios`). Under Reduce Motion they are static.
 
 ### 7.6 End of the week
 
@@ -771,6 +787,8 @@ Lists and pushes carry no amounts at all. The meter keeps its verdict, zones and
 
 **Contrast**: §4.1. The status chips are capsules only on the page background; inside cards they become a dot and text.
 
+One existing exception shows on `S3SwapProfile`: the trainer card's 80–90 % white lines ("ID No.", the XP caption) fall under 4.5:1 on the lighter, top-left part of its red gradient. It is drawn as it is today and isn't part of this work.
+
 ## 9. When social is off
 
 Trainers see nothing of this, and nothing of today's screens moves:
@@ -805,9 +823,10 @@ Canvas: https://claude.ai/artifact/QNJ3UNo7XYj1ze96mkcFGF, under the Wave 2b row
 | | `S3SwapEnded.dc.html` | Expired, declined or cancelled (state tweak) |
 | | `S3SwapProfile.dc.html` | Profile: the Trades tile count |
 | | `S3HomeTodo.dc.html` | Home: the swap to-do card |
-| | `S3SwapPush.dc.html` | Push texts: as built, recommended, details off; the icon number |
-| Activity feed (P12) | `S3FeedRanking.dc.html` | Leaderboard › Ranking with the segments |
-| | `S3Feed.dc.html` | Leaderboard › Activity: every kind, reactions (hide-values tweak) |
+| | `S3SwapPush.dc.html` | Push texts: as built, recommended, details off; the icon number (1180 × 1000) |
+| Activity feed (P12) | `S3FeedRanking.dc.html` | Leaderboard › Ranking with the segments and the row fix |
+| | `S3Feed.dc.html` | Leaderboard › Activity: a set, a big pull, a badge, reactions (hide-values tweak) |
+| | `S3FeedMore.dc.html` | The feed scrolled: your own goal (D6), a challenge finish, a pull without a value |
 | | `S3FeedEmpty.dc.html` | First visit and the empty state |
 | | `S3FeedSharing.dc.html` | What you share |
 | | `S3LeaderboardOff.dc.html` | Social off: Leaderboard as today |
