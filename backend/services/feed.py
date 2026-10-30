@@ -119,12 +119,12 @@ def shareable_events(db: Session, viewer_id: int):
             off = sharing["off"][kind]
             clause = UserEvent.kind == kind
             if off:
-                clause = and_(clause, UserEvent.user_id.notin_(off))
+                clause = and_(clause, UserEvent.user_id.notin_(sorted(off)))
         else:
             on = sharing["on"][kind]
             if not on:
                 continue
-            clause = and_(UserEvent.kind == kind, UserEvent.user_id.in_(on))
+            clause = and_(UserEvent.kind == kind, UserEvent.user_id.in_(sorted(on)))
         kind_clauses.append(clause)
     query = (
         db.query(UserEvent)
@@ -152,7 +152,7 @@ def shareable_events(db: Session, viewer_id: int):
             UserEvent.kind == EVENT_ACHIEVEMENT_UNLOCKED, UserEvent.subject_key.in_(value_badges)
         )
         if sharing_values:
-            value_clause = and_(value_clause, UserEvent.user_id.notin_(sharing_values))
+            value_clause = and_(value_clause, UserEvent.user_id.notin_(sorted(sharing_values)))
         query = query.filter(~value_clause)
     return query
 

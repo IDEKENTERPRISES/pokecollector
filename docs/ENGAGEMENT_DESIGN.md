@@ -466,6 +466,7 @@ Social phases may be built during B and C, because the switch keeps them dormant
 - A feed of other trainers' shareable events. Each trainer picks per kind what to share (default: set completions and badges); values are hidden unless they opt in.
 - One-tap reactions (table `event_reactions`), no comments.
 - It lives as a segment on Leaderboard.
+- P12a (backend, built): `GET /api/feed` (`before` + `limit`, `require_social`), `PUT`/`DELETE /api/feed/{event_id}/reactions/{kind}`, table `event_reactions`, and per-trainer settings `feed_share_<kind>` and `feed_share_values`. Code: `backend/services/feed.py`, `backend/api/feed.py`. Sharing is applied when the feed is read. The feed is on `READ_CACHE_DENY` (key `feed`): other trainers' data must not outlive a trainer hiding it or the admin switch going off.
 
 **P13 Weekly challenge (M).** After P7 and P12.
 - One shared goal a week from a catalogue, built on the quest engine.
