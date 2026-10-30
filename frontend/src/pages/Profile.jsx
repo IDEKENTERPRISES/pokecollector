@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Award, Dna, PartyPopper, Download, Globe, Sparkles, Package, ArrowLeftRight, Trophy, BarChart3, RefreshCw, Settings as SettingsIcon, Users } from 'lucide-react'
+import { Award, Dna, PartyPopper, Download, Globe, Sparkles, Package, ArrowLeftRight, Trophy, BarChart3, RefreshCw, Settings as SettingsIcon, Target, Users } from 'lucide-react'
 import {
   getAchievements,
   getCustomMatches,
@@ -156,6 +156,7 @@ export default function Profile() {
         <StatTile type="grass" icon={ArrowLeftRight} label={t('nav.trades')} value={tileIcon(ArrowLeftRight)} to="/trades" />
         {multiUser && <StatTile type="psychic" icon={Trophy} label={t('nav.leaderboard')} value={tileIcon(Trophy)} to="/leaderboard" />}
         <StatTile type="fairy" icon={Award} label={t('profile.badges')} value={tileIcon(Award)} to="/achievements" />
+        <StatTile type="fire" icon={Target} label={t('goals.title')} value={tileIcon(Target)} to="/goals" />
         {multiUser && handle && <StatTile type="dragon" icon={Globe} label={t('profile.publicPage')} value={tileIcon(Users)} to={`/u/${handle}`} />}
       </div>
 
