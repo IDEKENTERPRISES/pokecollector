@@ -75,9 +75,10 @@ CATEGORIES: dict[str, Category] = {
     "weekly_recap": Category("weekly_recap", False, INSTANT, "/", "recap"),
     "badges": Category("badges", True, INSTANT, "/achievements", "badge"),
     "goal_milestones": Category("goal_milestones", True, INSTANT, "/goals", "goal"),
-    "swap_offers": Category("swap_offers", True, None, "/", "swap offer"),
+    "swap_offers": Category("swap_offers", True, INSTANT, "/", "swap offer"),
 }
-UI_CATEGORIES = [c.id for c in CATEGORIES.values() if c.timing]
+# Swap offers are social (off until an admin switches it on); their Settings row comes with the swap screens.
+UI_CATEGORIES = [c.id for c in CATEGORIES.values() if c.timing and c.id != "swap_offers"]
 
 
 def pref_key(category: str) -> str:
@@ -642,6 +643,88 @@ def scans_needing_review(db: Session, user_id: int) -> int:
     ).count()
 
 
+def swap_offers_waiting(db: Session, user_id: int) -> int:
+    """Swap offers waiting for this trainer's answer. 0 while the social switch is off."""
+    from services.social_feature import social_enabled
+    from services.swaps import waiting_count
+
+    return waiting_count(db, user_id) if social_enabled(db) else 0
+
+
+def icon_number(db: Session, user_id: int) -> int:
+    """The app-icon number: scans waiting for review plus swap offers waiting for the trainer (social on only)."""
+    return scans_needing_review(db, user_id) + swap_offers_waiting(db, user_id)
+
+
+_SWAP_TITLES = {
+    "offer": "Swap offer",
+    "counter": "Swap counter-offer",
+    "accepted": "Swap accepted",
+    "swapped": "Confirm your swap",
+    "completed": "Swap complete",
+}
+_SWAP_LIGHT = {
+    "offer": "You have a new swap offer",
+    "counter": "A swap offer was updated",
+    "accepted": "Your swap offer was accepted",
+    "swapped": "Your swap partner tapped Swapped",
+    "completed": "Your swap is complete",
+}
+
+
+def build_swap_payload(details: dict | None, detailed: bool, badge: int | None = None) -> str:
+    """Swap-offer push; names the trainer and the card counts when detailed, content-light otherwise.
+
+    `badge` is the icon number (scans plus offers waiting) so the app badge updates with the push."""
+    details = details or {}
+    kind = details.get("kind") if details.get("kind") in _SWAP_TITLES else "offer"
+    name = " ".join(str(details.get("partner") or "").split())
+    gives, gets = details.get("gives"), details.get("gets")
+    navigate = CATEGORIES["swap_offers"].navigate
+    if not detailed or not name:
+        body = _SWAP_LIGHT[kind]
+    else:
+        who = _clip(name, 30)
+        if kind in ("offer", "counter") and isinstance(gives, int) and isinstance(gets, int):
+            verb = "offered" if kind == "offer" else "countered with"
+            body = f"{who} {verb} {gets} card{'' if gets == 1 else 's'} for {gives} of yours"
+        elif kind == "accepted":
+            body = f"{who} accepted your swap"
+        elif kind == "swapped":
+            body = f"{who} tapped Swapped. Tap yours once you have the cards"
+        elif kind == "completed":
+            body = f"Your swap with {who} is complete"
+        else:
+            body = f"{who} sent a swap offer"
+    payload = json.loads(push.encode_payload_fitted(_SWAP_TITLES[kind], body, navigate))
+    if badge is not None:
+        payload["app_badge"] = int(badge)
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def swap_push_still_relevant(db: Session, row: NotificationQueue) -> bool:
+    """False when the offer moved on while the push waited (answered, cancelled, expired, confirmed)."""
+    from models import SwapOffer
+
+    details = row.details or {}
+    offer = db.query(SwapOffer).filter(SwapOffer.id == details.get("offer_id")).first()
+    if offer is None:
+        return False
+    kind = details.get("kind")
+    if kind in ("offer", "counter"):
+        return (
+            offer.state in ("proposed", "countered")
+            and offer.turn_user_id == row.user_id
+            and int(offer.revision) == details.get("revision")
+        )
+    if kind == "accepted":
+        return offer.state == "accepted"
+    if kind == "swapped":
+        mine = offer.from_confirmed_at if row.user_id == offer.from_user_id else offer.to_confirmed_at
+        return offer.state == "accepted" and mine is None
+    return offer.state == "completed"
+
+
 def _mark_sent(rows, now: datetime.datetime) -> None:
     for row in rows:
         row.sent_at = now
@@ -713,7 +796,7 @@ def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, 
             # This job's items as they were when it finished, but never more than are still waiting.
             kept = (row.details or {}).get("count")
             review_count = min(int(kept), count) if isinstance(kept, int) and kept > 0 else count
-        outcome = _send(db, user_id, build_scans_payload(count, review_count))
+        outcome = _send(db, user_id, build_scans_payload(count + swap_offers_waiting(db, user_id), review_count))
         result["instant"] += 1
         _log("flushed", category, user_id, subject, f"{_sent_reason(outcome)} to_review={count}")
     elif category == "wishlist_alerts":
@@ -740,6 +823,19 @@ def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, 
     elif category == "goal_milestones":
         details = row.details or {}
         outcome = _send(db, user_id, build_goal_payload(details, show_details(db, user_id)))
+        result["instant"] += 1
+        _log("flushed", category, user_id, subject, _sent_reason(outcome))
+    elif category == "swap_offers":
+        from services.social_feature import social_enabled
+
+        if not social_enabled(db):
+            _log("skipped", category, user_id, subject, "reason=social_off")
+            return
+        if not swap_push_still_relevant(db, row):
+            _log("skipped", category, user_id, subject, "reason=offer_moved_on")
+            return
+        payload = build_swap_payload(row.details, show_details(db, user_id), icon_number(db, user_id))
+        outcome = _send(db, user_id, payload)
         result["instant"] += 1
         _log("flushed", category, user_id, subject, _sent_reason(outcome))
     elif category == "weekly_recap":

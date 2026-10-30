@@ -680,6 +680,25 @@ def create_trade(
     db: Session = Depends(get_db),
     price_field: str = Query(default="price_trend"),
 ):
+    db_trade = create_trade_for_user(db, current_user, trade, price_field)
+    return _trade_response(db_trade)
+
+
+def create_trade_for_user(
+    db: Session,
+    current_user: User,
+    trade: TradeCreate,
+    price_field: str = "price_trend",
+    *,
+    commit: bool = True,
+    swap_offer_id: int | None = None,
+) -> Trade:
+    """The trade engine: log one side of a trade and move the copies.
+
+    The route calls it with `commit=True`. A caller that needs several trades to succeed together
+    (swap offers, P11) passes `commit=False`: the trade is flushed, nothing is committed or rolled
+    back here, and the caller rolls back when this raises.
+    """
     price_field = normalize_price_field(price_field)
     outgoing_cash = _cash_amount(trade.outgoing_cash)
     incoming_cash = _cash_amount(trade.incoming_cash)
@@ -702,6 +721,7 @@ def create_trade(
         outgoing_value=0,
         incoming_value=0,
         value_delta=0,
+        swap_offer_id=swap_offer_id,
         created_at=datetime.datetime.utcnow(),
     )
     db.add(db_trade)
@@ -855,20 +875,26 @@ def create_trade(
         db_trade.outgoing_value = round(outgoing_total, 2)
         db_trade.incoming_value = round(incoming_total, 2)
         db_trade.value_delta = round(incoming_total - outgoing_total, 2)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except HTTPException:
-        db.rollback()
+        if commit:
+            db.rollback()
         raise
     except Exception as exc:
         logger.exception("Failed to create trade")
-        db.rollback()
+        if commit:
+            db.rollback()
         raise HTTPException(status_code=500, detail="Failed to create trade") from exc
 
+    if not commit:
+        return db_trade
     db.refresh(db_trade)
-    db_trade = db.query(Trade).options(
+    return db.query(Trade).options(
         joinedload(Trade.items).joinedload(TradeItem.card).joinedload(Card.set_ref),
     ).filter(Trade.id == db_trade.id).one()
-    return _trade_response(db_trade)
 
 
 @router.put("/{trade_id}", response_model=TradeResponse)

@@ -637,6 +637,8 @@ class Trade(Base):
     outgoing_value = Column(Float, default=0, nullable=False)
     incoming_value = Column(Float, default=0, nullable=False)
     value_delta = Column(Float, default=0, nullable=False)
+    # The swap offer this trade was logged from (P11); each side's trade links to it, and through it to the other's.
+    swap_offer_id = Column(Integer, ForeignKey("swap_offers.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, default=func.now())
 
     items = relationship(
@@ -1068,3 +1070,64 @@ class NotificationQueue(Base):
     details = Column(JSON, nullable=True)
 
     __table_args__ = (Index("ix_notification_queue_subject", "user_id", "category", "subject_key"),)
+
+
+class SwapOffer(Base):
+    """A card swap between two trainers (P11): proposed, countered, accepted, then both tap "Swapped"."""
+
+    __tablename__ = "swap_offers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    from_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    to_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    # proposed, countered, accepted, completed, declined, cancelled, expired
+    state = Column(String(16), nullable=False, default="proposed")
+    # Whose move it is while proposed or countered; NULL once accepted or finished.
+    turn_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    revision = Column(Integer, nullable=False, default=1)
+    cash_amount = Column(Float, nullable=False, default=0)
+    cash_payer_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    note = Column(String(140), nullable=True)
+    expires_at = Column(DateTime, nullable=False)
+    from_confirmed_at = Column(DateTime, nullable=True)
+    to_confirmed_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    updated_at = Column(DateTime, nullable=False, default=func.now())
+
+    items = relationship(
+        "SwapOfferItem",
+        back_populates="offer",
+        cascade="all, delete-orphan",
+        order_by="SwapOfferItem.id.asc()",
+    )
+
+    __table_args__ = (
+        CheckConstraint("cash_amount >= 0", name="ck_swap_offers_cash_non_negative"),
+        Index("ix_swap_offers_state_expires", "state", "expires_at"),
+    )
+
+
+class SwapOfferItem(Base):
+    """One copy (or part of a stack) on the table; replaced wholesale by a counter."""
+
+    __tablename__ = "swap_offer_items"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    offer_id = Column(Integer, ForeignKey("swap_offers.id", ondelete="CASCADE"), nullable=False, index=True)
+    giver_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    # Not a foreign key: the copy is gone after the swap.
+    collection_item_id = Column(Integer, nullable=True)
+    card_id = Column(String, nullable=True)
+    variant = Column(String, nullable=True)
+    condition = Column(String, nullable=True)
+    lang = Column(String, nullable=True)
+    quantity = Column(Integer, nullable=False, default=1)
+    card_name = Column(String, nullable=True)
+    set_id = Column(String, nullable=True)
+    card_number = Column(String, nullable=True)
+    value_per_card = Column(Float, nullable=False, default=0)
+
+    offer = relationship("SwapOffer", back_populates="items")
+
+    __table_args__ = (CheckConstraint("quantity >= 1", name="ck_swap_offer_items_quantity"),)

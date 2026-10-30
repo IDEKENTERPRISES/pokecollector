@@ -382,6 +382,9 @@ def _run_migrations(conn):
             CHECK (value_total >= 0)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_trades_user_date ON trades(user_id, trade_date DESC, id DESC)",
+        # Engagement P11: the swap offer a trade was logged from (swap_offers comes from create_all)
+        "ALTER TABLE trades ADD COLUMN IF NOT EXISTS swap_offer_id INTEGER REFERENCES swap_offers(id) ON DELETE SET NULL",
+        "CREATE INDEX IF NOT EXISTS ix_trades_swap_offer_id ON trades(swap_offer_id)",
         "CREATE INDEX IF NOT EXISTS idx_trade_items_trade ON trade_items(trade_id)",
         "CREATE INDEX IF NOT EXISTS idx_trade_items_user_card ON trade_items(user_id, card_id)",
         "ALTER TABLE trade_items DROP CONSTRAINT IF EXISTS trade_items_card_id_fkey",
