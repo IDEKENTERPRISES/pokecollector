@@ -118,10 +118,10 @@ test('an unpinned goal stays off Home', async ({ page }) => {
   await expect(page.getByTestId('goal-card-7')).toHaveCount(0)
 })
 
-test('Profile has a Goals row, so goals are reachable with none pinned', async ({ page }) => {
+test('Profile has a Goals tile, so goals are reachable with none pinned', async ({ page }) => {
   await install(page, { goals: [] })
   await page.goto('/profile')
-  await expect(page.getByTestId('profile-goals')).toHaveAttribute('href', '/goals')
+  await expect(page.getByTestId('profile-tiles').getByRole('link', { name: /Goals/ })).toHaveAttribute('href', '/goals')
 })
 
 test('creating a goal from the picker adds it to the list', async ({ page }) => {

@@ -156,11 +156,11 @@ export default function Profile() {
         <StatTile type="grass" icon={ArrowLeftRight} label={t('nav.trades')} value={tileIcon(ArrowLeftRight)} to="/trades" />
         {multiUser && <StatTile type="psychic" icon={Trophy} label={t('nav.leaderboard')} value={tileIcon(Trophy)} to="/leaderboard" />}
         <StatTile type="fairy" icon={Award} label={t('profile.badges')} value={tileIcon(Award)} to="/achievements" />
+        <StatTile type="fire" icon={Target} label={t('goals.title')} value={tileIcon(Target)} to="/goals" />
         {multiUser && handle && <StatTile type="dragon" icon={Globe} label={t('profile.publicPage')} value={tileIcon(Users)} to={`/u/${handle}`} />}
       </div>
 
       <ListSection>
-        <ListRow icon={Target} iconColor="#30D158" title={t('goals.title')} to="/goals" testId="profile-goals" />
         <ListRow
           icon={Sparkles}
           iconColor="#FF9F0A"
