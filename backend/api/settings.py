@@ -11,7 +11,7 @@ from api.auth import get_current_user
 from sqlalchemy.orm import Session
 from database import get_db
 from models import CollectionCardPhoto, Setting, UserSetting, User
-from services import notifications
+from services import feed as feed_service, notifications
 from services.audit import record_audit
 from services.debug_logging import configure_debug_logging, get_debug_log_path
 from services.digital_sets import DIGITAL_SETS_SETTING_KEY, refresh_digital_catalogue_flags
@@ -209,8 +209,11 @@ def _normalize_tcgdex_sync_languages(value) -> str:
 
 
 def _coerce_setting_value(key: str, value) -> str:
-    if key in notifications.boolean_keys():
+    if key in notifications.boolean_keys() or key in feed_service.boolean_keys():
         return "true" if str(value).lower() in {"true", "1", "yes", "on"} else "false"
+    if key.startswith(feed_service.SHARE_PREFIX):
+        # Only the known sharing choices: a typo must not store a setting that silently does nothing.
+        raise HTTPException(status_code=422, detail=f"{key} is not a feed sharing setting")
     if key == notifications.DIGEST_HOUR_KEY:
         return notifications.normalize_digest_hour(value)
     if key == "tcgdex_sync_languages":
@@ -278,6 +281,8 @@ def _get_user_settings(db: Session, user_id: int) -> dict:
     for key, value in DEFAULT_SETTINGS.items():
         result.setdefault(key, value)
     for key, value in notifications.default_settings().items():
+        result.setdefault(key, value)
+    for key, value in feed_service.default_settings().items():
         result.setdefault(key, value)
     if global_scanner_config_enabled():
         if _is_admin(db, user_id):

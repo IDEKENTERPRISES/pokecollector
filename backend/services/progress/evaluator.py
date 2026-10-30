@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 EVENT_SET_COMPLETED = "set_completed"
 EVENT_ACHIEVEMENT_UNLOCKED = "achievement_unlocked"
 EVENT_BIG_PULL = "big_pull"
+EVENT_GOAL_COMPLETED = "goal_completed"
 
 
 def record_event(

@@ -434,5 +434,16 @@ def evaluate_goals(db: Session, user_id: int, now: datetime.datetime, ctx: GoalC
                     logging.getLogger(__name__).exception("Could not queue the goal push for user %s", user_id)
         if 100 in (goal.milestones or []) and goal.completed_at is None:
             goal.completed_at = now
+            # A goal finished by the silent backfill (`known is None`) never becomes a feed event.
+            if known is not None:
+                from services.progress.evaluator import EVENT_GOAL_COMPLETED, record_event
+
+                record_event(
+                    db, user_id, EVENT_GOAL_COMPLETED,
+                    dedupe_key=f"{EVENT_GOAL_COMPLETED}:{goal.id}",
+                    subject_key=str(goal.id),
+                    payload={"goal_id": goal.id, "goal_kind": goal.kind, "title": goal_title(db, goal)},
+                    occurred_at=now,
+                )
     db.flush()
     return announced

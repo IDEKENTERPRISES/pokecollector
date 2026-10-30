@@ -512,4 +512,9 @@ export const getCollectionDna = () => api.get('/analytics/dna').then(r => r.data
 export const getShowcase = () => api.get('/profile/showcase').then(r => r.data)
 export const putShowcase = (ids) => api.put('/profile/showcase', { ids }).then(r => r.data)
 
+// Activity feed and reactions (engagement P12a; social switch on). The feed is never read-cached.
+export const getFeed = (params) => api.get('/feed', { params }).then(r => r.data)
+export const addFeedReaction = (eventId, kind) => api.put(`/feed/${eventId}/reactions/${kind}`).then(r => r.data)
+export const removeFeedReaction = (eventId, kind) => api.delete(`/feed/${eventId}/reactions/${kind}`).then(r => r.data)
+
 export default api

@@ -972,6 +972,20 @@ class UserEvent(Base):
     __table_args__ = (UniqueConstraint("user_id", "dedupe_key", name="uq_user_event_dedupe"),)
 
 
+class EventReaction(Base):
+    """A one-tap reaction from one trainer to another trainer's feed event (docs/ENGAGEMENT_DESIGN.md P12)."""
+
+    __tablename__ = "event_reactions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(Integer, ForeignKey("user_events.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String(24), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+
+    __table_args__ = (UniqueConstraint("event_id", "user_id", "kind", name="uq_event_reaction"),)
+
+
 class UserGoal(Base):
     """A chase goal: a rule over the catalogue (a set, a generation, a family, an artist, a card list)."""
 
