@@ -27,6 +27,7 @@ from services.exchange_rates import (
 )
 from services.card_visibility import get_visible_filter_languages
 from services.public_profile_feature import PUBLIC_PROFILES_SETTING_KEY
+from services.social_feature import SOCIAL_SETTING_KEY
 from services.tcgdex_languages import (
     DEFAULT_TCGDEX_SYNC_LANGUAGES,
     supported_tcgdex_language_payload,
@@ -169,6 +170,7 @@ ADMIN_ONLY_KEYS = {
     "cross_language_price_fallback", "cross_language_image_fallback",
     DIGITAL_SETS_SETTING_KEY,
     PUBLIC_PROFILES_SETTING_KEY,
+    SOCIAL_SETTING_KEY,
 }
 
 DEFAULT_SETTINGS = {
@@ -192,6 +194,7 @@ DEFAULT_SETTINGS = {
     "cross_language_image_fallback": "true",
     "debug_mode": "false",
     PUBLIC_PROFILES_SETTING_KEY: "false",
+    SOCIAL_SETTING_KEY: "false",
     SCAN_DIAGNOSTICS_SETTING_KEY: "false",
     PHOTO_PREFERENCE_SETTING_KEY: "false",
     SCANNER_GEMINI_FALLBACK_SETTING_KEY: "false",
@@ -215,7 +218,7 @@ def _coerce_setting_value(key: str, value) -> str:
     if key in {
         "debug_mode", "cross_language_price_fallback",
         "cross_language_image_fallback", DIGITAL_SETS_SETTING_KEY,
-        PUBLIC_PROFILES_SETTING_KEY, SCAN_DIAGNOSTICS_SETTING_KEY,
+        PUBLIC_PROFILES_SETTING_KEY, SOCIAL_SETTING_KEY, SCAN_DIAGNOSTICS_SETTING_KEY,
         PHOTO_PREFERENCE_SETTING_KEY, SCANNER_GEMINI_FALLBACK_SETTING_KEY,
     }:
         return "true" if str(value).lower() in {"true", "1", "yes", "on"} else "false"
@@ -979,7 +982,7 @@ def update_settings(
         coerced_value = _coerce_setting_value(key, value)
         if key in ADMIN_ONLY_KEYS:
             if current_user.role != "admin":
-                if key == PUBLIC_PROFILES_SETTING_KEY:
+                if key in {PUBLIC_PROFILES_SETTING_KEY, SOCIAL_SETTING_KEY}:
                     raise HTTPException(status_code=403, detail="Admin only")
                 continue
             row = db.query(Setting).filter(Setting.key == key).first()
