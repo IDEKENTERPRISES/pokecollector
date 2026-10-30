@@ -566,7 +566,7 @@ class NotificationTests(SwapBase):
             notifications.flush_due(self.db, now=NEXT_NOON)
         self.assertEqual([uid for uid, _ in sent], [self.misty.id])
         payload = sent[0][1]
-        self.assertEqual(payload["notification"]["body"], "ash offered 1 card for 1 of yours")
+        self.assertEqual(payload["notification"]["body"], "ash offered Big One (BIG 1) for your Test Two (TST 2)")
         self.assertEqual(payload["app_badge"], 1)
 
         from models import UserSetting
@@ -594,6 +594,210 @@ class NotificationTests(SwapBase):
         with patch.object(notifications, "_send") as send:
             notifications.flush_due(self.db, now=NEXT_NOON)
         send.assert_not_called()
+
+
+class PushTextTests(SwapBase):
+    def payload(self, details, detailed=True, badge=None):
+        return json.loads(notifications.build_swap_payload(details, detailed, badge))
+
+    def test_cards_are_named_and_amounts_never_appear(self):
+        base = {"offer_id": 41, "partner": "Brock", "gives": 1, "gets": 1, "cash": False,
+                "give_cards": ["Greninja ex (TWM 106)"], "get_cards": ["Charizard ex (OBF 125)"]}
+        expected = {
+            "offer": "Brock offered Charizard ex (OBF 125) for your Greninja ex (TWM 106)",
+            "counter": "Brock countered: Charizard ex (OBF 125) for your Greninja ex (TWM 106)",
+            "accepted": "Brock accepted: Charizard ex (OBF 125) for your Greninja ex (TWM 106). Meet up, then both tap Swapped.",
+            "swapped": "Brock tapped Swapped. Tap yours once you have Charizard ex (OBF 125).",
+            "completed": "Charizard ex (OBF 125) is in your collection.",
+        }
+        for kind, body in expected.items():
+            self.assertEqual(self.payload({**base, "kind": kind})["notification"]["body"], body)
+        cash = self.payload({**base, "kind": "offer", "cash": True})["notification"]["body"]
+        self.assertEqual(cash, "Brock offered Charizard ex (OBF 125) for your Greninja ex (TWM 106) + cash")
+        self.assertNotRegex(cash, r"[£€$]|\d+\.\d\d")
+
+    def test_a_side_with_more_than_two_cards_is_counted(self):
+        details = {"kind": "offer", "partner": "Brock", "offer_id": 1, "gives": 1, "gets": 3,
+                   "give_cards": ["Mew ex (MEW 151)", "Pikachu (MEW 173)"], "get_cards": ["A (X 1)", "B (X 2)", "C (X 3)"]}
+        self.assertEqual(self.payload(details)["notification"]["body"],
+                         "Brock offered 3 cards for your Mew ex (MEW 151) and Pikachu (MEW 173)")
+
+    def test_details_off_names_nothing(self):
+        details = {"kind": "offer", "partner": "Brock", "offer_id": 41, "gives": 1, "gets": 1,
+                   "give_cards": ["Greninja ex (TWM 106)"], "get_cards": ["Charizard ex (OBF 125)"]}
+        text = json.dumps(self.payload(details, detailed=False))
+        self.assertNotIn("Greninja", text)
+        self.assertNotIn("Brock", text)
+
+    def test_every_swap_push_opens_the_offer(self):
+        for kind in ("offer", "counter", "accepted", "swapped", "completed", "declined"):
+            for detailed in (True, False):
+                payload = self.payload({"kind": kind, "partner": "Brock", "offer_id": 41}, detailed)
+                self.assertEqual(payload["notification"]["navigate"], "/trades/offers/41", (kind, detailed))
+
+    def test_queued_rows_without_card_names_keep_the_counts(self):
+        body = self.payload({"kind": "offer", "partner": "ash", "offer_id": 1, "gives": 1, "gets": 2})["notification"]["body"]
+        self.assertEqual(body, "ash offered 2 cards for 1 of yours")
+
+    def test_queued_details_hold_labels_and_no_amount(self):
+        offer = self.propose(cash=2.5, payer=self.misty)
+        details = self.queue(self.misty)[0].details
+        self.assertEqual(details["get_cards"], ["Big One (BIG 1)"])
+        self.assertEqual(details["give_cards"], ["Test Two (TST 2)"])
+        self.assertTrue(details["cash"])
+        self.assertNotIn("2.5", json.dumps(details))
+        self.assertEqual(details["offer_id"], offer["id"])
+
+    def test_a_decline_pushes_the_other_trainer_without_an_icon_number(self):
+        offer = self.propose()
+        self.act(self.misty, offer["id"], "decline", {})
+        rows = self.queue(self.ash)
+        self.assertEqual([(r.subject_key, r.details["kind"]) for r in rows], [(f"swap:{offer['id']}:r1:declined", "declined")])
+        sent = []
+        with patch.object(notifications, "_send", side_effect=lambda db, uid, payload: sent.append((uid, json.loads(payload))) or {"sent": 1, "removed": 0}):
+            notifications.flush_due(self.db, now=NEXT_NOON)
+        payload = next(p for uid, p in sent if uid == self.ash.id)
+        self.assertEqual(payload["notification"]["title"], "Swap declined")
+        self.assertEqual(payload["notification"]["body"], "misty declined your swap offer")
+        self.assertNotIn("app_badge", payload)
+        light = self.payload({"kind": "declined", "partner": "misty", "offer_id": 1}, False, 4)
+        self.assertEqual(light["notification"]["body"], "A swap offer was declined")
+        self.assertNotIn("app_badge", light)
+
+    def test_cancelling_sends_no_push(self):
+        offer = self.propose()
+        self.act(self.ash, offer["id"], "cancel")
+        self.assertEqual([r.details["kind"] for r in self.queue(self.misty)], ["offer"])
+        self.assertEqual(self.queue(self.ash), [])
+
+
+class ChangesTests(SwapBase):
+    def test_a_first_revision_has_no_changes(self):
+        offer = self.propose()
+        self.assertEqual(offer["changes"], [])
+
+    def test_a_counter_lists_what_it_changed_from_the_viewers_side(self):
+        offer = self.propose(note="Hello")
+        response = self.act(self.misty, offer["id"], "counter", self.counter_body(
+            [(self.a2, 1), (self.a1, 1), (self.m2, 1)], cash=3, payer=self.ash, note="Pikachu makes it fair"))
+        self.assertEqual(response.status_code, 200, response.text)
+        by_kind = {}
+        for c in response.json()["changes"]:
+            by_kind.setdefault(c["change"], []).append(c)
+        # Misty (the viewer) now offers big-002 instead of the spare big-001; asks tst-001 in addition
+        self.assertEqual([(c["card_name"], c["gives"]) for c in by_kind["added"]], [("Test One", False), ("Big Two", True)])
+        self.assertEqual([(c["card_name"], c["gives"]) for c in by_kind["removed"]], [("Big One", True)])
+        self.assertEqual(by_kind["cash"][0]["to"], {"amount": 3.0, "payer_user_id": self.ash.id})
+        self.assertEqual(by_kind["note"][0]["to"], "Pikachu makes it fair")
+        self.as_user(self.ash)
+        seen = self.client.get(f"/api/swaps/{offer['id']}").json()["changes"]
+        self.assertEqual([c["gives"] for c in seen if c["change"] == "added"], [True, False])
+
+    def test_quantity_changes(self):
+        offer = self.propose([(self.a1, 1), (self.m1, 1)])
+        response = self.act(self.misty, offer["id"], "counter", self.counter_body([(self.a1, 2), (self.m1, 1)]))
+        changes = response.json()["changes"]
+        self.assertEqual([(c["change"], c["from"], c["to"]) for c in changes], [("quantity", 1, 2)])
+
+    def test_the_next_counter_replaces_the_changes(self):
+        offer = self.propose()
+        self.act(self.misty, offer["id"], "counter", self.counter_body([(self.a2, 1)], note="x"))
+        response = self.act(self.ash, offer["id"], "counter", self.counter_body([(self.a2, 1), (self.m1, 1)]))
+        self.assertEqual([c["change"] for c in response.json()["changes"]], ["added", "note"])
+
+
+class UnavailableTests(SwapBase):
+    def test_a_card_that_went_after_acceptance_shows_before_anyone_taps(self):
+        offer_id = self.accepted()
+        self.as_user(self.ash)
+        self.assertEqual(self.client.get(f"/api/swaps/{offer_id}").json()["unavailable"], [])
+        self.db.delete(self.db.get(CollectionItem, self.a2.id))
+        self.db.commit()
+        for user in (self.ash, self.misty):
+            self.as_user(user)
+            problems = self.client.get(f"/api/swaps/{offer_id}").json()["unavailable"]
+            self.assertEqual([(p["card_name"], p["giver_user_id"], p["needed"], p["available"]) for p in problems],
+                             [("Test Two", self.ash.id, 1, 0)])
+        self.assertEqual(self.client.get("/api/swaps").json()["outgoing"][0]["unavailable"][0]["card_name"], "Test Two")
+
+    def test_only_accepted_offers_carry_it(self):
+        offer = self.propose()
+        self.assertEqual(offer["unavailable"], [])
+
+
+class CandidateTests(SwapBase):
+    def get(self, user, **params):
+        self.as_user(user)
+        return self.client.get("/api/swaps/candidates", params={"partner_id": self.misty.id if user is self.ash else self.ash.id, **params})
+
+    def test_your_own_copies_with_a_wishlist_match_on_the_partners_list(self):
+        from models import WishlistItem
+
+        self.db.add(WishlistItem(user_id=self.misty.id, card_id="tst-001_en"))
+        self.misty.is_profile_public = True
+        self.misty.wishlist_visibility = "trade_matches"
+        self.db.commit()
+        with patch("services.public_profile_feature.public_profiles_enabled", return_value=True):
+            data = self.get(self.ash, side="give").json()
+            self.assertTrue(data["wishlist_visible"])
+            by_card = {i["card_id"]: i for i in data["items"]}
+            self.assertEqual(set(by_card), {"tst-001_en", "tst-002_en"})
+            self.assertTrue(by_card["tst-001_en"]["on_wishlist"])
+            self.assertFalse(by_card["tst-002_en"]["on_wishlist"])
+            self.assertEqual((by_card["tst-001_en"]["offerable"], by_card["tst-001_en"]["spare"]), (2, True))
+            self.assertEqual(by_card["tst-002_en"]["spare"], False)
+            self.assertEqual(data["counts"], {"all": 2, "spares": 1, "wishlist": 1})
+            self.assertEqual([i["card_id"] for i in self.get(self.ash, side="give", filter="wishlist").json()["items"]], ["tst-001_en"])
+            self.assertEqual([i["card_id"] for i in self.get(self.ash, side="give", filter="spares").json()["items"]], ["tst-001_en"])
+
+    def test_the_partners_wishlist_is_hidden_unless_compare_may_show_it(self):
+        from models import WishlistItem
+
+        self.db.add(WishlistItem(user_id=self.misty.id, card_id="tst-001_en"))
+        self.db.commit()
+        data = self.get(self.ash, side="give").json()
+        self.assertFalse(data["wishlist_visible"])
+        self.assertEqual(data["counts"]["wishlist"], 0)
+        self.assertFalse(any(i["on_wishlist"] for i in data["items"]))
+
+    def test_only_the_partners_spares_can_be_asked_for(self):
+        data = self.get(self.ash, side="get").json()
+        self.assertEqual([(i["card_id"], i["offerable"]) for i in data["items"]], [("big-001_en", 1)])
+        # a binder holding the spare copy makes it not spare any more
+        binder = Binder(user_id=self.misty.id, name="B", binder_type="collection")
+        self.db.add(binder)
+        self.db.flush()
+        self.db.add(BinderCard(binder_id=binder.id, card_id="big-001_en", collection_item_id=self.m1.id, required_quantity=2))
+        self.db.commit()
+        self.assertEqual(self.get(self.ash, side="get").json()["items"], [])
+
+    def test_your_wishlist_marks_the_partners_spares(self):
+        from models import WishlistItem
+
+        self.db.add(WishlistItem(user_id=self.ash.id, card_id="big-001_en"))
+        self.db.commit()
+        data = self.get(self.ash, side="get").json()
+        self.assertTrue(data["items"][0]["on_wishlist"])
+        self.assertEqual(data["counts"]["wishlist"], 1)
+
+    def test_search_and_values_use_your_price_field(self):
+        self.assertEqual(self.get(self.ash, side="give", q="two").json()["items"][0]["card_id"], "tst-002_en")
+        self.assertEqual(self.get(self.ash, side="give", q="nothing").json()["items"], [])
+        self.assertEqual(self.get(self.ash, side="give").json()["items"][1]["value"], 5.0)
+
+    def test_checks_and_the_social_switch(self):
+        self.as_user(self.ash)
+        self.assertEqual(self.client.get("/api/swaps/candidates", params={"partner_id": self.ash.id}).status_code, 422)
+        self.assertEqual(self.client.get("/api/swaps/candidates", params={"partner_id": 9999}).status_code, 404)
+        self.assertEqual(self.client.get("/api/swaps/candidates", params={"partner_id": self.misty.id, "side": "x"}).status_code, 422)
+        self.turn_social(False)
+        self.assertEqual(self.client.get("/api/swaps/candidates", params={"partner_id": self.misty.id}).status_code, 404)
+
+    def test_items_carry_the_set_code_and_types(self):
+        offer = self.propose()
+        item = offer["items"][0]
+        self.assertIn("set_code", item)
+        self.assertIsInstance(item["types"], list)
 
 
 class IconNumberTests(SwapBase):
