@@ -6,12 +6,13 @@ are applied when the feed is read, so turning a kind off hides that trainer's pa
 """
 import datetime
 
-from sqlalchemy import and_, false, or_
+from sqlalchemy import and_, false, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from models import (
     Card,
+    EventComment,
     EventReaction,
     Set,
     User,
@@ -44,6 +45,9 @@ REACTION_KINDS = ("cheer", "wow", "fire", "heart")
 
 # Badges that state an amount of money. They stay out of the feed unless the trainer shares values.
 VALUE_METRICS = {"total_value", "positive_pnl_flag"}
+
+COMMENT_MAX_LENGTH = 280
+MAX_COMMENTS_SHOWN = 200
 
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 50
@@ -106,8 +110,11 @@ def trainers_sharing(db: Session, prefs: dict[int, dict[str, bool]] | None = Non
     return {"on": on, "off": off, "values": values}
 
 
-def shareable_events(db: Session, viewer_id: int):
+def shareable_events(db: Session, viewer_id: int, include_own: bool = False):
     """Query of the events the viewer may see: other active trainers' events they currently share.
+
+    With `include_own` the viewer's own events join them, under the viewer's own sharing choices
+    (switching a kind off hides your own past events from your feed too).
 
     Backfilled and silent unlocks never qualify: an unlock needs a `user_achievements` row that is not
     backfilled. Value badges need the trainer to share values.
@@ -136,8 +143,10 @@ def shareable_events(db: Session, viewer_id: int):
                 UserAchievement.achievement_id == UserEvent.subject_key,
             ),
         )
-        .filter(User.is_active == True, UserEvent.user_id != viewer_id)  # noqa: E712
+        .filter(User.is_active == True)  # noqa: E712
     )
+    if not include_own:
+        query = query.filter(UserEvent.user_id != viewer_id)
     if not kind_clauses:
         return query.filter(false())
     query = query.filter(or_(*kind_clauses))
@@ -246,6 +255,20 @@ def reaction_summary(db: Session, event_ids: list[int], viewer_id: int) -> dict[
     }
 
 
+def comment_counts(db: Session, event_ids: list[int]) -> dict[int, int]:
+    counts = {event_id: 0 for event_id in event_ids}
+    if event_ids:
+        rows = (
+            db.query(EventComment.event_id, func.count(EventComment.id))
+            .join(User, User.id == EventComment.user_id)
+            .filter(EventComment.event_id.in_(event_ids), User.is_active == True)  # noqa: E712
+            .group_by(EventComment.event_id)
+        )
+        for event_id, count in rows:
+            counts[event_id] = count
+    return counts
+
+
 def serialize_events(db: Session, events: list[UserEvent], viewer_id: int, price_field: str = "price_trend") -> list[dict]:
     if not events:
         return []
@@ -260,6 +283,7 @@ def serialize_events(db: Session, events: list[UserEvent], viewer_id: int, price
         (s.tcg_set_id, s.lang): s.name for s in db.query(Set).filter(Set.tcg_set_id.in_(set_ids))
     } if set_ids else {}
     reactions = reaction_summary(db, [e.id for e in events], viewer_id)
+    comments = comment_counts(db, [e.id for e in events])
     items = []
     for event in events:
         user = users.get(event.user_id)
@@ -273,7 +297,9 @@ def serialize_events(db: Session, events: list[UserEvent], viewer_id: int, price
                 "avatar_id": user.avatar_id if user else None,
             },
             "display": _display(db, event, cards, set_names, event.user_id in sharing_values, price_field),
+            "mine": event.user_id == viewer_id,
             "reactions": reactions[event.id],
+            "comment_count": comments[event.id],
         })
     return items
 
@@ -283,7 +309,7 @@ def feed_page(
     price_field: str = "price_trend",
 ) -> dict:
     limit = max(1, min(int(limit), MAX_PAGE_SIZE))
-    query = _cursor_filter(db, shareable_events(db, viewer_id), before)
+    query = _cursor_filter(db, shareable_events(db, viewer_id, include_own=True), before)
     rows = query.order_by(UserEvent.occurred_at.desc(), UserEvent.id.desc()).limit(limit + 1).all()
     more = len(rows) > limit
     rows = rows[:limit]
@@ -294,8 +320,9 @@ def feed_page(
     }
 
 
-def visible_event(db: Session, viewer_id: int, event_id: int) -> UserEvent | None:
-    return shareable_events(db, viewer_id).filter(UserEvent.id == event_id).first()
+def visible_event(db: Session, viewer_id: int, event_id: int, include_own: bool = False) -> UserEvent | None:
+    """An event the viewer may see. Reactions are for other trainers' events; comments also go under your own."""
+    return shareable_events(db, viewer_id, include_own).filter(UserEvent.id == event_id).first()
 
 
 def add_reaction(db: Session, event_id: int, user_id: int, kind: str) -> bool:
@@ -316,3 +343,62 @@ def remove_reaction(db: Session, event_id: int, user_id: int, kind: str) -> bool
             synchronize_session=False
         )
     )
+
+
+def clean_comment(text) -> str:
+    """Plain text, trimmed. Raises ValueError when it is empty or longer than COMMENT_MAX_LENGTH."""
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        raise ValueError("A comment cannot be empty")
+    if len(cleaned) > COMMENT_MAX_LENGTH:
+        raise ValueError(f"A comment can have at most {COMMENT_MAX_LENGTH} characters")
+    return cleaned
+
+
+def serialize_comment(comment: EventComment, author: User | None, viewer_id: int, event_owner_id: int) -> dict:
+    return {
+        "id": comment.id,
+        "event_id": comment.event_id,
+        "text": comment.text,
+        "created_at": comment.created_at.isoformat() if comment.created_at else None,
+        "author": {
+            "id": comment.user_id,
+            "username": author.username if author else None,
+            "avatar_id": author.avatar_id if author else None,
+        },
+        "mine": comment.user_id == viewer_id,
+        "can_delete": comment.user_id == viewer_id or event_owner_id == viewer_id,
+    }
+
+
+def list_comments(db: Session, event: UserEvent, viewer_id: int) -> list[dict]:
+    """Oldest first, so a thread reads top to bottom. Comments by deactivated trainers are left out."""
+    rows = (
+        db.query(EventComment, User)
+        .join(User, User.id == EventComment.user_id)
+        .filter(EventComment.event_id == event.id, User.is_active == True)  # noqa: E712
+        .order_by(EventComment.created_at.asc(), EventComment.id.asc())
+        .limit(MAX_COMMENTS_SHOWN)
+        .all()
+    )
+    return [serialize_comment(comment, author, viewer_id, event.user_id) for comment, author in rows]
+
+
+def add_comment(db: Session, event: UserEvent, user_id: int, text: str) -> EventComment:
+    comment = EventComment(
+        event_id=event.id, user_id=user_id, text=clean_comment(text), created_at=datetime.datetime.utcnow()
+    )
+    db.add(comment)
+    db.flush()
+    return comment
+
+
+def delete_comment(db: Session, event: UserEvent, comment_id: int, viewer_id: int) -> str:
+    """'deleted', 'missing' or 'forbidden'. The author or the event's owner may delete."""
+    comment = db.query(EventComment).filter_by(id=comment_id, event_id=event.id).first()
+    if comment is None:
+        return "missing"
+    if comment.user_id != viewer_id and event.user_id != viewer_id:
+        return "forbidden"
+    db.delete(comment)
+    return "deleted"

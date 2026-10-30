@@ -9,6 +9,7 @@ try:
     from api.auth import get_current_user
     from api.backup import BACKUP_GROUPS
     from models import (
+        EventComment,
         EventReaction,
         Setting,
         User,
@@ -127,13 +128,39 @@ class VisibilityTests(FeedBase):
         self.pull(self.other, minutes=4)
         self.assertEqual(self.ids(), [b.id, s.id])
 
-    def test_own_events_and_inactive_trainers_are_left_out(self):
-        self.set_event(self.user)
+    def test_own_events_are_marked_and_inactive_trainers_are_left_out(self):
+        mine = self.set_event(self.user, minutes=1)
         gone = self.set_event(self.other)
-        self.assertEqual(self.ids(), [gone.id])
+        items = self.feed()["items"]
+        self.assertEqual([(i["id"], i["mine"]) for i in items], [(mine.id, True), (gone.id, False)])
         self.other.is_active = False
         self.db.commit()
-        self.assertEqual(self.ids(), [])
+        self.assertEqual(self.ids(), [mine.id])
+
+    def test_own_events_follow_your_own_sharing_choices(self):
+        set_done = self.set_event(self.user, minutes=1)
+        pull = self.pull(self.user, minutes=2)
+        # Big pulls are off until you share them, like for everyone else.
+        self.assertEqual(self.ids(), [set_done.id])
+        self.share(self.user, "feed_share_big_pull", "true")
+        self.assertEqual(self.ids(), [pull.id, set_done.id])
+        self.share(self.user, "feed_share_set_completed", "false")
+        self.assertEqual(self.ids(), [pull.id])
+
+    def test_own_events_carry_reaction_counts_but_never_who(self):
+        mine = self.set_event(self.user)
+        self.db.add_all([
+            EventReaction(event_id=mine.id, user_id=self.other.id, kind="cheer"),
+            EventReaction(event_id=mine.id, user_id=self.brock.id, kind="cheer"),
+            EventReaction(event_id=mine.id, user_id=self.brock.id, kind="fire"),
+        ])
+        self.db.commit()
+        item = self.feed()["items"][0]
+        self.assertEqual(item["reactions"]["counts"], {"cheer": 2, "wow": 0, "fire": 1, "heart": 0})
+        self.assertEqual(item["reactions"]["mine"], [])
+        text = self.client.get("/api/feed").text
+        self.assertNotIn("misty", text.lower())
+        self.assertNotIn("brock", text.lower())
 
     def test_a_trainer_can_opt_in_to_goals_and_big_pulls(self):
         self.share(self.other, "feed_share_goal_completed", "true")
@@ -453,7 +480,156 @@ class GoalEventTests(GoalBase):
         self.assertEqual(self.goal_events(), [])
 
 
+class CommentTests(FeedBase):
+    def comment(self, event, text="Great pull!", method="post", comment_id=None):
+        url = f"/api/feed/{event.id}/comments"
+        if method == "delete":
+            return self.client.delete(f"{url}/{comment_id}")
+        if method == "get":
+            return self.client.get(url)
+        return self.client.post(url, json={"text": text})
+
+    def test_post_list_and_count(self):
+        event = self.set_event(self.other)
+        response = self.comment(event, "  Nice one  ")
+        self.assertEqual(response.status_code, 201, response.text)
+        body = response.json()
+        self.assertEqual(body["comment"]["text"], "Nice one")
+        self.assertEqual(body["comment"]["author"]["username"], "ash")
+        self.assertTrue(body["comment"]["mine"])
+        self.assertEqual(body["comment_count"], 1)
+        items = self.comment(event, method="get").json()["items"]
+        self.assertEqual([c["text"] for c in items], ["Nice one"])
+        self.assertEqual(self.feed()["items"][0]["comment_count"], 1)
+
+    def test_comments_read_oldest_first(self):
+        event = self.set_event(self.other)
+        for text in ("one", "two", "three"):
+            self.comment(event, text)
+        items = self.comment(event, method="get").json()["items"]
+        self.assertEqual([c["text"] for c in items], ["one", "two", "three"])
+
+    def test_length_and_blank_rules(self):
+        event = self.set_event(self.other)
+        self.assertEqual(self.comment(event, "x" * 280).status_code, 201)
+        self.assertEqual(self.comment(event, "x" * 281).status_code, 422)
+        self.assertEqual(self.comment(event, "   ").status_code, 422)
+        self.assertEqual(self.comment(event, "").status_code, 422)
+        # Trimming happens before the length check.
+        self.assertEqual(self.comment(event, "  " + "y" * 280 + "  ").status_code, 201)
+        self.assertEqual(self.db.query(EventComment).count(), 2)
+
+    def test_the_owner_of_a_shared_event_sees_and_answers_comments_under_it(self):
+        mine = self.set_event(self.user)
+        self.as_user(self.other)
+        self.comment(mine, "Congrats!")
+        self.as_user(self.user)
+        items = self.comment(mine, method="get").json()["items"]
+        self.assertEqual([(c["text"], c["mine"], c["can_delete"]) for c in items], [("Congrats!", False, True)])
+        self.assertEqual(self.comment(mine, "Thanks").status_code, 201)
+        self.assertEqual(self.feed()["items"][0]["comment_count"], 2)
+
+    def test_comments_follow_the_events_visibility_including_retroactive_hiding(self):
+        event = self.set_event(self.other)
+        self.assertEqual(self.comment(event).status_code, 201)
+        self.share(self.other, "feed_share_set_completed", "false")
+        self.assertEqual(self.comment(event).status_code, 404)
+        self.assertEqual(self.comment(event, method="get").status_code, 404)
+        self.assertEqual(self.ids(), [])
+        self.share(self.other, "feed_share_set_completed", "true")
+        self.assertEqual(len(self.comment(event, method="get").json()["items"]), 1)
+
+    def test_hiding_your_own_event_hides_its_comments_from_everyone(self):
+        mine = self.set_event(self.user)
+        self.as_user(self.other)
+        self.comment(mine, "Congrats!")
+        self.share(self.user, "feed_share_set_completed", "false")
+        self.assertEqual(self.comment(mine, method="get").status_code, 404)
+        self.as_user(self.user)
+        self.assertEqual(self.comment(mine, method="get").status_code, 404)
+
+    def test_unseen_events_take_no_comments(self):
+        hidden = self.goal_done(self.other)
+        backfilled = self.badge(self.other, backfilled=True)
+        for event in (hidden, backfilled):
+            self.assertEqual(self.comment(event).status_code, 404, event.kind)
+        self.assertEqual(self.client.post("/api/feed/99999/comments", json={"text": "hi"}).status_code, 404)
+        self.assertEqual(self.db.query(EventComment).count(), 0)
+
+    def test_author_and_event_owner_may_delete_but_nobody_else(self):
+        event = self.set_event(self.other)
+        brocks = EventComment(event_id=event.id, user_id=self.brock.id, text="mine")
+        asks = EventComment(event_id=event.id, user_id=self.user.id, text="ash")
+        self.db.add_all([brocks, asks])
+        self.db.commit()
+        # A bystander cannot remove someone else's comment.
+        self.assertEqual(self.comment(event, method="delete", comment_id=brocks.id).status_code, 403)
+        # The author can.
+        response = self.comment(event, method="delete", comment_id=asks.id)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["comment_count"], 1)
+        # The event's owner can remove anyone's.
+        self.as_user(self.other)
+        self.assertEqual(self.comment(event, method="delete", comment_id=brocks.id).status_code, 200)
+        self.assertEqual(self.db.query(EventComment).count(), 0)
+        self.assertEqual(self.comment(event, method="delete", comment_id=brocks.id).status_code, 404)
+
+    def test_can_delete_flags_match_the_rules(self):
+        event = self.set_event(self.other)
+        self.db.add_all([
+            EventComment(event_id=event.id, user_id=self.brock.id, text="brock"),
+            EventComment(event_id=event.id, user_id=self.user.id, text="ash"),
+        ])
+        self.db.commit()
+        flags = {c["text"]: c["can_delete"] for c in self.comment(event, method="get").json()["items"]}
+        self.assertEqual(flags, {"brock": False, "ash": True})
+
+    def test_a_comment_cannot_be_deleted_through_another_event(self):
+        one = self.set_event(self.other)
+        two = self.set_event(self.other, minutes=1)
+        mine = EventComment(event_id=one.id, user_id=self.user.id, text="ash")
+        self.db.add(mine)
+        self.db.commit()
+        self.assertEqual(self.comment(two, method="delete", comment_id=mine.id).status_code, 404)
+
+    def test_answers_404_while_the_switch_is_off(self):
+        event = self.set_event(self.other)
+        self.db.query(Setting).filter_by(key=SOCIAL_SETTING_KEY).update({"value": "false"})
+        self.db.commit()
+        self.assertEqual(self.comment(event).status_code, 404)
+        self.assertEqual(self.comment(event, method="get").status_code, 404)
+
+    def test_comments_by_a_deactivated_trainer_are_left_out(self):
+        event = self.set_event(self.other)
+        self.db.add(EventComment(event_id=event.id, user_id=self.brock.id, text="gone"))
+        self.db.commit()
+        self.brock.is_active = False
+        self.db.commit()
+        self.assertEqual(self.comment(event, method="get").json()["items"], [])
+        self.assertEqual(self.feed()["items"][0]["comment_count"], 0)
+
+
 class BackupAndDeletionTests(FeedBase):
+    def test_the_comments_table_is_in_the_users_backup_group(self):
+        self.assertIn("event_comments", BACKUP_GROUPS["users"])
+
+    def test_deleting_a_trainer_removes_comments_they_wrote_and_received(self):
+        victim = self.other
+        victim_id = victim.id
+        theirs = self.set_event(victim)
+        other_event = self.set_event(self.brock)
+        self.db.add_all([
+            EventComment(event_id=theirs.id, user_id=self.brock.id, text="received"),
+            EventComment(event_id=other_event.id, user_id=victim_id, text="written"),
+            EventComment(event_id=other_event.id, user_id=self.user.id, text="unrelated"),
+        ])
+        self.db.commit()
+        with patch("services.scan_trace.revoke_user_traces"):
+            response = self.client.delete(f"/api/auth/users/{victim_id}")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.db.expire_all()
+        self.assertEqual([c.text for c in self.db.query(EventComment).all()], ["unrelated"])
+
     def test_the_reactions_table_is_in_the_users_backup_group(self):
         self.assertIn("event_reactions", BACKUP_GROUPS["users"])
         self.assertIn("user_events", BACKUP_GROUPS["users"])

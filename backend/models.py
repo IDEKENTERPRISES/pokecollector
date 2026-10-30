@@ -988,6 +988,18 @@ class EventReaction(Base):
     __table_args__ = (UniqueConstraint("event_id", "user_id", "kind", name="uq_event_reaction"),)
 
 
+class EventComment(Base):
+    """A short plain-text comment under a feed event (docs/SOCIAL_DESIGN.md D6). It follows the event's visibility."""
+
+    __tablename__ = "event_comments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(Integer, ForeignKey("user_events.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    text = Column(String(280), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+
+
 class UserGoal(Base):
     """A chase goal: a rule over the catalogue (a set, a generation, a family, an artist, a card list)."""
 
