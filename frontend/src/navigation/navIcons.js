@@ -14,6 +14,7 @@ import {
   ScanLine,
   Search,
   Settings,
+  Target,
   Trophy,
   User,
   Users,
@@ -39,5 +40,6 @@ export const NAV_ICONS = {
   Trophy,
   Award,
   Settings,
+  Target,
   RefreshCw,
 }

@@ -426,6 +426,10 @@ Size: S = one PR, M = a few days of worker time, L = several PRs.
 - `GET`/`PUT /api/profile/showcase` (max 6, own copies only, 400 otherwise). Copies deleted later are skipped on read. The public profile carries `showcase`, with values only when the public value setting is on.
 - `GET /api/analytics/dna` returns the first type of each card, illustrators, release-year eras and the first dex id; page `/dna`, read-cached under `['collection-dna']` and prefetched.
 
+- **P9a as built:** `GET /api/progress/recap/weekly` returns the last complete Monday–Sunday week in the user's `time_zone` (the ending week from Sunday 18:00 local). `show` is true from Sunday 18:00 to the end of Tuesday and `has_activity` says whether the week had anything; the Home card (`recap/RecapCard.jsx`, under the Today card) needs both. Amounts are plain numbers; the client masks them with hide-values. The optional Sunday push (`weekly_recap`, off by default, an instant category) is queued by the notification job once per ISO week (`week:YYYY-Www`) and names cards added and the best pull, never an amount.
+- **Wrapped data:** `GET /api/progress/wrapped?year=` is computed live (no new tables). It answers 1 December to 15 January, else 404; `WRAPPED_PREVIEW=1` skips the window and enables `preview_date` (see `docs/NONPROD.md`). `history_starts` and `partial_history` let the story say "since you started using PokéCollector".
+- **Share pictures:** `progress/shareImage.js` has the generic `blocksSpec` / `renderBlocksImage` (story 1080×1920 or square, number, card and line blocks, amounts masked under hide-values) next to the Who's That Pokémon picture; `sharePicture` shares a file or downloads it.
+
 ### Milestone C — recap and goals (round 3, promotion 3, on `deploy` by 1 December)
 
 **P9 Weekly recap and 2026 Wrapped (L).** After P8.

@@ -182,7 +182,7 @@ async def debug_request_logging(request: Request, call_next):
     return response
 
 # Include routers
-from api import auth, cards, collection, sets, wishlist, binders, decks, dashboard, analytics, sync, products, trades, export, backup, settings, images, social, pokedex, public, profile, scan_jobs, community, push, offline_carddb, progress
+from api import auth, cards, collection, sets, wishlist, binders, decks, dashboard, analytics, sync, products, trades, export, backup, settings, images, social, pokedex, public, profile, scan_jobs, community, push, offline_carddb, progress, goals
 from api.github import router as github_router
 from api.invites import router as invites_router
 from api.recognize import router as recognize_router
@@ -218,6 +218,7 @@ app.include_router(community.router, prefix="/api/community", tags=["community"]
 app.include_router(push.router, prefix="/api/push", tags=["push"])
 app.include_router(offline_carddb.router, prefix="/api/offline/carddb", tags=["offline-carddb"])
 app.include_router(progress.router, prefix="/api/progress", tags=["progress"])
+app.include_router(goals.router, prefix="/api/goals", tags=["goals"])
 
 
 @app.get("/api/health")

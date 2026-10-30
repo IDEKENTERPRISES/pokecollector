@@ -272,6 +272,11 @@ export default function SetDetail() {
   const borrowed = cards.filter(card => card.data_source_lang && card.data_source_lang !== set?.lang)
   const borrowedFrom = borrowed.length * 2 >= cards.length && borrowed.length > 0 ? borrowed[0].data_source_lang : null
   const ownedValue = cards.reduce((sum, card) => (card.owned ? sum + setSortPrice(card, pricePrimaryField) : sum), 0)
+  // The cheapest way to finish: the selected price of every card still missing (none when complete).
+  const missingCards = cards.filter(card => !card.owned)
+  const costToComplete = missingCards.length
+    ? missingCards.reduce((sum, card) => sum + (positivePrice(card?.[pricePrimaryField]) ?? positivePrice(card?.price_market) ?? 0), 0)
+    : null
   const master = masterSetStats(cards, card => setSortPrice(card, pricePrimaryField))
   const releaseLabel = releaseDate
     ? (() => {
@@ -335,6 +340,11 @@ export default function SetDetail() {
               <p className="text-title-2 font-display tabular-nums">{t('setDetail.xOfY').replace('{owned}', owned_count).replace('{total}', total_count)}</p>
               <HpBar value={owned_count} max={total_count} label={t('setDetail.completeSet')} />
               <p className="text-footnote tabular-nums text-text-secondary">{safeProgress}% · {formatPrice(ownedValue)}</p>
+              {costToComplete != null && (
+                <p data-testid="set-cost-to-complete" className="text-footnote tabular-nums text-text-secondary">
+                  {t('setDetail.costToComplete')}: {formatPrice(costToComplete)}
+                </p>
+              )}
             </div>
           </div>
         </section>

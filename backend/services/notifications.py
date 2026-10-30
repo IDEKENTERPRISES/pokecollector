@@ -72,9 +72,9 @@ CATEGORIES: dict[str, Category] = {
     "new_sets": Category("new_sets", True, DIGEST, "/sets", "new set"),
     "wishlist_dips": Category("wishlist_dips", True, DIGEST, "/wishlist", "wishlist dip"),
     "big_movers": Category("big_movers", False, DIGEST, "/collection", "big mover"),
-    "weekly_recap": Category("weekly_recap", False, None, "/", "recap"),
+    "weekly_recap": Category("weekly_recap", False, INSTANT, "/", "recap"),
     "badges": Category("badges", True, INSTANT, "/achievements", "badge"),
-    "goal_milestones": Category("goal_milestones", True, None, "/", "goal"),
+    "goal_milestones": Category("goal_milestones", True, INSTANT, "/goals", "goal"),
     "swap_offers": Category("swap_offers", True, None, "/", "swap offer"),
 }
 UI_CATEGORIES = [c.id for c in CATEGORIES.values() if c.timing]
@@ -453,6 +453,20 @@ def build_badge_payload(badge_id: str | None = None) -> str:
     return push.encode_payload_fitted("Badge unlocked", body, navigate)
 
 
+def build_goal_payload(details: dict | None, detailed: bool) -> str:
+    """"Goal milestone" naming the goal and the percent; content-light without details or a name."""
+    details = details or {}
+    goal_id = details.get("goal_id")
+    navigate = f"/goals/{int(goal_id)}" if isinstance(goal_id, int) else CATEGORIES["goal_milestones"].navigate
+    percent = details.get("percent")
+    name = " ".join(str(details.get("title") or "").split())
+    if not detailed or not name or not isinstance(percent, int):
+        return push.encode_payload_fitted("Goal milestone", "One of your goals reached a new milestone", navigate)
+    if percent >= 100:
+        return push.encode_payload_fitted("Goal complete", f"{_clip(name, 80)}: 100%", navigate)
+    return push.encode_payload_fitted("Goal milestone", f"{_clip(name, 80)}: {percent}% done", navigate)
+
+
 # --- detailed texts ------------------------------------------------------------------------
 # Prices are EUR, the currency the catalogue stores (Cardmarket); the backend has no per-user
 # conversion helper to call while a push is built, so they are shown with €.
@@ -721,6 +735,18 @@ def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, 
             return
         badge_id = (row.details or {}).get("badge_id") or achievement_id
         outcome = _send(db, user_id, build_badge_payload(badge_id if show_details(db, user_id) else None))
+        result["instant"] += 1
+        _log("flushed", category, user_id, subject, _sent_reason(outcome))
+    elif category == "goal_milestones":
+        details = row.details or {}
+        outcome = _send(db, user_id, build_goal_payload(details, show_details(db, user_id)))
+        result["instant"] += 1
+        _log("flushed", category, user_id, subject, _sent_reason(outcome))
+    elif category == "weekly_recap":
+        from services.recap import build_recap_push
+
+        title, body = build_recap_push(row.details if show_details(db, user_id) else None)
+        outcome = _send(db, user_id, push.encode_payload_fitted(title, body, CATEGORIES[category].navigate))
         result["instant"] += 1
         _log("flushed", category, user_id, subject, _sent_reason(outcome))
 

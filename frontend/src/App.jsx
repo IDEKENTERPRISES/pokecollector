@@ -34,6 +34,7 @@ const DeckEditor = lazy(() => import('./pages/DeckEditor'))
 const DeckCompare = lazy(() => import('./pages/DeckCompare'))
 const Analytics = lazy(() => import('./pages/Analytics'))
 const CollectionDna = lazy(() => import('./pages/CollectionDna'))
+const WrappedStory = lazy(() => import('./wrapped/WrappedStory'))
 const Products = lazy(() => import('./pages/Products'))
 const Trades = lazy(() => import('./pages/Trades'))
 const Settings = lazy(() => import('./pages/Settings'))
@@ -45,6 +46,8 @@ const InviteAccept = lazy(() => import('./pages/InviteAccept'))
 const Leaderboard = lazy(() => import('./pages/Leaderboard'))
 const Compare = lazy(() => import('./pages/Compare'))
 const Achievements = lazy(() => import('./pages/Achievements'))
+const Goals = lazy(() => import('./pages/Goals'))
+const GoalDetail = lazy(() => import('./pages/GoalDetail'))
 const UserCollection = lazy(() => import('./pages/UserCollection'))
 const PublicProfile = lazy(() => import('./pages/PublicProfile'))
 const PublicBinderView = lazy(() => import('./pages/PublicBinderView'))
@@ -234,10 +237,14 @@ function ProtectedRoutes() {
         <Route path="decks/:deckId/build" element={<LegacyDeckBuildRedirect />} />
         <Route path="analytics" element={lazyRoute(<Analytics />)} />
         <Route path="dna" element={lazyRoute(<CollectionDna />)} />
+        <Route path="wrapped" element={lazyRoute(<WrappedStory />)} />
+        <Route path="wrapped/:year" element={lazyRoute(<WrappedStory />)} />
         <Route path="products" element={lazyRoute(<Products />)} />
         <Route path="trades" element={lazyRoute(<Trades />)} />
         <Route path="leaderboard" element={lazyRoute(<Leaderboard />)} />
         <Route path="leaderboard/compare/:userId" element={lazyRoute(<Compare />)} />
+        <Route path="goals" element={lazyRoute(<Goals />)} />
+        <Route path="goals/:goalId" element={lazyRoute(<GoalDetail />)} />
         <Route path="achievements" element={lazyRoute(<Achievements />)} />
         <Route path="achievements/:userId" element={lazyRoute(<Achievements />)} />
         <Route path="settings" element={lazyRoute(<Settings />)} />

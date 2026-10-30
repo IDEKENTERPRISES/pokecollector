@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Award, Dna, Download, Globe, Sparkles, Package, ArrowLeftRight, Trophy, BarChart3, RefreshCw, Settings as SettingsIcon, Users } from 'lucide-react'
+import { Award, Dna, PartyPopper, Download, Globe, Sparkles, Package, ArrowLeftRight, Trophy, BarChart3, RefreshCw, Settings as SettingsIcon, Target, Users } from 'lucide-react'
 import {
   getAchievements,
   getCustomMatches,
@@ -30,6 +30,8 @@ import { useOutbox } from '../offline/useOutbox'
 import { readPwaFlags } from '../pwa/flags'
 import ShowcasePicker from '../delights/ShowcasePicker'
 import { SHOWCASE_MAX, fill } from '../delights/delights'
+import { useWrapped } from '../wrapped/useWrapped'
+import { wrappedYearFor } from '../wrapped/wrapped'
 
 const NAV_BAR = { trailing: <HideValuesToggle /> }
 
@@ -92,6 +94,8 @@ export default function Profile() {
     enabled: Boolean(user?.id),
     retry: false,
   })
+  const wrappedYear = wrappedYearFor()
+  const { data: wrapped } = useWrapped(wrappedYear)
   const { data: customMatches = [] } = useQuery({
     queryKey: ['custom-matches'],
     queryFn: () => getCustomMatches().then(r => r.data),
@@ -152,6 +156,7 @@ export default function Profile() {
         <StatTile type="grass" icon={ArrowLeftRight} label={t('nav.trades')} value={tileIcon(ArrowLeftRight)} to="/trades" />
         {multiUser && <StatTile type="psychic" icon={Trophy} label={t('nav.leaderboard')} value={tileIcon(Trophy)} to="/leaderboard" />}
         <StatTile type="fairy" icon={Award} label={t('profile.badges')} value={tileIcon(Award)} to="/achievements" />
+        <StatTile type="fire" icon={Target} label={t('goals.title')} value={tileIcon(Target)} to="/goals" />
         {multiUser && handle && <StatTile type="dragon" icon={Globe} label={t('profile.publicPage')} value={tileIcon(Users)} to={`/u/${handle}`} />}
       </div>
 
@@ -165,6 +170,9 @@ export default function Profile() {
           chevron
           testId="profile-showcase"
         />
+        {wrapped && (
+          <ListRow icon={PartyPopper} iconColor="#FF453A" title={fill(t('wrapped.row'), { year: wrapped.year })} to={`/wrapped/${wrapped.year}`} testId="profile-wrapped" />
+        )}
         <ListRow icon={Dna} iconColor="#BF5AF2" title={t('delights.dna')} to="/dna" testId="profile-dna" />
       </ListSection>
 

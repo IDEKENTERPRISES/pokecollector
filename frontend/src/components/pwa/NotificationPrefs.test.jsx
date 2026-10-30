@@ -18,7 +18,7 @@ function findAll(node, predicate, out = []) {
 describe('NotificationPrefs', () => {
   it('uses the design defaults when nothing is stored', () => {
     expect(NOTIFY_CATEGORIES.map(c => [c.id, categoryEnabled({}, c)])).toEqual([
-      ['scans_ready', true], ['wishlist_alerts', true], ['new_sets', true], ['wishlist_dips', true], ['big_movers', false], ['badges', true],
+      ['scans_ready', true], ['wishlist_alerts', true], ['new_sets', true], ['wishlist_dips', true], ['big_movers', false], ['badges', true], ['weekly_recap', false], ['goal_milestones', true],
     ])
     expect(digestHour({})).toBe(18)
     expect(quietHoursEnabled({})).toBe(true)
@@ -34,9 +34,9 @@ describe('NotificationPrefs', () => {
   it('renders one switch per category plus quiet hours and card details, with their captions and the digest time', () => {
     const html = renderToStaticMarkup(<NotificationPrefs settings={{ notify_big_movers: 'true', notify_new_sets: 'false', notify_digest_hour: '9' }} save={vi.fn()} t={t} />)
     const tags = switches(html)
-    expect(tags).toHaveLength(8)
-    expect(tags.map(checkedOf)).toEqual([true, true, false, true, true, true, true, true])
-    for (const key of ['notifyPrefs.scansReadyDesc', 'notifyPrefs.newSetsDesc', 'notifyPrefs.wishlistDipsDesc', 'notifyPrefs.bigMoversDesc', 'notifyPrefs.badgesDesc', 'notifyPrefs.digestTime', 'notifyPrefs.quietHoursDesc', 'notifyPrefs.showDetails', 'notifyPrefs.showDetailsDesc']) {
+    expect(tags).toHaveLength(10)
+    expect(tags.map(checkedOf)).toEqual([true, true, false, true, true, true, false, true, true, true])
+    for (const key of ['notifyPrefs.scansReadyDesc', 'notifyPrefs.newSetsDesc', 'notifyPrefs.wishlistDipsDesc', 'notifyPrefs.bigMoversDesc', 'notifyPrefs.badgesDesc', 'notifyPrefs.weeklyRecapDesc', 'notifyPrefs.digestTime', 'notifyPrefs.quietHoursDesc', 'notifyPrefs.showDetails', 'notifyPrefs.showDetailsDesc']) {
       expect(html).toContain(key)
     }
     expect(html).toContain('<option value="9" selected="">09:00</option>')
@@ -46,12 +46,12 @@ describe('NotificationPrefs', () => {
     const save = vi.fn().mockResolvedValue({})
     const tree = NotificationPrefs({ settings: { notify_big_movers: "true" }, save, t })
     const toggles = findAll(tree, n => typeof n.props.onChange === "function" && n.props.label)
-    expect(toggles.map(n => n.props.label)).toEqual(["notifyPrefs.scansReady", "notifyPrefs.wishlistAlerts", "notifyPrefs.newSets", "notifyPrefs.wishlistDips", "notifyPrefs.bigMovers", "notifyPrefs.badges", "notifyPrefs.quietHours", "notifyPrefs.showDetails"])
+    expect(toggles.map(n => n.props.label)).toEqual(["notifyPrefs.scansReady", "notifyPrefs.wishlistAlerts", "notifyPrefs.newSets", "notifyPrefs.wishlistDips", "notifyPrefs.bigMovers", "notifyPrefs.badges", "notifyPrefs.weeklyRecap", "notifyPrefs.goalMilestones", "notifyPrefs.quietHours", "notifyPrefs.showDetails"])
     toggles[0].props.onChange(false)
     toggles[4].props.onChange(false)
-    toggles[6].props.onChange(false)
-    toggles[7].props.onChange(false)
-    toggles[7].props.onChange(true)
+    toggles[8].props.onChange(false)
+    toggles[9].props.onChange(false)
+    toggles[9].props.onChange(true)
     expect(save.mock.calls).toEqual([
       [{ notify_scans_ready: "false" }], [{ notify_big_movers: "false" }], [{ notify_quiet_hours: "false" }],
       [{ notify_show_details: "false" }], [{ notify_show_details: "true" }],

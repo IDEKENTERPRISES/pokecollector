@@ -5,7 +5,7 @@ import {
   Layers, Grid2X2, Wallet, Heart, Layers3, BarChart3, ScanLine, UploadCloud, Link2, ShoppingBag, Sparkles, Loader2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { getDashboard, getInvestmentTracker, getScanJobs, getSets, getPokedexSummary, getCustomMatches } from '../api/client'
+import { getDashboard, getGoals, getInvestmentTracker, getScanJobs, getSets, getPokedexSummary, getCustomMatches } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import { useAuth } from '../contexts/AuthContext'
 import { useOffline } from '../offline/useOffline'
@@ -28,6 +28,10 @@ import DailyTodayCard from '../progress/TodayCard'
 import GreetingStreak from '../progress/GreetingStreak'
 import { readShowDaily } from '../progress/daily'
 import OnThisDayCard from '../delights/OnThisDayCard'
+import WrappedBanner from '../wrapped/WrappedBanner'
+import RecapCard from '../recap/RecapCard'
+import GoalHomeCard from '../goals/GoalHomeCard'
+import { goalsQueryKey, pinnedGoals } from '../goals/goals'
 import { useNavBar } from '../navigation/useNavBar'
 import {
   SCAN_JOBS_QUERY_KEY,
@@ -173,6 +177,13 @@ export default function HomeScreen() {
     queryKey: ['sets', 'all'],
     queryFn: () => getSets({ lang: 'all' }).then(r => r.data),
   })
+  const { data: goalsData } = useQuery({
+    queryKey: goalsQueryKey(user?.id),
+    queryFn: getGoals,
+    enabled: Boolean(user?.id),
+    staleTime: 60 * 1000,
+    retry: false,
+  })
   const { data: pokedexSummary } = useQuery({
     queryKey: ['pokedex-summary'],
     queryFn: getPokedexSummary,
@@ -214,6 +225,7 @@ export default function HomeScreen() {
 
   const completeSets = useMemo(() => completeSetCount(sets), [sets])
   const yourSets = useMemo(() => closestToCompleteSets(sets), [sets])
+  const goalCards = useMemo(() => pinnedGoals(goalsData?.goals), [goalsData])
 
   const todos = todoCards({
     scanAttention,
@@ -279,6 +291,9 @@ export default function HomeScreen() {
         <QuickAction to="/sets" icon={Grid2X2} label={t('nav.sets')} type="grass" />
         <QuickAction to="/analytics" icon={BarChart3} label={t('nav.analytics')} type="lightning" />
       </section>
+
+      {/* Only while the API says Wrapped is available (1 December to 15 January). */}
+      <WrappedBanner />
 
       <div className="-mx-4 -my-3 empty:hidden"><InstallHint /></div>
 
@@ -375,13 +390,25 @@ export default function HomeScreen() {
       {/* The Today card (progress/TodayCard); with streaks and quests off, just the Pokémon of the day. */}
       {showDaily ? <DailyTodayCard /> : <TodayCard />}
 
+      {/* Shows from Sunday 18:00 to Tuesday, and only for a week with something in it. */}
+      <RecapCard />
+
       {/* Shows only when cards were acquired on this day in earlier years. */}
       <OnThisDayCard />
 
-      {yourSets.length > 0 && (
+      {(yourSets.length > 0 || goalCards.length > 0) && (
         <section>
-          <SectionHeader title={t('home.yourSets')} to="/sets" action={t('home.viewAll')} />
+          <SectionHeader
+            title={t('home.yourSets')}
+            to={goalCards.length > 0 ? '/goals' : '/sets'}
+            action={goalCards.length > 0 ? t('goals.title') : t('home.viewAll')}
+          />
           <Carousel label={t('home.yourSets')}>
+            {goalCards.map(goal => (
+              <div key={`goal-${goal.id}`} role="listitem" className="w-[168px] flex-shrink-0 snap-start">
+                <GoalHomeCard goal={goal} />
+              </div>
+            ))}
             {yourSets.map(set => (
               <div key={set.id} role="listitem" className="w-[168px] flex-shrink-0 snap-start">
                 <SetTile
