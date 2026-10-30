@@ -385,6 +385,8 @@ def _run_migrations(conn):
         # Engagement P11: the swap offer a trade was logged from (swap_offers comes from create_all)
         "ALTER TABLE trades ADD COLUMN IF NOT EXISTS swap_offer_id INTEGER REFERENCES swap_offers(id) ON DELETE SET NULL",
         "CREATE INDEX IF NOT EXISTS ix_trades_swap_offer_id ON trades(swap_offer_id)",
+        # Engagement P11b: what a counter changed, for the "What changed" card
+        "ALTER TABLE swap_offers ADD COLUMN IF NOT EXISTS changes JSON",
         "CREATE INDEX IF NOT EXISTS idx_trade_items_trade ON trade_items(trade_id)",
         "CREATE INDEX IF NOT EXISTS idx_trade_items_user_card ON trade_items(user_id, card_id)",
         "ALTER TABLE trade_items DROP CONSTRAINT IF EXISTS trade_items_card_id_fkey",

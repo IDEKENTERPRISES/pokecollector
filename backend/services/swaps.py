@@ -27,10 +27,12 @@ from models import (
     BinderCard,
     Card,
     CollectionItem,
+    Set,
     SwapOffer,
     SwapOfferItem,
     Trade,
     User,
+    WishlistItem,
 )
 from services import notifications
 from services.binder_allocations import collection_item_allocated_quantity
@@ -267,6 +269,37 @@ def _touch(offer: SwapOffer, now: datetime.datetime) -> None:
     offer.expires_at = _expiry(now)
 
 
+def diff_revisions(before: dict, built: list[SwapOfferItem], cash: tuple[float, int | None],
+                   note: str | None) -> list[dict]:
+    """What a counter changed: cards added or removed, a different quantity, the cash, the note.
+    `giver_user_id` says whose card it is; the reader turns that into "what you give"."""
+    old = {i.collection_item_id: i for i in before["items"]}
+    new = {i.collection_item_id: i for i in built}
+    changes = []
+
+    def card(kind, item, **extra):
+        return {"change": kind, "giver_user_id": item.giver_user_id, "collection_item_id": item.collection_item_id,
+                "card_name": item.card_name, "set_id": item.set_id, "card_number": item.card_number, **extra}
+
+    for key, item in new.items():
+        if key not in old:
+            changes.append(card("added", item, to=int(item.quantity)))
+        elif int(old[key].quantity) != int(item.quantity):
+            changes.append(card("quantity", item, **{"from": int(old[key].quantity), "to": int(item.quantity)}))
+    for key, item in old.items():
+        if key not in new:
+            changes.append(card("removed", item, **{"from": int(item.quantity)}))
+    if before["cash"] != cash:
+        changes.append({
+            "change": "cash",
+            "from": {"amount": before["cash"][0], "payer_user_id": before["cash"][1]},
+            "to": {"amount": cash[0], "payer_user_id": cash[1]},
+        })
+    if (before["note"] or None) != (note or None):
+        changes.append({"change": "note", "from": before["note"], "to": note})
+    return changes
+
+
 def counter_offer(db: Session, offer: SwapOffer, actor: User, items, cash_amount, cash_payer_user_id, note,
                   revision: int | None = None, now: datetime.datetime | None = None) -> SwapOffer:
     now = now or _now()
@@ -274,6 +307,8 @@ def counter_offer(db: Session, offer: SwapOffer, actor: User, items, cash_amount
     partner_id = other_party(offer, actor.id)
     cash, payer = _clean_cash(cash_amount, cash_payer_user_id, (actor.id, partner_id))
     built = build_items(db, actor.id, partner_id, items)
+    before = {"items": list(offer.items), "cash": (float(offer.cash_amount or 0), offer.cash_payer_user_id),
+              "note": offer.note}
     for old in list(offer.items):
         offer.items.remove(old)
     db.flush()
@@ -283,6 +318,7 @@ def counter_offer(db: Session, offer: SwapOffer, actor: User, items, cash_amount
     offer.cash_amount = cash
     offer.cash_payer_user_id = payer
     offer.note = _clean_note(note)
+    offer.changes = diff_revisions(before, built, (cash, payer), offer.note)
     offer.revision = int(offer.revision) + 1
     offer.state = COUNTERED if offer.state == PROPOSED else PROPOSED
     offer.turn_user_id = partner_id
@@ -336,6 +372,7 @@ def decline_offer(db: Session, offer: SwapOffer, actor: User, revision: int | No
     offer.turn_user_id = None
     offer.updated_at = now
     db.flush()
+    _notify(db, offer, other_party(offer, actor.id), "declined", actor, now)
     return offer
 
 
@@ -491,18 +528,56 @@ def complete_offer(db: Session, offer: SwapOffer, now: datetime.datetime | None 
 # --- notifications -------------------------------------------------------------------------------
 
 
+def _set_codes(db: Session, cards) -> dict[tuple, str]:
+    """(set_id, lang) -> the code printed on the card ("OBF"), from the cards' own sets."""
+    pairs = {(c.set_id, c.lang) for c in cards if c is not None and c.set_id}
+    codes: dict[tuple, str] = {}
+    if not pairs:
+        return codes
+    rows = db.query(Set.tcg_set_id, Set.lang, Set.abbreviation).filter(
+        Set.tcg_set_id.in_({p[0] for p in pairs})
+    ).all()
+    for tcg_id, lang, abbreviation in rows:
+        if abbreviation:
+            codes[(tcg_id, lang)] = abbreviation
+    return codes
+
+
+def set_code(codes: dict, set_id, lang) -> str:
+    return codes.get((set_id, lang)) or str(set_id or "").upper()
+
+
+def _card_labels(db: Session, offer: SwapOffer) -> dict[int, str]:
+    """item id -> "Charizard ex (OBF 125)" for the push texts."""
+    ids = {i.card_id for i in offer.items if i.card_id}
+    cards = {c.id: c for c in db.query(Card).filter(Card.id.in_(ids)).all()} if ids else {}
+    codes = _set_codes(db, cards.values())
+    labels = {}
+    for item in offer.items:
+        card = cards.get(item.card_id)
+        code = set_code(codes, item.set_id, card.lang if card else None)
+        tag = " ".join(part for part in (code, item.card_number) if part)
+        labels[item.id] = f"{item.card_name or 'Card'} ({tag})" if tag else (item.card_name or "Card")
+    return labels
+
+
 def _notify(db: Session, offer: SwapOffer, recipient_id: int, kind: str, actor: User,
             now: datetime.datetime) -> None:
-    """One push per offer, revision and kind. `kind`: offer, counter, accepted, swapped, completed."""
-    details = {
-        "offer_id": offer.id,
-        "revision": int(offer.revision),
-        "kind": kind,
-        "partner": actor.username,
-        "gives": sum(int(i.quantity) for i in offer.items if i.giver_user_id == recipient_id),
-        "gets": sum(int(i.quantity) for i in offer.items if i.giver_user_id != recipient_id),
-    }
+    """One push per offer, revision and kind. `kind`: offer, counter, accepted, swapped, completed, declined.
+    The details name the cards, never amounts; cash is only a flag."""
     try:
+        labels = _card_labels(db, offer)
+        details = {
+            "offer_id": offer.id,
+            "revision": int(offer.revision),
+            "kind": kind,
+            "partner": actor.username,
+            "gives": sum(int(i.quantity) for i in offer.items if i.giver_user_id == recipient_id),
+            "gets": sum(int(i.quantity) for i in offer.items if i.giver_user_id != recipient_id),
+            "give_cards": [labels[i.id] for i in offer.items if i.giver_user_id == recipient_id],
+            "get_cards": [labels[i.id] for i in offer.items if i.giver_user_id != recipient_id],
+            "cash": float(offer.cash_amount or 0) > 0,
+        }
         with db.begin_nested():
             notifications.enqueue(
                 db, recipient_id, "swap_offers", f"swap:{offer.id}:r{int(offer.revision)}:{kind}",
@@ -556,6 +631,16 @@ def _side_values(db: Session, offer: SwapOffer, user_id: int, cards: dict) -> di
     }
 
 
+def _changes_view(offer: SwapOffer, viewer_id: int) -> list[dict]:
+    """The last counter's changes with `gives` from the viewer's side. Empty on a first revision."""
+    if int(offer.revision) <= 1 or not offer.changes:
+        return []
+    return [
+        {**change, "gives": change.get("giver_user_id") == viewer_id} if "giver_user_id" in change else change
+        for change in offer.changes
+    ]
+
+
 def serialize_offers(db: Session, offers: list[SwapOffer], viewer_id: int) -> list[dict]:
     if not offers:
         return []
@@ -563,6 +648,7 @@ def serialize_offers(db: Session, offers: list[SwapOffer], viewer_id: int) -> li
     cards = {c.id: c for c in db.query(Card).filter(Card.id.in_(card_ids)).all()} if card_ids else {}
     user_ids = {uid for offer in offers for uid in (offer.from_user_id, offer.to_user_id)}
     users = {u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()}
+    codes = _set_codes(db, cards.values())
     trade_ids = {
         trade.swap_offer_id: trade.id
         for trade in db.query(Trade.id, Trade.swap_offer_id).filter(
@@ -592,6 +678,8 @@ def serialize_offers(db: Session, offers: list[SwapOffer], viewer_id: int) -> li
             "your_turn": offer.state in OPEN_STATES and offer.turn_user_id == viewer_id,
             "actions": actions_for(offer, viewer_id),
             "note": offer.note,
+            "changes": _changes_view(offer, viewer_id),
+            "unavailable": find_unavailable(db, offer) if offer.state == ACCEPTED else [],
             "cash": {"amount": float(offer.cash_amount or 0), "payer_user_id": offer.cash_payer_user_id},
             "items": [
                 {
@@ -602,7 +690,9 @@ def serialize_offers(db: Session, offers: list[SwapOffer], viewer_id: int) -> li
                     "card_id": item.card_id,
                     "card_name": item.card_name,
                     "set_id": item.set_id,
+                    "set_code": set_code(codes, item.set_id, cards[item.card_id].lang if item.card_id in cards else None),
                     "card_number": item.card_number,
+                    "types": (cards[item.card_id].types if item.card_id in cards else None) or [],
                     "variant": item.variant,
                     "condition": item.condition,
                     "lang": item.lang,
@@ -643,3 +733,87 @@ def list_offers(db: Session, viewer_id: int, history_limit: int = 50) -> dict:
         "history": [by_id[o.id] for o in history],
         "waiting_count": waiting_count(db, viewer_id),
     }
+
+
+# --- candidates --------------------------------------------------------------------------------
+
+
+def _wishlist_ids(db: Session, owner_id: int) -> set[str]:
+    return {
+        row.card_id
+        for row in db.query(WishlistItem.card_id).join(Card, Card.id == WishlistItem.card_id).filter(
+            WishlistItem.user_id == owner_id, Card.is_custom == False,  # noqa: E712
+            visible_card_filter(db, owner_id, "all"),
+        ).all()
+    }
+
+
+def candidates(db: Session, viewer: User, partner: User, side: str, flt: str = "all", q: str | None = None,
+               limit: int = 300) -> dict:
+    """Copies that can go on the table, in the shape the picker and Compare need.
+
+    `side="give"` lists the viewer's own copies (any quantity); `"get"` the partner's spare copies (the rule
+    `build_items` enforces). `on_wishlist` marks cards the other trainer is looking for: the partner's wishlist
+    for `give` (only when Compare may show it) and the viewer's own for `get`. `counts` ignore the filter."""
+    from services.public_profile_feature import public_profiles_enabled
+
+    giving = side == "give"
+    owner = viewer if giving else partner
+    rows = db.query(CollectionItem).options(joinedload(CollectionItem.card)).join(
+        Card, Card.id == CollectionItem.card_id
+    ).filter(
+        CollectionItem.user_id == owner.id, Card.is_custom == False,  # noqa: E712
+        CollectionItem.quantity > 0, visible_card_filter(db, owner.id, "all"),
+    )
+    text = " ".join(str(q or "").split())
+    if text:
+        rows = rows.filter(Card.name.ilike(f"%{text}%"))
+    copies = rows.order_by(Card.name.asc(), CollectionItem.id.asc()).all()
+
+    wishlist_visible = (not giving) or bool(
+        public_profiles_enabled(db) and partner.is_profile_public
+        and (partner.wishlist_visibility or "private") in {"trade_matches", "public"}
+    )
+    wanted = _wishlist_ids(db, partner.id if giving else viewer.id) if wishlist_visible else set()
+    field = notifications._price_field(db, viewer.id)
+    codes = _set_codes(db, [c.card for c in copies])
+    entries = []
+    for copy in copies:
+        have = int(copy.quantity or 0)
+        if giving:
+            offerable = have
+            spare = have > 1
+        else:
+            offerable = max(have - max(collection_item_allocated_quantity(db, owner.id, copy.id), 1), 0)
+            if have <= 1 or offerable < 1:
+                continue
+            spare = True
+        card = copy.card
+        entries.append({
+            "collection_item_id": copy.id,
+            "card_id": card.id,
+            "card_name": card.name,
+            "set_id": card.set_id,
+            "set_code": set_code(codes, card.set_id, card.lang),
+            "card_number": card.number,
+            "variant": copy.variant,
+            "condition": copy.condition,
+            "lang": copy.lang,
+            "images_small": card.images_small,
+            "types": card.types or [],
+            "quantity": have,
+            "offerable": offerable,
+            "on_wishlist": card.id in wanted,
+            "spare": spare,
+            "value": _price(card, copy.variant, field),
+        })
+    counts = {
+        "all": len(entries),
+        "spares": sum(1 for e in entries if e["spare"]),
+        "wishlist": sum(1 for e in entries if e["on_wishlist"]),
+    }
+    if flt == "wishlist":
+        entries = [e for e in entries if e["on_wishlist"]]
+    elif flt == "spares":
+        entries = [e for e in entries if e["spare"]]
+    return {"items": entries[:limit], "counts": counts, "wishlist_visible": wishlist_visible}

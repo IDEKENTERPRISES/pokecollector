@@ -1,7 +1,7 @@
 """Swap offers (/api/swaps). Every route answers 404 while the admin's social switch is off."""
-from typing import List, Optional
+from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -102,6 +102,24 @@ def create_swap(body: SwapCreate, current_user: User = Depends(get_current_user)
         db.rollback()
         raise
     return _one(db, offer.id, current_user)
+
+
+@router.get("/candidates")
+def swap_candidates(
+    partner_id: int,
+    side: Literal["give", "get"] = "give",
+    filter: Literal["wishlist", "spares", "all"] = "all",
+    q: Optional[str] = Query(default=None, max_length=80),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The copies the picker and Compare can put on the table: your own (`give`) or the partner's spares (`get`)."""
+    if partner_id == current_user.id:
+        raise HTTPException(status_code=422, detail="You cannot swap with yourself")
+    partner = db.query(User).filter(User.id == partner_id, User.is_active == True).first()  # noqa: E712
+    if partner is None:
+        raise HTTPException(status_code=404, detail="Trainer not found")
+    return swaps.candidates(db, current_user, partner, side, filter, q)
 
 
 @router.get("/{offer_id}")

@@ -75,10 +75,10 @@ CATEGORIES: dict[str, Category] = {
     "weekly_recap": Category("weekly_recap", False, INSTANT, "/", "recap"),
     "badges": Category("badges", True, INSTANT, "/achievements", "badge"),
     "goal_milestones": Category("goal_milestones", True, INSTANT, "/goals", "goal"),
-    "swap_offers": Category("swap_offers", True, INSTANT, "/", "swap offer"),
+    "swap_offers": Category("swap_offers", True, INSTANT, "/trades/offers", "swap offer"),
 }
-# Swap offers are social (off until an admin switches it on); their Settings row comes with the swap screens.
-UI_CATEGORIES = [c.id for c in CATEGORIES.values() if c.timing and c.id != "swap_offers"]
+# Swap offers are social: the frontend shows their Settings row only while the admin's switch is on.
+UI_CATEGORIES = [c.id for c in CATEGORIES.values() if c.timing]
 
 
 def pref_key(category: str) -> str:
@@ -662,6 +662,7 @@ _SWAP_TITLES = {
     "accepted": "Swap accepted",
     "swapped": "Confirm your swap",
     "completed": "Swap complete",
+    "declined": "Swap declined",
 }
 _SWAP_LIGHT = {
     "offer": "You have a new swap offer",
@@ -669,35 +670,68 @@ _SWAP_LIGHT = {
     "accepted": "Your swap offer was accepted",
     "swapped": "Your swap partner tapped Swapped",
     "completed": "Your swap is complete",
+    "declined": "A swap offer was declined",
 }
+SWAP_NAMED_CARDS = 2  # a side with more cards than this is counted ("3 cards") instead of listed
+
+
+def _swap_side(cards, cash: bool = False) -> str:
+    """"Charizard ex (OBF 125)", "A and B", or "3 cards"; never an amount. `cash` adds "+ cash"."""
+    cards = [_clip(c, MAX_NAME_CHARS + 12) for c in (cards or []) if c]
+    if not cards:
+        return ""
+    text = " and ".join(cards) if len(cards) <= SWAP_NAMED_CARDS else f"{len(cards)} cards"
+    return f"{text} + cash" if cash else text
 
 
 def build_swap_payload(details: dict | None, detailed: bool, badge: int | None = None) -> str:
-    """Swap-offer push; names the trainer and the card counts when detailed, content-light otherwise.
+    """Swap-offer push. Detailed: names the trainer and the cards ("Brock offered Charizard ex (OBF 125) for
+    your Greninja ex (TWM 106)"), cash as "+ cash", never an amount. Content-light otherwise.
+    It opens the offer itself. `badge` is the icon number (scans plus offers waiting); a decline carries none.
 
-    `badge` is the icon number (scans plus offers waiting) so the app badge updates with the push."""
+    Rows queued before the cards were named only carry counts, and keep their old wording."""
     details = details or {}
     kind = details.get("kind") if details.get("kind") in _SWAP_TITLES else "offer"
     name = " ".join(str(details.get("partner") or "").split())
     gives, gets = details.get("gives"), details.get("gets")
-    navigate = CATEGORIES["swap_offers"].navigate
+    give_cards, get_cards = details.get("give_cards"), details.get("get_cards")
+    named = isinstance(give_cards, list) and isinstance(get_cards, list)
+    offer_id = details.get("offer_id")
+    navigate = f"/trades/offers/{int(offer_id)}" if isinstance(offer_id, int) else "/trades/offers"
     if not detailed or not name:
         body = _SWAP_LIGHT[kind]
     else:
         who = _clip(name, 30)
-        if kind in ("offer", "counter") and isinstance(gives, int) and isinstance(gets, int):
+        cash = bool(details.get("cash"))
+        got = _swap_side(get_cards) if named else ""
+        gave = _swap_side(give_cards, cash) if named else ""
+        if named and cash and not gave:
+            got = _swap_side(get_cards, True)
+        if kind in ("offer", "counter") and named and got:
+            verb = "offered" if kind == "offer" else "countered:"
+            body = f"{who} {verb} {got} for your {gave}" if gave else f"{who} {verb} {got}"
+        elif kind in ("offer", "counter") and isinstance(gives, int) and isinstance(gets, int):
             verb = "offered" if kind == "offer" else "countered with"
             body = f"{who} {verb} {gets} card{'' if gets == 1 else 's'} for {gives} of yours"
+        elif kind == "accepted" and named and got:
+            body = f"{who} accepted: {got} for your {gave}. Meet up, then both tap Swapped." if gave else (
+                f"{who} accepted: {got}. Meet up, then both tap Swapped.")
         elif kind == "accepted":
             body = f"{who} accepted your swap"
+        elif kind == "swapped" and named and got:
+            body = f"{who} tapped Swapped. Tap yours once you have {got}."
         elif kind == "swapped":
             body = f"{who} tapped Swapped. Tap yours once you have the cards"
+        elif kind == "completed" and named and got:
+            body = f"{got} is in your collection." if len(get_cards) == 1 else f"{got} are in your collection."
         elif kind == "completed":
             body = f"Your swap with {who} is complete"
+        elif kind == "declined":
+            body = f"{who} declined your swap offer"
         else:
             body = f"{who} sent a swap offer"
     payload = json.loads(push.encode_payload_fitted(_SWAP_TITLES[kind], body, navigate))
-    if badge is not None:
+    if badge is not None and kind != "declined":
         payload["app_badge"] = int(badge)
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
@@ -722,6 +756,8 @@ def swap_push_still_relevant(db: Session, row: NotificationQueue) -> bool:
     if kind == "swapped":
         mine = offer.from_confirmed_at if row.user_id == offer.from_user_id else offer.to_confirmed_at
         return offer.state == "accepted" and mine is None
+    if kind == "declined":
+        return offer.state == "declined"
     return offer.state == "completed"
 
 

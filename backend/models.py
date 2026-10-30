@@ -1088,6 +1088,8 @@ class SwapOffer(Base):
     cash_amount = Column(Float, nullable=False, default=0)
     cash_payer_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
     note = Column(String(140), nullable=True)
+    # What the last counter changed against the previous revision (see services.swaps.diff_revisions).
+    changes = Column(JSON, nullable=True)
     expires_at = Column(DateTime, nullable=False)
     from_confirmed_at = Column(DateTime, nullable=True)
     to_confirmed_at = Column(DateTime, nullable=True)
