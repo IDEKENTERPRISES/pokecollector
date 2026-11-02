@@ -19,6 +19,7 @@ import {
   sideItems,
   addedKeys,
   isOpen,
+  joinNames,
 } from './swapHelpers'
 
 const fill = (text, values) => Object.entries(values).reduce((out, [key, value]) => out.replace(`{${key}}`, value), text)
@@ -120,7 +121,7 @@ export function SwapOfferRow({ offer }) {
     ? dayMonth(offer.state === 'completed' ? offer.completed_at : offer.updated_at)
     : shortAgeLabel(offer.updated_at)
   const status = swapStatus(offer)
-  const names = list => list.map(item => item.card_name).join(', ')
+  const names = list => joinNames(list.map(item => item.card_name))
   const left = offer.expires_at && isOpen(offer) && !offer.your_turn
     ? Math.max(0, Math.ceil(((parseServerTime(offer.expires_at) ?? 0) - Date.now()) / 86400000))
     : null
