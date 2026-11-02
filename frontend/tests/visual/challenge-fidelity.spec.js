@@ -196,12 +196,13 @@ test('S3HomeChallenge: the challenge row sits in the Today card under the daily 
   const bar = await box(row.getByRole('progressbar'))
   near(bar.height, 8, 0.5)
   near(bar.y - ((await box(link)).y + (await box(link)).height), 8, 1)
-  near((await box(row.locator('img').first())).width, 20 - 3, 1.5) // the sprite inside the 20 px ring (1.5 px each side)
+  const avatars = row.getByTestId('challenge-finisher')
+  near((await box(avatars.first())).width, 20, 0.5)
+  near((await box(avatars.nth(1))).x - (await box(avatars.first())).x, 14, 0.5) // 20 px avatars overlapping by 6 px
   const barFill = await row.getByRole('progressbar').locator('div').first().boundingBox()
   near(barFill.width / bar.width, 0.7, 0.01)
 
-  await row.scrollIntoViewIfNeeded()
-  await page.evaluate(() => window.scrollBy(0, -140))
+  await row.evaluate(node => node.scrollIntoView({ block: 'center' }))
   await capture(page, testInfo, 'S3HomeChallenge')
 })
 
@@ -390,13 +391,15 @@ test('hide values changes nothing here: the challenge shows counts, never amount
   await expect(page.locator('body')).not.toContainText('£')
 })
 
-test('offline: the last saved board stays, marked as saved', async ({ page, context }) => {
+test('offline: the last saved board stays, marked as saved', async ({ page }) => {
   await install(page)
   await page.goto('/leaderboard/challenge')
   await expect(page.getByTestId('challenge-hero')).toBeVisible()
   await expect(page.getByTestId('challenge-offline')).toHaveCount(0)
-  await context.setOffline(true)
-  await page.evaluate(() => window.dispatchEvent(new Event('offline')))
+  // The server can't be reached: the next look keeps what was saved and says so.
+  await page.route('**/api/challenge', route => route.abort('connectionrefused'))
+  await page.getByRole('radio', { name: 'Ranking' }).click()
+  await page.getByRole('radio', { name: 'Challenge' }).click()
   const note = page.getByTestId('challenge-offline')
   await expect(note).toBeVisible()
   await expect(note).toContainText('Offline. Showing the last saved board')

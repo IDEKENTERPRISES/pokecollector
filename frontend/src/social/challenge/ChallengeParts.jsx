@@ -42,6 +42,7 @@ export function useChallenge(enabled = true) {
     queryFn: getChallenge,
     enabled: enabled && typeof user?.id === 'number',
     staleTime: 30 * 1000,
+    refetchOnMount: 'always',
     retry: false,
   })
   const unreachable = query.isError && !query.error?.response
@@ -97,7 +98,7 @@ function FinishersLine({ finishers, t }) {
       {finishers.length > 0 && (
         <span aria-hidden="true" className="flex">
           {finishers.slice(0, 3).map((entry, index) => (
-            <span key={entry.user.id} className={clsx('rounded-full', index > 0 && '-ml-1.5')} style={{ boxShadow: '0 0 0 2px var(--color-card)' }}>
+            <span key={entry.user.id} data-testid="challenge-finisher" className={clsx('rounded-full', index > 0 && '-ml-1.5')} style={{ boxShadow: '0 0 0 2px var(--color-card)' }}>
               <TrainerAvatar avatarId={entry.user.avatar_id} size={20} ring={1.5} />
             </span>
           ))}
@@ -263,8 +264,8 @@ export function PodiumList({ entries, size = 'md', target, viewerId, rise = fals
         const finished = Boolean(entry.finished_at)
         const caption = finished ? formatWhen(entry.finished_at, locale()) : fill(t('challenge.ofTarget'), { done: entry.progress, target })
         const spoken = finished
-          ? fill(t('challenge.podiumRowFinished'), { place: ordinal, name, when: formatWhen(entry.finished_at, locale(), { long: true }) })
-          : fill(t('challenge.podiumRowCount'), { place: ordinal, name, done: entry.progress, target })
+          ? fill(t('challenge.podiumRowFinished'), { place: ordinal, name: me ? name.toLowerCase() : name, when: formatWhen(entry.finished_at, locale(), { long: true }) })
+          : fill(t('challenge.podiumRowCount'), { place: ordinal, name: me ? name.toLowerCase() : name, done: entry.progress, target })
         const type = PODIUM_TYPES[place]
         return (
           <li key={place} className="flex min-w-0 flex-col items-center text-center" style={style} aria-label={spoken} data-place={place}>
