@@ -37,10 +37,12 @@ export function todoCards({
   customMatches = 0,
   productsToReview = 0,
   newSets = 0,
+  swapsWaiting = 0,
 } = {}) {
   const cards = []
   if (num(scanAttention) > 0) cards.push({ key: 'scans-review', count: num(scanAttention) })
   else if (scansActive) cards.push({ key: 'scans-processing', count: 0 })
+  if (num(swapsWaiting) > 0) cards.push({ key: 'swaps', count: num(swapsWaiting) })
   if (queueEnabled && num(outboxCount) > 0) cards.push({ key: 'sync', count: num(outboxCount) })
   if (num(customMatches) > 0) cards.push({ key: 'matches', count: num(customMatches) })
   if (num(productsToReview) > 0) cards.push({ key: 'products', count: num(productsToReview) })

@@ -347,7 +347,7 @@ export default function SwapComposerSheet({ isOpen, onClose, partner, mode = 'ne
           <ChevronLeft size={22} strokeWidth={2.25} aria-hidden="true" />{t('common.back')}
         </button>
       ) : undefined}
-      trailing={step ? { label: t('common.done'), onPress: () => setStep(null) } : undefined}
+      trailing={step ? { label: t('ios.done'), onPress: () => setStep(null) } : undefined}
       footer={step ? undefined : (
         <div className="flex flex-col gap-3">
           <FairTradeMeter gives={gives} gets={gets} missingPrices={missingPrices} variant="compact" />

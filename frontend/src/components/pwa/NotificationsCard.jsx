@@ -4,12 +4,14 @@ import { sendTestPush } from '../../api/client'
 import { useSettings } from '../../contexts/SettingsContext'
 import { readPwaFlags } from '../../pwa/flags'
 import NotificationPrefs from './NotificationPrefs'
+import { useSocialEnabled } from '../../social/social'
 import {
   disablePush, enablePush, getCurrentSubscription, isIosBrowserTab, pushPermission, pushSupported,
 } from '../../pwa/push'
 
 // Settings → Notifications. Hidden without HTTPS or without the opt-in service worker.
 export default function NotificationsCard() {
+  const social = useSocialEnabled()
   const { t, settings, updateSettings } = useSettings()
   const visible = readPwaFlags().sw && (pushSupported() || isIosBrowserTab())
   const supported = pushSupported()
@@ -101,7 +103,7 @@ export default function NotificationsCard() {
           </div>
         )}
       </div>
-      {supported && subscribed && <NotificationPrefs settings={settings} save={updateSettings} t={t} />}
+      {supported && subscribed && <NotificationPrefs settings={settings} save={updateSettings} t={t} social={social} />}
     </section>
   )
 }

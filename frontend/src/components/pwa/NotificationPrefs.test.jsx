@@ -18,7 +18,7 @@ function findAll(node, predicate, out = []) {
 describe('NotificationPrefs', () => {
   it('uses the design defaults when nothing is stored', () => {
     expect(NOTIFY_CATEGORIES.map(c => [c.id, categoryEnabled({}, c)])).toEqual([
-      ['scans_ready', true], ['wishlist_alerts', true], ['new_sets', true], ['wishlist_dips', true], ['big_movers', false], ['badges', true], ['weekly_recap', false], ['goal_milestones', true],
+      ['scans_ready', true], ['wishlist_alerts', true], ['new_sets', true], ['wishlist_dips', true], ['big_movers', false], ['badges', true], ['weekly_recap', false], ['goal_milestones', true], ['swap_offers', true],
     ])
     expect(digestHour({})).toBe(18)
     expect(quietHoursEnabled({})).toBe(true)

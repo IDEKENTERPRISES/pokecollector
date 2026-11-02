@@ -78,7 +78,7 @@ function changeSentence(t, change, partnerName) {
   const where = t(change.gives ? 'swaps.toWhatYouGive' : 'swaps.toWhatYouGet')
   switch (change.change) {
     case 'added': return fill(t('swaps.changeAdded'), { name, where })
-    case 'removed': return fill(t('swaps.changeRemoved'), { name, where })
+    case 'removed': return fill(t('swaps.changeRemoved'), { name, where: t(change.gives ? 'swaps.fromWhatYouGive' : 'swaps.fromWhatYouGet') })
     case 'quantity': return fill(t('swaps.changeQuantity'), { name: change.card_name, from: change.from, to: change.to })
     case 'cash': return t('swaps.changeCash')
     case 'note': return t('swaps.changeNote')

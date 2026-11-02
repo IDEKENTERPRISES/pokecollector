@@ -270,16 +270,25 @@ def _touch(offer: SwapOffer, now: datetime.datetime) -> None:
 
 
 def diff_revisions(before: dict, built: list[SwapOfferItem], cash: tuple[float, int | None],
-                   note: str | None) -> list[dict]:
+                   note: str | None, db: Session | None = None) -> list[dict]:
     """What a counter changed: cards added or removed, a different quantity, the cash, the note.
     `giver_user_id` says whose card it is; the reader turns that into "what you give"."""
     old = {i.collection_item_id: i for i in before["items"]}
     new = {i.collection_item_id: i for i in built}
     changes = []
+    codes: dict = {}
+    langs: dict = {}
+    if db is not None:
+        ids = {i.card_id for i in [*old.values(), *new.values()] if i.card_id}
+        found = db.query(Card).filter(Card.id.in_(ids)).all() if ids else []
+        langs = {c.id: c.lang for c in found}
+        codes = _set_codes(db, found)
 
     def card(kind, item, **extra):
         return {"change": kind, "giver_user_id": item.giver_user_id, "collection_item_id": item.collection_item_id,
-                "card_name": item.card_name, "set_id": item.set_id, "card_number": item.card_number, **extra}
+                "card_name": item.card_name, "set_id": item.set_id,
+                "set_code": set_code(codes, item.set_id, langs.get(item.card_id)),
+                "card_number": item.card_number, **extra}
 
     for key, item in new.items():
         if key not in old:
@@ -318,7 +327,7 @@ def counter_offer(db: Session, offer: SwapOffer, actor: User, items, cash_amount
     offer.cash_amount = cash
     offer.cash_payer_user_id = payer
     offer.note = _clean_note(note)
-    offer.changes = diff_revisions(before, built, (cash, payer), offer.note)
+    offer.changes = diff_revisions(before, built, (cash, payer), offer.note, db)
     offer.revision = int(offer.revision) + 1
     offer.state = COUNTERED if offer.state == PROPOSED else PROPOSED
     offer.turn_user_id = partner_id

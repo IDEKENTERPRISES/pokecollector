@@ -522,6 +522,8 @@ export const removeFeedReaction = (eventId, kind) => api.delete(`/feed/${eventId
 export const getChallenge = () => api.get('/challenge').then(r => r.data)
 export const getSwaps = () => api.get('/swaps').then(r => r.data)
 export const getSwapsWaiting = () => api.get('/swaps/waiting').then(r => r.data)
+// The cards that can go on the table: your own (side=give) or the partner's spares (side=get).
+export const getSwapCandidates = (params) => api.get('/swaps/candidates', { params }).then(r => r.data)
 export const getSwap = (id) => api.get(`/swaps/${id}`).then(r => r.data)
 // body: { to_user_id, items: [{ collection_item_id, quantity }], cash_amount, cash_payer_user_id, note }
 export const createSwap = (body) => api.post('/swaps', body).then(r => r.data)
