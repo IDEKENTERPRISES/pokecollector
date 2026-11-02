@@ -521,6 +521,8 @@ export const addFeedComment = (eventId, text) => api.post(`/feed/${eventId}/comm
 export const deleteFeedComment = (eventId, commentId) => api.delete(`/feed/${eventId}/comments/${commentId}`).then(r => r.data)
 
 // Swap offers (engagement P11). All 404 while an admin keeps the social switch off.
+// The weekly challenge (404 while the social switch is off): this week, the board, and last week's result Monday and Tuesday.
+export const getChallenge = () => api.get('/challenge').then(r => r.data)
 export const getSwaps = () => api.get('/swaps').then(r => r.data)
 export const getSwapsWaiting = () => api.get('/swaps/waiting').then(r => r.data)
 export const getSwap = (id) => api.get(`/swaps/${id}`).then(r => r.data)
