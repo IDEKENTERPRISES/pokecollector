@@ -92,7 +92,7 @@ Social **on** has 8 numbered steps, social **off** has 6 (the challenge and swap
 |---|---|---|---|---|
 | — | Welcome | centre card | Welcome to PokéCollector, {name} | A one-minute tour of where everything lives. |
 | — | Home Screen (browser only) | centre card | Add PokéCollector to your Home Screen | It opens full screen like any app, tells you when scans are ready, and keeps your collection ready offline. |
-| 1 | Today | the **Today card** | Your day starts here | The Today card has your Pokémon of the day, your streak and three daily quests. Finish them to earn XP. |
+| 1 | Today | the top of the **Today card** (Pokémon of the day, streak, quests) | Your day starts here | The Today card has your Pokémon of the day, your streak and three daily quests. Finish them to earn XP. |
 | 2 | Weekly challenge (social on) | the challenge row in the Today card | A challenge for everyone | Each week sets one goal for every trainer on this server. Finish it for a badge; the quickest finishers make the podium. |
 | 3 | Collection | the **Collection** tab | Everything you own | Cards, binders and your wishlist live here. Switch between Grid, List and Book to browse your way. |
 | 4 | Scan | the **Scan** button | Scan your cards | Point your camera at a card and PokéCollector finds it. Recognising a card can take a little while, so you can leave and come back. |
