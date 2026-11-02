@@ -37,14 +37,14 @@ Principles only; no branded artwork is copied.
 |---|---|---|
 | [Apple HIG — Onboarding](https://developer.apple.com/design/human-interface-guidelines/onboarding) | Keep any onboarding "fast, fun, and optional"; teach by letting people use the app; put a permission request where its reason is clear. | Under a minute, always skippable; the notification ask lives in the Scan step, next to the reason. |
 | [Apple HIG — Offering help](https://developer.apple.com/design/human-interface-guidelines/offering-help) | Help that people can find again later, not only once. | "Show the tour again" in Settings › About. |
-| [Appcues — user onboarding UX](https://www.appcues.com/blog/user-onboarding-ui-ux-patterns) and [NN/g on onboarding tutorials](https://www.nngroup.com/articles/mobile-tutorials/) | A spotlight on the real control beats a screenshot; one idea per step; show progress; skippable. NN/g found that front-loaded tutorials are rarely remembered, and contextual hints work better. | Hints point at the real tab or tile with the rest dimmed, one idea per step, "3 of 8" progress, and a Skip on every step. |
-| [Material Design — Onboarding](https://m3.material.io/foundations/designing/onboarding) (principles) | Ask for permissions in context and let people carry on if they say no. | Declining notifications leaves a plain sentence and a pointer to Settings; the tour carries on. |
+| Appcues and NN/g write-ups (general, not linked) | A spotlight on the real control beats a screenshot; one idea per step; show progress; skippable. Front-loaded tutorials are rarely remembered; contextual hints work better. | Hints point at the real tab or tile with the rest dimmed, one idea per step, "3 of 8" progress, and a Skip on every step. |
+| Common platform guidance (not linked) | Ask for permissions in context and let people carry on if they say no. | Declining notifications leaves a plain sentence and a pointer to Settings; the tour carries on. |
 
 ### 1.2 What's new
 
 | Source | What works | Take for us |
 |---|---|---|
-| [Carbon Design System — Show what's new](https://carbondesignsystem.com/guidelines/onboarding/) (principles) | Show it once per version, let people revisit it, give a next step. | Once per account per update, "See everything" links to the history, and the history stays in Settings. |
+| [Carbon Design System — Show what's new](https://preview.carbondesignsystem.com/building-experiences/onboard/tutorials/show-whats-new-to-maintain-user-engagement) (principles) | Show it once per version, let people revisit it, give a next step. | Once per account per update, "See everything" links to the history, and the history stays in Settings. |
 | [UX Collective — better release notes](https://uxdesign.cc/as-a-designer-i-want-better-release-notes-3e8c8c785231) | Lead with a short summary, then the detail. Write for the reader, not as a changelog. | Two levels: ≤ 3 friendly highlights, then the full list in the history. |
 | [Yellowhead — "What's new" section](https://www.yellowhead.com/blog/whats-new-section-in-your-app/) | Short, visual, not blocking the task; group by version and date. | A sheet that dismisses with a swipe; the history groups by release with the date under the name. |
 
@@ -119,7 +119,7 @@ Buttons: every numbered step has **Next** (filled, `md`) on the right, **Back** 
 **Skip (E1).** On the welcome and on every step, **Skip** opens an `Alert` (the existing component):
 - Title: **Skip the tour?**
 - Message: You can replay it any time from Settings › About › Show the tour again.
-- Buttons: **Keep going** (preferred) · **Skip** (destructive-free, plain).
+- Buttons: **Keep going** (preferred) · **Skip** (plain).
 - Confirming writes `tutorial_completed_at` with outcome `skipped`.
 
 **Browser — Home Screen push (iPhone Safari, not the Home Screen app).** The step comes right after the welcome:
@@ -164,7 +164,7 @@ Centre card with a Poké Ball, the title "You're ready", the sentence "That's th
 ### 3.7 "Take the tour" card on Home
 
 For existing accounts that have not finished or skipped.
-- It is Home's existing `TodoCard` (`pages/HomeScreen.jsx`): type `water` (gradient #236BB4 → #123F8C, white text, 6.8:1 at the lighter end), 64 px minimum, 18 px radius, an icon in a black/20 circle (`Compass`), title **Take the tour**, detail **A one-minute look around PokéCollector**, action pill **Start**.
+- It is Home's existing `TodoCard` (`pages/HomeScreen.jsx`): type `water` (gradient #236BB4 → #123F8C, white text, 5.5:1 at the lighter end), 64 px minimum, 18 px radius, an icon in a black/20 circle (`Compass`), title **Take the tour**, detail **A one-minute look around PokéCollector**, action pill **Start**.
 - It sits at the top of the to-do cards, above the Today card.
 - Under it a quiet line, **Not now**, as a 44 px-high text button in the secondary text colour. It counts as done (E8) and the card never returns.
 - Starting the tour from it behaves as a new account's tour, but with the welcome shortened to a single title ("Here's a quick look around").
@@ -213,8 +213,8 @@ All from `src/index.css` and `tailwind.config.js` on `nonprod`. No new tokens. S
 Contrast pairs used (WCAG 2.x, measured):
 - white on the accent fill 4.9;
 - tint on the card 5.2;
-- secondary text on the card 6.0, on black 8.4;
-- white on the `water` gradient, lighter end #236BB4: 6.0;
+- secondary text on the card 6.0, on black 6.4;
+- white on the `water` gradient, lighter end #236BB4: 5.5;
 - black on the yellow count badge 14.9;
 - green #30D158 on the card 8.4.
 
