@@ -20,10 +20,11 @@ export function appIconNumber(scanAttention, swapsWaiting, socialOn) {
   return scans + swaps
 }
 
-// The Leaderboard segments (docs/SOCIAL_DESIGN.md §6.1). Challenge joins when P13b builds its page.
+// The Leaderboard segments (docs/SOCIAL_DESIGN.md §6.1, §7.4).
 export const LEADERBOARD_SEGMENTS = [
   { value: 'ranking', path: '/leaderboard', labelKey: 'leaderboard.segmentRanking' },
   { value: 'activity', path: '/leaderboard/activity', labelKey: 'leaderboard.segmentActivity' },
+  { value: 'challenge', path: '/leaderboard/challenge', labelKey: 'leaderboard.segmentChallenge' },
 ]
 
 export const FEED_QUERY_KEY = ['feed']

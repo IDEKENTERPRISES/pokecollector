@@ -13,16 +13,23 @@ const GLYPHS = {
   daily: 'M12 4c1 3 4 4.500 4 8a4 4 0 01-8 0c0-1.500.6-2.600 1.500-3.500C9.600 10 10 8 12 4z',
 }
 
+// Drawn instead of the track's glyph when an achievement names its own `art` (the weekly challenge badges).
+const ART_GLYPHS = {
+  trophy: 'M8 5h8v5a4 4 0 0 1-8 0z M8 7H6a2 2 0 0 0 0 4h2 M16 7h2a2 2 0 0 1 0 4h-2 M12 14v3 M9 19h6',
+}
+
 /**
  * A gym badge: a hexagon in the track's type colour with a tier ring (bronze, silver, gold).
  * `holo` adds a static foil sheen; nothing here animates by itself, so Reduce Motion needs no case.
  */
-export default function BadgeMedal({ track = 'collection', tier = 'bronze', earned = true, holo = false, size = 56, label }) {
+export default function BadgeMedal({ track = 'collection', tier = 'bronze', earned = true, holo = false, size = 56, label, glyph: art }) {
   const type = TRACK_TYPE[track] ?? 'grass'
   const colours = TYPE_COLOURS[type]
   const ring = TIER_TINT[tier] ?? TIER_TINT.bronze
-  const glyph = GLYPHS[track] ?? GLYPHS.collection
-  const id = `medal-${track}-${tier}-${holo ? 'h' : 'p'}`
+  const glyph = ART_GLYPHS[art] ?? GLYPHS[track] ?? GLYPHS.collection
+  // Small medals (a list row) drop the inner outline and draw the glyph heavier so it stays legible.
+  const small = size < 40
+  const id = `medal-${track}-${art ?? 'track'}-${tier}-${holo ? 'h' : 'p'}`
   return (
     <svg
       width={size}
@@ -53,8 +60,8 @@ export default function BadgeMedal({ track = 'collection', tier = 'bronze', earn
       </defs>
       <path d="M24 2.500l20 11.500v24L24 49.500 4 38V14z" fill={`url(#${id}-fill)`} stroke={ring} strokeWidth="3" strokeLinejoin="round" />
       {holo && <path d="M24 2.500l20 11.500v24L24 49.500 4 38V14z" fill={`url(#${id}-foil)`} style={{ mixBlendMode: 'screen' }} />}
-      <path d="M24 8l15.500 9v18L24 44 8.500 35V17z" fill="none" stroke="rgba(255,255,255,0.28)" strokeWidth="1" />
-      <g transform="translate(12 14)" fill="none" stroke={colours.text} strokeWidth="1.900" strokeLinecap="round" strokeLinejoin="round">
+      {!small && <path d="M24 8l15.500 9v18L24 44 8.500 35V17z" fill="none" stroke="rgba(255,255,255,0.28)" strokeWidth="1" />}
+      <g transform="translate(12 14)" fill="none" stroke={colours.text} strokeWidth={small ? '2.400' : '1.900'} strokeLinecap="round" strokeLinejoin="round">
         <path d={glyph} />
       </g>
     </svg>

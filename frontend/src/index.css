@@ -999,8 +999,11 @@ input:-webkit-autofill:focus {
 .ios-fade-in { animation: ios-fade-in 0.2s ease; }
 .ios-menu-in { animation: ios-menu-in 0.15s ease-out; }
 .ios-alert-in { animation: ios-alert-in 0.2s var(--ease-ios); }
+/* The weekly challenge podium: the blocks rise once, 500 ms. */
+@keyframes podium-rise { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+.podium-rise { transform-origin: bottom; animation: podium-rise 0.5s var(--ease-ios) both; }
 @media (prefers-reduced-motion: reduce) {
-  .ios-sheet-in, .ios-fade-in, .ios-menu-in, .ios-alert-in { animation: none; }
+  .ios-sheet-in, .ios-fade-in, .ios-menu-in, .ios-alert-in, .podium-rise { animation: none; }
 }
 
 /* Accent text: the lighter tint, so small accent-coloured text passes AA on black.
