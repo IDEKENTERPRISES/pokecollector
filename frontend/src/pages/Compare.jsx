@@ -11,6 +11,9 @@ import { CardModal } from '../components/CardItem'
 import HpBar from '../components/ios/HpBar'
 import { useNavBar } from '../navigation/useNavBar'
 import { TrainerAvatar, countLabel } from './socialParts'
+import Button from '../components/ios/Button'
+import { useSocialEnabled } from '../social/social'
+import { useSwapStarter } from '../social/SwapStarter'
 
 function StatRow({ label, value, accent }) {
   return (
@@ -74,6 +77,8 @@ export default function Compare() {
   const { t, formatPrice, pricePrimaryField } = useSettings()
   const { multiUser } = useAuth()
   const [selectedCard, setSelectedCard] = useState(null)
+  const social = useSocialEnabled()
+  const { start, element: swapElement } = useSwapStarter()
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['compare', userId, pricePrimaryField],
@@ -92,6 +97,7 @@ export default function Compare() {
   }
 
   const suggestions = data?.trade_suggestions ?? []
+  const partner = data?.user_b ? { id: data.user_b.user_id, username: data.user_b.username, avatar_id: data.user_b.avatar_id } : null
 
   return (
     <div className="page-container">
@@ -137,16 +143,54 @@ export default function Compare() {
             <TrainerPanel trainer={data.user_b} formatPrice={formatPrice} t={t} onCardClick={setSelectedCard} />
           </div>
 
-          <section className="rounded-xl bg-card p-4">
-            <div className="mb-3">
-              <h2 className="text-headline text-text-primary">{t('compare.tradeSuggestions')}</h2>
-              <p className="text-footnote text-text-secondary">
-                {t('compare.exclusiveCards')}
-                {suggestions.length > 0 && ` · ${countLabel(t, 'compare.suggestionCount', suggestions.length)}`}
-              </p>
+          <section className={social ? 'rounded-xl bg-card px-4 pb-1 pt-4' : 'rounded-xl bg-card p-4'}>
+            <div className={social ? 'mb-1 flex items-start justify-between gap-2' : 'mb-3'}>
+              <div className={social ? 'min-w-0 pt-0.5' : undefined}>
+                <h2 className="text-headline text-text-primary">{t('compare.tradeSuggestions')}</h2>
+                <p className="text-footnote text-text-secondary">
+                  {t('compare.exclusiveCards')}
+                  {suggestions.length > 0 && ` · ${countLabel(t, 'compare.suggestionCount', suggestions.length)}`}
+                </p>
+              </div>
+              {social && (
+                <button
+                  type="button"
+                  onClick={() => start(partner)}
+                  className="ios-press -mr-2 -mt-1.5 min-h-[44px] flex-shrink-0 rounded-full px-2 text-callout font-semibold text-tint"
+                >
+                  {t('swaps.newOffer')}
+                </button>
+              )}
             </div>
 
-            {suggestions.length ? (
+            {suggestions.length && social ? (
+              <ul className="flex flex-col">
+                {suggestions.map((trade, index) => {
+                  const mine = trade.owner_username === data.user_a?.username
+                  return (
+                    <li key={`${trade.card_id}-${trade.owner_username}-${trade.wants_username}`} className={`flex flex-col gap-3 py-3 ${index ? 'border-t-[0.5px] border-border' : ''}`}>
+                      <CardIdentity
+                        className="w-full"
+                        card={trade}
+                        image={resolveCardImageUrl(trade)}
+                        name={trade.card_name}
+                        subtext={`${trade.owner_username} ${t('compare.has')} · ${trade.wants_username} ${t('compare.wants')}`}
+                        onClick={() => setSelectedCard({ ...trade, id: trade.card_id, name: trade.card_name })}
+                      />
+                      <Button
+                        variant="gray"
+                        size="md"
+                        full
+                        icon={ArrowLeftRight}
+                        onClick={() => start(partner, { side: mine ? 'give' : 'get', cardId: trade.card_id })}
+                      >
+                        {t('swaps.offerSuggestion')}
+                      </Button>
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : suggestions.length ? (
               <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {suggestions.map((trade) => (
                   <li key={`${trade.card_id}-${trade.owner_username}-${trade.wants_username}`} className="rounded-xl bg-fill-tertiary p-3">
@@ -162,13 +206,14 @@ export default function Compare() {
                 ))}
               </ul>
             ) : (
-              <p className="rounded-xl border border-dashed border-border p-6 text-center text-footnote text-text-muted">
+              <p className="mb-3 rounded-xl border border-dashed border-border p-6 text-center text-footnote text-text-muted">
                 {t('compare.noTrades')}
               </p>
             )}
           </section>
         </>
       )}
+      {swapElement}
       {selectedCard && (
         <CardModal
           card={{ ...selectedCard, id: selectedCard.card_id || selectedCard.id }}

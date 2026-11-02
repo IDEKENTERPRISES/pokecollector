@@ -48,6 +48,8 @@ export const ROUTES = Object.freeze([
   { path: '/wrapped/:year', section: 'profile', kind: 'pushed', backToPrevious: true, titleKey: 'wrapped.title' },
   { path: '/products', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.products' },
   { path: '/trades', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.trades' },
+  { path: '/trades/offers', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.trades' },
+  { path: '/trades/offers/:offerId', section: 'profile', kind: 'pushed', parent: '/trades/offers', titleKey: 'swaps.detailTitle' },
   { path: '/leaderboard', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.leaderboard' },
   { path: '/leaderboard/compare/:userId', section: 'profile', kind: 'pushed', parent: '/leaderboard', titleKey: 'nav.leaderboard' },
   { path: '/collection/user/:userId', section: 'profile', kind: 'pushed', parent: '/leaderboard', titleKey: 'nav.leaderboard' },

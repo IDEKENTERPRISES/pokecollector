@@ -73,6 +73,7 @@ export default function SegmentedControl({ options, value, onChange, ariaLabel, 
             type="button"
             role="radio"
             aria-checked={selected}
+            aria-label={option.ariaLabel}
             tabIndex={selected ? 0 : -1}
             onClick={() => onChange?.(option.value)}
             className={clsx(

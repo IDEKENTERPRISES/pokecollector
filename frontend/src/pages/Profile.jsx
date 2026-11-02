@@ -5,6 +5,7 @@ import {
   getAchievements,
   getCustomMatches,
   getDashboard,
+  getSwapsWaiting,
   getInvestmentTracker,
   getPokedexSummary,
   getProfile,
@@ -33,6 +34,8 @@ import { SHOWCASE_MAX, fill } from '../delights/delights'
 import { useWrapped } from '../wrapped/useWrapped'
 import { wrappedYearFor } from '../wrapped/wrapped'
 
+import { SWAPS_WAITING_QUERY_KEY, useSocialEnabled } from '../social/social'
+
 const NAV_BAR = { trailing: <HideValuesToggle /> }
 
 /**
@@ -52,6 +55,9 @@ export default function Profile() {
   const queue = readPwaFlags().queue
 
   useNavBar(NAV_BAR)
+  const social = useSocialEnabled()
+  const { data: swapsData } = useQuery({ queryKey: SWAPS_WAITING_QUERY_KEY, queryFn: getSwapsWaiting, enabled: social })
+  const swapsWaiting = social ? Number(swapsData?.count) || 0 : 0
 
   // Same keys as Home, so the read cache restores them offline.
   const { data: dashboard } = useQuery({
@@ -153,7 +159,14 @@ export default function Profile() {
           detail={productsToReview > 0 ? t(productsToReview === 1 ? 'profile.productNeedsReview' : 'profile.productsNeedReview') : undefined}
           to="/products"
         />
-        <StatTile type="grass" icon={ArrowLeftRight} label={t('nav.trades')} value={tileIcon(ArrowLeftRight)} to="/trades" />
+        <StatTile
+          type="grass"
+          icon={ArrowLeftRight}
+          label={t('nav.trades')}
+          value={swapsWaiting > 0 ? swapsWaiting : tileIcon(ArrowLeftRight)}
+          detail={swapsWaiting > 0 ? t(swapsWaiting === 1 ? 'swaps.offersWaitingOne' : 'swaps.offersWaiting') : undefined}
+          to={swapsWaiting > 0 ? '/trades/offers' : '/trades'}
+        />
         {multiUser && <StatTile type="psychic" icon={Trophy} label={t('nav.leaderboard')} value={tileIcon(Trophy)} to="/leaderboard" />}
         <StatTile type="fairy" icon={Award} label={t('profile.badges')} value={tileIcon(Award)} to="/achievements" />
         <StatTile type="fire" icon={Target} label={t('goals.title')} value={tileIcon(Target)} to="/goals" />
