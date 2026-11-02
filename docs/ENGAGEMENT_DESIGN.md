@@ -512,6 +512,44 @@ The owner added this milestone on 2 November 2026. Both phases are for every tra
 - **New accounts** get no backlog: their last seen is set to the current release, and the tutorial covers them.
 - **Version history:** Settings › About lists every entry, newest first, in **full detail**, and it's readable offline.
 - **Open questions:** the owner answers them on the tracker (q19 onwards) before the detailed plan and the mockups.
+
+**Owner's answers for milestone E (2 November 2026)**
+
+These replace the bullets above wherever they differ.
+
+*Tutorial (P15)*
+- **Existing accounts** get a "Take the tour" card on Home, which they can start or dismiss. New accounts get the tour on their own.
+- **Style:** a short welcome, then hints that point at each real tab and button one at a time, with the rest dimmed, and Next and Skip.
+- **Length:** about seven short steps, under a minute in total.
+  - The tour also introduces **swapping**, the **daily quests** and the **weekly challenge**. The social steps appear only while the social switch is on.
+  - There are **no admin steps**.
+  - **Single-user mode** gets no tour.
+- **Home Screen:** a trainer using the app in a browser rather than as the Home Screen app is pushed hard to add it to the Home Screen.
+  - The push is needed for notifications and a proper app.
+  - After a couple of "are you sure?" confirmations, they can carry on in the browser. They're told they can add it later.
+- **Completion:**
+  - The tour is marked complete on the account only once it's **fully** finished.
+  - A tour left part-way, for example to add the app to the Home Screen, starts again in the Home Screen app until it's finished.
+  - A tour finished in the browser counts, so the Home Screen app won't show it again.
+- **Notifications:** on the Home Screen app, the scan step asks for notification permission with a button. If they turn it down, Settings › Notifications offers it later.
+- **The end:** it explains only, and ends with "Scan your first card" and "Explore on my own".
+- **Offline step:**
+  - The collection, binders and card pages work from the saved copy.
+  - Changes wait and are sent when back online.
+  - **Scanning works offline too:** the photo is kept on the phone, and recognition starts once the connection is back.
+  - Fresh prices and other trainers need a connection.
+  - Sync & offline is in Profile.
+
+*What's new and version history (P16)*
+- **Release names:** major releases get Pokémon names. The scheme is on the tracker (q37).
+- **Approval:** the owner approves both the What's new highlights and the full notes for every release before the deploy merge.
+- **Missed releases:** they appear in one sheet, newest first, with at most three highlights per release and "See everything" at the end.
+- **When it shows:** What's new appears on the first open after any update, including updates iOS does on its own, once per account.
+- **New accounts** see the tutorial only. Their What's new starts with their next update.
+- **No admin notes.**
+- **Full detail:** every change or fix a trainer could notice, plus a short "Under the hood" list. No PR numbers or code names.
+- **Nonprod** shows the next release's draft notes as "Coming next" at the top of the version history.
+- **Timing:** the Wave 4 mockups start while milestone D is being tested. The build follows the owner's approval.
 - **Backfill:**
   - Write entries for the 23 deploys from `8f5acbf` (18 October) to `2a630ce` (30 October), from the merge history, the PRs and the tracker log.
   - Group deploys that shipped together on one day.
