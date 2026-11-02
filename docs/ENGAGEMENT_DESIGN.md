@@ -529,7 +529,8 @@ These replace the bullets above wherever they differ.
   - After a couple of "are you sure?" confirmations, they can carry on in the browser. They're told they can add it later.
 - **Completion:**
   - The tour is marked complete on the account only once it's **fully** finished.
-  - A tour left part-way, for example to add the app to the Home Screen, starts again in the Home Screen app until it's finished.
+  - A tour left part-way, for example to add the app to the Home Screen, **starts over** from the beginning the next time, including in the Home Screen app, until it's finished.
+  - **Skip** counts as done: the tour never comes back on its own, and "Show the tour again" in Settings replays it.
   - A tour finished in the browser counts, so the Home Screen app won't show it again.
 - **Notifications:** on the Home Screen app, the scan step asks for notification permission with a button. If they turn it down, Settings › Notifications offers it later.
 - **The end:** it explains only, and ends with "Scan your first card" and "Explore on my own".
@@ -541,7 +542,10 @@ These replace the bullets above wherever they differ.
   - Sync & offline is in Profile.
 
 *What's new and version history (P16)*
-- **Release names:** major releases get Pokémon names. The scheme is on the tracker (q37).
+- **Release names** (q37):
+  - Each major release, meaning a milestone or a big feature drop, is named after the next **starter** Pokémon: Bulbasaur, Charmander and Squirtle, then each later generation's starters in Pokédex order (Chikorita, Cyndaquil, Totodile, Treecko and so on). If they ever run out, naming continues from Caterpie onwards.
+  - Smaller releases before the next major one take its evolutions (Bulbasaur, then Ivysaur, then Venusaur). After the final form they add the date, as in "Venusaur · 4 Nov". The version history shows the date under each name.
+  - The past releases are Bulbasaur (the Home Screen app and offline, 18–19 October), Charmander (the iPhone redesign, 20–23 October), Squirtle (badges, the daily loop and binder pockets, 29 October) and Chikorita (Wrapped and goals, 30 October). Milestone D is the next major release: Cyndaquil.
 - **Approval:** the owner approves both the What's new highlights and the full notes for every release before the deploy merge.
 - **Missed releases:** they appear in one sheet, newest first, with at most three highlights per release and "See everything" at the end.
 - **When it shows:** What's new appears on the first open after any update, including updates iOS does on its own, once per account.
