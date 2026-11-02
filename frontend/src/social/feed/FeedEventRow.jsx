@@ -158,7 +158,9 @@ export default function FeedEventRow({ item, onReact, onOpenCard, onOpenComments
       : place > 1 && place <= 3
         ? t('feed.sentence.challenge_finishedPlace').replace('{place}', t(`feed.place.${place}`))
         : t('feed.sentence.challenge_finished')
-    const title = display.title_key ? t(display.title_key) : display.title
+    const keyed = display.title_key ? t(display.title_key) : null
+    const title = (keyed && keyed !== display.title_key ? keyed : display.title) || t('feed.challengeGeneric')
+    const weekNumber = display.week ? String(display.week).split('W').pop().replace(/^0+/, '') : ''
     subject = title
     body = (
       <Body>
@@ -167,7 +169,7 @@ export default function FeedEventRow({ item, onReact, onOpenCard, onOpenComments
           <span className="block text-headline">{title}</span>
           {display.week && (
             <span className="block text-footnote text-text-secondary">
-              {t('feed.challengeLine').replace('{week}', display.week).replace('{place}', place ? t(`feed.ordinal.${place}`) : '')}
+              {t('feed.challengeLine').replace('{week}', weekNumber).replace('{place}', place ? t(`feed.ordinal.${place}`) : '')}
             </span>
           )}
         </span>

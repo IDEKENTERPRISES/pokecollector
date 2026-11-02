@@ -2350,6 +2350,7 @@ const en = {
     badgeLine: '{tier} · {track}',
     cardLine: '{set} · {number}',
     challengeLine: 'Week {week} · {place}',
+    challengeGeneric: 'Weekly challenge',
     place: { 1: 'first', 2: 'second', 3: 'third' },
     ordinal: { 1: '1st', 2: '2nd', 3: '3rd' },
     reactions: 'Reactions',
