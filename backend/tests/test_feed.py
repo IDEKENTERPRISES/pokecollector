@@ -396,6 +396,7 @@ class PreferenceTests(FeedBase):
                 "feed_share_achievement_unlocked": "true",
                 "feed_share_goal_completed": "false",
                 "feed_share_big_pull": "false",
+                "feed_share_challenge_finished": "true",
                 "feed_share_values": "false",
             },
         )

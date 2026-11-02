@@ -65,6 +65,8 @@ BACKUP_GROUPS = {
         "notification_queue",
         "swap_offers",
         "swap_offer_items",
+        "challenge_weeks",
+        "challenge_progress",
     ],
     "cards": ["cards", "sets", "price_history", "custom_card_matches"],
     "products": [

@@ -4,6 +4,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.date import DateTrigger
 import logging
 import datetime
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 # Give the persistent scan queue a short recovery window without changing other jobs.
@@ -246,6 +247,21 @@ def run_swap_expiry_job():
         db.close()
 
 
+def run_challenge_close_job():
+    """Close the finished challenge week (just after Monday 00:00 UK time, and again at start-up after downtime)."""
+    from database import SessionLocal
+    from services.challenge import close_due_weeks
+
+    db = SessionLocal()
+    try:
+        close_due_weeks(db)
+    except Exception:
+        db.rollback()
+        logger.exception("Challenge close job failed")
+    finally:
+        db.close()
+
+
 def start_scheduler():
     """Start the background scheduler with separate full and small price sync jobs."""
     if not scheduler.running:
@@ -345,6 +361,25 @@ def start_scheduler():
             misfire_grace_time=_SCAN_QUEUE_MISFIRE_GRACE_SECONDS,
             coalesce=True,
             max_instances=1,
+        )
+
+        scheduler.add_job(
+            run_challenge_close_job,
+            trigger=CronTrigger(day_of_week="mon", hour=0, minute=5, timezone=ZoneInfo("Europe/London")),
+            id="challenge_close_job",
+            name="Weekly Challenge Close",
+            replace_existing=True,
+            misfire_grace_time=6 * 3600,
+            coalesce=True,
+            max_instances=1,
+        )
+        # A server that was down at Monday 00:05 catches up shortly after it starts.
+        scheduler.add_job(
+            run_challenge_close_job,
+            trigger=DateTrigger(run_date=now_utc + datetime.timedelta(seconds=90)),
+            id="challenge_close_startup_job",
+            name="Weekly Challenge Close (catch-up)",
+            replace_existing=True,
         )
 
         scheduler.add_job(

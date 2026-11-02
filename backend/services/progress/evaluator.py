@@ -236,6 +236,17 @@ def _evaluate_goals(db: Session, user_id: int, now) -> None:
         logger.exception("Goal evaluation failed for user %s", user_id)
 
 
+def _evaluate_challenge(db: Session, user_id: int, now) -> None:
+    """The weekly challenge count; a failure here never blocks the rest of the evaluation."""
+    from services import challenge
+
+    try:
+        with db.begin_nested():
+            challenge.update_progress(db, user_id, now)
+    except Exception:
+        logger.exception("Challenge progress failed for user %s", user_id)
+
+
 def evaluate_user(db: Session, user_id: int) -> bool:
     """Evaluate one user in a single transaction. Returns False if the user is gone."""
     from api.social import _load_user_stats  # lazy, not moved: keeps the upstream diff small
@@ -270,6 +281,7 @@ def evaluate_user(db: Session, user_id: int) -> bool:
         _evaluate_big_pulls(db, user_id, state, price_field, first, started)
         _evaluate_daily(db, user_id)
         _evaluate_goals(db, user_id, started)
+        _evaluate_challenge(db, user_id, started)
 
         state.evaluated_at = started
         db.flush()

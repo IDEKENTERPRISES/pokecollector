@@ -409,6 +409,7 @@ def delete_user(
         BinderCard,
         BinderSlot,
         Card,
+        ChallengeProgress,
         CollectionCardPhoto,
         CollectionItem,
         CustomCardMatch,
@@ -481,6 +482,7 @@ def delete_user(
     ).delete(synchronize_session=False)
     for progress_model in (
         UserAchievement, UserDailyActivity, UserEvent, UserGoal, UserXpLedger, ProgressState, NotificationQueue,
+        ChallengeProgress,
     ):
         db.query(progress_model).filter(progress_model.user_id == user_id).delete(
             synchronize_session=False
