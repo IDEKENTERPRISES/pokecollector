@@ -104,7 +104,7 @@ export default function FeedEventRow({ item, onReact, onOpenCard, onOpenComments
       </Body>
     )
   } else if (kind === 'achievement_unlocked') {
-    const title = display.name_key ? t(display.name_key) : display.name
+    const title = (display.name_key && t(display.name_key) !== display.name_key ? t(display.name_key) : display.name) || display.name_key
     const tier = display.tier ? t(`achievements.tier.${display.tier}`) : ''
     const track = display.track ? t(`achievements.track.${display.track}`) : ''
     subject = [title, tier].filter(Boolean).join(', ')

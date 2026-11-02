@@ -45,7 +45,7 @@ export default function ReactionBar({ counts, mine = [], own = false, onToggle, 
             aria-label={reactionLabel(t(`feed.reaction.${kind}`), count, reacted, t)}
             disabled={disabled}
             onClick={() => onToggle?.(kind)}
-            className="ios-press inline-flex h-11 items-center disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-tint motion-safe:active:[&>span]:scale-[1.15]"
+            className="ios-press inline-flex h-11 min-w-[44px] items-center justify-center disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-tint motion-safe:active:[&>span]:scale-[1.15]"
           >
             {capsule}
           </button>

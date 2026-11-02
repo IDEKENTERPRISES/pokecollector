@@ -74,7 +74,9 @@ export default function ActivityFeed() {
     refetchOnMount: 'always',
   })
   const items = useMemo(() => (query.data?.pages ?? []).flatMap(page => page.items), [query.data])
-  const state = feedState({ offline, isLoading: query.isLoading, error: query.error, itemCount: items.length })
+  // A request that got no answer at all means the server can't be reached, banner or not.
+  const unreachable = query.isError && !query.error?.response
+  const state = feedState({ offline: offline || unreachable, isLoading: query.isLoading, error: query.error, itemCount: items.length })
   const groups = useMemo(() => groupByDay(items, t, new Date(), document.documentElement.lang || undefined), [items, t])
 
   // Loads the next page when the end of the list scrolls near.
