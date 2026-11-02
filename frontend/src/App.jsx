@@ -245,6 +245,7 @@ function ProtectedRoutes() {
         <Route path="trades/offers" element={lazyRoute(<Trades />)} />
         <Route path="trades/offers/:offerId" element={lazyRoute(<SwapOffer />)} />
         <Route path="leaderboard" element={lazyRoute(<Leaderboard />)} />
+        <Route path="leaderboard/activity" element={lazyRoute(<Leaderboard segment="activity" />)} />
         <Route path="leaderboard/compare/:userId" element={lazyRoute(<Compare />)} />
         <Route path="goals" element={lazyRoute(<Goals />)} />
         <Route path="goals/:goalId" element={lazyRoute(<GoalDetail />)} />

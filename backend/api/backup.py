@@ -58,6 +58,7 @@ BACKUP_GROUPS = {
         "progress_state",
         "user_events",
         "event_reactions",
+        "event_comments",
         "user_daily_activity",
         "user_achievements",
         "user_goals",

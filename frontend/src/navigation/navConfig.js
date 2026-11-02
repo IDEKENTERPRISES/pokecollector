@@ -51,6 +51,7 @@ export const ROUTES = Object.freeze([
   { path: '/trades/offers', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.trades' },
   { path: '/trades/offers/:offerId', section: 'profile', kind: 'pushed', parent: '/trades/offers', titleKey: 'swaps.detailTitle' },
   { path: '/leaderboard', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.leaderboard' },
+  { path: '/leaderboard/activity', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.leaderboard' },
   { path: '/leaderboard/compare/:userId', section: 'profile', kind: 'pushed', parent: '/leaderboard', titleKey: 'nav.leaderboard' },
   { path: '/collection/user/:userId', section: 'profile', kind: 'pushed', parent: '/leaderboard', titleKey: 'nav.leaderboard' },
   { path: '/goals', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'goals.title' },

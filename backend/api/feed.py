@@ -1,5 +1,6 @@
 """Activity feed and reactions (docs/ENGAGEMENT_DESIGN.md §7 P12). Every route answers 404 while the admin switch is off."""
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
@@ -60,3 +61,61 @@ def remove_reaction(
     feed_service.remove_reaction(db, event_id, current_user.id, kind)
     db.commit()
     return _reaction_state(db, event_id, current_user.id)
+
+
+class CommentBody(BaseModel):
+    text: str
+
+
+def _commentable_event(db: Session, viewer_id: int, event_id: int):
+    event = feed_service.visible_event(db, viewer_id, event_id, include_own=True)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return event
+
+
+@router.get("/{event_id}/comments")
+def get_comments(
+    event_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    event = _commentable_event(db, current_user.id, event_id)
+    return {"items": feed_service.list_comments(db, event, current_user.id)}
+
+
+@router.post("/{event_id}/comments", status_code=201)
+def post_comment(
+    event_id: int,
+    body: CommentBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    event = _commentable_event(db, current_user.id, event_id)
+    try:
+        comment = feed_service.add_comment(db, event, current_user.id, body.text)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error))
+    db.commit()
+    db.refresh(comment)
+    return {
+        "comment": feed_service.serialize_comment(comment, current_user, current_user.id, event.user_id),
+        "comment_count": feed_service.comment_counts(db, [event.id])[event.id],
+    }
+
+
+@router.delete("/{event_id}/comments/{comment_id}")
+def delete_comment(
+    event_id: int,
+    comment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    event = _commentable_event(db, current_user.id, event_id)
+    outcome = feed_service.delete_comment(db, event, comment_id, current_user.id)
+    if outcome == "missing":
+        raise HTTPException(status_code=404, detail="Not found")
+    if outcome == "forbidden":
+        raise HTTPException(status_code=403, detail="Only the author or the event's owner can delete a comment")
+    db.commit()
+    return {"comment_count": feed_service.comment_counts(db, [event.id])[event.id]}
