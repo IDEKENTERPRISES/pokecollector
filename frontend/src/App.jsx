@@ -19,6 +19,7 @@ import LaunchSplash from './components/splash/LaunchSplash'
 
 const HomeScreen = lazy(() => import('./pages/HomeScreen'))
 const Profile = lazy(() => import('./pages/Profile'))
+const SwapOffer = lazy(() => import('./pages/SwapOffer'))
 const CardSearch = lazy(() => import('./pages/CardSearch'))
 const Collection = lazy(() => import('./pages/Collection'))
 const Pokedex = lazy(() => import('./pages/Pokedex'))
@@ -241,6 +242,8 @@ function ProtectedRoutes() {
         <Route path="wrapped/:year" element={lazyRoute(<WrappedStory />)} />
         <Route path="products" element={lazyRoute(<Products />)} />
         <Route path="trades" element={lazyRoute(<Trades />)} />
+        <Route path="trades/offers" element={lazyRoute(<Trades />)} />
+        <Route path="trades/offers/:offerId" element={lazyRoute(<SwapOffer />)} />
         <Route path="leaderboard" element={lazyRoute(<Leaderboard />)} />
         <Route path="leaderboard/activity" element={lazyRoute(<Leaderboard segment="activity" />)} />
         <Route path="leaderboard/compare/:userId" element={lazyRoute(<Compare />)} />

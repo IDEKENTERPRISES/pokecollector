@@ -21,6 +21,9 @@ The owner chose these from a review of the shipped app (2026-10-28) and accepted
 - A book view for sets and binders (Grid | Book). **Drag and drop is wanted**, so a binder's pockets mirror the physical binder.
 - On this day, Showcase 6, and Collection DNA.
 - Social: swap offers, an activity feed and a weekly challenge, all three, behind an admin switch that is off by default.
+- Added on 2 November 2026 (milestone E):
+  - a skippable tutorial for new trainers, once per account;
+  - a "What's new" sheet after an update, with a full version history in Settings.
 
 **Dropped:** pack-opening mode and deck playtest.
 
@@ -473,7 +476,49 @@ Social phases may be built during B and C, because the switch keeps them dormant
 - One shared goal a week from a catalogue, built on the quest engine.
 - A progress board, a badge for everyone who finishes, and a top-3 podium.
 
-**P14 Docs and cleanup (S).**
+### Milestone E — welcome and what's new (round 5, promotion 5)
+
+The owner added this milestone on 2 November 2026. Both phases are for every trainer, in single-user and multi-user mode, and neither sits behind the social switch. Mockups come first (Wave 4 on the Design canvas), and the owner approves them before the build.
+
+**P15 Tutorial for new trainers (M).**
+- **When it shows:** once per account, and skippable at every step. Finishing or skipping is stored on the account, server side (for example `tutorial_completed_at`), so a second device doesn't show it again. "Show the tour again" in Settings replays it.
+- **Steps:** one short step per section, pointing at the real tab or control:
+  - Home: the Today card, streak and quests.
+  - Collection: cards, binders, the wishlist, Grid | List, and Book.
+  - Scan.
+  - Search: sets and the Pokédex.
+  - Profile: analytics, trades, goals and badges. Leaderboard appears only in multi-user mode, and the social features only while their switch is on.
+- **Scan step:** it says that recognising a card can take a while, and offers to turn on notifications right there, so a push says when scans are ready. On iPhone, pushes need the Home Screen app, so the step says so when the app is open in Safari.
+- **Offline step:**
+  - what works without a connection: browsing the collection, binders and card pages from the saved copy; changes are queued and sent once back online; Sync & offline in Profile;
+  - what needs a connection: scanning, fresh prices and other trainers.
+- **Accessibility:** it respects Reduce Motion and VoiceOver, with 44 pt targets and safe areas, and it works offline itself.
+
+**P16 What's new and version history (M).**
+- **Facts:**
+  - The update button arrived with the service worker (#7, 18 October 2026), first deployed in `8f5acbf`.
+  - `VERSION` is the upstream release and has stayed `1.51.6` through every deploy since, so the app has no version of its own to compare.
+- **A release list of our own:**
+  - Every merge into `deploy` gets an entry with two levels:
+    - **highlights**: a few friendly lines about only what a trainer would notice or care about, in plain words with no technical terms;
+    - **details**: the full list of changes, for the version history.
+  - Each entry also has an id, a date and a title.
+  - The entries live in one file that ships with the app, and the build carries the current release id.
+  - `VERSION` stays upstream's.
+- **What's new sheet:**
+  - When the update button reloads the app and the trainer is signed in, a "What's new" sheet shows the **highlights** of every entry newer than the last one that trainer saw. It's short and friendly, and it links to the version history for more.
+  - The last seen release is stored per account, server side, so each trainer sees the notes once, whichever device they update on.
+  - An offline device uses its own stored id until it can sync.
+- **New accounts** get no backlog: their last seen is set to the current release, and the tutorial covers them.
+- **Version history:** Settings › About lists every entry, newest first, in **full detail**, and it's readable offline.
+- **Open questions:** the owner answers them on the tracker (q19 onwards) before the detailed plan and the mockups.
+- **Backfill:**
+  - Write entries for the 23 deploys from `8f5acbf` (18 October) to `2a630ce` (30 October), from the merge history, the PRs and the tracker log.
+  - Group deploys that shipped together on one day.
+  - A trainer last on an old build sees what has changed since that build, back as far as the first deploy with the update button.
+- **Promotion procedure:** it gains a step: add the release entry before merging into `deploy`.
+
+**P14 Docs and cleanup (S).** Runs last, after milestone E.
 - README feature bullets and screenshots; `FRONTEND.md`, `BACKEND.md`, `PWA.md`.
 - Remove dead code that the rollout replaced.
 - An optional translation pass.
@@ -498,6 +543,7 @@ The tracker page holds each round's checks for the owner, on the nonprod Home Sc
 - **B:** drag and drop, badges, the daily loop over two or more days including one offline, small delights.
 - **C:** recap, Wrapped (with a date override for testing), goals.
 - **D:** social, with a second trainer account on nonprod.
+- **E:** the tutorial on a new account (finish it, skip it, replay it); What's new after updating from an older build; the version history.
 
 ## 10. Risks
 

@@ -2,10 +2,10 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Layers, Grid2X2, Wallet, Heart, Layers3, BarChart3, ScanLine, UploadCloud, Link2, ShoppingBag, Sparkles, Loader2,
+  ArrowLeftRight, Layers, Grid2X2, Wallet, Heart, Layers3, BarChart3, ScanLine, UploadCloud, Link2, ShoppingBag, Sparkles, Loader2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { getDashboard, getGoals, getInvestmentTracker, getScanJobs, getSets, getPokedexSummary, getCustomMatches } from '../api/client'
+import { getDashboard, getGoals, getInvestmentTracker, getScanJobs, getSwapsWaiting, getSets, getPokedexSummary, getCustomMatches } from '../api/client'
 import { useSettings } from '../contexts/SettingsContext'
 import { useAuth } from '../contexts/AuthContext'
 import { useOffline } from '../offline/useOffline'
@@ -41,6 +41,8 @@ import {
 import {
   closestToCompleteSets, completeSetCount, minutesSince, pluralKey, seriesChange, shortAge, todoCards, trackerSeries,
 } from './homeHelpers'
+
+import { SWAPS_WAITING_QUERY_KEY, useSocialEnabled } from '../social/social'
 
 const NAV_BAR = { trailing: <HideValuesToggle /> }
 
@@ -166,6 +168,9 @@ export default function HomeScreen() {
   const scanJobs = scanData?.jobs || []
   const scanAttention = scanAttentionCount(scanJobs)
   const scansActive = hasActiveScanJobs(scanJobs)
+  const social = useSocialEnabled()
+  const { data: swapsData } = useQuery({ queryKey: SWAPS_WAITING_QUERY_KEY, queryFn: getSwapsWaiting, enabled: social })
+  const swapsWaiting = social ? Number(swapsData?.count) || 0 : 0
 
   // Same keys as the Sets page and Profile, so the read cache and the other pages share them.
   const { data: trackerData } = useQuery({
@@ -235,6 +240,7 @@ export default function HomeScreen() {
     customMatches: customMatches.length,
     productsToReview: Number(data?.products_needing_review_count ?? 0),
     newSets: Number(data?.new_sets_count ?? 0),
+    swapsWaiting,
   })
 
   const age = shortAge(minutesSince(data?.last_sync?.finished_at))
@@ -246,6 +252,7 @@ export default function HomeScreen() {
   const todoView = {
     'scans-review': { type: 'lightning', icon: ScanLine, title: 'todoScansReview', detail: 'todoScansReviewDetail', action: 'todoReview', to: '/scans' },
     'scans-processing': { type: 'psychic', icon: Loader2, title: 'todoScansProcessing', detail: 'todoScansProcessingDetail', action: 'todoOpen', to: '/scans' },
+    swaps: { type: 'dragon', icon: ArrowLeftRight, title: 'todoSwaps', detail: 'todoSwapsDetail', action: 'todoOpen', to: '/trades/offers' },
     sync: { type: 'water', icon: UploadCloud, title: 'todoSync', detail: 'todoSyncDetail', action: 'todoOpen', onClick: () => setSyncOpen(true) },
     matches: { type: 'psychic', icon: Link2, title: 'todoMatches', detail: 'todoMatchesDetail', action: 'todoReview', to: '/migration' },
     products: { type: 'fighting', icon: ShoppingBag, title: 'todoProducts', detail: 'todoProductsDetail', action: 'todoReview', to: '/products' },

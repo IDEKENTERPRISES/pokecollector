@@ -11,6 +11,7 @@ export const NOTIFY_CATEGORIES = [
   { id: 'badges', fallback: true, label: 'notifyPrefs.badges', desc: 'notifyPrefs.badgesDesc' },
   { id: 'weekly_recap', fallback: false, label: 'notifyPrefs.weeklyRecap', desc: 'notifyPrefs.weeklyRecapDesc' },
   { id: 'goal_milestones', fallback: true, label: 'notifyPrefs.goalMilestones', desc: 'notifyPrefs.goalMilestonesDesc' },
+  { id: 'swap_offers', fallback: true, label: 'notifyPrefs.swapOffers', desc: 'notifyPrefs.swapOffersDesc', social: true },
 ]
 export const DIGEST_HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
 
@@ -45,13 +46,13 @@ function Row({ label, description, children }) {
 }
 
 /** Category switches, digest time and quiet hours. `save` takes a settings patch and may reject. */
-export default function NotificationPrefs({ settings, save, t }) {
+export default function NotificationPrefs({ settings, save, t, social = false }) {
   const update = patch => Promise.resolve(save(patch)).catch(() => {})
   return (
     <div data-testid="notification-prefs" className="space-y-1">
       <p className="px-4 pb-1.5 text-footnote text-text-secondary">{t('notifyPrefs.categoriesTitle')}</p>
       <div className="overflow-hidden rounded-xl bg-card">
-        {NOTIFY_CATEGORIES.map(category => (
+        {NOTIFY_CATEGORIES.filter(category => social || !category.social).map(category => (
           <Row key={category.id} label={t(category.label)} description={t(category.desc)}>
             <Switch
               checked={categoryEnabled(settings, category)}
