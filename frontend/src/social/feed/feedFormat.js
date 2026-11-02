@@ -131,3 +131,10 @@ export function feedState({ offline, isLoading, error, itemCount }) {
   if (itemCount === 0) return 'empty'
   return 'list'
 }
+
+/** Height of the on-screen keyboard from the visual viewport (0 when there is none). */
+export function keyboardInset(innerHeight, viewport) {
+  if (!viewport) return 0
+  const inset = Math.round(innerHeight - viewport.height - (viewport.offsetTop || 0))
+  return inset > 80 ? inset : 0
+}

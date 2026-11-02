@@ -324,6 +324,12 @@ test('offline: the feed says it needs a connection', async ({ page }, testInfo) 
 test('comments: read, write and delete under an event', async ({ page }, testInfo) => {
   const state = await install(page)
   await page.goto('/leaderboard/activity')
+  await page.evaluate(() => {
+    const target = new EventTarget()
+    const viewport = Object.assign(target, { height: window.innerHeight, offsetTop: 0, width: window.innerWidth })
+    Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport })
+    window.__fakeViewport = viewport
+  })
   await events(page).nth(0).getByTestId('feed-comments').click()
   const sheet = page.getByRole('dialog', { name: 'Comments' })
   await expect(sheet.getByTestId('feed-comment')).toHaveCount(3)
@@ -331,6 +337,24 @@ test('comments: read, write and delete under an event', async ({ page }, testInf
   // Only your own comment carries a delete button here (you do not own this event).
   await expect(sheet.getByRole('button', { name: 'Delete comment' })).toHaveCount(1)
   await capture(page, testInfo, '09-comments')
+  // Nothing of the page shows through the sheet: it is a solid card above the tab bar.
+  expect(await sheet.evaluate(node => getComputedStyle(node).backgroundColor)).toBe('rgb(28, 28, 30)')
+  // With the keyboard open (a 300 px visual viewport cut) the composer stays above it, on the same solid sheet.
+  await sheet.getByRole('textbox', { name: 'Add a comment' }).focus()
+  await page.evaluate(() => {
+    window.__fakeViewport.height = window.innerHeight - 300
+    window.__fakeViewport.dispatchEvent(new Event('resize'))
+  })
+  await expect.poll(async () => {
+    const box = await sheet.boundingBox()
+    return Math.round(844 - (box.y + box.height))
+  }).toBe(300)
+  await expect(sheet.getByRole('textbox', { name: 'Add a comment' })).toBeInViewport()
+  await capture(page, testInfo, '10-comments-keyboard')
+  await page.evaluate(() => {
+    window.__fakeViewport.height = window.innerHeight
+    window.__fakeViewport.dispatchEvent(new Event('resize'))
+  })
   const send = sheet.getByRole('button', { name: 'Send comment' })
   await expect(send).toBeDisabled()
   await sheet.getByRole('textbox', { name: 'Add a comment' }).fill('  Well played  ')

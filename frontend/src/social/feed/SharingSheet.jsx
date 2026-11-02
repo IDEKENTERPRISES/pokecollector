@@ -44,6 +44,7 @@ export default function SharingSheet({ isOpen, onClose }) {
       onClose={onClose}
       title={t('feed.sharingTitle')}
       leading={<span />}
+      opaque
       trailing={{ label: t('feed.sharingDone'), onPress: onClose }}
     >
       <div className="flex flex-col gap-5 px-4 pb-[34px] pt-4">

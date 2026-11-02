@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowUp, MessageCircle, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -9,7 +9,7 @@ import PageSheet from '../../components/ios/PageSheet'
 import { useSettings } from '../../contexts/SettingsContext'
 import { useOffline } from '../../offline/useOffline'
 import { TrainerAvatar } from '../../pages/socialParts'
-import { COMMENT_MAX_LENGTH, ageLabel, cleanComment } from './feedFormat'
+import { COMMENT_MAX_LENGTH, ageLabel, cleanComment, keyboardInset } from './feedFormat'
 
 /**
  * The comments under one event (docs/SOCIAL_DESIGN.md D6): a list in the feed's card style, oldest
@@ -23,6 +23,20 @@ export default function CommentsSheet({ event, onClose, onCount }) {
   const queryClient = useQueryClient()
   const [draft, setDraft] = useState('')
   const [deleting, setDeleting] = useState(null)
+  const [inset, setInset] = useState(0)
+  // The composer rides above the keyboard: iOS shrinks the visual viewport, not the layout one.
+  useEffect(() => {
+    const viewport = window.visualViewport
+    if (!viewport || !event) return undefined
+    const update = () => setInset(keyboardInset(window.innerHeight, viewport))
+    update()
+    viewport.addEventListener('resize', update)
+    viewport.addEventListener('scroll', update)
+    return () => {
+      viewport.removeEventListener('resize', update)
+      viewport.removeEventListener('scroll', update)
+    }
+  }, [event])
   const eventId = event?.id
   const queryKey = ['feed', 'comments', eventId]
 
@@ -100,6 +114,8 @@ export default function CommentsSheet({ event, onClose, onCount }) {
       leading={<span />}
       trailing={{ label: t('feed.commentsDone'), onPress: onClose }}
       footer={footer}
+      opaque
+      bottomInset={inset}
     >
       <div className="min-h-[200px] px-4 pb-4 pt-4" data-testid="feed-comments-list">
         {isLoading ? (
