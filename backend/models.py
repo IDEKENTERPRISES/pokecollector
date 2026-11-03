@@ -159,6 +159,9 @@ class User(Base):
     role = Column(String, default="trainer")  # "admin" or "trainer"
     is_active = Column(Boolean, default=True)
     avatar_id = Column(Integer, nullable=True)  # Pokemon number (1-151) for avatar sprite
+    # Last release id the trainer has seen in What's new (docs/WELCOME_DESIGN.md §5.5), or a
+    # "since:YYYY-MM-DD" marker the migration wrote for accounts that existed before it.
+    whats_new_seen = Column(String(24), nullable=True)
     public_handle = Column(String, nullable=True)
     is_profile_public = Column(Boolean, default=False, nullable=False)
     public_show_values = Column(Boolean, default=False, nullable=False)

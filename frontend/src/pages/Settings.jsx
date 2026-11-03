@@ -1508,7 +1508,16 @@ export default function Settings() {
           
 
           {/* ── 8. ÜBER DIE APP ── */}
-          {activeSection === 'about' && <section className="space-y-1">
+          {activeSection === 'about' && <div className="space-y-6">
+            <ListSection header={t('welcome.sectionHeader')} className="!mx-0">
+              <ListRow
+                title={t('welcome.versionHistory')}
+                subtitle={t('welcome.versionHistoryDesc')}
+                to="/settings/about/versions"
+                testId="settings-version-history"
+              />
+            </ListSection>
+            <section className="space-y-1">
             <SectionHeader title={t('settings.sectionAbout')} />
             <SettingsCard>
               <SettingsRow label={t('settings.app')} description="Pokemon TCG Collection">
@@ -1560,7 +1569,8 @@ export default function Settings() {
                 {t('settings.madeWith')} <a href="https://romerg.de/" target="_blank" rel="noreferrer" className="text-brand-red hover:opacity-80 transition-opacity font-semibold">Gilles Romer</a>
               </p>
             </div>
-          </section>}
+          </section>
+          </div>}
         </>
       )}
 

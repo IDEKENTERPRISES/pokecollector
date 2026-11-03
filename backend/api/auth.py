@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from datetime import timedelta
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
@@ -264,6 +265,7 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
             "username": user.username,
             "role": user.role,
             "avatar_id": user.avatar_id,
+            "whats_new_seen": user.whats_new_seen,
             "must_change_password": user.must_change_password,
         },
     )
@@ -276,6 +278,7 @@ def get_me(current_user: User = Depends(get_current_user)):
         "username": current_user.username,
         "role": current_user.role,
         "avatar_id": current_user.avatar_id,
+        "whats_new_seen": current_user.whats_new_seen,
         "must_change_password": current_user.must_change_password,
     }
 
@@ -642,6 +645,23 @@ def change_avatar(data: dict, current_user: User = Depends(get_current_user), db
     current_user.avatar_id = avatar_id
     db.commit()
     return {"id": current_user.id, "username": current_user.username, "role": current_user.role, "avatar_id": current_user.avatar_id}
+
+
+WHATS_NEW_ID = re.compile(r"^\d{4}-\d{2}-\d{2}(\.\d{1,3})?$")
+
+
+@router.put("/me/whats-new-seen")
+def set_whats_new_seen(data: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Records the newest release the trainer has seen. It only moves forward, so a device that
+    is behind can't undo what another device saved; a "since:" marker is replaced by any real id."""
+    release_id = data.get("id")
+    if not isinstance(release_id, str) or not WHATS_NEW_ID.match(release_id):
+        raise HTTPException(status_code=400, detail="id must be a release id such as 2026-10-30")
+    current = current_user.whats_new_seen
+    if current is None or current.startswith("since:") or release_id > current:
+        current_user.whats_new_seen = release_id
+        db.commit()
+    return {"whats_new_seen": current_user.whats_new_seen}
 
 
 @router.put("/me/username")

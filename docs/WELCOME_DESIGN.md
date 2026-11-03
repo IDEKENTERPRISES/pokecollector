@@ -1,6 +1,6 @@
 # Welcome and What's new — design for PokéCollector
 
-Status: build started 3 November 2026 at the owner's request (P15, P16). Mockups: the Design canvas, row **"Wave 4 — Welcome and what's new"** (https://claude.ai/artifact/QNJ3UNo7XYj1ze96mkcFGF). The owner's review of the mockups (a6) and the release notes (a7) is still open; any changes from it are folded into this doc and the build.
+Status: build started 3 November 2026 at the owner's request (P15, P16). Mockups: the Design canvas, row **"Wave 4 — Welcome and what's new"** (https://claude.ai/artifact/QNJ3UNo7XYj1ze96mkcFGF). The owner approved the mockups (a6) and the notes of the four past releases, both levels (a7), on 3 November 2026, with no changes.
 
 What this builds on:
 - The plan of record is `docs/ENGAGEMENT_DESIGN.md` §7 milestone E, including both "Owner's answers" blocks (2 November 2026), which override its bullets.
@@ -25,8 +25,14 @@ The owner reviewed the first version of the mockups. The answers below are built
 | E6 | Squirtle's three highlights | **OK as drafted.** |
 | E7 | Other browsers | **Yes**: an Install step where the browser supports it. |
 | E8 | Dismissing the Take the tour card | **A quiet "Not now" link.** |
+| a6 | Wave 4 mockups | **Approved**, no changes. |
+| a7 | Notes of the four past releases, highlights and full notes | **Approved**, no changes. |
+| q49 | Cyndaquil: say that social features appear once the server's admin turns them on? | **Yes**: the last New line reads "Swaps, the feed and the weekly challenge appear once the person who runs your server turns them on." |
+| q50 | Cyndaquil: the challenge's "UK time" and podium rule | **Keep** "Monday to Sunday, UK time" and "the highest counts by Sunday night make the podium". |
+| q51 | Cyndaquil: the "Your Wrapped is ready" notification | **Remove it** (the New line and the Under the hood line). Wrapped stays out of the notes until December. |
+| q52 | Cyndaquil: "Your own shared moments … marked You" | **Keep as written.** |
 
-The release notes in §8 are still drafts: the owner has not yet commented on their content.
+The release notes in §8 (the four past releases, both levels) are approved. The Cyndaquil draft in `releases.json` follows the answers q49–q52 below and is approved with the milestone D test round.
 
 ---
 
@@ -326,7 +332,7 @@ Between Chikorita and Cyndaquil, a small fix release would be **Bayleef**, then 
 
 ### 5.4 Coming next (nonprod only)
 
-`releases.json` has an optional `next` object: the draft of the release being tested, in the same shape without `id` or `date`. Nonprod builds show it as the first block of the version history, under a yellow "Coming next" chip (black on #FFD60A, 14.9) with the line "Draft — not released yet." It is not part of What's new, and the deploy build leaves `next` out (the production build strips it, and a test checks that).
+`releases.json` has an optional `next` object: the draft of the release being tested, in the same shape without `id` or `date`. Nonprod builds show it as the first block of the version history, under a yellow "Coming next" chip (black on #FFD60A, 14.9) with the line "Draft — not released yet." A "See full notes" row at the bottom of the block opens the draft's detail page (`/settings/about/versions/next`), so the owner can read the full notes before approving them. It is not part of What's new, and the deploy build leaves `next` out (the production build strips it, and a test checks that; the gate is described in `docs/NONPROD.md`).
 
 ### 5.5 Data
 
@@ -365,15 +371,21 @@ Between Chikorita and Cyndaquil, a small fix release would be **Bayleef**, then 
 
 | Field | Where | Notes |
 |---|---|---|
-| `whats_new_seen` | users table, `String(16)` nullable | The last release id the trainer has seen. `null` is treated as "set it now, show nothing". |
+| `whats_new_seen` | users table, `String(24)` nullable | The last release id the trainer has seen, or for an account that existed before P16 a marker `since:YYYY-MM-DD` (below). `null` is treated as "set it now, show nothing". |
 | `pc.whatsNew.seen.<userId>` | `localStorage` | Offline copy. The newer of the two (by position in the file) wins. |
 
+**Existing accounts (decided 3 November 2026).** Trainers on older builds should see what they missed, so the migration that adds the column sets every existing user's `whats_new_seen` to `since:YYYY-MM-DD`:
+- the date is that trainer's most recent recorded activity (the latest of their daily check-ins, push subscription `last_seen_at`, sessions' `last_used_at` and collection `added_at`), or `since:2026-10-17` when there is none;
+- the client resolves the marker to the newest release whose `from` is on or before that date, or to "before the first release" when none is, shows everything newer, then writes the real id (a release's `from` is the first day it was available: 18 Oct for Bulbasaur, 20 Oct for Charmander);
+- the endpoint `PUT /api/auth/me/whats-new-seen` (`{ "id": "2026-10-30" }`) only moves forward and replaces a marker with any real id; `GET /api/auth/me` and the sign-in answer carry `whats_new_seen`.
+
 Rules:
-- On start, signed in: if `whats_new_seen` is `null`, set it to `__RELEASE_ID__` and show nothing.
+- On start, signed in: if `whats_new_seen` is `null` (a **new account**; no marker), set it to `__RELEASE_ID__` and show nothing.
 - If it names a release newer than this build (a device not yet updated), show nothing.
 - Otherwise the sheet lists every release newer than `whats_new_seen`, up to the running one.
 - On dismissal, write the running id. Offline, the write goes through the outbox when it is on and is retried at the next sign-in otherwise.
-- A trainer last on a very old build sees everything since, back to the first release.
+- A trainer last on a very old build sees everything since, back to the first release (the marker resolves to "before the first release").
+- The device copy is written first. If the server write fails (offline), this device's copy is then newer than the server's, and the write is retried at the next start (the "sync" case in `planWhatsNew`). It does not go through the offline outbox: that queue is for collection and scan items and shows in Sync & offline.
 
 ---
 
