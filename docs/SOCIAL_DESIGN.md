@@ -55,7 +55,7 @@ Each has a recommendation, which the mockups show. "As built" means what #113 an
 | **Pokémon GO trading** ([Bulbapedia](https://bulbapedia.bulbagarden.net/wiki/Trade_(GO))) | Trades happen in person, between friends, after both see what's on offer and confirm. | Our swaps also happen in person. The app records the agreement; both tap **Swapped** after the meet-up, and only then do the cards move. |
 | **Yahoo Fantasy trades** ([help](https://help.yahoo.com/kb/SLN6125.html)) | The recipient can "Evaluate trade" before accepting, rejecting or making a counter-offer. The proposer can cancel until it's accepted. A cap on pending offers, and a response window. | Accept · Counter · Decline for the trainer whose turn it is; Cancel for the trainer who started the offer. The meter is our "Evaluate". |
 | **eBay Best Offer** ([developer guide](https://developer.ebay.com/api-docs/user-guides/static/trading-user-guide/best-offers-counter.html)) | Each counteroffer has its own expiry, and a new counteroffer declines the earlier ones. | One live revision at a time; a counter replaces the cards on the table. |
-| **Panini sticker swaps** ([Panini blog](https://blog.paniniamerica.net/fifa-world-cup-sticker-swaps-a-collaborative-approach-to-completing-your-collection/), [Scanini on trade matching](https://scanini.app/trade-matching)) | The swap tool suggests only duplicates; your first copy of a sticker is never offered. | As built, you can only ask for another trainer's **spare** copies: they always keep one, and copies in binders aren't spare. Compare's suggestions use the same rule. |
+| **Panini sticker swaps** ([Panini blog](https://blog.paniniamerica.net/fifa-world-cup-sticker-swaps-a-collaborative-approach-to-completing-your-collection/), [Scanini on trade matching](https://scanini.app/trade-matching)) | The swap tool suggests only duplicates; your first copy of a sticker is never offered. | As first built, you could only ask for another trainer's **spare** copies. The owner changed that (2026-11, tracker r9-02): the picker lists every card, and spares are a filter. Compare's suggestions stay spares-first. |
 
 ### 1.2 Activity feeds and one-tap reactions
 
@@ -233,7 +233,7 @@ Avatars in the artboards are drawn placeholders (the trainer's initial). At runt
 | proposed / countered / accepted | 14 days after the last change (send, counter, accept, a Swapped tap) | scheduler | `expired` | none |
 
 **Rules as built:**
-- **What you can ask for.** You can ask only for the other trainer's **spare** copies: they keep at least one, and copies their binders hold aren't spare. You can give any copy you own, up to its quantity. Custom cards can't be swapped.
+- **What you can ask for.** Any card the other trainer owns and may show you, up to the quantity they own (owner's change, tracker r9-02: it first allowed spares only). They decide by accepting or declining, and a binder or deck slot the copy held is freed when the swap is marked Swapped. A **spare** is a copy of a card the trainer has more than one of, beyond what binders and decks hold; they keep one. Spares are a filter and a hint, not a limit. You can give any copy you own, up to its quantity. Custom cards can't be swapped. Compare's suggestions stay spares-first.
 - **Limits.** At most 40 copies on the table, 99 of one copy, and at least one card (no cash-only offers). Cash is one amount with a payer (`cash_payer_user_id`), up to 100,000.
 - **Accept and decline** carry the `revision` the trainer looked at. If the other trainer changed it meanwhile: 409 "This offer changed. Reload it first", and the screen reloads.
 - **Completion** re-checks each copy. It frees binder pockets and deck slots that hold a copy being swapped, and handles product-linked copies like Trades does. Then it logs one `Trade` per trainer (`partner_name`, notes "Swap offer #41", `swap_offer_id`), all in one transaction.
@@ -296,7 +296,7 @@ A `PageSheet` (92 dvh, glass, grabber), over Compare, the Offers segment or an o
   1. `SwapSide` **You give**:
      - a `SwapCardRow` per copy, with the ✕ labelled "Remove Mew ex";
      - "Add from your cards" (`ListRow`, green 29 px square with a plus, chevron) opens the picker on your cards.
-  2. `SwapSide` **You get from Misty**, the same, with "Add from Misty's spares".
+  2. `SwapSide` **You get from Misty**, the same, with "Add from Misty's cards".
   3. **Matches**: the header "Misty is looking for these. You have spares", then one row of chips that scrolls sideways and bleeds to the sheet's edges.
      - Each chip is a 44 px capsule button on `#1C1C1E`: a tint plus (18 px) and "Pikachu · MEW 173" (Subheadline semibold). Tapping it adds the card to You give.
      - The row shows only when Misty's wishlist is visible to you (her public profile and `wishlist_visibility`, the rule Compare uses).
@@ -309,15 +309,14 @@ A `PageSheet` (92 dvh, glass, grabber), over Compare, the Offers segment or an o
 **Cash** is one amount with a payer, as built (`cash_amount`, `cash_payer_user_id`). That is why there is one Cash row, not one per side.
 
 **The picker step** replaces the sheet's body; there is no second sheet:
-- **Header:** leading "‹ Back" (tint, back to the composer), title "Misty's spares" or "Your cards", trailing **Done**.
-- A `SearchField` ("Search Misty's spares").
-- `SegmentedControl` (`sm`). It opens on the first segment that has cards.
-  - On the partner's side: **On your wishlist · 2** | **All spares · 31**. Only spares can be asked for.
-  - On your side: **On Misty's wishlist** | **Spares** | **All**.
+- **Header:** leading "‹ Back" (tint, back to the composer), title "Misty's cards" or "Your cards", trailing **Done**.
+- A `SearchField` ("Search Misty's cards").
+- `SegmentedControl` (`sm`), the same three choices on both sides: **On Misty's wishlist** (or **On your wishlist**) | **Spares** | **All**. It opens on the wishlist when that applies, otherwise on **All**: every card the trainer owns, not only spares. **Spares** keeps copies of cards the trainer has more than one of that no binder or deck holds.
+- **Filters** under the segmented control: the compact **Filters** pill with a count of active filters, the same pill and page sheet as the Collection page (one shared component, `CardFilterPanel`). Rarity, condition, variant, printing detail, set and energy type, then under Advanced filters category, subtype, legality, language, min and max price, and duplicates. The sheet's **Clear** resets them; a **Clear all** link next to the pill also resets the search and the quick choice. "Showing 40 of 5,000" sits at the right. Filtering happens on the phone, on the candidate list; the grid renders 60 tiles at a time and loads more as you scroll. Prices in the tiles stay masked by Hide values.
 - **A 3-column grid** of card tiles (gap 10 px, art 5:7, radius 8):
   - name (Caption 1 semibold, one line), "MEW 170" (Caption 2, secondary) and the value (Caption 1, secondary, masked);
   - a fairy-pink heart on cards on the wanted wishlist;
-  - "×2" when more than one copy can be offered.
+  - "×2" when the trainer owns more than one copy.
 - **Selected:** a 3 px tint ring and a 24 px accent check badge (top right). Each tap adds one copy, up to what can be offered; the badge then shows the count. The tile's label reads "Squirtle, MEW 170, £14.20, selected".
 
 Sending: `POST /api/swaps`; the sheet closes, a toast "Offer sent to Misty", and the new offer opens. Offline: Send is disabled with "Needs a connection" under it. Swaps don't go through the outbox.
@@ -522,7 +521,7 @@ The offer, from the viewer's side:
 
 | Addition | Why | Shape |
 |---|---|---|
-| `GET /api/swaps/candidates?partner_id=&side=give\|get&filter=wishlist\|spares\|all&q=` | The picker (§5.4) and Compare's "Offer a swap" need copies that `build_items` will accept, with their wishlist match | `[{ collection_item_id, card_id, card_name, set_id, card_number, variant, condition, lang, images_small, types, offerable, on_wishlist, spare, value }]`, plus a count per filter. `offerable` is the spare count on the partner's side and the quantity on yours. `on_wishlist` is only set when that wishlist is visible to the viewer (Compare's rule) |
+| `GET /api/swaps/candidates?partner_id=&side=give\|get&filter=wishlist\|spares\|all&q=` | The picker (§5.4) and Compare's "Offer a swap" need copies that `build_items` will accept, with their wishlist match | `[{ collection_item_id, card_id, card_name, set_id, set_key, set_name, card_number, variant, condition, lang, images_small, types, rarity, supertype, subtypes, trainer_type, energy_type, stage, standard_legal, printing_details, quantity, offerable, on_wishlist, spare, value }]`, plus a count per filter. `offerable` is the quantity owned on both sides, and `spare` how many of those are spare (0 when none). The extra fields feed the picker's Collection-style filters. `on_wishlist` is only set when that wishlist is visible to the viewer (Compare's rule) |
 | `changes` on an offer after a counter | "What changed" (§5.5.3) | `[{ "change": "added" \| "removed" \| "quantity" \| "cash" \| "note", "gives": true, "card_name", "set_id", "card_number", "from", "to" }]`, computed when the counter is saved |
 | `unavailable` on accepted offers in `GET` | Both trainers see the problem before they tap (§5.5.6) | the 409's list, computed by `find_unavailable` |
 | `images_small` is enough for rows; `types` on items | The card placeholders and glows use the card's type | `types` from the card |
