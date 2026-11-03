@@ -424,10 +424,12 @@ test.describe('Coming next', () => {
     await expect(detail.getByRole('heading', { name: 'New', level: 3 })).toBeVisible()
   })
 
-  test("Test What's new: a row reloads the app and opens the real sheet as if updated from that release", async ({ page }) => {
+  test("Test What's new: a row reloads the app and opens the real sheet as if updated from that release", async ({ page }, testInfo) => {
     const puts = []
     await install(page, { seen: '2026-10-30', channel: 'nonprod', puts })
     await page.goto('/settings/about/versions')
+    await page.getByTestId('test-whats-new-before').scrollIntoViewIfNeeded()
+    await capture(page, testInfo, 'W4TestWhatsNew')
     await expect(page.getByTestId('test-whats-new-2026-10-29')).toContainText('As if I last had Squirtle')
     await expect(page.getByTestId('test-whats-new-2026-10-23')).toContainText('As if I last had Charmander')
     await expect(page.getByTestId('test-whats-new-2026-10-19')).toContainText('As if I last had Bulbasaur')
