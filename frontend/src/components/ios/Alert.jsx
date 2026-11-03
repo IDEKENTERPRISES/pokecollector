@@ -6,7 +6,7 @@ import { useDialogBehavior } from '../ui/dialogBehavior'
 
 /**
  * iOS alert: centred, 270 px wide, a title (Headline), a message (Footnote) and buttons side by
- * side (stacked when there are three or more). Destructive actions are red, `preferred` is bold.
+ * side (stacked when there are three or more, or when `stacked` is set). Destructive actions are red, `preferred` is bold.
  *
  * actions: [{ label, onSelect, style: 'default' | 'cancel' | 'destructive', preferred, disabled }].
  * It keeps role="dialog" (not "alertdialog") because existing specs find confirmations by that role.
@@ -21,6 +21,7 @@ export default function Alert({
   actions = [],
   container,
   zIndex = 'var(--z-menu)',
+  stacked: forceStacked,
 }) {
   const { t } = useSettings()
   const titleId = useId()
@@ -28,7 +29,7 @@ export default function Alert({
   const { dialogRef, onDialogKeyDown } = useDialogBehavior(isOpen, onClose)
   if (!isOpen || typeof document === 'undefined') return null
 
-  const stacked = actions.length >= 3
+  const stacked = forceStacked ?? actions.length >= 3
 
   return createPortal(
     <div className="fixed inset-0 flex items-center justify-center p-4" style={{ zIndex }}>

@@ -10,7 +10,7 @@ export default function BookViewSwitch({ value, onChange }) {
     { key: 'book', label: t('book.bookView'), Icon: BookOpen },
   ]
   return (
-    <div className="flex items-center gap-0.5 rounded-full bg-fill-tertiary p-0.5" role="group" aria-label={t('book.viewMode')}>
+    <div className="flex items-center gap-0.5 rounded-full bg-fill-tertiary p-0.5" role="group" aria-label={t('book.viewMode')} data-tour="view-switch">
       {options.map(({ key, label, Icon }) => (
         <button
           key={key}
@@ -19,6 +19,7 @@ export default function BookViewSwitch({ value, onChange }) {
           title={label}
           aria-label={label}
           aria-pressed={value === key}
+          data-tour-tap={key === 'book' ? 'book' : undefined}
           className={clsx('ios-press grid h-8 w-8 place-items-center rounded-full', value === key ? 'bg-accent text-on-accent' : 'text-text-secondary')}
         >
           <Icon size={15} aria-hidden="true" />

@@ -139,6 +139,7 @@ export default function BatchCameraCapture({
           type="button"
           onClick={onOpenInbox}
           aria-label={t('scanner.queueTitle')}
+          data-tour="scan-queue"
           className="glass ios-press flex h-11 items-center gap-2 rounded-full px-4 text-subhead font-semibold"
         >
           <Inbox size={18} aria-hidden="true" />
@@ -169,6 +170,7 @@ export default function BatchCameraCapture({
           disabled={!ready || atLimit}
           aria-label={t('scanner.takePhoto')}
           data-testid="scan-shutter"
+          data-tour="shutter"
           className="ios-press grid h-[82px] w-[82px] place-items-center justify-self-center rounded-full border-4 border-white disabled:opacity-40"
         >
           <PokeBall size={70} gloss />

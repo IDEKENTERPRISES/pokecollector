@@ -202,7 +202,7 @@ export default function Binders() {
   const navOptions = useMemo(() => ({
     title: t('nav.collection'),
     trailing: (
-      <IconButton icon={Plus} label={t('binders.newCardList')} onClick={() => setCreating(true)} />
+      <IconButton icon={Plus} label={t('binders.newCardList')} onClick={() => setCreating(true)} data-tour="new-list" />
     ),
   }), [t])
   useNavBar(navOptions)
@@ -320,7 +320,7 @@ export default function Binders() {
       ) : (
         <div className="-mx-4 sm:-mx-4">
           <ListSection header={t('binders.title')} footer={showShareHint ? t('binders.enablePublicProfileHint') : undefined}>
-            {binders.map((binder) => {
+            {binders.map((binder, binderIndex) => {
               const isWishlist = binder.binder_type === 'wishlist'
               const isPlannedDeck = binder.binder_type === 'deck'
               const isRealDeck = binder.binder_type === 'physical_deck'
@@ -339,6 +339,7 @@ export default function Binders() {
                 >
                   <Link
                     to={isDeck ? `/decks/${binder.id}` : `/binders/${binder.id}`}
+                    data-tour={binderIndex === 0 ? 'first-binder' : undefined}
                     className="ios-press flex min-h-[64px] min-w-0 flex-1 items-center gap-3 py-2.5 pl-4 pr-1 text-left"
                   >
                     <span

@@ -41,9 +41,9 @@ function readBuildId() {
   })
 }
 
-function Section({ title, children }) {
+function Section({ title, children, tour }) {
   return (
-    <section className="space-y-3 rounded-xl border border-border bg-card p-4">
+    <section className="space-y-3 rounded-xl border border-border bg-card p-4" data-tour={tour}>
       <h2 className="text-sm font-semibold text-text-primary">{title}</h2>
       {children}
     </section>
@@ -111,7 +111,7 @@ export default function OfflineCenter() {
     <div className="mx-auto max-w-2xl space-y-4 py-6" data-testid="offline-center">
       <h1 className="sr-only">{t('sync.centerTitle')}</h1>
 
-      <Section title={t('pwa.connection')}>
+      <Section title={t('pwa.connection')} tour="offline-card">
         <p className="text-sm text-text-primary" data-testid="connection-state" data-state={state}>{stateText}</p>
         {info && (
           <p className="text-xs text-text-muted">

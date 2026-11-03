@@ -4,9 +4,9 @@ import clsx from 'clsx'
  * Inset grouped list section: 16 px side margins, a --color-card block with radius 12, an optional
  * header and footer in Footnote, secondary, sentence case. Put ListRow children inside.
  */
-export default function ListSection({ header, footer, children, className = '' }) {
+export default function ListSection({ header, footer, children, className = '', ...rest }) {
   return (
-    <section className={clsx('mx-4', className)}>
+    <section className={clsx('mx-4', className)} {...rest}>
       {header && (
         <h3 className="px-4 pb-1.5 text-footnote text-text-secondary">{header}</h3>
       )}

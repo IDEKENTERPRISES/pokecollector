@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Crown, RefreshCw, Download, Upload, Plus, Pencil, Trash2, User, UserCheck, UserX, Zap, Copy } from 'lucide-react'
+import { ChevronRight, Crown, RefreshCw, Download, Upload, Plus, Pencil, Trash2, User, UserCheck, UserX, Zap, Copy } from 'lucide-react'
 import clsx from 'clsx'
 import {
   getSyncStatus, triggerSync, triggerPriceSync, triggerAllPriceSync, rescheduleFullSync, reschedulePriceSync,
@@ -44,6 +44,8 @@ import { readSplashEnabled, writeSplashEnabled } from '../components/splash/laun
 import { readShowDaily, writeShowDaily } from '../progress/daily'
 import SplashCacheSection from '../components/splash/SplashCacheSection'
 import { ServerPicturesSection } from '../components/settings/OfflineCardDbSection'
+import { requestTour } from '../welcome/tourControl'
+import { resetTourDone } from '../welcome/tourStorage'
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -1511,6 +1513,30 @@ export default function Settings() {
           {activeSection === 'about' && <section className="space-y-1">
             <SectionHeader title={t('settings.sectionAbout')} />
             <SettingsCard>
+              {/* The hands-on tour (docs/WELCOME_DESIGN.md §3.1): multi-user mode only. Clears the completion, then starts it. */}
+              {multiUser && (
+                <button
+                  type="button"
+                  data-testid="settings-show-tour"
+                  onClick={async () => {
+                    try {
+                      await resetTourDone(user, updateCurrentUser)
+                    } catch {
+                      toast.error(t('common.error'))
+                      return
+                    }
+                    navigate('/')
+                    requestTour()
+                  }}
+                  className="ios-press flex min-h-[44px] w-full items-center justify-between gap-3 border-t-[0.5px] border-border px-4 py-[11px] text-left first:border-t-0"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-body text-text-primary">{t('tour.settingsRow')}</span>
+                    <span className="mt-0.5 block text-footnote text-text-secondary">{t('tour.settingsRowDetail')}</span>
+                  </span>
+                  <ChevronRight size={18} className="flex-shrink-0 text-text-tertiary" aria-hidden="true" />
+                </button>
+              )}
               <SettingsRow label={t('settings.app')} description="Pokemon TCG Collection">
                 <span className="text-body text-text-secondary tabular-nums">
                   v{__APP_VERSION__}

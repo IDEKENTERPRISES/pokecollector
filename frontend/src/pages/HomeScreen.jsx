@@ -17,6 +17,7 @@ import { CollectionCardDisplay } from '../components/CollectionCardImage'
 import SyncSheet from '../components/sync/SyncSheet'
 import HeaderBloom from '../components/ios/HeaderBloom'
 import InstallHint from '../components/pwa/InstallHint'
+import TakeTourCard, { HomeTourNote } from '../welcome/TakeTourCard'
 import HideValuesToggle from '../components/ios/HideValuesToggle'
 import LargeTitle from '../components/ios/LargeTitle'
 import StatTile from '../components/ios/StatTile'
@@ -107,7 +108,7 @@ function CardThumb({ card, onClick, rank, price }) {
   )
 }
 
-function TodoCard({ type, icon: Icon, title, detail, action, to, onClick }) {
+export function TodoCard({ type, icon: Icon, title, detail, action, to, onClick }) {
   const { text, top, bottom } = TYPE_COLOURS[type]
   const style = { color: text, background: `linear-gradient(150deg, ${top}, ${bottom})` }
   const body = (
@@ -292,6 +293,8 @@ export default function HomeScreen() {
       </LargeTitle>
       </div>
 
+      <HomeTourNote />
+
       <section aria-label={t('home.quickActions')} className="grid grid-cols-4 gap-2">
         <QuickAction to="/wishlist" icon={Heart} label={t('nav.wishlist')} type="fairy" />
         <QuickAction to="/binders" icon={Layers3} label={t('nav.binders')} type="water" />
@@ -372,6 +375,8 @@ export default function HomeScreen() {
           <p className="px-1 text-footnote text-text-secondary">{fill(t('home.pricesUpdated'), { age })}</p>
         )}
       </section>
+
+      <TakeTourCard />
 
       {todos.length > 0 && (
         <section className="space-y-2.5">

@@ -18,11 +18,11 @@ import SegmentedControl from '../components/ios/SegmentedControl'
 import GoalRing from '../goals/GoalRing'
 import { GOAL_KINDS, KIND_LABEL_KEYS, goalPercent, goalsQueryKey, isGoalComplete, setGoalParams } from '../goals/goals'
 
-function GoalRow({ goal, onPin, onDelete, t, formatPrice }) {
+function GoalRow({ goal, onPin, onDelete, t, formatPrice, tour }) {
   const progress = goal.progress || {}
   const complete = isGoalComplete(goal)
   return (
-    <li className="flex items-center gap-1 border-t-[0.5px] border-border first:border-t-0" data-testid={`goal-row-${goal.id}`}>
+    <li className="flex items-center gap-1 border-t-[0.5px] border-border first:border-t-0" data-testid={`goal-row-${goal.id}`} data-tour={tour}>
       <Link to={`/goals/${goal.id}`} className="ios-press flex min-h-[64px] min-w-0 flex-1 items-center gap-3 px-4 py-2">
         <GoalRing percent={goalPercent(goal)} size={48} stroke={6} />
         <span className="min-w-0 flex-1">
@@ -274,6 +274,7 @@ export default function Goals() {
         type="button"
         onClick={() => setSheetOpen(true)}
         aria-label={t('goals.newGoal')}
+        data-tour="new-goal"
         className="ios-press grid h-11 w-11 place-items-center text-tint"
       >
         <Plus size={22} aria-hidden="true" />
@@ -332,9 +333,10 @@ export default function Goals() {
         </div>
       ) : (
         <ul className="overflow-hidden rounded-xl bg-card" aria-label={t('goals.title')}>
-          {goals.map(goal => (
+          {goals.map((goal, goalIndex) => (
             <GoalRow
               key={goal.id}
+              tour={goalIndex === 0 ? 'first-goal' : undefined}
               goal={goal}
               t={t}
               formatPrice={formatPrice}

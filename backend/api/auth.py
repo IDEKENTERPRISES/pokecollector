@@ -108,6 +108,13 @@ def tutorial_fields(user) -> dict:
     }
 
 
+def account_fields(user) -> dict:
+    """What the client needs to run the tour: whether it is done, and how old the account is
+    (a new account starts the tour by itself, an older one gets the Take the tour card)."""
+    created = user.created_at
+    return {**tutorial_fields(user), "created_at": created.isoformat() if created else None}
+
+
 def validate_avatar_id(avatar_id: int | None):
     if avatar_id is not None and (avatar_id < 1 or avatar_id > 151):
         raise HTTPException(status_code=400, detail="avatar_id must be 1-151")
@@ -276,7 +283,7 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
             "role": user.role,
             "avatar_id": user.avatar_id,
             "must_change_password": user.must_change_password,
-            **tutorial_fields(user),
+            **account_fields(user),
         },
     )
 
@@ -289,7 +296,7 @@ def get_me(current_user: User = Depends(get_current_user)):
         "role": current_user.role,
         "avatar_id": current_user.avatar_id,
         "must_change_password": current_user.must_change_password,
-        **tutorial_fields(current_user),
+        **account_fields(current_user),
     }
 
 

@@ -33,6 +33,7 @@ class TutorialTests(unittest.TestCase):
         me = get_me(current_user=self.user)
         self.assertIsNone(me["tutorial_completed_at"])
         self.assertIsNone(me["tutorial_outcome"])
+        self.assertIsNotNone(me["created_at"])
 
     def test_finishing_is_stored_and_returned_by_me(self):
         result = set_tutorial({"outcome": "finished"}, current_user=self.user, db=self.db)

@@ -20,7 +20,7 @@ export default function CollectionHeader({ active, subtitle }) {
   const navigate = useNavigate()
   const options = [
     { value: 'cards', label: t('collection.segmentCards') },
-    { value: 'lists', label: t('nav.binders') },
+    { value: 'lists', label: t('nav.binders'), tour: 'collection-segments' },
     { value: 'wishlist', label: t('nav.wishlist') },
   ]
 
