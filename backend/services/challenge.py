@@ -328,6 +328,7 @@ def close_week(db: Session, week: Week, now: datetime.datetime | None = None) ->
     badge check. Returns False when it was already closed. Commits."""
     from services.progress import xp
     from services.progress.evaluator import record_event
+    from services.job_isolation import trainer_savepoint
     from services.progress.state import _upsert_dirty
 
     now = now or datetime.datetime.utcnow()
@@ -342,7 +343,9 @@ def close_week(db: Session, week: Week, now: datetime.datetime | None = None) ->
 
     trainers = [uid for (uid,) in db.query(User.id).filter(User.is_active == True)]  # noqa: E712
     for user_id in trainers:
-        _apply_count(db, user_id, week, challenge_id, now)
+        with trainer_savepoint(db, f"Challenge recount for {week.key}", user_id):
+            _apply_count(db, user_id, week, challenge_id, now)
+            db.flush()
     db.flush()
 
     rows = db.query(ChallengeProgress).filter(
@@ -351,15 +354,16 @@ def close_week(db: Session, week: Week, now: datetime.datetime | None = None) ->
         entry.place = place
     finishers = [r for r in rows if r.finished_at is not None]
     for entry in sorted(finishers, key=lambda r: (r.finished_at, r.user_id)):
-        xp.award(db, entry.user_id, xp.SOURCE_CHALLENGE, week.key, FINISHER_XP)
-        if entry.user_id not in off_board:
-            record_event(
-                db, entry.user_id, EVENT_CHALLENGE_FINISHED,
-                dedupe_key=f"{EVENT_CHALLENGE_FINISHED}:{week.key}", subject_key=week.key,
-                payload={"week": week.key, "challenge_id": challenge_id,
-                         "title_key": f"challenge.{challenge_id}", "place": entry.place},
-                occurred_at=min(entry.finished_at, week.end),
-            )
+        with trainer_savepoint(db, f"Challenge finish for {week.key}", entry.user_id):
+            xp.award(db, entry.user_id, xp.SOURCE_CHALLENGE, week.key, FINISHER_XP)
+            if entry.user_id not in off_board:
+                record_event(
+                    db, entry.user_id, EVENT_CHALLENGE_FINISHED,
+                    dedupe_key=f"{EVENT_CHALLENGE_FINISHED}:{week.key}", subject_key=week.key,
+                    payload={"week": week.key, "challenge_id": challenge_id,
+                             "title_key": f"challenge.{challenge_id}", "place": entry.place},
+                    occurred_at=min(entry.finished_at, week.end),
+                )
     # The badge family counts closed weeks, so the evaluator grants it (and its unlock sheet and push) on its next pass.
     if finishers:
         _upsert_dirty(db, sorted({r.user_id for r in finishers}), now)
