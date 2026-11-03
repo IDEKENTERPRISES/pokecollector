@@ -396,7 +396,7 @@ test('a reaction link opens the feed at that event and then drops the query', as
   await expect.poll(() => new URL(page.url()).search).toBe('')
 })
 
-test('a comment link opens the feed with that event's comments sheet', async ({ page }) => {
+test('a comment link opens the feed with the comments sheet of that event', async ({ page }) => {
   await install(page)
   await page.goto('/leaderboard/activity?event=9003&comments=1')
   const sheet = page.getByRole('dialog', { name: 'Comments' })
