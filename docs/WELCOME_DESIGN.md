@@ -10,20 +10,23 @@ What this builds on:
 
 ---
 
-## 0. Decisions for the owner
+## 0. Owner's answers (3 November 2026)
 
-Each has a recommendation, which the mockups show.
+The owner reviewed the first version of the mockups. The answers below are built into this doc and the canvas.
 
-| # | Question | Recommended | Alternative |
-|---|---|---|---|
-| E1 | Should **Skip** ask first? It ends the tour for good. | **One** quiet confirmation ("Skip the tour?" with where to find it again), so a stray tap doesn't lose it. | Skip at once; Settings replays it. |
-| E2 | Where does the **Home Screen** step sit? | Right after the welcome, so a trainer who leaves to add the app loses almost nothing. | Just before the scan step, where notifications need it. |
-| E3 | Do the **weekly challenge** and **swapping** each get their own step (social on)? | **Yes, two short steps**, as you asked: 8 steps with social on, 6 with it off. | Fold both into the Home and Profile steps (7 and 6). |
-| E4 | **Past releases.** The 23 deploys since `8f5acbf` | Four entries, one per named release (§8). | One entry per deploy day, with evolutions (Ivysaur, Venusaur…) for the in-between days. |
-| E5 | **Chikorita** and Wrapped. Wrapped is hidden on `deploy` until December. | Mention it as "arrives in December" in the third highlight. | Leave it out until it opens. |
-| E6 | **Squirtle** has more than three headline features (daily loop, badges, binder pockets, Book view, holo cards, notifications). | Highlights: daily loop, badges, binder pockets and Book view; holo cards and notifications in the details. | Swap in holo cards for badges. |
-| E7 | **Other browsers** (not iPhone). The Home Screen push is about iPhone. | On Android/desktop Chrome the same step says "Install the app" when the browser offers it, and is skipped otherwise. | iPhone only. |
-| E8 | **Take the tour card**: how a trainer dismisses it. | A quiet "Not now" line under the card; dismissing counts as done, like Skip. | An ✕ on the card. |
+| # | Question | Answer |
+|---|---|---|
+| — | **Shape of the tour** | **Hands-on.** The trainer taps the real controls and goes into the real menus; each hint points at one specific control with everything else dimmed, and says what it is and where it is. Taps outside the highlighted control do nothing (apart from Skip). A sequence of artboards per section (§3). |
+| E1 | Should Skip ask first? | **Yes, once.** |
+| E2 | Where does the Home Screen step sit? | **Right after the welcome.** |
+| E3 | Do the weekly challenge and swapping get their own steps (social on)? | **Yes.** |
+| E4 | Past releases | **Four entries** (§8). |
+| E5 | Wrapped | **Left out of Chikorita's highlights** (and of its details). A separate change sends a "Your Wrapped is ready" push on 1 December. |
+| E6 | Squirtle's three highlights | **OK as drafted.** |
+| E7 | Other browsers | **Yes**: an Install step where the browser supports it. |
+| E8 | Dismissing the Take the tour card | **A quiet "Not now" link.** |
+
+The release notes in §8 are still drafts: the owner has not yet commented on their content.
 
 ---
 
@@ -37,7 +40,7 @@ Principles only; no branded artwork is copied.
 |---|---|---|
 | [Apple HIG — Onboarding](https://developer.apple.com/design/human-interface-guidelines/onboarding) | Keep any onboarding "fast, fun, and optional"; teach by letting people use the app; put a permission request where its reason is clear. | Under a minute, always skippable; the notification ask lives in the Scan step, next to the reason. |
 | [Apple HIG — Offering help](https://developer.apple.com/design/human-interface-guidelines/offering-help) | Help that people can find again later, not only once. | "Show the tour again" in Settings › About. |
-| Appcues and NN/g write-ups (general, not linked) | A spotlight on the real control beats a screenshot; one idea per step; show progress; skippable. Front-loaded tutorials are rarely remembered; contextual hints work better. | Hints point at the real tab or tile with the rest dimmed, one idea per step, "3 of 8" progress, and a Skip on every step. |
+| Appcues and NN/g write-ups (general, not linked) | A spotlight on the real control beats a screenshot; one idea per step; show progress; skippable. Front-loaded tutorials are rarely remembered; contextual hints work better. | Hints point at the real tab or tile with the rest dimmed, one idea per step, a five-part progress bar, and a Skip on every step. |
 | Common platform guidance (not linked) | Ask for permissions in context and let people carry on if they say no. | Declining notifications leaves a plain sentence and a pointer to Settings; the tour carries on. |
 
 ### 1.2 What's new
@@ -60,8 +63,8 @@ Principles only; no branded artwork is copied.
 
 ## 2. Principles
 
-1. **Quiet and short.** Under a minute. Eight steps at most, one sentence or two each.
-2. **Point at the real thing.** The spotlight ring sits on the real tab, tile or button, never on a picture of it.
+1. **Quiet and short.** About a minute, one idea per hint, a sentence or two each.
+2. **Do the real thing.** The trainer taps the real tab, tile or button, and the next hint points at what is on the real screen they land on.
 3. **Honest about the browser.** A trainer in Safari is told plainly what they miss, twice asked, and then left free.
 4. **Done means done.** The tour is marked complete only when it is fully finished or skipped; anything else starts over.
 5. **Friendly words.** Highlights have no technical terms, no PR numbers and no code names.
@@ -71,58 +74,110 @@ Principles only; no branded artwork is copied.
 
 ## 3. The tour (P15)
 
+The tour is **hands-on**. The trainer does the real thing: taps the real tab, the app navigates for real, and the next hint points at the specific control on the new screen, with everything else dimmed. Nothing is a picture of the app, and a hint never just talks over a dimmed bottom bar.
+
 ### 3.1 When it shows
 
 | Case | Behaviour |
 |---|---|
 | New account, multi-user mode | Starts by itself on the first Home visit after sign-in. |
-| Existing account | A **Take the tour** card on Home (§3.7). Starting it or dismissing it counts as done. |
+| Existing account | A **Take the tour** card on Home (§3.9). Starting it or dismissing it counts as done. |
 | Single-user mode | No tour, no card, no Settings row. |
 | Tour finished or skipped | Never shows again by itself; **Settings › About › Show the tour again** replays it. |
 | Tour left part-way (app closed, or left to add the Home Screen app) | Starts again from the welcome next time, on any device, until finished. |
-| Finished in the browser | Counts. The Home Screen app won't show it. |
+| Finished in the browser | Counts. The Home Screen app won't show it again. |
 
-Skip, "Explore on my own" and "Scan your first card" all mark the tour done. Only reaching the end screen, or a confirmed Skip, writes `tutorial_completed_at`.
+Only reaching the end screen, or a confirmed Skip, writes `tutorial_completed_at`.
 
-### 3.2 The steps
+### 3.2 How a step works
 
-Social **on** has 8 numbered steps, social **off** has 6 (the challenge and swap steps are left out and the numbers close up). The welcome, the Home Screen step and the end screen are not numbered.
+Every step is one of two kinds, shown in the mockups:
 
-| # | Step | Target | Title | Body |
-|---|---|---|---|---|
-| — | Welcome | centre card | Welcome to PokéCollector, {name} | A one-minute tour of where everything lives. |
-| — | Home Screen (browser only) | centre card | Add PokéCollector to your Home Screen | It opens full screen like any app, tells you when scans are ready, and keeps your collection ready offline. |
-| 1 | Today | the top of the **Today card** (Pokémon of the day, streak, quests) | Your day starts here | The Today card has your Pokémon of the day, your streak and three daily quests. Finish them to earn XP. |
-| 2 | Weekly challenge (social on) | the challenge row in the Today card | A challenge for everyone | Each week sets one goal for every trainer on this server. Finish it for a badge; the quickest finishers make the podium. |
-| 3 | Collection | the **Collection** tab | Everything you own | Cards, binders and your wishlist live here. Switch between Grid, List and Book to browse your way. |
-| 4 | Scan | the **Scan** button | Scan your cards | Point your camera at a card and PokéCollector finds it. Recognising a card can take a little while, so you can leave and come back. |
-| 5 | Search | the **Search** tab | Find any card or set | Search every set and card, or open the Pokédex to see which Pokémon you've caught. |
-| 6 | Profile | the **Profile** tab | Your trainer page | Analytics, trades, goals, badges and the leaderboard live here, with Settings too. |
-| 7 | Swapping (social on) | the **Profile** tab | Swap cards with friends | Offer a swap from Trades › Offers. Nothing moves until you both tap Swapped after you meet. |
-| 8 | Offline | centre card | Works without a signal | See §3.5. |
-| — | End | centre card | You're ready | That's the tour. Replay it any time from Settings › About. |
+- **Tap** — the dimmed screen has one hole, around the real control, with a red tap badge on its corner. The hint card says what the control is and ends with "Tap {control}" instead of a button. The real tap goes through to the app (it opens the real screen); the tour sees it and moves to the next step. Any tap outside the hole does nothing, except **Skip**.
+- **Info** — the hole shows a control or area without a tap (for a risky control like the shutter, or an area like the Today card). The hint card has a **Next** button. Taps in the hole are swallowed, so the shutter never takes a photo.
 
-Numbers above are social-on numbers; with social off, Profile is 5 and Offline is 6. The counter reads "{n} of {total}".
+The hint card carries: the section name, a five-segment progress bar (Home · Collection · Scan · Search · Profile), the title (Title 3), the body (Callout, secondary), and either a tap line or **Next**. **Skip** sits at the top right (44 × 44). There is no Back button: the trainer's own navigation is the way through.
 
-Buttons: every numbered step has **Next** (filled, `md`) on the right, **Back** (plain) on the left from step 2 on, and **Skip** in the card's top-right corner (plain, 44 × 44 target). The last numbered step's Next reads **Finish**.
+### 3.3 The steps
 
-### 3.3 The coach card and spotlight
+Social **on** is shown; social-off differences are in the last column. Numbers are the artboard numbers on the canvas.
 
-- **Scrim:** a fixed layer at `z-index: 56` (above `--z-menu` 55, below the update banner's 60/70 and not over the scanner at 58 because the tour never runs while it is open), painted as one ring element with `box-shadow: 0 0 0 9999px rgba(0,0,0,0.72)` around the target's rect. The ring is the target's rect plus 6 px padding, fully rounded for tabs and the Scan button, 22 px for the Today card, with a 2 px `--color-tint` outline. The target is visible and untappable during the tour (the ring layer takes the taps).
-- **Card:** `.glass`, `rounded-xl` (16 px), 16 px padding, full width minus 16 px side margins, max width 440 px. A 10 px arrow notch points at the target. It sits above the target for tab-bar targets and below it for Home targets, never under the safe areas.
-- **Contents:** step counter (Caption 1, secondary), title (Title 3, display font), body (Callout, secondary), then the buttons row.
-- **Progress:** "3 of 8" text, plus dots (6 px, 5 px gap; filled = `--color-tint`, empty = `--color-fill`). The dots are decoration for sighted users and `aria-hidden`.
-- **Centre cards** (welcome, Home Screen, offline, end) sit over the dimmed app with no ring.
+| Section | # | Screen | Hole (target) | Kind | Title and body | Social off / empty |
+|---|---|---|---|---|---|---|
+| Home | 006 | Home | `today` (top of the Today card) | info | **Your day starts here** — The Today card shows your Pokémon of the day, your streak and three daily quests. Finish them to earn XP. | same |
+| Home | 007 | Home | `challenge-row` | tap | **A challenge for everyone** — Each week sets one goal for every trainer on this server. Tap the challenge to see how everyone is doing. | left out |
+| Home | 008 | Challenge board | `challenge-hero` | info | **Finish it for a badge** — Your progress is here. Everyone who finishes earns a badge, and the quickest finishers make the podium. | left out |
+| Collection | 009 | Home / board | `tab-collection` | tap | **Everything you own** — Cards, binders and your wishlist live under Collection. | same |
+| Collection | 010 | Collection | `collection-segments` | tap | **Cards, Card Lists, Wishlist** — Cards is every card you own. Card Lists holds your binders and decks. Wishlist is what you want next. Tap **Card Lists**. | same |
+| Collection | 011 | Card Lists | `first-binder` | tap | **Binders and decks** — Each binder keeps cards in order, like the real thing. Open one to see inside. | no binder: 012 |
+| Collection | 012 | Card Lists, empty | `new-list` (+) | info | **Make your first binder here** — Tap + any time to start a binder or a deck. We'll move on to Scan. | only when empty |
+| Collection | 013 | Binder | `view-switch` | tap | **Grid or Book** — Grid shows your cards in rows. Book shows pockets, like a real binder — you can even drag cards between them. Tap **Book**. | skipped after 012 |
+| Scan | 014 | any | `tab-scan` | tap | **Scan your cards** — The red-and-white button opens the camera. Point it at a card and PokéCollector finds it. | same |
+| Scan | 015 | Scanner | `shutter` | info | **This is the shutter** — Fit one card in the frame and tap it. You can take several photos in a row and send them together. | same |
+| Scan | 016–018 | Scanner | `scan-queue` | tap | **Scans take a little while** — Recognising a card can take a minute, so you can leave and come back. Tap the queue to see your scans. Plus the notifications ask (§3.7). | same |
+| Scan | 019 | Scan queue | `queue-list` | info | **Photos wait here** — Each photo shows as recognising, then ready to review. Review a scan to add it to your collection. Even offline, photos wait here and are recognised once you're back online. | empty queue: the page header |
+| Search | 020 | any | `tab-search` | tap | **Find any card or set** — Search is where you look things up, in sets or the Pokédex. | same |
+| Search | 021 | Search | `search-field` | info | **Type it any way you like** — Name, set and number in any order — "umbreon 161" works. Small typos get corrected for you. | same |
+| Search | 022 | Search | `browse-sets` | tap | **Browse by set** — Sets lists every set by language and series, with how many cards you own. The Pokédex beside it shows which Pokémon you've caught. | same |
+| Search | 023 | Sets | `sets-language` | info | **Language first** — Pick a language, then a series, then a set. Each set shows a checklist of the cards you own. | same |
+| Profile | 024 | any | `tab-profile` | tap | **Your trainer page** — Everything about you lives under Profile. | same |
+| Profile | 025 | Profile | `tile-trades` | tap | **Swap cards with friends** — Trades is where you compare collections and offer swaps. The number shows offers waiting for you. | 026: **Trade cards in person** — Trades helps you work out a fair swap when you meet another collector. |
+| Profile | 027 | Trades | `trades-offers` | info | **Swap offers live here** — Offers waiting for you show up in Offers. Nothing moves until you both tap Swapped after you meet. | 028: **Live trade and History** — Live trade compares two collections. History keeps the trades you've done. |
+| Profile | 029 | Trades | `back` | tap | **Back to your page** — The Back button always takes you one step back. | same |
+| Profile | 030 | Profile | `tile-goals` | tap | **Chase goals** — Goals follow a set, a generation, an evolution family or an artist. Badges and the leaderboard sit beside it. | same |
+| Profile | 031 | Goals | `first-goal` | info | **Watch the ring fill** — Each goal shows how far you are and what's left. Tap + to start another. | no goal: 032 |
+| Profile | 032 | Goals, empty | `new-goal` (+) | info | **Start your first goal** — Tap + when you're ready. We'll finish with how PokéCollector works offline. | only when empty |
+| Profile | 033 | Profile | `row-offline` | tap | **Works without a signal** — Your collection, binders and card pages are saved on this phone. Sync & offline shows what's saved. | skipped when offline features are off |
+| Profile | 034 | Sync & offline | `offline-card` | info, **Finish** | **Everything stays with you** — Browse your collection, binders and card pages from the saved copy. Scan anywhere: the photo waits on your phone and is recognised once you're back online. Changes wait their turn and are sent when you're back online. Fresh prices and other trainers need a connection. | same |
 
-### 3.4 Skip and "are you sure?"
+The welcome (001), the Skip alert (002), the Home Screen step with its two alerts (003–005) and the end screen (§3.8) are centre cards, not holes. The tour does not open the leaderboard; its tile is seen next to Goals in step 030.
 
-**Skip (E1).** On the welcome and on every step, **Skip** opens an `Alert` (the existing component):
+### 3.4 Finding targets: `data-tour` hooks
+
+The hint layer never guesses from text or layout. It finds a target by a stable attribute:
+
+```html
+<button data-tour="shutter" …>
+```
+
+- **Hooks live in the real components**, one attribute each, no styling: `today` (Today card wrapper), `challenge-row`, `challenge-hero`, `tab-collection`, `tab-scan`, `tab-search`, `tab-profile` (TabBar and SidebarNav links, so it works on iPad and desktop), `collection-segments`, `first-binder`, `new-list`, `view-switch` (BookViewSwitch), `shutter`, `scan-queue` (the scanner's inbox button), `queue-list`, `search-field`, `browse-sets`, `sets-language`, `tile-trades`, `tile-goals`, `trades-offers`, `back` (the NavBar's back button), `first-goal`, `new-goal`, `row-offline`, `offline-card`. A unit test lists every id the tour uses and checks it exists in the source, so a refactor can't silently drop one.
+- **A step names its route and its hook.** The step table is data (`tourSteps()`), for example `{ id: 'binder-view', route: /^\/binders\/\d+$/, target: 'view-switch', kind: 'tap' }`.
+- **Waiting for a screen.** After a tap the route changes. `TourSpotlight` waits for the hook with a `MutationObserver` for up to 1.5 s (the page may be a lazy chunk); the screen stays dimmed and the hint hidden until then.
+- **Measuring.** The hole is the target's `getBoundingClientRect()` plus 6 px padding, re-measured on resize, orientation change, `document.fonts.ready`, scroll end and each animation frame while the page is sliding in (the shell's slide transition). If the target is off screen, the page is scrolled until it is centred, with the scrim up so nothing is tappable meanwhile.
+- **Blocking.** The scrim is four fixed panels around the hole with `pointer-events: auto`, so the real control gets the real tap. For an info step a fifth transparent panel covers the hole too.
+- **Detecting the tap.** A capture-phase `click` listener on the target advances the tour after the app has handled the tap, so the app's navigation always runs.
+- **Layers.** The tour layer is `z-index: 59`: above the scanner (58) so it can sit on the camera, below the update banner (60/70).
+
+### 3.5 If the trainer leaves the path
+
+- **They went somewhere else** (edge-swipe back, a deep link, a push opening the app): if the route matches neither the step's route nor the next step's route, the tour calls `navigate(step.route, { replace: true })` once to bring them back. If that route can't be resolved (a binder deleted), it skips to the next section's first step.
+- **They left the app** (switch, lock): the tour state is in memory only. A backgrounded app resumes where it was; a closed app starts over (owner's rule).
+- **Orientation, Dynamic Type, keyboard:** the layer re-measures and the card scrolls inside itself.
+- **Update ready mid-tour:** the update banner (z 60) sits above the tour; Update is a normal tap. After the update, the tour starts over.
+
+### 3.6 Empty and missing screens
+
+A new account has no binders, no goals and an empty scan queue. The tour never needs data to exist:
+
+| Step | If there is nothing to point at |
+|---|---|
+| 011 first binder | Replaced by 012: the **+** button, info, "Make your first binder here"; step 013 (Book) is skipped. |
+| 013 view switch | Skipped if there is no binder to open. |
+| 019 queue list | Points at the page header; the body is the same. |
+| 031 first goal | Replaced by 032: the **+** button. |
+| 033 Sync & offline | Skipped when the offline features are off (`readPwaFlags()`); the offline body moves to the end card. |
+| Any hook missing after 1.5 s (a flag hid it, a layout changed) | The step is skipped and logged to the console. The tour never blocks. |
+| The scan-queue step in the browser, or where push is unsupported | No ask button (§3.7). |
+
+### 3.7 Skip, the Home Screen push and notifications
+
+**Skip.** On the welcome and on every step, **Skip** opens an `Alert` (the existing component), once (owner's answer E1):
 - Title: **Skip the tour?**
 - Message: You can replay it any time from Settings › About › Show the tour again.
 - Buttons: **Keep going** (preferred) · **Skip** (plain).
 - Confirming writes `tutorial_completed_at` with outcome `skipped`.
 
-**Browser — Home Screen push (iPhone Safari, not the Home Screen app).** The step comes right after the welcome:
+**Home Screen push (iPhone Safari, not the Home Screen app).** The step comes right after the welcome (E2):
 - Instructions, as numbered rows: 1 Tap **Share** (the Share glyph) in Safari's toolbar. 2 Choose **Add to Home Screen**. 3 Tap **Add**, then open PokéCollector from your Home Screen. The tour starts again there.
 - Primary button **I'll add it now** closes the tour (state: part-way, so it starts over) and leaves the existing install hint on Home. A line at the top of Home says "Open PokéCollector from your Home Screen to take the tour."
 - Secondary **Carry on in the browser** opens confirmation one:
@@ -133,58 +188,41 @@ Buttons: every numbered step has **Next** (filled, `md`) on the right, **Back** 
   - Title: **Really carry on?**
   - Message: The tour will skip the notifications step. You can add the app any time: tap Share, then Add to Home Screen.
   - Buttons (stacked): **Add it first** (preferred) · **Yes, carry on**
-- After "Yes, carry on" the tour continues; the scan step shows the browser variant (§3.5). The install hint (`InstallHint`) stays on Home as today.
+- After "Yes, carry on" the tour continues; the scan-queue step shows the browser variant.
 
-On non-iPhone browsers (E7) the step reads "Install PokéCollector" with the browser's install button when `beforeinstallprompt` was captured, and is left out otherwise.
+**Other browsers (E7, yes).** When the browser has offered an install (`beforeinstallprompt` was captured), the step reads **Install PokéCollector** with one **Install** button that calls the saved prompt; the two confirmations are the same. If the browser offers nothing, the step is left out.
 
-### 3.5 Scan, notifications and offline steps
+**Notifications ask (scan-queue step, 016–018).**
+- In the Home Screen app: a paragraph "Want a nudge when scans are ready?" and a tinted **Turn on notifications** button that runs `enablePush()` (`pwa/push.js`) and asks iOS. Tapping the queue button is still the way on.
+- States: *Declined* — "No problem. You can turn them on later in Settings › Notifications." *On* — "Notifications are on." *Unsupported or offline* — the button is left out.
+- In the browser: no button; "Notifications need the Home Screen app. Add it later and turn them on in Settings › Notifications."
 
-**Scan step, in the Home Screen app.**
-- Body as the table, then a second paragraph: **Want a nudge when scans are ready?**
-- Button **Turn on notifications** (filled, `md`) runs `enablePush()` from `pwa/push.js`, which asks iOS for permission. The tour's **Next** stays available at all times.
-- States:
-  - *Asked* (before): the button above.
-  - *On*: a green check line, "Notifications are on."
-  - *Declined*: "No problem. You can turn them on later in Settings › Notifications." (`pwa.pushDenied` is the matching Settings hint.)
-  - *Unsupported or no HTTPS*: the button is left out.
+### 3.8 The end
 
-**Scan step, in the browser (after "Carry on in the browser").** No button. Footnote line: "Notifications need the Home Screen app. Add it later and turn them on in Settings › Notifications."
+Centre card with a Poké Ball, the title "You're ready", the sentence "That's the tour. Replay it any time from Settings › About.", then two buttons: **Scan your first card** (filled, `lg`) opens the scanner; **Explore on my own** (plain) closes the tour. Both mark the tour done. The last info step's **Finish** goes to this card.
 
-**Offline step** (a centre card, social on or off):
-
-| Title | Works without a signal |
-|---|---|
-| Rows (icon + text) | **Browse** your collection, binders and card pages from the saved copy.<br>**Scan anywhere.** The photo waits on your phone and is recognised once you're back online.<br>**Changes wait their turn** and are sent when you're back online. |
-| Footnote | Fresh prices and other trainers need a connection. Sync & offline in Profile shows what's saved. |
-
-### 3.6 The end
-
-Centre card with a Poké Ball, the title "You're ready", the sentence "That's the tour. Replay it any time from Settings › About.", then two buttons: **Scan your first card** (filled, `lg`) opens the scanner; **Explore on my own** (plain) closes the tour. Both mark the tour done.
-
-### 3.7 "Take the tour" card on Home
+### 3.9 "Take the tour" card on Home
 
 For existing accounts that have not finished or skipped.
 - It is Home's existing `TodoCard` (`pages/HomeScreen.jsx`): type `water` (gradient #236BB4 → #123F8C, white text, 5.5:1 at the lighter end), 64 px minimum, 18 px radius, an icon in a black/20 circle (`Compass`), title **Take the tour**, detail **A one-minute look around PokéCollector**, action pill **Start**.
 - It sits at the top of the to-do cards, above the Today card.
-- Under it a quiet line, **Not now**, as a 44 px-high text button in the secondary text colour. It counts as done (E8) and the card never returns.
-- Starting the tour from it behaves as a new account's tour, but with the welcome shortened to a single title ("Here's a quick look around").
+- Under it a quiet **Not now** link (E8): a 44 px-high text button in the secondary text colour. It counts as done and the card never returns.
+- Starting the tour from it behaves as a new account's tour.
 
-### 3.8 When social is off
-
-Only the challenge step and the swap step are dropped. The scan, Profile and offline copy is unchanged. There is no mention of friends, swaps or the podium anywhere in the tour.
-
-### 3.9 Data
+### 3.10 Data
 
 | Field | Where | Notes |
 |---|---|---|
 | `tutorial_completed_at` | users table, `DateTime` nullable | Set when the tour is finished, skipped or the card is dismissed. |
-| `tutorial_outcome` | users table, `String(12)` nullable | `finished`, `skipped` or `dismissed`; for the owner's curiosity and for tests. |
+| `tutorial_outcome` | users table, `String(12)` nullable | `finished`, `skipped` or `dismissed`; for tests and the owner's curiosity. |
 | Part-way state | not stored on the server | Held in memory only, so a closed app starts over (owner's rule). |
 | `pc.tour.done.<userId>` | `localStorage` | Written with the server call; stops the tour repeating on this device while offline. Wrapped in try/catch. |
 
 The client reads both through the user object it already loads (`useAuth().user`, as it does `avatar_id`), and writes with one small `PATCH` next to the existing profile calls. "Show the tour again" clears `tutorial_completed_at` and starts the tour.
 
-New accounts: created with `tutorial_completed_at = null`. Existing accounts: the migration sets it to `null` as well, which is what makes the Home card appear; the card is the only prompt for them.
+New accounts are created with `tutorial_completed_at = null`. Existing accounts get `null` from the migration as well, which is what makes the Home card appear.
+
+**Side effects of a hands-on tour.** The trainer's real taps do real things, so the tour keeps them harmless: it never taps for them, the shutter is blocked (an info step), the scanner opens without staging anything, and opening Book view only changes the saved view preference, which the trainer can flip back in the same place. It never creates, edits or deletes data.
 
 ---
 
@@ -208,7 +246,7 @@ All from `src/index.css` and `tailwind.config.js` on `nonprod`. No new tokens. S
 | Alert | `Alert`: 270 px wide, `.glass`, 14 px radius, buttons stacked when long |
 | Sheet | `PageSheet`: `.glass`, 16 px top corners, up to 92 dvh, 5 × 36 grabber, 44 px header, trailing "Done" |
 | Shell | nav bar 44 px under `--safe-top` (47 px on a 390 × 844 iPhone); tab bar 64 px capsule, 12 px from the sides, bottom 24 px above the edge; `main` bottom padding 114 px; page sides 16 px |
-| Layers | nav bar 30, tab bar 40, sheet 50, menu 55, **tour 56**, scanner 58, update banner 60/70 |
+| Layers | nav bar 30, tab bar 40, sheet 50, menu 55, scanner 58, **tour 59**, update banner 60/70 |
 
 Contrast pairs used (WCAG 2.x, measured):
 - white on the accent fill 4.9;
@@ -230,11 +268,11 @@ All in `frontend/src/welcome/`.
 
 | Component | Props | Notes |
 |---|---|---|
-| `TourHost` | none | Mounted once in `App.jsx` under the router. Decides whether to show the tour or the card, and owns the step machine. |
-| `tourSteps()` | `({ social, standalone, ios }) → step[]` | Pure; builds the list in §3.2 so the counts are tested. |
-| `TourSpotlight` | `{ targetSelector, shape, onNext, onBack, onSkip }` | The ring and scrim. Finds the target by `data-tour="today"`, `"challenge"`, `"tab-collection"`, `"scan"`, `"tab-search"`, `"tab-profile"`. Re-measures on resize, on orientation change and when fonts load. |
-| `CoachCard` | `{ step, index, total, children }` | The glass card, counter, dots, title, body, buttons. |
-| `CenterCard` | `{ children }` | The welcome, Home Screen, offline and end cards. |
+| `TourHost` | none | Mounted once in `App.jsx` under the router. Decides whether to show the tour or the card, owns the step machine and the route guard (§3.5). |
+| `tourSteps()` | `({ social, standalone, ios, flags, empty }) → step[]` | Pure; builds the step list of §3.3 (route, hook, kind, copy keys, fallbacks) so the counts and the social/empty variants are tested. |
+| `TourSpotlight` | `{ step, onTap, onNext, onSkip }` | Finds the hook (§3.4), measures it, draws the four-panel scrim, the ring and the tap badge. |
+| `GuideCard` | `{ section, title, body, kind, extra }` | The glass hint card: section name, five-segment progress, title, body, tap line or Next, Skip. |
+| `CenterCard` | `{ children }` | The welcome, Home Screen and end cards. |
 | `TakeTourCard` | none | The Home card (§3.7). |
 | `WhatsNewHost` | none | Mounted next to `TourHost`; opens the sheet (§5.2). |
 | `WhatsNewSheet` | `{ isOpen, onClose, releases }` | `PageSheet` with a list of release blocks. |
@@ -258,7 +296,7 @@ All in `frontend/src/welcome/`.
 | Home Screen app and offline | **Bulbasaur** | 18–19 Oct | major |
 | The iPhone redesign | **Charmander** | 20–23 Oct | major |
 | Badges, the daily loop and binder pockets | **Squirtle** | 29 Oct | major |
-| Wrapped and goals | **Chikorita** | 30 Oct | major |
+| Goals and the weekly recap | **Chikorita** | 30 Oct | major |
 | Milestone D (social) | **Cyndaquil** | draft, "Coming next" | major |
 
 Between Chikorita and Cyndaquil, a small fix release would be **Bayleef**, then **Meganium**, then "Meganium · 4 Nov".
@@ -341,7 +379,7 @@ Rules:
 
 ## 6. Accessibility
 
-- **VoiceOver.** The tour is a modal `role="dialog"` with `aria-labelledby` on the title and `aria-describedby` on the body. Focus moves to the card at each step; the live announcement is "Step 3 of 8. Everything you own." The app behind is `inert`, so VoiceOver can't wander off. The card says what the ring points at ("the Collection tab at the bottom of the screen"), because the ring itself is decoration. Dots and the ring are `aria-hidden`. The What's new sheet is a `PageSheet` dialog and its release blocks are headings (`h3`) with the date inside the heading text.
+- **VoiceOver.** The hint card is a modal `role="dialog"` with `aria-labelledby` on the title and `aria-describedby` on the body. Focus moves to the card at each step and the live announcement reads the section, the title and the instruction ("Collection. Everything you own. Tap the Collection tab, at the bottom of the screen."). The app behind is `inert` **except the highlighted control**, so a VoiceOver user can double-tap the very control the hint names and nothing else; on an info step the whole app is inert and Next is the way on. The card names where the control is, because the ring is decoration. The progress bar and the ring are `aria-hidden`; the progress is also in the card as text ("Collection, step 2 of 5"). The What's new sheet is a `PageSheet` dialog and its release blocks are headings (`h3`) with the date inside the heading text.
 - **Reduce Motion.** With `prefers-reduced-motion: reduce` the scrim doesn't fade, the card doesn't slide, the ring doesn't pulse and steps change instantly. Without it the ring does one 250 ms ease-out (`--ease-ios`) move between targets.
 - **44 pt.** Every button, link, tab and chip is at least 44 × 44. The Skip button is a 44 × 44 target with text only.
 - **Safe areas.** The card keeps `max(16px, var(--safe-top))` from the top, `var(--safe-bottom)` plus the 88 px the tab bar takes from the bottom (unless centered), and 16 px from the sides. The sheet uses `PageSheet`'s own handling.
@@ -353,7 +391,7 @@ Rules:
 
 | Thing | Offline |
 |---|---|
-| The tour (copy, steps, spotlight) | Fully works: all strings are bundled. |
+| The tour (copy, steps, spotlight) | Fully works: all strings are bundled, and every page the tour visits opens offline. |
 | Completing, skipping, dismissing | Written to `localStorage` at once and sent to the server through the outbox (or at next sign-in). The tour won't repeat on this device meanwhile. |
 | Notification ask | Needs the push service; the button is hidden offline with "Connect to turn on notifications." |
 | What's new sheet | Works from the bundled file and the local seen id. |
@@ -364,7 +402,7 @@ Rules:
 
 ## 8. Draft release notes (for the owner to approve)
 
-Written from the merge history of `origin/deploy` since `8f5acbf` (23 deploy merges, 18–30 October 2026, grouped by the owner's named releases). Highlights are the first block of each; the details follow. Admin-only changes are left out. PR numbers and code names are left out.
+Written from the merge history of `origin/deploy` since `8f5acbf` (23 deploy merges, 18–30 October 2026, grouped into the owner's four named releases). Highlights are the first block of each; the details follow. Admin-only changes are left out. PR numbers and code names are left out.
 
 ### Bulbasaur — 18–19 Oct 2026 · "PokéCollector on your Home Screen"
 
@@ -405,53 +443,43 @@ Written from the merge history of `origin/deploy` since `8f5acbf` (23 deploy mer
 - *Fixed:* Restoring an older backup into a newer app works. Background restore, CSV pocket sizes and the "scans ready" notification are fixed.
 - *Under the hood:* Your history (cards, streaks, quests) is recorded from now on. Badge and notification checks run every 30 seconds.
 
-### Chikorita — 30 Oct 2026 · "Wrapped and goals"
+### Chikorita — 30 Oct 2026 · "Goals and the weekly recap"
 
 **Highlights**
 - **Chase goals.** Pick a set, a generation, an evolution family or an artist, and watch the ring fill as you collect.
 - **Your weekly recap.** On Sunday evening Home shows how your week went.
-- **2026 Wrapped is coming.** Your year as a story arrives in December.
+- **Goals at a glance.** A Goals tile on your Profile, and your goals next to your sets on Home.
 
 **Everything**
-- *New:* Goals, with a Goals tile on your Profile. Family goals count every card in an evolution family. A weekly recap card on Home from Sunday evening. The 2026 Wrapped story is ready for December, with pictures you can share.
+- *New:* Goals, with a Goals tile on your Profile. Family goals count every card in an evolution family. A weekly recap card on Home from Sunday evening.
 - *Better:* Your goals show on Home next to your sets.
-- *Under the hood:* Weekly recap data is stored for Wrapped.
+- *Under the hood:* Your weekly numbers are now kept so they can be looked back on.
+
+(The 2026 Wrapped story is on `deploy` but hidden until December, so it is left out of these notes; a separate push on 1 December announces it.)
 
 ---
 
 ## 9. Mockups (the canvas row)
 
-Row **"Wave 4 — Welcome and what's new"**, 390 × 844 unless noted, in the real shell:
+Row **"Wave 4 — Welcome and what's new"**, 390 × 844 unless noted, in the real shell. The tour is drawn as a sequence per section, each step on the real screen with the one hole lit (tap steps carry the red tap badge):
 
-1. Welcome
-2. Skip confirmation
-3. Home Screen step (browser)
-4. Are you sure? (1)
-5. Really carry on? (2)
-6. Step 1 Today
-7. Step 2 Weekly challenge (social on)
-8. Step 3 Collection
-9. Step 4 Scan, Home Screen app (the ask)
-10. Step 4 Scan, notifications declined
-11. Step 4 Scan, browser variant
-12. Step 5 Search
-13. Step 6 Profile (social on)
-14. Step 7 Swapping (social on)
-15. Step 6 Profile, social off ("5 of 6")
-16. Step 8 Offline
-17. End
-18. Home with the "Take the tour" card
-19. What's new, one release
-20. What's new, several releases
-21. Settings › About
-22. Version history, list
-23. Release detail
-24. Version history on nonprod with "Coming next"
-25. Release names (1180 × 520): how the starters and evolutions run
+- **Begin:** 001 Welcome · 002 Skip confirmation · 003 Home Screen step (browser) · 004 "Are you sure?" · 005 "Really carry on?"
+- **Home:** 006 Today card · 007 tap the weekly challenge (social on) · 008 the challenge board (social on)
+- **Collection:** 009 tap Collection · 010 the three segments, tap Card Lists · 011 tap a binder · 012 empty Card Lists (+) · 013 Grid | Book, tap Book
+- **Scan:** 014 tap Scan · 015 the shutter · 016 the scan queue with the notifications ask · 017 notifications declined · 018 browser variant · 019 the scan queue page
+- **Search:** 020 tap Search · 021 the search field · 022 tap Sets · 023 Sets by language
+- **Profile:** 024 tap Profile · 025 tap Trades (social on) · 026 tap Trades (social off) · 027 Offers segment (social on) · 028 Trades with social off · 029 tap Back · 030 tap Goals · 031 a goal · 032 empty Goals (+) · 033 tap Sync & offline · 034 Sync & offline (Finish)
+- **After:** End · Home with the "Take the tour" card
+- **What's new:** What's new with one release · with three missed releases · Settings › About · Version history list · Release detail · Nonprod "Coming next"
+- **Names** (1180 × 520): how the starters and evolutions run
+
+The Home Screen, Skip and "are you sure?" screens are centre cards over the dimmed Home. Social-off differences are the two Trades artboards (026, 028); the social-on Home and board steps (007, 008, 027) are simply absent.
+
+---
 
 ## 10. Risks
 
-- **Spotlight position drift.** Rotation, Dynamic Type and late font loads move targets. `TourSpotlight` re-measures on resize, orientation change and `document.fonts.ready`, and falls back to a centred card if the target is missing (a tab hidden by a feature flag), so the tour never blocks.
-- **Z-order.** The update banner (60/70) must stay above the tour. A test asserts the order of the z-index variables.
+- **Targets that move or vanish.** Hooks are stable ids with a test (§3.4); the hole is re-measured on resize, font load, scroll end and during page slides; a missing hook after 1.5 s skips that step instead of blocking.
+- **Z-order.** The update banner (60/70) must stay above the tour. A test asserts the order of the z-index values (tour 59, scanner 58, banner 60).
 - **Two layers.** The tour and What's new never show together: What's new waits for the tour.
 - **Release file discipline.** The only guard is the test in §5.5 plus the promotion step. A forgotten entry means the sheet says nothing, which is safe.
