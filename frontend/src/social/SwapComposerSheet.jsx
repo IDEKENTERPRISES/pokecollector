@@ -402,6 +402,7 @@ export default function SwapComposerSheet({ isOpen, onClose, partner, mode = 'ne
       isOpen={isOpen}
       onClose={onClose}
       title={title}
+      opaque
       isDirty={dirty && !send.isPending}
       className="!h-[92dvh]"
       leading={step ? (
