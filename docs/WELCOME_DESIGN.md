@@ -483,3 +483,18 @@ The Home Screen, Skip and "are you sure?" screens are centre cards over the dimm
 - **Z-order.** The update banner (60/70) must stay above the tour. A test asserts the order of the z-index values (tour 59, scanner 58, banner 60).
 - **Two layers.** The tour and What's new never show together: What's new waits for the tour.
 - **Release file discipline.** The only guard is the test in §5.5 plus the promotion step. A forgotten entry means the sheet says nothing, which is safe.
+
+---
+
+## 11. Build notes (P15, 3 November 2026)
+
+Where the build differs from, or had to decide beyond, the doc:
+
+- **New or existing account.** The doc does not say how to tell them apart. The user payload now carries `created_at`; an account made in the last two days starts the tour by itself, an older one gets the Take the tour card (`NEW_ACCOUNT_DAYS` in `welcome/tourStorage.js`).
+- **Starting from the card.** Per the build brief, only Finish, a confirmed Skip or "Not now" writes completion; Start on the card does not (§3.9 said it counts as done).
+- **Scrim.** The dim and ring are one pointer-events:none element with the artboards' 9999 px shadow; four transparent panels take the taps (so the hole keeps its rounded corners).
+- **Hooks that sit differently from the artboards.** `collection-segments` is on the Card Lists segment; `view-switch` exists only once a binder has cards (the real Binder page hides it for an empty binder, so the step is then skipped after 1.5 s); `sets-language` is the language list on `/sets` or the language switch on a language page, and is skipped for a one-language account; `offline-card` is the first card of Sync & offline; `queue-list` is the job list, or the empty card.
+- **Empty variants** are decided once at the start from the binders and goals lists.
+- **Offline features off:** the tour ends on the last goals step with Finish, and the end card carries one offline sentence.
+- **Next to another screen.** Next on the goals step goes back to Profile for the Sync & offline step.
+- **Server.** `PUT /api/auth/me/tutorial` (`outcome`, optional `completed_at`, earliest wins) and `DELETE /api/auth/me/tutorial`.

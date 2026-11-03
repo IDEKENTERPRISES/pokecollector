@@ -65,3 +65,13 @@
 - With `WRAPPED_PREVIEW=1` (set on nonprod) the date and 10:00 gate are skipped: each trainer's first scheduler tick after the deploy sends it once (the subject is `wrapped:<year>`, so it does not repeat).
 - To try it again, delete that trainer's `wrapped:2026` row from `notification_queue` (or use a trainer who has not had it yet). Without the preview, nothing sends before 1 December.
 - The check runs on the first tick and then every 10 minutes. Look for `category=wrapped` in `docker logs <backend> | grep "Notification "`.
+
+## Testing the tour on nonprod
+
+The hands-on tour (docs/WELCOME_DESIGN.md §3) runs in multi-user mode only.
+
+- **Replay it:** Settings › About › Show the tour again clears your completion on the server and on this device, goes to Home and starts the welcome. Nothing else is needed.
+- **A fresh account:** create a new trainer (Settings › Users, or an invite). An account made in the last two days starts the tour by itself on its first Home visit. Older accounts get the "Take the tour" card on Home instead; "Not now" counts as done.
+- **Reset by hand:** `UPDATE users SET tutorial_completed_at = NULL, tutorial_outcome = NULL WHERE username = '...';` and clear `pc.tour.done.<userId>` in the browser's local storage.
+- **Home Screen step:** it shows in iPhone Safari (not the Home Screen app) and in other browsers that offered an install. In the installed app it is skipped, and the scan step offers the notifications button.
+- Leaving it part-way (closing the app, "I'll add it now") writes nothing: it starts over from the welcome. Only Finish, a confirmed Skip or "Not now" is stored (`tutorial_outcome`: `finished`, `skipped`, `dismissed`).
