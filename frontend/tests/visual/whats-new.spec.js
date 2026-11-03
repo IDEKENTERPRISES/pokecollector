@@ -424,7 +424,7 @@ test.describe('Coming next', () => {
     await expect(detail.getByRole('heading', { name: 'New', level: 3 })).toBeVisible()
   })
 
-  test('Test What's new: a row reloads the app and opens the real sheet as if updated from that release', async ({ page }) => {
+  test("Test What's new: a row reloads the app and opens the real sheet as if updated from that release", async ({ page }) => {
     const puts = []
     await install(page, { seen: '2026-10-30', channel: 'nonprod', puts })
     await page.goto('/settings/about/versions')
