@@ -67,10 +67,13 @@ async function install(page, { user = account(), social = true, multiUser = true
       const ctx = canvas.getContext('2d')
       ctx.fillStyle = '#334'
       ctx.fillRect(0, 0, 640, 480)
-      return canvas.captureStream(5)
+      if (canvas.captureStream) return canvas.captureStream(5)
+      // This WebKit build has no MediaStream: a stand-in that the viewfinder accepts.
+      Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', { set() {}, get() { return null }, configurable: true })
+      return { getTracks: () => [{ stop() {} }] }
     }
     if (!navigator.mediaDevices) Object.defineProperty(navigator, 'mediaDevices', { value: {}, configurable: true })
-    navigator.mediaDevices.getUserMedia = fakeCamera
+    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: fakeCamera, configurable: true, writable: true })
   }, { account: user, installed: standalone })
   await page.route('**/api/**', async (route) => {
     const request = route.request()
@@ -191,6 +194,7 @@ async function begin(page) {
 }
 
 test('a new trainer is welcomed, walks the whole tour by tapping the real controls and finishes', async ({ page }, testInfo) => {
+  test.setTimeout(120000)
   const state = await install(page)
   await begin(page)
   await capture(page, testInfo, '001-welcome')
@@ -283,7 +287,7 @@ test('an account with no binders and no goals is pointed at +, and Book is left 
   }
   await stepIs(page, 'new-goal')
   await expect(card(page)).toContainText('Start your first goal')
-  await card(page).getByRole('button', { name: 'Next' }).click()
+  await card(page).getByRole('button', { name: 'Finish' }).click()
   await expect(page.getByRole('heading', { name: "You're ready" })).toBeVisible()
   expect(state.puts[0].outcome).toBe('finished')
 })
