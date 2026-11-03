@@ -99,7 +99,7 @@ async function install(page, { social = true, hideValues = false, intro = false,
     localStorage.setItem('pc.splash.enabled', '0')
     if (hide) localStorage.setItem('pc.hideValues', '1')
   }, { account: ASH, hide: hideValues })
-  const state = { settings: { ...BASE_SETTINGS, social_features_enabled: social ? 'true' : 'false', feed_intro_seen: intro ? 'false' : 'true', ...settings }, comments: [...COMMENTS], puts: [], posts: [], feedCalls: [] }
+  const state = { settings: { ...BASE_SETTINGS, social_features_enabled: social ? 'true' : 'false', feed_intro_seen: intro ? 'false' : 'true', ...settings }, comments: [...COMMENTS], puts: [], posts: [], feedCalls: [], eventCalls: [] }
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url())
     const path = url.pathname
@@ -122,6 +122,12 @@ async function install(page, { social = true, hideValues = false, intro = false,
           ? { items: FEED_MORE, next_before: null, reaction_kinds: ['cheer', 'wow', 'fire', 'heart'] }
           : { items: FEED_FIRST, next_before: 9001, reaction_kinds: ['cheer', 'wow', 'fire', 'heart'] },
       })
+    }
+    const single = path.match(/^\/api\/feed\/(\d+)$/)
+    if (single && method === 'GET') {
+      state.eventCalls.push(single[1])
+      const row = [...FEED_FIRST, ...FEED_MORE].find(item => String(item.id) === single[1])
+      return row ? route.fulfill({ json: row }) : route.fulfill({ status: 404, json: { detail: 'Not found' } })
     }
     const reaction = path.match(/^\/api\/feed\/(\d+)\/reactions\/(\w+)$/)
     if (reaction) {
@@ -378,4 +384,32 @@ test('targets are 44 px and nothing scrolls sideways', async ({ page }) => {
     .map(({ name, rect }) => `${name} ${Math.round(rect.width)}x${Math.round(rect.height)}`))
   expect(small).toEqual([])
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0)
+})
+
+// Reaction and comment pushes open the feed at their event (docs/SOCIAL_DESIGN.md §6.7).
+test('a reaction link opens the feed at that event and then drops the query', async ({ page }) => {
+  await install(page)
+  await page.goto('/leaderboard/activity?event=9002')
+  await expect(events(page)).toHaveCount(3)
+  await expect(page.locator('[data-event-id="9002"]')).toBeInViewport()
+  await expect(page.getByRole('dialog', { name: 'Comments' })).toHaveCount(0)
+  await expect.poll(() => new URL(page.url()).search).toBe('')
+})
+
+test('a comment link opens the feed with that event's comments sheet', async ({ page }) => {
+  await install(page)
+  await page.goto('/leaderboard/activity?event=9003&comments=1')
+  const sheet = page.getByRole('dialog', { name: 'Comments' })
+  await expect(sheet.getByTestId('feed-comment')).toHaveCount(3)
+  await expect.poll(() => new URL(page.url()).search).toBe('')
+})
+
+test('a link to an event beyond the loaded page pins it on top; an unknown one just shows the feed', async ({ page }) => {
+  const state = await install(page)
+  await page.goto('/leaderboard/activity?event=8700')
+  await expect(page.locator('[data-event-id="8700"]')).toBeVisible()
+  expect(state.eventCalls).toContain('8700')
+  await page.goto('/leaderboard/activity?event=1')
+  await expect(events(page)).toHaveCount(3)
+  await expect(page.getByRole('alert')).toHaveCount(0)
 })

@@ -4,7 +4,7 @@ import ListSection from '../../components/ios/ListSection'
 import PageSheet from '../../components/ios/PageSheet'
 import Switch from '../../components/ios/Switch'
 import { useSettings } from '../../contexts/SettingsContext'
-import { BIG_PULL_EUR, CHALLENGE_BOARD_KEY, SHARE_ROWS, SHARE_VALUES_KEY, isOn } from './feedFormat'
+import { BIG_PULL_EUR, CHALLENGE_BOARD_KEY, SHARE_ROWS, SHARE_VALUES_DEFAULT, SHARE_VALUES_KEY, isOn } from './feedFormat'
 
 const LABEL_KEYS = {
   set_completed: 'feed.sharingSetCompleted',
@@ -57,7 +57,7 @@ export default function SharingSheet({ isOpen, onClose }) {
           ))}
         </ListSection>
         <ListSection className="!mx-0" header={t('feed.sharingAmounts')} footer={t('feed.sharingValuesFooter')}>
-          {row(SHARE_VALUES_KEY, false, t('feed.sharingValues'))}
+          {row(SHARE_VALUES_KEY, SHARE_VALUES_DEFAULT, t('feed.sharingValues'))}
         </ListSection>
         {hasBoard && (
           <ListSection className="!mx-0" header={t('feed.sharingBoard')} footer={t('feed.sharingBoardFooter')}>

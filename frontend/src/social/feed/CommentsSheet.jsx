@@ -14,7 +14,7 @@ import { COMMENT_MAX_LENGTH, ageLabel, cleanComment, keyboardInset } from './fee
 /**
  * The comments under one event (docs/SOCIAL_DESIGN.md D6): a list in the feed's card style, oldest
  * first, and a composer in the sheet's footer. Plain text, up to 280 characters. The author and the
- * event's owner can delete a comment. No pushes and no badge numbers: comments are read here.
+ * event's owner can delete a comment. A comment push (docs/SOCIAL_DESIGN.md §6.7) opens this sheet; comments never make a badge number.
  * `onCount(eventId, count)` keeps the feed row's count in step.
  */
 export default function CommentsSheet({ event, onClose, onCount }) {

@@ -65,7 +65,7 @@ Each has a recommendation, which the mockups show. "As built" means what #113 an
 | **GitHub reactions** ([GitHub blog, 2016](https://github.blog/2016-03-10-add-reactions-to-pull-requests-issues-and-comments/), [study of 2.5M issues](https://arxiv.org/pdf/1910.00188.pdf)) | A small, fixed set chosen to "reduce the noise in these threads". People can give several kinds. The study found reactions cut emoji-only comments. | Four fixed kinds, each once per trainer (as built), and **no comments**: nothing to moderate, nothing to answer. |
 | **Duolingo friend updates** ([Duolingo blog](https://blog.duolingo.com/friends-social-features/), [Android Authority](https://androidauthority.com/duolingo-random-strangers-cluttering-social-feeds-3694884/)) | A "Celebrate" reaction on friends' milestones. Users complain when strangers' updates bury their friends'. | Our feed only ever shows the 5–7 trainers on this server. |
 | **Apple Fitness sharing** ([Apple Support](https://support.apple.com/guide/iphone/share-your-activity-iph0b826155d/ios)) | Per friend: "Hide My Activity", or remove the friend. | Per kind: what you share is a switch, and switching a kind off hides what you shared before (as built). |
-| **Strava privacy** ([Android Central](https://androidcentral.com/apps-software/how-to-control-your-privacy-settings-strava)) | An audience per activity; "Only You" keeps it off feeds and leaderboards. | Values are their own opt-in, off by default (as built). Leaving the challenge board is a switch. |
+| **Strava privacy** ([Android Central](https://androidcentral.com/apps-software/how-to-control-your-privacy-settings-strava)) | An audience per activity; "Only You" keeps it off feeds and leaderboards. | Values are their own switch, on by default since D (a trainer can switch them off). Leaving the challenge board is a switch. |
 
 ### 1.3 Weekly challenges, boards and podiums
 
@@ -90,10 +90,10 @@ Apple's guidance on the icon badge ([HIG, Notifications](https://developer.apple
 
 ## 2. Principles
 
-1. **Quiet by default.** Social is a layer on the collection, not a new home. Only swap offers waiting for your answer make a number (icon, Profile tile, segment, Home card). Reactions, the feed and the challenge never push and never badge (as built for reactions).
+1. **Quiet by default.** Social is a layer on the collection, not a new home. Only swap offers waiting for your answer make a number (icon, Profile tile, segment, Home card). The feed and the challenge never badge. Reactions and comments on your own events push, folded and capped (§6.7); they never make a number.
 2. **The app records; trainers swap.** Cards move between collections only after both trainers tap Swapped. Cash is something they settle in person; the app records the amount and never moves money (the "money between trainers" non-goal).
 3. **Fair, from both sides.** Each trainer sees the fair-trade meter from their own side, at their own price setting (as built: `values.you` and `values.partner`). The podium rewards finishing first; the badge rewards finishing at all.
-4. **Private about money.** Hide-values masks every amount on these screens. The feed shows no amount unless its trainer opted in (as built). Pushes never carry amounts.
+4. **Private about money.** Hide-values masks every amount on these screens. The feed shows no amount once its trainer switches values off (they are shared by default since D). Pushes never carry amounts.
 5. **Consent you can see.** The first visit to the feed says what you share and links to the switches. Turning a kind off hides your past events of that kind too.
 6. **No chat.** Structured counters, one optional 140-character note per offer (D9), and one-tap reactions instead of comments.
 7. **iOS first, Pokémon flavour.** List sections, page sheets, segmented controls and capsule buttons from `components/ios/`; type colours, Poké Balls, medals and the podium for the moments worth celebrating.
@@ -607,12 +607,14 @@ Artboard `S3FeedSharing`. A `PageSheet`, title "What you share", leading empty, 
 1. `ListSection` "Show in the activity feed", rows with a `Switch`:
    - **Sets you complete** (`feed_share_set_completed`, on);
    - **Badges you earn** (`feed_share_achievement_unlocked`, on);
-   - **Big pulls** (`feed_share_big_pull`, off), subtitle "Cards worth £17.40 or more when you add them" (`formatPrice(BIG_PULL_EUR)`);
-   - **Goals you complete** (`feed_share_goal_completed`, off);
+   - **Big pulls** (`feed_share_big_pull`, on), subtitle "Cards worth £17.40 or more when you add them" (`formatPrice(BIG_PULL_EUR)`);
+   - **Goals you complete** (`feed_share_goal_completed`, on);
    - **Weekly challenge results** (`feed_share_challenge_finished`, on; P13 adds the key).
-2. `ListSection` "Amounts": **Show card values** (`feed_share_values`, off). Footer: "Off: trainers see the card, never what it's worth. Badges about your collection's value also need this."
+2. `ListSection` "Amounts": **Show card values** (`feed_share_values`, on). Footer: "Off: trainers see the card, never what it's worth. Badges about your collection's value also need this."
 3. `ListSection` "Weekly challenge": **Show me on the board** (`challenge_on_board`, on; P13). Footer: "Off: you still play and earn the badge; others don't see your progress."
 4. Footer: "Only the trainers on this server see your activity. Switching a kind off hides what you shared before, too."
+
+**Shared by default (round D, r9-06).** Every option above is on until a trainer switches it off: the five event kinds and the values switch. The defaults live in one place on each side (`FEED_KINDS` and `SHARE_VALUES_DEFAULT` in `services/feed.py`, `SHARE_ROWS` and `SHARE_VALUES_DEFAULT` in `feedFormat.js`). A setting row is written only when a trainer flips a switch, so a saved row is always a choice: existing rows are never overwritten, and a trainer who switched something off keeps it off. There was no migration. (On the real server the social switch has never been on, so nobody there has a saved choice.) Hide values still masks amounts on the viewer's side.
 
 ### 6.5 First visit, empty and offline
 
@@ -652,6 +654,23 @@ Artboard `S3FeedEmpty`.
 - P13: the `challenge_finished` kind in `FEED_KINDS`, default on.
 - The `feed_intro_seen` setting (any per-user key outside the `feed_share_` prefix is stored as is).
 - `display.set_code` on `set_completed` and big pulls would let the rows show "PRE 161" like the rest of the app. Until then they use the set name.
+
+### 6.7 Pushes for reactions and comments (round D)
+
+Category `feed_activity` ("Reactions and comments", instant, **on by default**). Its Settings › Notifications row shows only while the social switch is on, like Swap offers. The event's owner gets a push when another trainer reacts to or comments on their event. Your own reactions and comments never push. Quiet hours and the category switch apply, and nothing is sent while the social switch is off.
+
+**Anti-spam, as built** (constants in `services/notifications.py`):
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `FEED_PUSH_WINDOW_MINUTES` | 15 | The first reaction or comment on an event pushes at once and opens a window. Anything on the same event inside the window is folded into one follow-up push when the window ends (a follow-up opens the next window). Activity after the window leads again. |
+| `FEED_PUSH_HOURLY_CAP` | 6 | At most this many pushes of this category per trainer in a rolling `FEED_PUSH_CAP_WINDOW_MINUTES` (60). Anything over it waits until a slot frees and then goes out as one summary ("3 new reactions and comments", opens the feed). |
+
+- A reaction taken back before its push goes out is dropped from the queue and never pushes; one added again later is new. A comment deleted, or an event no longer shared, while a push waits is skipped when the push is built.
+- Each reaction (per trainer and kind) and comment pushes at most once: toggling a reaction on and off cannot make more pushes.
+- Detailed wording (`notify_show_details` on): "Misty reacted to your Base Set completion", "Misty and Brock reacted to …", "Misty and 2 others reacted to …", "Misty commented on your Charizard ex pull", "3 new comments on your Charizard ex pull", "5 new reactions and comments on your …". Content-light: "Someone reacted to your activity", "New comments on your activity". The event is named by its set, card, badge or goal, never by an amount, and the comment text is never in the push.
+- Links: a reaction push opens `/leaderboard/activity?event=<id>`; a push with a comment opens `/leaderboard/activity?event=<id>&comments=1`; a summary opens `/leaderboard/activity`. The service worker opens the link from a closed or a backgrounded app, like the swap and Wrapped links. The feed scrolls to the event, opens its comments sheet for `comments=1`, then drops the query so a refresh or Back doesn't reopen it. An event older than the loaded pages is fetched with `GET /api/feed/{id}` (the viewer's visible events, own included; 404 otherwise) and pinned at the top. A missing event just shows the feed.
+- Queue rows: subject `e<event>:r:<actor>:<kind>` or `e<event>:c:<comment>`, owner = the event's trainer, `details` = kind, actor, event label and flags (`lead`, `pushed`, `head`, `capped`). No new table.
 
 ## 7. P13 Weekly challenge
 

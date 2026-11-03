@@ -34,10 +34,12 @@ from services.progress.evaluator import (
 FEED_KINDS = {
     EVENT_SET_COMPLETED: True,
     EVENT_ACHIEVEMENT_UNLOCKED: True,
-    EVENT_GOAL_COMPLETED: False,
+    EVENT_GOAL_COMPLETED: True,
     EVENT_CHALLENGE_FINISHED: True,
-    EVENT_BIG_PULL: False,
+    EVENT_BIG_PULL: True,
 }
+# Card values go with shared events until the trainer chooses otherwise. Settings rows are written only
+# when a trainer flips a switch, so a saved row is always a choice and is never overridden by a default.
 
 SHARE_VALUES_KEY = "feed_share_values"
 SHARE_PREFIX = "feed_share_"
@@ -70,7 +72,7 @@ def boolean_keys() -> set[str]:
 def default_settings() -> dict[str, str]:
     """Defaults merged into the settings API response."""
     defaults = {share_key(kind): "true" if shared else "false" for kind, shared in FEED_KINDS.items()}
-    defaults[SHARE_VALUES_KEY] = "false"
+    defaults[SHARE_VALUES_KEY] = "true"
     return defaults
 
 
@@ -94,10 +96,11 @@ def _preference_rows(db: Session) -> dict[int, dict[str, bool]]:
 
 
 def trainers_sharing(db: Session, prefs: dict[int, dict[str, bool]] | None = None) -> dict:
-    """Trainer ids per preference: `{"on": {kind: set(ids)}, "off": {kind: set(ids)}, "values": set(ids)}`.
+    """Trainer ids per preference: `{"on": {kind: set(ids)}, "off": {kind: set(ids)}, "values_off": set(ids)}`.
 
     A trainer without a stored row follows the default, so only deviations are listed:
-    `off` holds trainers who switched a default-on kind off, `on` those who switched a default-off kind on.
+    `off` holds trainers who switched a default-on kind off, `on` those who switched a default-off kind on
+    (none while every kind is on by default), `values_off` those who chose not to share values.
     """
     prefs = _preference_rows(db) if prefs is None else prefs
     on: dict[str, set[int]] = {kind: set() for kind in FEED_KINDS}
@@ -108,8 +111,8 @@ def trainers_sharing(db: Session, prefs: dict[int, dict[str, bool]] | None = Non
             if value is None or value == default:
                 continue
             (on if value else off)[kind].add(user_id)
-    values = {user_id for user_id, row in prefs.items() if row.get(SHARE_VALUES_KEY)}
-    return {"on": on, "off": off, "values": values}
+    values_off = {user_id for user_id, row in prefs.items() if row.get(SHARE_VALUES_KEY) is False}
+    return {"on": on, "off": off, "values_off": values_off}
 
 
 def shareable_events(db: Session, viewer_id: int, include_own: bool = False):
@@ -158,13 +161,13 @@ def shareable_events(db: Session, viewer_id: int, include_own: bool = False):
     ))
     value_badges = _value_badge_ids()
     if value_badges:
-        sharing_values = sharing["values"]
-        value_clause = and_(
-            UserEvent.kind == EVENT_ACHIEVEMENT_UNLOCKED, UserEvent.subject_key.in_(value_badges)
-        )
-        if sharing_values:
-            value_clause = and_(value_clause, UserEvent.user_id.notin_(sorted(sharing_values)))
-        query = query.filter(~value_clause)
+        values_off = sharing["values_off"]
+        if values_off:
+            query = query.filter(~and_(
+                UserEvent.kind == EVENT_ACHIEVEMENT_UNLOCKED,
+                UserEvent.subject_key.in_(value_badges),
+                UserEvent.user_id.in_(sorted(values_off)),
+            ))
     return query
 
 
@@ -281,7 +284,7 @@ def serialize_events(db: Session, events: list[UserEvent], viewer_id: int, price
         return []
     price_field = normalize_price_field(price_field)
     users = {u.id: u for u in db.query(User).filter(User.id.in_({e.user_id for e in events}))}
-    sharing_values = trainers_sharing(db)["values"]
+    values_off = trainers_sharing(db)["values_off"]
     card_ids = {(e.payload or {}).get("card_id") for e in events if e.kind == EVENT_BIG_PULL}
     card_ids.discard(None)
     cards = {c.id: c for c in db.query(Card).filter(Card.id.in_(card_ids))} if card_ids else {}
@@ -303,7 +306,7 @@ def serialize_events(db: Session, events: list[UserEvent], viewer_id: int, price
                 "username": user.username if user else None,
                 "avatar_id": user.avatar_id if user else None,
             },
-            "display": _display(db, event, cards, set_names, event.user_id in sharing_values, price_field),
+            "display": _display(db, event, cards, set_names, event.user_id not in values_off, price_field),
             "mine": event.user_id == viewer_id,
             "reactions": reactions[event.id],
             "comment_count": comments[event.id],

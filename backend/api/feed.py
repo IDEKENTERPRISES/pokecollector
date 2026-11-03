@@ -1,4 +1,6 @@
 """Activity feed and reactions (docs/ENGAGEMENT_DESIGN.md §7 P12). Every route answers 404 while the admin switch is off."""
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -7,9 +9,20 @@ from api.auth import get_current_user
 from database import get_db
 from models import User
 from services import feed as feed_service
+from services import notifications
 from services.social_feature import require_social
 
 router = APIRouter(dependencies=[Depends(require_social)])
+logger = logging.getLogger(__name__)
+
+
+def _push_safely(db, step, *args) -> None:
+    """Queueing a push never fails the reaction or the comment."""
+    try:
+        with db.begin_nested():
+            step(db, *args)
+    except Exception:
+        logger.exception("Could not queue the feed activity push")
 
 
 def _reaction_state(db: Session, event_id: int, viewer_id: int) -> dict:
@@ -25,6 +38,20 @@ def get_feed(
     current_user: User = Depends(get_current_user),
 ):
     return feed_service.feed_page(db, current_user.id, before=before, limit=limit, price_field=price_field)
+
+
+@router.get("/{event_id}")
+def get_event(
+    event_id: int,
+    price_field: str = Query(default="price_trend", description="Price field for shared amounts"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """One event the viewer may see (their own included): where a reaction or comment push opens."""
+    event = feed_service.visible_event(db, current_user.id, event_id, include_own=True)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return feed_service.serialize_events(db, [event], current_user.id, price_field)[0]
 
 
 def _checked_kind(kind: str) -> str:
@@ -43,7 +70,9 @@ def add_reaction(
     _checked_kind(kind)
     if feed_service.visible_event(db, current_user.id, event_id) is None:
         raise HTTPException(status_code=404, detail="Not found")
-    feed_service.add_reaction(db, event_id, current_user.id, kind)
+    event = feed_service.visible_event(db, current_user.id, event_id)
+    if feed_service.add_reaction(db, event_id, current_user.id, kind):
+        _push_safely(db, notifications.notify_feed_reaction, event, current_user, kind)
     db.commit()
     return _reaction_state(db, event_id, current_user.id)
 
@@ -59,6 +88,7 @@ def remove_reaction(
     if feed_service.visible_event(db, current_user.id, event_id) is None:
         raise HTTPException(status_code=404, detail="Not found")
     feed_service.remove_reaction(db, event_id, current_user.id, kind)
+    _push_safely(db, notifications.cancel_feed_reaction, event_id, current_user.id, kind)
     db.commit()
     return _reaction_state(db, event_id, current_user.id)
 
@@ -96,6 +126,7 @@ def post_comment(
         comment = feed_service.add_comment(db, event, current_user.id, body.text)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error))
+    _push_safely(db, notifications.notify_feed_comment, event, current_user, comment)
     db.commit()
     db.refresh(comment)
     return {

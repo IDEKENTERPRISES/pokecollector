@@ -121,12 +121,12 @@ class SwitchTests(FeedBase):
 
 
 class VisibilityTests(FeedBase):
-    def test_defaults_share_set_completions_and_badges_only(self):
+    def test_defaults_share_every_kind(self):
         s = self.set_event(self.other, minutes=1)
         b = self.badge(self.other, minutes=2)
-        self.goal_done(self.other, minutes=3)
-        self.pull(self.other, minutes=4)
-        self.assertEqual(self.ids(), [b.id, s.id])
+        g = self.goal_done(self.other, minutes=3)
+        p = self.pull(self.other, minutes=4)
+        self.assertEqual(self.ids(), [p.id, g.id, b.id, s.id])
 
     def test_own_events_are_marked_and_inactive_trainers_are_left_out(self):
         mine = self.set_event(self.user, minutes=1)
@@ -140,12 +140,12 @@ class VisibilityTests(FeedBase):
     def test_own_events_follow_your_own_sharing_choices(self):
         set_done = self.set_event(self.user, minutes=1)
         pull = self.pull(self.user, minutes=2)
-        # Big pulls are off until you share them, like for everyone else.
-        self.assertEqual(self.ids(), [set_done.id])
-        self.share(self.user, "feed_share_big_pull", "true")
+        # Big pulls are shared until you switch them off, like for everyone else.
         self.assertEqual(self.ids(), [pull.id, set_done.id])
+        self.share(self.user, "feed_share_big_pull", "false")
+        self.assertEqual(self.ids(), [set_done.id])
         self.share(self.user, "feed_share_set_completed", "false")
-        self.assertEqual(self.ids(), [pull.id])
+        self.assertEqual(self.ids(), [])
 
     def test_own_events_carry_reaction_counts_but_never_who(self):
         mine = self.set_event(self.user)
@@ -162,14 +162,14 @@ class VisibilityTests(FeedBase):
         self.assertNotIn("misty", text.lower())
         self.assertNotIn("brock", text.lower())
 
-    def test_a_trainer_can_opt_in_to_goals_and_big_pulls(self):
-        self.share(self.other, "feed_share_goal_completed", "true")
-        self.share(self.other, "feed_share_big_pull", "true")
-        g = self.goal_done(self.other, minutes=1)
-        p = self.pull(self.other, minutes=2)
-        # Opting in is per trainer: brock's are still hidden.
-        self.goal_done(self.brock, minutes=3)
-        self.assertEqual(self.ids(), [p.id, g.id])
+    def test_a_trainer_can_opt_out_of_goals_and_big_pulls_and_the_choice_is_kept(self):
+        self.share(self.other, "feed_share_goal_completed", "false")
+        self.share(self.other, "feed_share_big_pull", "false")
+        self.goal_done(self.other, minutes=1)
+        self.pull(self.other, minutes=2)
+        # Opting out is per trainer: brock's are still shared by default.
+        g = self.goal_done(self.brock, minutes=3)
+        self.assertEqual(self.ids(), [g.id])
 
     def test_turning_a_kind_off_hides_past_events_and_back_on_shows_them_again(self):
         s = self.set_event(self.other, minutes=1)
@@ -245,7 +245,8 @@ class ValueMaskingTests(FeedBase):
         super().setUp()
         self.share(self.other, "feed_share_big_pull", "true")
 
-    def test_amounts_are_left_out_unless_the_trainer_shares_values(self):
+    def test_amounts_are_left_out_when_the_trainer_does_not_share_values(self):
+        self.share(self.other, "feed_share_values", "false")
         self.pull(self.other)
         item = self.feed()["items"][0]
         self.assertNotIn("amount", item["display"])
@@ -256,16 +257,16 @@ class ValueMaskingTests(FeedBase):
         self.assertNotIn("price_market", item["display"]["card"])
         self.assertEqual(item["display"]["variant"], "Normal")
 
-    def test_amounts_appear_once_the_trainer_shares_values_and_vanish_again(self):
+    def test_amounts_are_shared_by_default_and_vanish_when_switched_off(self):
         self.pull(self.other)
-        self.share(self.other, "feed_share_values", "true")
         self.assertEqual(self.feed()["items"][0]["display"]["amount"], 30.0)
         self.share(self.other, "feed_share_values", "false")
         self.assertNotIn("amount", self.feed()["items"][0]["display"])
+        self.share(self.other, "feed_share_values", "true")
+        self.assertEqual(self.feed()["items"][0]["display"]["amount"], 30.0)
 
     def test_values_are_per_trainer(self):
-        self.share(self.brock, "feed_share_big_pull", "true")
-        self.share(self.brock, "feed_share_values", "true")
+        self.share(self.other, "feed_share_values", "false")
         mine = self.pull(self.other, minutes=1)
         theirs = self.pull(self.brock, minutes=2)
         by_id = {item["id"]: item for item in self.feed()["items"]}
@@ -273,6 +274,7 @@ class ValueMaskingTests(FeedBase):
         self.assertNotIn("amount", by_id[mine.id]["display"])
 
     def test_badges_that_state_money_need_shared_values(self):
+        self.share(self.other, "feed_share_values", "false")
         money = self.badge(self.other, "big_spender_100", minutes=1)
         plain = self.badge(self.other, "collector_10", minutes=2)
         self.assertEqual(self.ids(), [plain.id])
@@ -386,6 +388,8 @@ class ReactionTests(FeedBase):
         self.assertEqual(self.react(event).status_code, 404)
 
     def test_you_cannot_react_to_what_you_cannot_see(self):
+        self.share(self.other, "feed_share_goal_completed", "false")
+        self.share(self.other, "feed_share_values", "false")
         hidden_kind = self.goal_done(self.other)
         backfilled = self.badge(self.other, backfilled=True)
         value_badge = self.badge(self.other, "big_spender_100")
@@ -405,12 +409,13 @@ class ReactionTests(FeedBase):
         self.share(self.other, "feed_share_set_completed", "true")
         self.assertEqual(self.feed()["items"][0]["reactions"]["mine"], ["cheer"])
 
-    def test_reactions_queue_no_notification(self):
+    def test_a_reaction_queues_a_push_for_the_event_owner_only(self):
         from models import NotificationQueue
 
         event = self.set_event(self.other)
         self.react(event)
-        self.assertEqual(self.db.query(NotificationQueue).count(), 0)
+        rows = self.db.query(NotificationQueue).all()
+        self.assertEqual([(r.user_id, r.category) for r in rows], [(self.other.id, "feed_activity")])
 
 
 class PreferenceTests(FeedBase):
@@ -421,10 +426,10 @@ class PreferenceTests(FeedBase):
             {
                 "feed_share_set_completed": "true",
                 "feed_share_achievement_unlocked": "true",
-                "feed_share_goal_completed": "false",
-                "feed_share_big_pull": "false",
+                "feed_share_goal_completed": "true",
+                "feed_share_big_pull": "true",
                 "feed_share_challenge_finished": "true",
-                "feed_share_values": "false",
+                "feed_share_values": "true",
             },
         )
 
@@ -550,6 +555,7 @@ class CommentTests(FeedBase):
         self.assertEqual(self.comment(mine, method="get").status_code, 404)
 
     def test_unseen_events_take_no_comments(self):
+        self.share(self.other, "feed_share_goal_completed", "false")
         hidden = self.goal_done(self.other)
         backfilled = self.badge(self.other, backfilled=True)
         for event in (hidden, backfilled):
