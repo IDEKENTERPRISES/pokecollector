@@ -16,7 +16,7 @@ function BadgeSheet({ item, more, t }) {
   const name = t(item.name_key)
   return (
     <div data-unlock-sheet data-testid="unlock-sheet" data-achievement-id={item.id} className="flex flex-col items-center gap-3 px-6 pb-6 pt-8 text-center">
-      <BadgeMedal track={item.track} tier={item.tier} holo size={132} label={name} />
+      <BadgeMedal track={item.track} tier={item.tier} glyph={item.art} holo size={132} label={name} />
       <p className="text-footnote font-semibold uppercase tracking-wide text-text-secondary">{t(tierLabelKey(item.tier))}</p>
       <h3 className="break-words text-title-2 font-display text-text-primary">{name}</h3>
       <p className="break-words text-body text-text-secondary">{t(item.description_key)}</p>

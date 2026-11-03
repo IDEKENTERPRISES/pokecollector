@@ -9,14 +9,15 @@ const SPRITE_BASE = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sp
  * The trainer's sprite (or a Poké Ball) in a ring split red over white like a Poké Ball.
  * Decorative: the trainer's name is always written next to it, so the image has no alt text.
  */
-export function TrainerAvatar({ avatarId, size = 48, className = '' }) {
+export function TrainerAvatar({ avatarId, size = 48, ring, className = '' }) {
   return (
     <span
       aria-hidden="true"
-      className={clsx('grid flex-shrink-0 place-items-center rounded-full p-[2.5px]', className)}
+      className={clsx('grid flex-shrink-0 place-items-center rounded-full', ring == null && 'p-[2.5px]', className)}
       style={{
         width: size,
         height: size,
+        ...(ring == null ? {} : { padding: ring }),
         background: 'linear-gradient(to bottom, #E3350D 0 48%, #111 48% 52%, #F5F5F5 52% 100%)',
       }}
     >

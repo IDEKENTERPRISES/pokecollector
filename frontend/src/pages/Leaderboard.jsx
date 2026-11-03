@@ -16,6 +16,7 @@ import { readShowDaily, streakLabel } from '../progress/daily'
 import { TrainerAvatar, countLabel, PODIUM_TYPES } from './socialParts'
 import { LEADERBOARD_SEGMENTS, useSocialEnabled } from '../social/social'
 import ActivityFeed from '../social/feed/ActivityFeed'
+import ChallengePage from '../social/challenge/ChallengePage'
 
 const NAV_BAR = {}
 const SORT_OPTIONS = ['xp', 'total_value', 'total_cards', 'unique_cards', 'sets_completed', 'pnl']
@@ -37,11 +38,12 @@ export default function Leaderboard({ segment = 'ranking' }) {
   const [showDaily] = useState(() => readShowDaily())
   const socialOn = useSocialEnabled()
   const activity = segment === 'activity'
+  const challenge = segment === 'challenge'
   useNavBar(NAV_BAR)
 
   const { data = [], isLoading, error } = useQuery({
     queryKey: ['leaderboard', pricePrimaryField],
-    enabled: !activity,
+    enabled: !activity && !challenge,
     queryFn: () => getLeaderboard({ price_field: pricePrimaryField }).then((response) => response.data),
   })
 
@@ -57,8 +59,8 @@ export default function Leaderboard({ segment = 'ranking' }) {
   if (!multiUser) {
     return <Navigate to="/" replace />
   }
-  // The feed belongs to the social switch: with it off the route goes back to the ranking.
-  if (activity && !socialOn) {
+  // The feed and the challenge belong to the social switch: with it off the route goes back to the ranking.
+  if ((activity || challenge) && !socialOn) {
     return <Navigate to="/leaderboard" replace />
   }
 
@@ -80,6 +82,15 @@ export default function Leaderboard({ segment = 'ranking' }) {
       <div className="flex flex-col gap-3">
         {segments}
         <ActivityFeed />
+      </div>
+    )
+  }
+
+  if (challenge) {
+    return (
+      <div className="flex flex-col gap-4" data-testid="challenge-page">
+        {segments}
+        <ChallengePage />
       </div>
     )
   }

@@ -13,6 +13,8 @@ import { HOME_FACTS } from '../components/splash/config'
 import { factLabelKey, fill, typeColour } from '../components/splash/format'
 import { ensureDay } from '../components/splash/prefetch'
 import WhosThatPokemon from './WhosThatPokemon'
+import { ChallengeTodayRow } from '../social/challenge/ChallengeParts'
+import { useSocialEnabled } from '../social/social'
 import { priciestLabel } from './daily'
 import { xpProgress } from './xp'
 
@@ -192,6 +194,7 @@ export default function DailyTodayCard() {
   const lang = splashLanguage(language)
   const date = localDate()
   const userId = user?.id
+  const socialOn = useSocialEnabled()
 
   const { data: entry } = useQuery({
     queryKey: ['pokemon-of-the-day', date, lang],
@@ -279,6 +282,7 @@ export default function DailyTodayCard() {
           </div>
         )}
         {summary?.quests?.length > 0 && <Quests quests={summary.quests} t={t} />}
+        {socialOn && <ChallengeTodayRow />}
         {typeof userId === 'number' && (
           <WhosThatPokemon
             date={date}

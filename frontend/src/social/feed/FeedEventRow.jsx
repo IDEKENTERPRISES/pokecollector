@@ -110,7 +110,7 @@ export default function FeedEventRow({ item, onReact, onOpenCard, onOpenComments
     subject = [title, tier].filter(Boolean).join(', ')
     body = (
       <Body to={own ? '/achievements' : `/achievements/${trainer.id}`}>
-        <BadgeMedal track={display.track} tier={display.tier} holo size={48} />
+        <BadgeMedal track={display.track} tier={display.tier} glyph={display.art} holo size={48} />
         <span className="min-w-0 flex-1">
           <span className="block text-headline">{title}</span>
           <span className="block text-footnote text-text-secondary">
