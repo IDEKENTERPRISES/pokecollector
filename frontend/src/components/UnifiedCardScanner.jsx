@@ -351,7 +351,7 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
               className="btn-secondary flex w-full items-center justify-center gap-2"
             >
               <Inbox size={16} />
-              <span>{t('scanner.queueTitle')}</span>
+              <span>{t('scanner.inbox')}</span>
             </button>
           )}
           {!cameraMode && liveCameraSupported() && (

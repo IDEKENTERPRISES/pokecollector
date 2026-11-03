@@ -111,7 +111,7 @@ export default function OfflineCenter() {
     <div className="mx-auto max-w-2xl space-y-4 py-6" data-testid="offline-center">
       <h1 className="sr-only">{t('sync.centerTitle')}</h1>
 
-      <Section title={t('pwa.connection')} tour="offline-card">
+      <Section title={t('pwa.connection')}>
         <p className="text-sm text-text-primary" data-testid="connection-state" data-state={state}>{stateText}</p>
         {info && (
           <p className="text-xs text-text-muted">
@@ -134,7 +134,7 @@ export default function OfflineCenter() {
 
       <OfflineCardDbSection />
 
-      <Section title={t('sync.storageTitle')}>
+      <Section title={t('sync.storageTitle')} tour="offline-card">
         {unavailable ? <p className="text-sm text-text-secondary">{t('sync.storageUnavailable')}</p> : <StorageSummary />}
       </Section>
 

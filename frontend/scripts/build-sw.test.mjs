@@ -103,3 +103,16 @@ test('fails when a placeholder is missing or duplicated or another token remains
     rmSync(scratch, { recursive: true, force: true })
   }
 })
+
+test('the build id changes with the release id', () => {
+  const dir = fixture()
+  try {
+    const first = buildServiceWorker({ distDir: dir, swSource, killSource, releaseId: '2026-10-30' }).buildId
+    const same = buildServiceWorker({ distDir: dir, swSource, killSource, releaseId: '2026-10-30' }).buildId
+    const next = buildServiceWorker({ distDir: dir, swSource, killSource, releaseId: '2026-11-04' }).buildId
+    assert.equal(first, same)
+    assert.notEqual(first, next)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

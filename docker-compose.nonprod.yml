@@ -34,3 +34,7 @@ services:
   frontend:
     image: pokelocal-frontend:nonprod
     container_name: pokemonlocal-nonprod-frontend
+    build:
+      args:
+        # Keeps the "Coming next" draft in the version history (docs/NONPROD.md).
+        RELEASE_CHANNEL: nonprod

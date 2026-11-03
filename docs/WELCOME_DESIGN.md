@@ -1,6 +1,6 @@
 # Welcome and What's new — design for PokéCollector
 
-Status: build started 3 November 2026 at the owner's request (P15, P16). Mockups: the Design canvas, row **"Wave 4 — Welcome and what's new"** (https://claude.ai/artifact/QNJ3UNo7XYj1ze96mkcFGF). The owner's review of the mockups (a6) and the release notes (a7) is still open; any changes from it are folded into this doc and the build.
+Status: build started 3 November 2026 at the owner's request (P15, P16). Mockups: the Design canvas, row **"Wave 4 — Welcome and what's new"** (https://claude.ai/artifact/QNJ3UNo7XYj1ze96mkcFGF). The owner approved the mockups (a6) and the notes of the four past releases, both levels (a7), on 3 November 2026, with no changes.
 
 What this builds on:
 - The plan of record is `docs/ENGAGEMENT_DESIGN.md` §7 milestone E, including both "Owner's answers" blocks (2 November 2026), which override its bullets.
@@ -25,8 +25,14 @@ The owner reviewed the first version of the mockups. The answers below are built
 | E6 | Squirtle's three highlights | **OK as drafted.** |
 | E7 | Other browsers | **Yes**: an Install step where the browser supports it. |
 | E8 | Dismissing the Take the tour card | **A quiet "Not now" link.** |
+| a6 | Wave 4 mockups | **Approved**, no changes. |
+| a7 | Notes of the four past releases, highlights and full notes | **Approved**, no changes. |
+| q49 | Cyndaquil: say that social features appear once the server's admin turns them on? | **Yes**: the last New line reads "Swaps, the feed and the weekly challenge appear once the person who runs your server turns them on." |
+| q50 | Cyndaquil: the challenge's "UK time" and podium rule | **Keep** "Monday to Sunday, UK time" and "the highest counts by Sunday night make the podium". |
+| q51 | Cyndaquil: the "Your Wrapped is ready" notification | **Remove it** (the New line and the Under the hood line). Wrapped stays out of the notes until December. |
+| q52 | Cyndaquil: "Your own shared moments … marked You" | **Keep as written.** |
 
-The release notes in §8 are still drafts: the owner has not yet commented on their content.
+The release notes in §8 (the four past releases, both levels) are approved. The Cyndaquil draft in `releases.json` follows the answers q49–q52 below and is approved with the milestone D test round.
 
 ---
 
@@ -114,7 +120,7 @@ Social **on** is shown; social-off differences are in the last column. Numbers a
 | Collection | 013 | Binder | `view-switch` | tap | **Grid or Book** — Grid shows your cards in rows. Book shows pockets, like a real binder — you can even drag cards between them. Tap **Book**. | skipped after 012 |
 | Scan | 014 | any | `tab-scan` | tap | **Scan your cards** — The red-and-white button opens the camera. Point it at a card and PokéCollector finds it. | same |
 | Scan | 015 | Scanner | `shutter` | info | **This is the shutter** — Fit one card in the frame and tap it. You can take several photos in a row and send them together. | same |
-| Scan | 016–018 | Scanner | `scan-queue` | tap | **Scans take a little while** — Recognising a card can take a minute, so you can leave and come back. Tap the queue to see your scans. Plus the notifications ask (§3.7). | same |
+| Scan | 016–018 | Scanner | `scan-queue` | tap | **Scans take a little while** — Recognising a card can take a minute, so you can leave and come back. Tap Inbox to see your scans. Plus the notifications ask (§3.7). The control is the Inbox button at the top right of the scanner, so the hint and the tap line ("Tap Inbox") use that name. | same |
 | Scan | 019 | Scan queue | `queue-list` | info | **Photos wait here** — Each photo shows as recognising, then ready to review. Review a scan to add it to your collection. Even offline, photos wait here and are recognised once you're back online. | empty queue: the page header |
 | Search | 020 | any | `tab-search` | tap | **Find any card or set** — Search is where you look things up, in sets or the Pokédex. | same |
 | Search | 021 | Search | `search-field` | info | **Type it any way you like** — Name, set and number in any order — "umbreon 161" works. Small typos get corrected for you. | same |
@@ -140,7 +146,7 @@ The hint layer never guesses from text or layout. It finds a target by a stable 
 <button data-tour="shutter" …>
 ```
 
-- **Hooks live in the real components**, one attribute each, no styling: `today` (Today card wrapper), `challenge-row`, `challenge-hero`, `tab-collection`, `tab-scan`, `tab-search`, `tab-profile` (TabBar and SidebarNav links, so it works on iPad and desktop), `collection-segments`, `first-binder`, `new-list`, `view-switch` (BookViewSwitch), `shutter`, `scan-queue` (the scanner's inbox button), `queue-list`, `search-field`, `browse-sets`, `sets-language`, `tile-trades`, `tile-goals`, `trades-offers`, `back` (the NavBar's back button), `first-goal`, `new-goal`, `row-offline`, `offline-card`. A unit test lists every id the tour uses and checks it exists in the source, so a refactor can't silently drop one.
+- **Hooks live in the real components**, one attribute each, no styling: `today` (Today card wrapper), `challenge-row`, `challenge-hero`, `tab-collection`, `tab-scan`, `tab-search`, `tab-profile` (TabBar and SidebarNav links, so it works on iPad and desktop), `collection-segments`, `first-binder`, `new-list`, `view-switch` (BookViewSwitch), `shutter`, `scan-queue` (the scanner's inbox button), `queue-list`, `search-field`, `browse-sets`, `sets-language`, `tile-trades`, `tile-goals`, `trades-offers`, `back` (the NavBar's back button), `first-goal`, `new-goal`, `row-offline`, `offline-card` (the Storage card of Sync & offline, which shows what is saved on the phone). A unit test lists every id the tour uses and checks it exists in the source, so a refactor can't silently drop one.
 - **A step names its route and its hook.** The step table is data (`tourSteps()`), for example `{ id: 'binder-view', route: /^\/binders\/\d+$/, target: 'view-switch', kind: 'tap' }`.
 - **Waiting for a screen.** After a tap the route changes. `TourSpotlight` waits for the hook with a `MutationObserver` for up to 1.5 s (the page may be a lazy chunk); the screen stays dimmed and the hint hidden until then.
 - **Measuring.** The hole is the target's `getBoundingClientRect()` plus 6 px padding, re-measured on resize, orientation change, `document.fonts.ready`, scroll end and each animation frame while the page is sliding in (the shell's slide transition). If the target is off screen, the page is scrolled until it is centred, with the scrim up so nothing is tappable meanwhile.
@@ -193,7 +199,7 @@ A new account has no binders, no goals and an empty scan queue. The tour never n
 **Other browsers (E7, yes).** When the browser has offered an install (`beforeinstallprompt` was captured), the step reads **Install PokéCollector** with one **Install** button that calls the saved prompt; the two confirmations are the same. If the browser offers nothing, the step is left out.
 
 **Notifications ask (scan-queue step, 016–018).**
-- In the Home Screen app: a paragraph "Want a nudge when scans are ready?" and a tinted **Turn on notifications** button that runs `enablePush()` (`pwa/push.js`) and asks iOS. Tapping the queue button is still the way on.
+- In the Home Screen app: a paragraph "Want a nudge when scans are ready?" and a tinted **Turn on notifications** button that runs `enablePush()` (`pwa/push.js`) and asks iOS. Tapping the Inbox button is still the way on.
 - States: *Declined* — "No problem. You can turn them on later in Settings › Notifications." *On* — "Notifications are on." *Unsupported or offline* — the button is left out.
 - In the browser: no button; "Notifications need the Home Screen app. Add it later and turn them on in Settings › Notifications."
 
@@ -326,7 +332,7 @@ Between Chikorita and Cyndaquil, a small fix release would be **Bayleef**, then 
 
 ### 5.4 Coming next (nonprod only)
 
-`releases.json` has an optional `next` object: the draft of the release being tested, in the same shape without `id` or `date`. Nonprod builds show it as the first block of the version history, under a yellow "Coming next" chip (black on #FFD60A, 14.9) with the line "Draft — not released yet." It is not part of What's new, and the deploy build leaves `next` out (the production build strips it, and a test checks that).
+`releases.json` has an optional `next` object: the draft of the release being tested, in the same shape without `id` or `date`. Nonprod builds show it as the first block of the version history, under a yellow "Coming next" chip (black on #FFD60A, 14.9) with the line "Draft — not released yet." A "See full notes" row at the bottom of the block opens the draft's detail page (`/settings/about/versions/next`), so the owner can read the full notes before approving them. It is not part of What's new, and the deploy build leaves `next` out (the production build strips it, and a test checks that; the gate is described in `docs/NONPROD.md`).
 
 ### 5.5 Data
 
@@ -365,15 +371,21 @@ Between Chikorita and Cyndaquil, a small fix release would be **Bayleef**, then 
 
 | Field | Where | Notes |
 |---|---|---|
-| `whats_new_seen` | users table, `String(16)` nullable | The last release id the trainer has seen. `null` is treated as "set it now, show nothing". |
+| `whats_new_seen` | users table, `String(24)` nullable | The last release id the trainer has seen, or for an account that existed before P16 a marker `since:YYYY-MM-DD` (below). `null` is treated as "set it now, show nothing". |
 | `pc.whatsNew.seen.<userId>` | `localStorage` | Offline copy. The newer of the two (by position in the file) wins. |
 
+**Existing accounts (decided 3 November 2026).** Trainers on older builds should see what they missed, so the migration that adds the column sets every existing user's `whats_new_seen` to `since:YYYY-MM-DD`:
+- the date is that trainer's most recent recorded activity (the latest of their daily check-ins, push subscription `last_seen_at`, sessions' `last_used_at` and collection `added_at`), or `since:2026-10-17` when there is none;
+- the client resolves the marker to the newest release whose `from` is on or before that date, or to "before the first release" when none is, shows everything newer, then writes the real id (a release's `from` is the first day it was available: 18 Oct for Bulbasaur, 20 Oct for Charmander);
+- the endpoint `PUT /api/auth/me/whats-new-seen` (`{ "id": "2026-10-30" }`) only moves forward and replaces a marker with any real id; `GET /api/auth/me` and the sign-in answer carry `whats_new_seen`.
+
 Rules:
-- On start, signed in: if `whats_new_seen` is `null`, set it to `__RELEASE_ID__` and show nothing.
+- On start, signed in: if `whats_new_seen` is `null` (a **new account**; no marker), set it to `__RELEASE_ID__` and show nothing.
 - If it names a release newer than this build (a device not yet updated), show nothing.
 - Otherwise the sheet lists every release newer than `whats_new_seen`, up to the running one.
 - On dismissal, write the running id. Offline, the write goes through the outbox when it is on and is retried at the next sign-in otherwise.
-- A trainer last on a very old build sees everything since, back to the first release.
+- A trainer last on a very old build sees everything since, back to the first release (the marker resolves to "before the first release").
+- The device copy is written first. If the server write fails (offline), this device's copy is then newer than the server's, and the write is retried at the next start (the "sync" case in `planWhatsNew`). It does not go through the offline outbox: that queue is for collection and scan items and shows in Sync & offline.
 
 ---
 

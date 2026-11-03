@@ -74,7 +74,7 @@ export function tourSteps({ social = true, standalone = false, flags = {}, empty
   if (flags.queue) {
     steps.push(
       step('row-offline', PROFILE, 'row-offline', 'tap', 'rowOffline', /^\/profile$/, '/profile'),
-      step('offline-card', PROFILE, 'offline-card', 'info', 'offlineCard', /^\/offline$/, '/offline', { finish: true }),
+      step('offline-card', PROFILE, 'offline-card', 'info', 'offlineCard', /^\/offline$/, '/offline', { finish: true, maxHeight: 280 }),
     )
   } else {
     // Offline features are off: the last step ends the tour (the offline sentence moves to the end card).

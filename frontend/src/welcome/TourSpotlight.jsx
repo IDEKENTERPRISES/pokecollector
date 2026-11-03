@@ -7,6 +7,8 @@ import { TOUR_SECTIONS } from './tourSteps'
 
 export const HOOK_WAIT_MS = 1500
 const RING = 2
+const EDGE_MARGIN = 4
+const BADGE = 30
 const NOTCH_GAP_BELOW = 18
 const NOTCH_GAP_ABOVE = 16
 
@@ -128,12 +130,17 @@ export default function TourSpotlight({ step, title, body, tap, onTap, onNext, o
     const own = parseFloat(getComputedStyle(target).borderTopLeftRadius) || 0
     const width = box.width + pad * 2
     const tall = height + pad * 2
+    // The ring and its badge stay at least 4 px inside the screen, so a control at the edge (Inbox, a + button) is not clipped.
+    const edge = EDGE_MARGIN + RING
+    const left = Math.max(box.left - pad, edge)
+    const top = Math.max(box.top - pad, edge)
+    const right = Math.min(box.left - pad + width, window.innerWidth - edge)
     const next = {
-      left: box.left - pad,
-      top: box.top - pad,
-      width,
-      height: tall,
-      radius: Math.min(Math.max(own, 8) + pad, Math.min(width, tall) / 2),
+      left,
+      top,
+      width: right - left,
+      height: tall - (top - (box.top - pad)),
+      radius: Math.min(Math.max(own, 8) + pad, Math.min(right - left, tall) / 2),
     }
     setRect(prev => (sameRect(prev, next) ? prev : next))
   }, [target, step])
@@ -254,7 +261,11 @@ export default function TourSpotlight({ step, title, body, tap, onTap, onNext, o
               aria-hidden="true"
               data-testid="tour-badge"
               className="absolute grid h-[30px] w-[30px] place-items-center rounded-full bg-accent text-on-accent shadow-[0_2px_8px_rgba(0,0,0,0.5)]"
-              style={{ left: rect.left + rect.width - 18, top: rect.top + rect.height - 18, transition: motion }}
+              style={{
+                left: Math.max(EDGE_MARGIN, Math.min(rect.left + rect.width - 18, viewport.width - EDGE_MARGIN - BADGE)),
+                top: Math.max(EDGE_MARGIN, Math.min(rect.top + rect.height - 18, viewport.height - EDGE_MARGIN - BADGE)),
+                transition: motion,
+              }}
             >
               <Pointer size={16} />
             </span>

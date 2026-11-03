@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronRight, Crown, RefreshCw, Download, Upload, Plus, Pencil, Trash2, User, UserCheck, UserX, Zap, Copy } from 'lucide-react'
+import { Crown, RefreshCw, Download, Upload, Plus, Pencil, Trash2, User, UserCheck, UserX, Zap, Copy } from 'lucide-react'
 import clsx from 'clsx'
 import {
   getSyncStatus, triggerSync, triggerPriceSync, triggerAllPriceSync, rescheduleFullSync, reschedulePriceSync,
@@ -1510,14 +1510,21 @@ export default function Settings() {
           
 
           {/* ── 8. ÜBER DIE APP ── */}
-          {activeSection === 'about' && <section className="space-y-1">
-            <SectionHeader title={t('settings.sectionAbout')} />
-            <SettingsCard>
+          {activeSection === 'about' && <div className="space-y-6">
+            <ListSection header={t('welcome.sectionHeader')} className="!mx-0">
+              <ListRow
+                title={t('welcome.versionHistory')}
+                subtitle={t('welcome.versionHistoryDesc')}
+                to="/settings/about/versions"
+                testId="settings-version-history"
+              />
               {/* The hands-on tour (docs/WELCOME_DESIGN.md §3.1): multi-user mode only. Clears the completion, then starts it. */}
               {multiUser && (
-                <button
-                  type="button"
-                  data-testid="settings-show-tour"
+                <ListRow
+                  title={t('tour.settingsRow')}
+                  subtitle={t('tour.settingsRowDetail')}
+                  chevron
+                  testId="settings-show-tour"
                   onClick={async () => {
                     try {
                       await resetTourDone(user, updateCurrentUser)
@@ -1528,15 +1535,12 @@ export default function Settings() {
                     navigate('/')
                     requestTour()
                   }}
-                  className="ios-press flex min-h-[44px] w-full items-center justify-between gap-3 border-t-[0.5px] border-border px-4 py-[11px] text-left first:border-t-0"
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-body text-text-primary">{t('tour.settingsRow')}</span>
-                    <span className="mt-0.5 block text-footnote text-text-secondary">{t('tour.settingsRowDetail')}</span>
-                  </span>
-                  <ChevronRight size={18} className="flex-shrink-0 text-text-tertiary" aria-hidden="true" />
-                </button>
+                />
               )}
+            </ListSection>
+            <section className="space-y-1">
+            <SectionHeader title={t('settings.sectionAbout')} />
+            <SettingsCard>
               <SettingsRow label={t('settings.app')} description="Pokemon TCG Collection">
                 <span className="text-body text-text-secondary tabular-nums">
                   v{__APP_VERSION__}
@@ -1586,7 +1590,8 @@ export default function Settings() {
                 {t('settings.madeWith')} <a href="https://romerg.de/" target="_blank" rel="noreferrer" className="text-brand-red hover:opacity-80 transition-opacity font-semibold">Gilles Romer</a>
               </p>
             </div>
-          </section>}
+          </section>
+          </div>}
         </>
       )}
 

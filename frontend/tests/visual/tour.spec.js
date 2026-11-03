@@ -461,6 +461,14 @@ test('frames: the notifications ask (idle, declined), Sync & offline and the end
   await page.getByRole('button', { name: 'Start the tour' }).click()
   await walkTo(page, 'scan-queue')
   await expect(card(page).getByRole('button', { name: 'Turn on notifications' })).toBeVisible()
+  await expect(card(page)).toContainText('Tap Inbox to see your scans.')
+  await expect(card(page)).toContainText('Tap Inbox')
+  // The ring and the tap badge stay inside the screen even for a control at the right edge.
+  const edges = await page.evaluate(() => {
+    const inside = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, right: innerWidth - r.right, bottom: innerHeight - r.bottom } }
+    return { ring: inside(document.querySelector('[data-testid=tour-ring]')), badge: inside(document.querySelector('[data-testid=tour-badge]')) }
+  })
+  for (const part of Object.values(edges)) for (const gap of Object.values(part)) expect(gap).toBeGreaterThanOrEqual(3.5)
   await capture(page, testInfo, '016-scan-queue-ask')
   await card(page).getByRole('button', { name: 'Turn on notifications' }).click()
   await expect(card(page)).toContainText('No problem. You can turn them on later')

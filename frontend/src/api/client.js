@@ -100,6 +100,7 @@ export const changeAvatar = (avatarId) => api.put('/auth/me/avatar', { avatar_id
 // The hands-on tour (docs/WELCOME_DESIGN.md §3.10): finished, skipped or dismissed; the earliest completion wins on the server.
 export const setTutorialDone = (outcome, completedAt) => api.put('/auth/me/tutorial', { outcome, completed_at: completedAt }).then(r => r.data)
 export const clearTutorialDone = () => api.delete('/auth/me/tutorial').then(r => r.data)
+export const setWhatsNewSeen = (id) => api.put('/auth/me/whats-new-seen', { id }).then(r => r.data)
 export const changeUsername = (username) => api.put('/auth/me/username', { username }).then(r => r.data)
 
 

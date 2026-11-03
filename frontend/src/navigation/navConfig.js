@@ -61,6 +61,8 @@ export const ROUTES = Object.freeze([
   { path: '/achievements/:userId', section: 'profile', kind: 'pushed', parent: '/leaderboard', titleKey: 'nav.achievements' },
   { path: '/settings', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'nav.settings' },
   { path: '/settings/:section', section: 'profile', kind: 'pushed', parent: '/settings', titleKey: 'nav.settings' },
+  { path: '/settings/about/versions', section: 'profile', kind: 'pushed', parent: '/settings/about', titleKey: 'welcome.versionHistory' },
+  { path: '/settings/about/versions/:id', section: 'profile', kind: 'pushed', parent: '/settings/about/versions', titleKey: 'welcome.versionHistory' },
   { path: '/offline', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'sync.centerTitle' },
   { path: '/migration', section: 'profile', kind: 'pushed', parent: '/profile', titleKey: 'migration.title' },
 ])

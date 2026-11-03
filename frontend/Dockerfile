@@ -8,6 +8,10 @@ RUN npm ci
 COPY VERSION /VERSION
 COPY frontend/ .
 
+# nonprod keeps the "Coming next" draft in the version history; every other build leaves it out (docs/NONPROD.md).
+ARG RELEASE_CHANNEL=production
+ENV VITE_RELEASE_CHANNEL=$RELEASE_CHANNEL
+
 RUN cp public/robots-block.txt public/robots.txt \
     && npm run build
 
