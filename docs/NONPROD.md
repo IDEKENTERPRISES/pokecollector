@@ -7,6 +7,7 @@
 - Phase branches are named `feature/np-pNN-<slug>`, are cut from `origin/nonprod`, and open their PR into `nonprod`.
 - CI runs on every PR and on every push to `nonprod`. A green run on the `nonprod` head is the check before a promotion.
 - After the owner's test round, `nonprod` is merged into `deploy` with the owner's OK. A fix that lands on `deploy` first is merged back into `nonprod`.
+- **Before merging into `deploy`, add the release entry:** in `frontend/src/welcome/releases.json`, move the `next` draft into `releases` as the first entry, with its `id` (the release date), `from`, `date`, `kind` and `nameDate`, and write the next draft (or drop `next`). The owner approves the notes first. The entry's `id` is what What's new shows trainers and what the service worker's build id carries, so a promotion without it shows no sheet. The file's test checks the rules.
 
 ## Set up the stack (once)
 
@@ -50,6 +51,15 @@
 - **Push diagnosis:** the backend log says what happened to each notification (`docker logs <backend> | grep "Notification "`): `queued` or `not queued` (category off, duplicate, nothing to review), `deferred` (quiet hours, with the end time), `skipped` (category off, already reviewed, badge sheet already seen) and `flushed` with `sent=`/`removed=` counts (`sent=0` means no device received it). Any non-2xx answer from a push service (403, 429, 410 …) is logged as a warning. Payloads and push endpoints are never logged.
 - **Scanner:** per-user scanner keys come with the restore and share the provider's quota with prod.
 - **Syncs:** nonprod runs its own scheduled syncs against TCGdex. You can lengthen the intervals in nonprod's Settings.
+
+## "Coming next" in the version history
+
+Settings › About › Version history shows the draft notes of the release being tested (`next` in `frontend/src/welcome/releases.json`) at the top, under a yellow "Coming next" chip, **on nonprod only**.
+
+- The gate is the **build channel**. `docker-compose.nonprod.yml` passes the build argument `RELEASE_CHANNEL: nonprod` to the frontend image, and `frontend/Dockerfile` hands it to Vite as `VITE_RELEASE_CHANNEL`. The base build file (`docker-compose.build.yml`, which `deploy` uses) defaults it to `production`.
+- A build for any other channel **drops `next` from the bundle** (a Vite plugin in `vite.config.js`), so a `deploy` build holds no draft at all, even though the branch's file has one. `frontend/scripts/releases-build.test.mjs` checks this.
+- In the app, `isNonprod()` (`frontend/src/welcome/channel.js`) reads the channel, and the history shows the block and the `/settings/about/versions/next` page only when it is `nonprod`. The draft is not part of the What's new sheet.
+- Running `npm run dev` locally keeps the draft in the file, with the channel on `production`; start it with `VITE_RELEASE_CHANNEL=nonprod npm run dev` to see the block.
 
 ## Previewing Wrapped
 

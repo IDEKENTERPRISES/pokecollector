@@ -326,7 +326,7 @@ Between Chikorita and Cyndaquil, a small fix release would be **Bayleef**, then 
 
 ### 5.4 Coming next (nonprod only)
 
-`releases.json` has an optional `next` object: the draft of the release being tested, in the same shape without `id` or `date`. Nonprod builds show it as the first block of the version history, under a yellow "Coming next" chip (black on #FFD60A, 14.9) with the line "Draft — not released yet." It is not part of What's new, and the deploy build leaves `next` out (the production build strips it, and a test checks that).
+`releases.json` has an optional `next` object: the draft of the release being tested, in the same shape without `id` or `date`. Nonprod builds show it as the first block of the version history, under a yellow "Coming next" chip (black on #FFD60A, 14.9) with the line "Draft — not released yet." A "See full notes" row at the bottom of the block opens the draft's detail page (`/settings/about/versions/next`), so the owner can read the full notes before approving them. It is not part of What's new, and the deploy build leaves `next` out (the production build strips it, and a test checks that; the gate is described in `docs/NONPROD.md`).
 
 ### 5.5 Data
 
@@ -365,15 +365,21 @@ Between Chikorita and Cyndaquil, a small fix release would be **Bayleef**, then 
 
 | Field | Where | Notes |
 |---|---|---|
-| `whats_new_seen` | users table, `String(16)` nullable | The last release id the trainer has seen. `null` is treated as "set it now, show nothing". |
+| `whats_new_seen` | users table, `String(24)` nullable | The last release id the trainer has seen, or for an account that existed before P16 a marker `since:YYYY-MM-DD` (below). `null` is treated as "set it now, show nothing". |
 | `pc.whatsNew.seen.<userId>` | `localStorage` | Offline copy. The newer of the two (by position in the file) wins. |
 
+**Existing accounts (decided 3 November 2026).** Trainers on older builds should see what they missed, so the migration that adds the column sets every existing user's `whats_new_seen` to `since:YYYY-MM-DD`:
+- the date is that trainer's most recent recorded activity (the latest of their daily check-ins, push subscription `last_seen_at`, sessions' `last_used_at` and collection `added_at`), or `since:2026-10-17` when there is none;
+- the client resolves the marker to the newest release whose `from` is on or before that date, or to "before the first release" when none is, shows everything newer, then writes the real id (a release's `from` is the first day it was available: 18 Oct for Bulbasaur, 20 Oct for Charmander);
+- the endpoint `PUT /api/auth/me/whats-new-seen` (`{ "id": "2026-10-30" }`) only moves forward and replaces a marker with any real id; `GET /api/auth/me` and the sign-in answer carry `whats_new_seen`.
+
 Rules:
-- On start, signed in: if `whats_new_seen` is `null`, set it to `__RELEASE_ID__` and show nothing.
+- On start, signed in: if `whats_new_seen` is `null` (a **new account**; no marker), set it to `__RELEASE_ID__` and show nothing.
 - If it names a release newer than this build (a device not yet updated), show nothing.
 - Otherwise the sheet lists every release newer than `whats_new_seen`, up to the running one.
 - On dismissal, write the running id. Offline, the write goes through the outbox when it is on and is retried at the next sign-in otherwise.
-- A trainer last on a very old build sees everything since, back to the first release.
+- A trainer last on a very old build sees everything since, back to the first release (the marker resolves to "before the first release").
+- The device copy is written first. If the server write fails (offline), this device's copy is then newer than the server's, and the write is retried at the next start (the "sync" case in `planWhatsNew`). It does not go through the offline outbox: that queue is for collection and scan items and shows in Sync & offline.
 
 ---
 

@@ -12,3 +12,5 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+      args:
+        RELEASE_CHANNEL: ${RELEASE_CHANNEL:-production}
