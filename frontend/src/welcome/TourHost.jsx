@@ -130,10 +130,20 @@ export default function TourHost() {
   const userRef = useRef(user)
   userRef.current = user
 
+  // Only this host's own tour sets the flag, and only it clears it (What's new waits on the flag, and must not be unblocked by a host that never showed anything).
+  const flagged = useRef(false)
   useEffect(() => {
-    setTourActive(phase !== null)
-    return () => setTourActive(false)
+    if (phase !== null) {
+      flagged.current = true
+      setTourActive(true)
+    } else if (flagged.current) {
+      flagged.current = false
+      setTourActive(false)
+    }
   }, [phase])
+  useEffect(() => () => {
+    if (flagged.current) setTourActive(false)
+  }, [])
 
   // A completion that could not be sent (offline) goes out at the next start and when the device is back online.
   useEffect(() => {
