@@ -19,15 +19,13 @@
         "Your own shared moments appear in the feed too, marked You, with how many reactions they got.",
         "A weekly challenge sets one goal for every trainer each week (Monday to Sunday, UK time). Everyone who finishes earns a badge, and the highest counts by Sunday night make the podium.",
         "The challenge shows on Home under your daily quests and as a Challenge tab on the leaderboard.",
-        "A notification tells you when your 2026 Wrapped is ready on 1 December.",
         "Swaps, the feed and the weekly challenge appear once the person who runs your server turns them on."
       ],
       "better": [],
       "fixed": []
     },
     "underTheHood": [
-      "Swaps, the feed and the challenge have an on/off switch for the whole server.",
-      "The Wrapped notification is sent once per trainer per year."
+      "Swaps, the feed and the challenge have an on/off switch for the whole server."
     ]
   },
   "releases": [

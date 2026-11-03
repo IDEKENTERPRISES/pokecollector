@@ -1,6 +1,6 @@
 # Welcome and What's new — design for PokéCollector
 
-Status: build started 3 November 2026 at the owner's request (P15, P16). Mockups: the Design canvas, row **"Wave 4 — Welcome and what's new"** (https://claude.ai/artifact/QNJ3UNo7XYj1ze96mkcFGF). The owner's review of the mockups (a6) and the release notes (a7) is still open; any changes from it are folded into this doc and the build.
+Status: build started 3 November 2026 at the owner's request (P15, P16). Mockups: the Design canvas, row **"Wave 4 — Welcome and what's new"** (https://claude.ai/artifact/QNJ3UNo7XYj1ze96mkcFGF). The owner approved the mockups (a6) and the notes of the four past releases, both levels (a7), on 3 November 2026, with no changes.
 
 What this builds on:
 - The plan of record is `docs/ENGAGEMENT_DESIGN.md` §7 milestone E, including both "Owner's answers" blocks (2 November 2026), which override its bullets.
@@ -25,8 +25,14 @@ The owner reviewed the first version of the mockups. The answers below are built
 | E6 | Squirtle's three highlights | **OK as drafted.** |
 | E7 | Other browsers | **Yes**: an Install step where the browser supports it. |
 | E8 | Dismissing the Take the tour card | **A quiet "Not now" link.** |
+| a6 | Wave 4 mockups | **Approved**, no changes. |
+| a7 | Notes of the four past releases, highlights and full notes | **Approved**, no changes. |
+| q49 | Cyndaquil: say that social features appear once the server's admin turns them on? | **Yes**: the last New line reads "Swaps, the feed and the weekly challenge appear once the person who runs your server turns them on." |
+| q50 | Cyndaquil: the challenge's "UK time" and podium rule | **Keep** "Monday to Sunday, UK time" and "the highest counts by Sunday night make the podium". |
+| q51 | Cyndaquil: the "Your Wrapped is ready" notification | **Remove it** (the New line and the Under the hood line). Wrapped stays out of the notes until December. |
+| q52 | Cyndaquil: "Your own shared moments … marked You" | **Keep as written.** |
 
-The release notes in §8 are still drafts: the owner has not yet commented on their content.
+The release notes in §8 (the four past releases, both levels) are approved. The Cyndaquil draft in `releases.json` follows the answers q49–q52 below and is approved with the milestone D test round.
 
 ---
 
