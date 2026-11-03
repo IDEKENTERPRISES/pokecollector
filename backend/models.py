@@ -159,6 +159,8 @@ class User(Base):
     role = Column(String, default="trainer")  # "admin" or "trainer"
     is_active = Column(Boolean, default=True)
     avatar_id = Column(Integer, nullable=True)  # Pokemon number (1-151) for avatar sprite
+    tutorial_completed_at = Column(DateTime, nullable=True)  # engagement P15: when the tour was finished, skipped or dismissed
+    tutorial_outcome = Column(String(12), nullable=True)  # 'finished', 'skipped' or 'dismissed'
     public_handle = Column(String, nullable=True)
     is_profile_public = Column(Boolean, default=False, nullable=False)
     public_show_values = Column(Boolean, default=False, nullable=False)

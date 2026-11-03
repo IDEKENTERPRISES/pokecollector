@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
@@ -95,6 +95,17 @@ def validate_new_password(password: str | None) -> None:
 def validate_role(role: str | None) -> None:
     if role is not None and role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail=f"role must be one of: {', '.join(VALID_ROLES)}")
+
+
+TUTORIAL_OUTCOMES = ("finished", "skipped", "dismissed")
+
+
+def tutorial_fields(user) -> dict:
+    done = user.tutorial_completed_at
+    return {
+        "tutorial_completed_at": done.isoformat() if done else None,
+        "tutorial_outcome": user.tutorial_outcome,
+    }
 
 
 def validate_avatar_id(avatar_id: int | None):
@@ -265,6 +276,7 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
             "role": user.role,
             "avatar_id": user.avatar_id,
             "must_change_password": user.must_change_password,
+            **tutorial_fields(user),
         },
     )
 
@@ -277,6 +289,7 @@ def get_me(current_user: User = Depends(get_current_user)):
         "role": current_user.role,
         "avatar_id": current_user.avatar_id,
         "must_change_password": current_user.must_change_password,
+        **tutorial_fields(current_user),
     }
 
 
@@ -642,6 +655,40 @@ def change_avatar(data: dict, current_user: User = Depends(get_current_user), db
     current_user.avatar_id = avatar_id
     db.commit()
     return {"id": current_user.id, "username": current_user.username, "role": current_user.role, "avatar_id": current_user.avatar_id}
+
+
+@router.put("/me/tutorial")
+def set_tutorial(data: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Mark the tour done. The earliest completion wins, so two devices that both
+    finish it (one of them offline) agree. `completed_at` is the time the trainer
+    actually finished, sent by a device that was offline at the time."""
+    outcome = data.get("outcome")
+    if outcome not in TUTORIAL_OUTCOMES:
+        raise HTTPException(status_code=400, detail="outcome must be finished, skipped or dismissed")
+    completed_at = datetime.utcnow()
+    raw = data.get("completed_at")
+    if raw:
+        try:
+            parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="completed_at must be an ISO date") from None
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        completed_at = min(parsed, completed_at)
+    if current_user.tutorial_completed_at is None or completed_at < current_user.tutorial_completed_at:
+        current_user.tutorial_completed_at = completed_at
+        current_user.tutorial_outcome = outcome
+        db.commit()
+    return tutorial_fields(current_user)
+
+
+@router.delete("/me/tutorial")
+def clear_tutorial(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """'Show the tour again': forget that the tour was done."""
+    current_user.tutorial_completed_at = None
+    current_user.tutorial_outcome = None
+    db.commit()
+    return tutorial_fields(current_user)
 
 
 @router.put("/me/username")
