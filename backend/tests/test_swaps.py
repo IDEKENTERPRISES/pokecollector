@@ -637,6 +637,20 @@ class PushTextTests(SwapBase):
                 payload = self.payload({"kind": kind, "partner": "Brock", "offer_id": 41}, detailed)
                 self.assertEqual(payload["notification"]["navigate"], "/trades/offers/41", (kind, detailed))
 
+    def test_every_queued_swap_row_carries_the_link_to_its_offer(self):
+        offer = self.propose()
+        self.act(self.misty, offer["id"], "counter", self.counter_body([(self.a2, 1), (self.m1, 1)], note="hi"))
+        self.act(self.ash, offer["id"], "accept")
+        self.act(self.ash, offer["id"], "confirm-swapped")
+        self.act(self.misty, offer["id"], "confirm-swapped")
+        rows = self.queue(self.ash) + self.queue(self.misty)
+        self.assertGreaterEqual({r.details["kind"] for r in rows}, {"offer", "counter", "accepted", "swapped", "completed"})
+        for row in rows:
+            self.assertEqual(row.details["offer_id"], offer["id"])
+            for detailed in (True, False):
+                payload = self.payload(row.details, detailed)
+                self.assertEqual(payload["notification"]["navigate"], f"/trades/offers/{offer['id']}", row.details["kind"])
+
     def test_queued_rows_without_card_names_keep_the_counts(self):
         body = self.payload({"kind": "offer", "partner": "ash", "offer_id": 1, "gives": 1, "gets": 2})["notification"]["body"]
         self.assertEqual(body, "ash offered 2 cards for 1 of yours")
@@ -724,9 +738,97 @@ class UnavailableTests(SwapBase):
                              [("Tst-002", self.ash.id, 1, 0)])
         self.assertEqual(self.client.get("/api/swaps").json()["incoming"][0]["unavailable"][0]["card_name"], "Tst-002")
 
-    def test_only_accepted_offers_carry_it(self):
+    def test_a_fresh_offer_carries_nothing(self):
         offer = self.propose()
         self.assertEqual(offer["unavailable"], [])
+
+    def remove(self, copy):
+        self.db.delete(self.db.get(CollectionItem, copy.id))
+        self.db.commit()
+
+    def problems(self, user, offer_id):
+        self.as_user(user)
+        return self.client.get(f"/api/swaps/{offer_id}").json()["unavailable"]
+
+    def test_a_card_removed_from_a_pending_offer_warns_both_trainers(self):
+        offer = self.propose()
+        self.remove(self.a2)  # the proposer's own card
+        for user in (self.ash, self.misty):
+            found = self.problems(user, offer["id"])
+            self.assertEqual([(p["card_name"], p["giver_user_id"], p["available"]) for p in found], [("Tst-002", self.ash.id, 0)])
+        self.as_user(self.ash)
+        listed = self.client.get("/api/swaps").json()
+        self.assertEqual(listed["outgoing"][0]["unavailable"][0]["card_name"], "Tst-002")
+        self.as_user(self.misty)
+        self.assertEqual(self.client.get("/api/swaps").json()["incoming"][0]["unavailable"][0]["card_name"], "Tst-002")
+        # the receiver is still stopped from accepting
+        self.assertEqual(self.act(self.misty, offer["id"], "accept").status_code, 409)
+
+    def test_the_receivers_missing_card_warns_the_proposer_too(self):
+        offer = self.propose()
+        self.remove(self.m1)
+        self.assertEqual(len(self.problems(self.ash, offer["id"])), 1)
+        self.assertEqual(len(self.problems(self.misty, offer["id"])), 1)
+
+    def test_a_card_removed_and_added_back_clears_the_warning_and_the_swap_moves_the_new_copy(self):
+        offer_id = self.accepted()
+        self.remove(self.a2)
+        self.assertEqual(len(self.problems(self.ash, offer_id)), 1)
+        new = self.give("tst-002", self.ash, 1)
+        for user in (self.ash, self.misty):
+            self.assertEqual(self.problems(user, offer_id), [])
+        self.assertEqual(self.act(self.ash, offer_id, "confirm-swapped").status_code, 200)
+        response = self.act(self.misty, offer_id, "confirm-swapped")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.db.expire_all()
+        self.assertEqual(self.db.query(CollectionItem).filter_by(user_id=self.ash.id, card_id="tst-002_en").count(), 0)  # the new copy moved out
+        self.assertEqual(self.db.query(CollectionItem).filter_by(user_id=self.misty.id, card_id="tst-002_en").one().quantity, 1)
+        self.assertEqual(self.offer_row(offer_id).state, "completed")
+
+    def test_a_pending_offer_clears_when_the_card_is_added_back_and_accept_rebinds(self):
+        offer = self.propose()
+        self.remove(self.a2)
+        new = self.give("tst-002", self.ash, 1)
+        self.assertEqual(self.problems(self.misty, offer["id"]), [])
+        self.assertEqual(self.act(self.misty, offer["id"], "accept").status_code, 200)
+        item = next(i for i in self.offer_row(offer["id"]).items if i.giver_user_id == self.ash.id)
+        self.assertEqual(item.collection_item_id, new.id)
+
+    def test_a_partly_removed_stack_is_short(self):
+        offer = self.propose([(self.a1, 2), (self.m1, 1)])
+        row = self.db.get(CollectionItem, self.a1.id)
+        row.quantity = 1
+        self.db.commit()
+        for user in (self.ash, self.misty):
+            found = self.problems(user, offer["id"])
+            self.assertEqual([(p["needed"], p["available"]) for p in found], [(2, 1)])
+
+    def test_a_different_variant_added_back_is_still_flagged(self):
+        offer_id = self.accepted()
+        self.remove(self.a2)
+        other = CollectionItem(card_id="tst-002_en", user_id=self.ash.id, quantity=1, variant="Holo", lang="en", condition="NM")
+        self.db.add(other)
+        self.db.commit()
+        for user in (self.ash, self.misty):
+            self.assertEqual(len(self.problems(user, offer_id)), 1)
+        self.act(self.ash, offer_id, "confirm-swapped")
+        self.assertEqual(self.act(self.misty, offer_id, "confirm-swapped").status_code, 409)
+
+    def test_a_different_condition_or_other_trainers_copy_does_not_count(self):
+        offer_id = self.accepted()
+        self.remove(self.a2)
+        self.db.add(CollectionItem(card_id="tst-002_en", user_id=self.ash.id, quantity=1, variant="Normal", lang="en", condition="HP"))
+        self.db.add(CollectionItem(card_id="tst-002_en", user_id=self.misty.id, quantity=1, variant="Normal", lang="en", condition="NM"))
+        self.db.commit()
+        self.assertEqual(len(self.problems(self.ash, offer_id)), 1)
+
+    def test_one_re_added_copy_cannot_cover_two_items(self):
+        offer = self.propose([(self.a1, 1), (self.a2, 1), (self.m1, 1)])
+        self.remove(self.a1)
+        self.remove(self.a2)
+        self.give("tst-001", self.ash, 1)
+        found = self.problems(self.ash, offer["id"])
+        self.assertEqual([p["card_name"] for p in found], ["Tst-002"])
 
 
 class CandidateTests(SwapBase):

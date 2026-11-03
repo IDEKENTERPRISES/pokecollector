@@ -200,7 +200,7 @@ export default function SwapOffer() {
   const gives = (offer.values?.you?.gives) ?? 0
   const gets = (offer.values?.you?.gets) ?? 0
   const run = (action) => act.mutate({ action })
-  const blockedOnOpen = open && problems?.length > 0
+  const blockedOnOpen = open && unavailable.length > 0 // for both trainers; only the receiver's Accept is held back
   const openCard = item => setOpenedCard({ ...item, id: item.card_id, name: item.card_name })
 
   const endedSentence = () => {
@@ -249,8 +249,8 @@ export default function SwapOffer() {
           unavailable={unavailable}
           viewerId={viewerId}
           offline={offline}
-          onCancel={actions.includes('decline') ? () => setConfirming('decline') : undefined}
-          cancelLabel={t('swaps.decline')}
+          onCancel={actions.includes('decline') ? () => setConfirming('decline') : actions.includes('cancel') ? () => setConfirming('cancel') : undefined}
+          cancelLabel={t(actions.includes('decline') ? 'swaps.decline' : 'swaps.cancelOffer')}
         />
       )}
       {offer.state === 'completed' && <SuccessCard offer={offer} t={t} />}

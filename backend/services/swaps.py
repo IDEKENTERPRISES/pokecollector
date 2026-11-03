@@ -338,12 +338,55 @@ def counter_offer(db: Session, offer: SwapOffer, actor: User, items, cash_amount
     return offer
 
 
-def find_unavailable(db: Session, offer: SwapOffer) -> list[dict]:
-    """Copies on the table that are gone, belong to somebody else now, or are short."""
-    problems = []
+def _same_value(a, b, default: str) -> bool:
+    return (a or default) == (b or default)
+
+
+def resolve_copies(db: Session, offer: SwapOffer) -> list[tuple[SwapOfferItem, CollectionItem | None, int]]:
+    """For each item: the copy the giver can hand over now and how many of it are free for this item.
+
+    The recorded copy is used while the giver still owns it with enough on hand. Removing a card and adding
+    it again makes a new collection row, so otherwise the narrowest equivalent copy is used: the same giver,
+    card, variant, condition and language as the offer recorded. Two items never count the same cards twice.
+    """
+    claimed: dict[int, int] = {}
+    resolved = []
     for item in offer.items:
-        copy = db.query(CollectionItem).filter(CollectionItem.id == item.collection_item_id).first()
-        available = int(copy.quantity or 0) if copy is not None and copy.user_id == item.giver_user_id else 0
+        need = int(item.quantity)
+        original = db.query(CollectionItem).filter(CollectionItem.id == item.collection_item_id).first()             if item.collection_item_id is not None else None
+        if original is not None and original.user_id != item.giver_user_id:
+            original = None
+        candidates = [original] if original is not None else []
+        if item.card_id and item.giver_user_id is not None:
+            others = db.query(CollectionItem).filter(
+                CollectionItem.user_id == item.giver_user_id,
+                CollectionItem.card_id == item.card_id,
+            ).order_by(CollectionItem.id).all()
+            candidates += [
+                c for c in others
+                if (original is None or c.id != original.id)
+                and _same_value(c.variant, item.variant, "Normal")
+                and _same_value(c.condition, item.condition, "NM")
+                and _same_value(c.lang, item.lang, "en")
+            ]
+        best, best_free = None, -1
+        for copy in candidates:
+            free = int(copy.quantity or 0) - claimed.get(copy.id, 0)
+            if free >= need:
+                best, best_free = copy, free
+                break  # the recorded copy first, then the oldest equivalent that covers it
+            if free > best_free:
+                best, best_free = copy, free
+        if best is not None and best_free > 0:
+            claimed[best.id] = claimed.get(best.id, 0) + min(need, best_free)
+        resolved.append((item, best, max(best_free, 0)))
+    return resolved
+
+
+def find_unavailable(db: Session, offer: SwapOffer, resolved=None) -> list[dict]:
+    """Cards on the table the giver no longer has (or has too few of). A re-added card counts as present."""
+    problems = []
+    for item, _copy, available in (resolved if resolved is not None else resolve_copies(db, offer)):
         if available < int(item.quantity):
             problems.append({
                 "item_id": item.id,
@@ -356,6 +399,20 @@ def find_unavailable(db: Session, offer: SwapOffer) -> list[dict]:
     return problems
 
 
+def rebind_items(db: Session, offer: SwapOffer) -> dict[int, CollectionItem]:
+    """Point every item at the copy it resolves to; call after `find_unavailable` came back empty.
+    Returns item id -> copy."""
+    copies = {}
+    for item, copy, _available in resolve_copies(db, offer):
+        if copy is None:
+            raise SwapUnavailable(find_unavailable(db, offer))
+        if item.collection_item_id != copy.id:
+            item.collection_item_id = copy.id
+        copies[item.id] = copy
+    db.flush()
+    return copies
+
+
 def accept_offer(db: Session, offer: SwapOffer, actor: User, revision: int | None = None,
                  now: datetime.datetime | None = None) -> SwapOffer:
     now = now or _now()
@@ -363,6 +420,7 @@ def accept_offer(db: Session, offer: SwapOffer, actor: User, revision: int | Non
     problems = find_unavailable(db, offer)
     if problems:
         raise SwapUnavailable(problems)
+    rebind_items(db, offer)
     offer.state = ACCEPTED
     offer.turn_user_id = None
     _touch(offer, now)
@@ -474,6 +532,7 @@ def complete_offer(db: Session, offer: SwapOffer, now: datetime.datetime | None 
     if problems:
         raise SwapUnavailable(problems)
 
+    rebind_items(db, offer)
     copies = {
         item.id: db.query(CollectionItem).options(joinedload(CollectionItem.card)).filter(
             CollectionItem.id == item.collection_item_id
@@ -670,6 +729,9 @@ def serialize_offers(db: Session, offers: list[SwapOffer], viewer_id: int) -> li
 
     result = []
     for offer in offers:
+        live = offer.state in OPEN_STATES or offer.state == ACCEPTED
+        resolved = resolve_copies(db, offer) if live else []
+        now_copy = {item.id: copy.id for item, copy, _free in resolved if copy is not None}
         partner_id = other_party(offer, viewer_id)
         mine_confirmed = offer.from_confirmed_at if viewer_id == offer.from_user_id else offer.to_confirmed_at
         theirs_confirmed = offer.to_confirmed_at if viewer_id == offer.from_user_id else offer.from_confirmed_at
@@ -686,14 +748,14 @@ def serialize_offers(db: Session, offers: list[SwapOffer], viewer_id: int) -> li
             "actions": actions_for(offer, viewer_id),
             "note": offer.note,
             "changes": _changes_view(offer, viewer_id),
-            "unavailable": find_unavailable(db, offer) if offer.state == ACCEPTED else [],
+            "unavailable": find_unavailable(db, offer, resolved) if live else [],
             "cash": {"amount": float(offer.cash_amount or 0), "payer_user_id": offer.cash_payer_user_id},
             "items": [
                 {
                     "id": item.id,
                     "giver_user_id": item.giver_user_id,
                     "gives": item.giver_user_id == viewer_id,
-                    "collection_item_id": item.collection_item_id,
+                    "collection_item_id": now_copy.get(item.id, item.collection_item_id),
                     "card_id": item.card_id,
                     "card_name": item.card_name,
                     "set_id": item.set_id,

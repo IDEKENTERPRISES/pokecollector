@@ -132,6 +132,7 @@ export function SwapOfferRow({ offer }) {
     gives.length ? fill(t('swaps.rowYouGive'), { cards: names(gives) + (Number(offer.cash?.amount) > 0 ? ` ${t('swaps.andCash')}` : '') }) : null,
     fill(t(status.key), { name: partner }) + suffix,
     finished ? fill(t('swaps.rowOn'), { date: age }) : fill(t('swaps.rowAgo'), { age }),
+    (offer.unavailable?.length ?? 0) > 0 ? t('swaps.cardMissing') : null,
   ].filter(Boolean).join('. ') + '.'
   return (
     <Link
@@ -148,6 +149,9 @@ export function SwapOfferRow({ offer }) {
         </span>
         <span className="truncate text-footnote text-text-secondary">{offerSummary(offer, t)}</span>
         <SwapStatusChip offer={offer} variant="dot" suffix={suffix} />
+        {(offer.unavailable?.length ?? 0) > 0 && (
+          <span data-testid="swap-card-missing" className="mt-[3px] text-caption-1 font-semibold text-red">{t('swaps.cardMissing')}</span>
+        )}
       </span>
       <span aria-hidden="true" className="relative h-[50px] w-[42px] flex-shrink-0">
         <CardArt item={gets[0] ?? gives[0]} width={28} height={39} radius={3} glow={false} className="!absolute left-0 top-0" />
