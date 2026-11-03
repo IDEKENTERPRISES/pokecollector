@@ -475,6 +475,8 @@ class WrappedReadyPushTests(RecapBase):
     def test_quiet_hours_hold_it_back_until_morning(self):
         self.with_cards()
         self.set_zone("Pacific/Auckland")
+        self.db.add(UserSetting(user_id=self.user.id, key="notify_quiet_hours", value="true"))
+        self.db.commit()
         late = datetime.datetime(2026, 12, 1, 9, 30)  # 22:30 on 1 December in Auckland: quiet hours
         self.assertEqual(recap.queue_wrapped_ready(self.db, late), 1)
         with patch.object(notifications.push, "send_to_user", return_value={"sent": 1, "removed": 0}) as send:

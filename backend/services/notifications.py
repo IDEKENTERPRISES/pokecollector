@@ -100,7 +100,7 @@ def default_settings() -> dict[str, str]:
     """Defaults merged into the settings API response."""
     defaults = {pref_key(c.id): "true" if c.default else "false" for c in CATEGORIES.values()}
     defaults[DIGEST_HOUR_KEY] = str(DEFAULT_DIGEST_HOUR)
-    defaults[QUIET_ENABLED_KEY] = "true"
+    defaults[QUIET_ENABLED_KEY] = "false"
     defaults[SHOW_DETAILS_KEY] = "true"
     return defaults
 
@@ -145,7 +145,7 @@ def digest_hour(db: Session, user_id: int) -> int:
 
 def quiet_hours_enabled(db: Session, user_id: int) -> bool:
     value = _setting(db, user_id, QUIET_ENABLED_KEY)
-    return True if value is None else value.strip().lower() in {"true", "1", "yes", "on"}
+    return False if value is None else value.strip().lower() in {"true", "1", "yes", "on"}
 
 
 def show_details(db: Session, user_id: int) -> bool:

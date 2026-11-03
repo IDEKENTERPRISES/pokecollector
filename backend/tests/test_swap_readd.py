@@ -185,7 +185,15 @@ class PushSendingSanityTests(SwapBase):
         self.assertTrue(any("offered" in b for b in bodies), bodies)
         self.assertTrue(any("reacted" in b for b in bodies), bodies)
 
-    def test_both_wait_for_eight_in_quiet_hours(self):
+    def test_both_go_out_at_night_by_default(self):
+        night = datetime.datetime(2026, 10, 30, 22, 50)
+        self.queue_both(night)
+        notifications.flush_due(self.db, now=night)
+        self.assertEqual(len(self.bodies()), 2)
+
+    def test_both_wait_for_eight_when_quiet_hours_are_on(self):
+        self.db.add(UserSetting(user_id=self.misty.id, key="notify_quiet_hours", value="true"))
+        self.db.commit()
         night = datetime.datetime(2026, 10, 30, 22, 50)
         self.queue_both(night)
         notifications.flush_due(self.db, now=night)

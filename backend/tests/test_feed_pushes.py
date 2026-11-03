@@ -174,6 +174,7 @@ class FeedPushTests(FeedPushBase):
         self.assertEqual(self.flush(T0), [])
 
     def test_quiet_hours_hold_the_push_until_morning(self):
+        self.setting(self.user, "notify_quiet_hours", "true")
         event = self.set_event(self.user)
         night = datetime.datetime(2026, 10, 30, 23, 30)
         self.react(event, self.other, at=night)

@@ -28,7 +28,7 @@ export function digestHour(settings) {
   return DIGEST_HOURS.includes(hour) ? hour : 18
 }
 
-export const quietHoursEnabled = settings => isOn(settings?.notify_quiet_hours, true)
+export const quietHoursEnabled = settings => isOn(settings?.notify_quiet_hours, false)
 
 // Pushes name cards, prices and badges unless this is off (the server then sends short texts).
 export const showDetailsEnabled = settings => isOn(settings?.notify_show_details, true)

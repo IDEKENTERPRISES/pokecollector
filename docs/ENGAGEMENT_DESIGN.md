@@ -332,7 +332,7 @@ Size: S = one PR, M = a few days of worker time, L = several PRs.
 - Wishlist dips: the effective price is at least 15 % below `avg30` **and** at least €1 lower (constants). Each card is told at most once a week.
 - Big movers: owned cards move by the existing `price_alert_threshold` percent (default 10) **and** at least €2. That repurposes the dead global setting as the default.
 - New sets: when a sync marks sets `is_new`, push to users with the category on. `send_new_sets_notification` is also called for Telegram.
-- The digest is one push a day at 18:00 in the user's time zone (falling back to the server's). Quiet hours are 22:00–08:00, and instant pushes wait until the end of quiet hours.
+- The digest is one push a day at 18:00 in the user's time zone (falling back to the server's). Quiet hours are 22:00–08:00 and **off by default**; a trainer who switches them on has instant pushes wait until 08:00 (the digest hour still avoids 22–08).
 - The service worker routes each notification to its page (`navigate`).
 - **Push texts** (English, prices in EUR as stored, a body fitted to 300 characters with "and N more", never more than 4096 bytes). Each queued row keeps a `details` JSON (card name, set name and code, number, price, baseline, drop or change %, threshold, set name, scan count, badge id) as of the event.
 
