@@ -15,7 +15,7 @@ import { useNavBar } from '../navigation/useNavBar'
 import {
   acceptSwap, cancelSwap, confirmSwapped, declineSwap, getApiErrorMessage, getSwap,
 } from '../api/client'
-import { SWAPS_QUERY_KEY, SWAPS_WAITING_QUERY_KEY, useSocialEnabled } from '../social/social'
+import { SWAPS_QUERY_KEY, SWAPS_WAITING_QUERY_KEY, useSocialGate } from '../social/social'
 import {
   FairTradeMeter, SwapHeader, SwapProblemCard, SwapSides, SwappedStep,
 } from '../social/SwapParts'
@@ -140,7 +140,8 @@ function LinkRow({ to, color, icon: Icon, title, last }) {
 export default function SwapOffer() {
   const { offerId } = useParams()
   useNavBar(NAV_BAR)
-  const social = useSocialEnabled()
+  const gate = useSocialGate()
+  const social = gate === 'on'
   const { t } = useSettings()
   const { user } = useAuth()
   const offline = useOffline()
@@ -181,8 +182,8 @@ export default function SwapOffer() {
     },
   })
 
-  if (!social) return <Navigate to="/trades" replace />
-  if (isLoading) {
+  if (gate === 'off') return <Navigate to="/trades" replace />
+  if (gate === 'wait' || isLoading) {
     return <div className="flex flex-col gap-3 pt-2"><div className="skeleton mx-auto h-24 w-48 rounded-xl" /><div className="skeleton h-40 rounded-xl" /></div>
   }
   if (error || !offer) {
@@ -199,7 +200,7 @@ export default function SwapOffer() {
   const gives = (offer.values?.you?.gives) ?? 0
   const gets = (offer.values?.you?.gets) ?? 0
   const run = (action) => act.mutate({ action })
-  const blockedOnOpen = open && problems?.length > 0
+  const blockedOnOpen = open && unavailable.length > 0 // for both trainers; only the receiver's Accept is held back
   const openCard = item => setOpenedCard({ ...item, id: item.card_id, name: item.card_name })
 
   const endedSentence = () => {
@@ -248,8 +249,8 @@ export default function SwapOffer() {
           unavailable={unavailable}
           viewerId={viewerId}
           offline={offline}
-          onCancel={actions.includes('decline') ? () => setConfirming('decline') : undefined}
-          cancelLabel={t('swaps.decline')}
+          onCancel={actions.includes('decline') ? () => setConfirming('decline') : actions.includes('cancel') ? () => setConfirming('cancel') : undefined}
+          cancelLabel={t(actions.includes('decline') ? 'swaps.decline' : 'swaps.cancelOffer')}
         />
       )}
       {offer.state === 'completed' && <SuccessCard offer={offer} t={t} />}

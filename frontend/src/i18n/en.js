@@ -2723,6 +2723,7 @@ const en = {
     notYet: 'Not yet',
     swapped: 'Swapped',
     waitingFor: 'Waiting for {name}',
+    cardMissing: 'Card missing',
     problemTitle: "This swap can't finish yet",
     problemGoneMine: '{name} is no longer in your collection.',
     problemShortMine: 'You have {available} {name}; the swap needs {needed}.',

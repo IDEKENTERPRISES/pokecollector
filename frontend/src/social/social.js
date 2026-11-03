@@ -9,6 +9,21 @@ export function isSocialEnabled(settings, multiUser) {
   return Boolean(multiUser) && settings?.social_features_enabled === 'true'
 }
 
+/**
+ * 'on' | 'off' | 'wait'. Settings arrive after the first render, so a deep link (a tapped swap push opens
+ * /trades/offers/<id> in a fresh window) must wait for them instead of reading the default "off" and bouncing away.
+ */
+export function socialGate(settings, multiUser, settingsLoaded) {
+  if (isSocialEnabled(settings, multiUser)) return 'on'
+  return settingsLoaded ? 'off' : 'wait'
+}
+
+export function useSocialGate() {
+  const { settings, loaded } = useSettings()
+  const { multiUser } = useAuth()
+  return socialGate(settings, multiUser, loaded)
+}
+
 // Swap offers (P11). `waiting` is the server's count of offers whose turn it is.
 export const SWAPS_QUERY_KEY = ['swaps']
 export const SWAPS_WAITING_QUERY_KEY = ['swaps', 'waiting']

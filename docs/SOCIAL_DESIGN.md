@@ -405,6 +405,14 @@ The second Swapped tap (or Accept) answered 409 with `unavailable`. Nothing chan
 
 As built, the problem is known only from the 409. On a reload the offer looks accepted again until someone taps Swapped. The addition in §5.9 puts `unavailable` on the offer itself, so both trainers see it before they tap.
 
+**Missing-card warnings (round D fixes).**
+- `unavailable` is on every open (proposed, countered) and accepted offer in `GET`, not only accepted ones. The same `SwapProblemCard` shows to **both** trainers, naming the card, from the first revision. The proposer's own missing card warns the proposer too.
+- On a pending offer the receiver's Accept stays hidden while a card is missing (accept still answers 409); Counter and Decline stay. The proposer's way out is Cancel offer.
+- The Offers list marks an affected row with a small red "Card missing" line, for both sides.
+- **Re-adding clears it.** Removing a card and adding it again makes a new `collection` row, so the offer item's `collection_item_id` goes stale. `resolve_copies` resolves each item to a copy the giver owns now: the recorded copy while the giver still owns it with enough on hand, otherwise the oldest copy of the **same giver, card, variant, condition and language** as the item recorded (printing-detail tags are not snapshotted, so they are not compared). A different variant or condition is not equivalent and stays flagged.
+- Quantity must still be covered by one copy; two items never count the same cards twice. A stack that is partly removed is short (`available < needed`).
+- Rebinding happens when the copy is used: `accept_offer` and `complete_offer` (the second Swapped tap) call `rebind_items`, which points `collection_item_id` at the resolved copy before the cards move. Reads never write; `GET` shows the resolved id so a counter starts from a copy that exists.
+
 #### 5.5.7 Declined, cancelled, expired — `S3SwapEnded` (state tweak)
 
 | State | Chip (gray) | Sentence | Action |
