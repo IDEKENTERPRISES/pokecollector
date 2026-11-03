@@ -58,3 +58,10 @@
 - With it set, the date window is skipped.
 - `preview_date=YYYY-MM-DD` pretends it is that day (`/api/progress/wrapped?year=2026&preview_date=2026-12-05`) and still enforces the window for that date.
 - Leave it unset on prod; the preview date is ignored there.
+
+### Trying the "Your Wrapped is ready" push
+
+- On prod it goes out once per trainer per year: from 10:00 on 1 December in the trainer's own time zone, or at the next scheduler tick after that (up to 15 January). It needs at least one card added in the year, honours the "Wrapped" switch in Settings › Notifications (on by default), quiet hours and "Show card names and prices" (the detailed text names the card count, never an amount), and tapping it opens `/wrapped/<year>`.
+- With `WRAPPED_PREVIEW=1` (set on nonprod) the date and 10:00 gate are skipped: each trainer's first scheduler tick after the deploy sends it once (the subject is `wrapped:<year>`, so it does not repeat).
+- To try it again, delete that trainer's `wrapped:2026` row from `notification_queue` (or use a trainer who has not had it yet). Without the preview, nothing sends before 1 December.
+- The check runs on the first tick and then every 10 minutes. Look for `category=wrapped` in `docker logs <backend> | grep "Notification "`.
