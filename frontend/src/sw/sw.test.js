@@ -427,6 +427,18 @@ describe('web push', () => {
     })
   })
 
+  it('opens the swap offer for every swap push kind, from a closed or an open app', async () => {
+    for (const path of ['/trades/offers/41', '/trades/offers']) {
+      const closed = click(path, [])
+      await closed.pending
+      expect(closed.calls.opened).toEqual([ORIGIN + path])
+      const client = { url: ORIGIN + '/', focus: async () => {}, navigated: [], navigate: async function (u) { this.navigated.push(u) } }
+      const warm = click(path, [client])
+      await warm.pending
+      expect(client.navigated).toEqual([ORIGIN + path])
+    }
+  })
+
   it('routes each notification to its own page', async () => {
     for (const target of ['/sets', '/wishlist', '/collection', '/scans']) {
       const { pending, calls } = click(target, [])
