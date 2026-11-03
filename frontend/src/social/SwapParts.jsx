@@ -250,6 +250,7 @@ function CashLine({ amount, who }) {
 
 function SideCard({ item, past, added, unavailable, onOpenCard }) {
   const { t, formatPrice } = useSettings()
+  const conditionNote = !past && item.now_condition ? fill(t('swaps.conditionNow'), { now: item.now_condition, was: item.condition || 'NM' }) : null
   const detail = [item.set_code || item.set_id?.toUpperCase(), item.card_number].filter(Boolean).join(' ') + (item.variant ? ` · ${item.variant}` : '')
   const value = formatPrice(Number(item.value_per_card) * Number(item.quantity || 1))
   const quantity = Number(item.quantity) > 1 ? `×${item.quantity} ` : ''
@@ -272,6 +273,9 @@ function SideCard({ item, past, added, unavailable, onOpenCard }) {
           </span>
         ) : (
           <span className="block text-footnote tabular-nums text-text-secondary">{value}</span>
+        )}
+        {conditionNote && !unavailable && (
+          <span data-testid="swap-condition-note" className="block text-caption-1 text-text-secondary">{conditionNote}</span>
         )}
       </span>
     </>
@@ -300,6 +304,7 @@ export function SwapSides({ offer, viewerId, past = false, unavailable = [], onO
   const goneText = item => {
     const problem = gone.get(item.id)
     if (!problem) return null
+    if (problem.reason === 'variant') return fill(t('swaps.otherVariantOnly'), { offer: problem.offer_variant })
     return t(item.gives ? 'swaps.notInYourCollection' : 'swaps.notInTheirs').replace('{name}', partner)
   }
   const addedBy = (item) => (added.has(item.collection_item_id) ? partner : null)
@@ -402,6 +407,11 @@ export function problemSentence(problem, viewerId, partnerName, offer, t) {
   const item = (offer?.items ?? []).find(entry => entry.id === problem.item_id)
   const name = item ? `${problem.card_name} · ${[item.set_code || item.set_id?.toUpperCase(), item.card_number].filter(Boolean).join(' ')}` : problem.card_name
   const mine = problem.giver_user_id === viewerId
+  if (problem.reason === 'variant' && problem.have_variants?.length) {
+    return fill(t(mine ? 'swaps.problemVariantMine' : 'swaps.problemVariantTheirs'), {
+      name, partner: partnerName, have: problem.have_variants.join(' / '), offer: problem.offer_variant,
+    })
+  }
   if (problem.available > 0) {
     return fill(t(mine ? 'swaps.problemShortMine' : 'swaps.problemShortTheirs'), {
       name, available: problem.available, needed: problem.needed, partner: partnerName,

@@ -346,35 +346,41 @@ def resolve_copies(db: Session, offer: SwapOffer) -> list[tuple[SwapOfferItem, C
     """For each item: the copy the giver can hand over now and how many of it are free for this item.
 
     The recorded copy is used while the giver still owns it with enough on hand. Removing a card and adding
-    it again makes a new collection row, so otherwise the narrowest equivalent copy is used: the same giver,
-    card, variant, condition and language as the offer recorded. Two items never count the same cards twice.
+    it again makes a new collection row, so otherwise any copy of the same card (`card_id`, which carries the
+    language) and the same variant counts: Holo against Normal changes the value, but a condition the add flow
+    defaulted ("NM") does not block. Copies of the recorded condition come first, then the oldest. Two items
+    never count the same cards twice.
     """
     claimed: dict[int, int] = {}
     resolved = []
     for item in offer.items:
         need = int(item.quantity)
         original = db.query(CollectionItem).filter(CollectionItem.id == item.collection_item_id).first()             if item.collection_item_id is not None else None
-        if original is not None and original.user_id != item.giver_user_id:
-            original = None
+        if original is not None and (
+            original.user_id != item.giver_user_id
+            or original.card_id != item.card_id
+            or not _same_value(original.variant, item.variant, "Normal")
+        ):
+            original = None  # a reused id, or a copy turned into another card or variant, is not the copy offered
         candidates = [original] if original is not None else []
         if item.card_id and item.giver_user_id is not None:
             others = db.query(CollectionItem).filter(
                 CollectionItem.user_id == item.giver_user_id,
                 CollectionItem.card_id == item.card_id,
             ).order_by(CollectionItem.id).all()
-            candidates += [
+            same = [
                 c for c in others
                 if (original is None or c.id != original.id)
                 and _same_value(c.variant, item.variant, "Normal")
-                and _same_value(c.condition, item.condition, "NM")
-                and _same_value(c.lang, item.lang, "en")
             ]
+            same.sort(key=lambda c: (0 if _same_value(c.condition, item.condition, "NM") else 1, c.id))
+            candidates += same
         best, best_free = None, -1
         for copy in candidates:
             free = int(copy.quantity or 0) - claimed.get(copy.id, 0)
             if free >= need:
                 best, best_free = copy, free
-                break  # the recorded copy first, then the oldest equivalent that covers it
+                break  # the recorded copy first, then the closest equivalent that covers it
             if free > best_free:
                 best, best_free = copy, free
         if best is not None and best_free > 0:
@@ -384,19 +390,42 @@ def resolve_copies(db: Session, offer: SwapOffer) -> list[tuple[SwapOfferItem, C
 
 
 def find_unavailable(db: Session, offer: SwapOffer, resolved=None) -> list[dict]:
-    """Cards on the table the giver no longer has (or has too few of). A re-added card counts as present."""
+    """Cards on the table the giver no longer has (or has too few of). A re-added card counts as present.
+
+    When the giver holds the card only in another variant, `reason` is "variant" and `have_variants` /
+    `offer_variant` say which, so the warning can explain itself.
+    """
     problems = []
     for item, _copy, available in (resolved if resolved is not None else resolve_copies(db, offer)):
         if available < int(item.quantity):
-            problems.append({
+            problem = {
                 "item_id": item.id,
                 "card_id": item.card_id,
                 "card_name": item.card_name,
                 "giver_user_id": item.giver_user_id,
                 "needed": int(item.quantity),
                 "available": available,
-            })
+            }
+            if available == 0 and item.card_id and item.giver_user_id is not None:
+                other = db.query(CollectionItem.variant).filter(
+                    CollectionItem.user_id == item.giver_user_id,
+                    CollectionItem.card_id == item.card_id,
+                    CollectionItem.quantity > 0,
+                ).all()
+                have = sorted({v or "Normal" for (v,) in other})
+                if have:
+                    problem["reason"] = "variant"
+                    problem["have_variants"] = have
+                    problem["offer_variant"] = item.variant or "Normal"
+            problems.append(problem)
     return problems
+
+
+def _now_condition(item: SwapOfferItem, copy: CollectionItem | None) -> str | None:
+    """The condition of the copy that stands in for the item now, only when it differs from the offer's."""
+    if copy is None or _same_value(copy.condition, item.condition, "NM"):
+        return None
+    return copy.condition or "NM"
 
 
 def rebind_items(db: Session, offer: SwapOffer) -> dict[int, CollectionItem]:
@@ -731,7 +760,8 @@ def serialize_offers(db: Session, offers: list[SwapOffer], viewer_id: int) -> li
     for offer in offers:
         live = offer.state in OPEN_STATES or offer.state == ACCEPTED
         resolved = resolve_copies(db, offer) if live else []
-        now_copy = {item.id: copy.id for item, copy, _free in resolved if copy is not None}
+        now_copies = {item.id: copy for item, copy, _free in resolved if copy is not None}
+        now_copy = {item_id: copy.id for item_id, copy in now_copies.items()}
         partner_id = other_party(offer, viewer_id)
         mine_confirmed = offer.from_confirmed_at if viewer_id == offer.from_user_id else offer.to_confirmed_at
         theirs_confirmed = offer.to_confirmed_at if viewer_id == offer.from_user_id else offer.from_confirmed_at
@@ -765,6 +795,7 @@ def serialize_offers(db: Session, offers: list[SwapOffer], viewer_id: int) -> li
                     "variant": item.variant,
                     "condition": item.condition,
                     "lang": item.lang,
+                    "now_condition": _now_condition(item, now_copies.get(item.id)),
                     "quantity": int(item.quantity),
                     "value_per_card": float(item.value_per_card or 0),
                     "images_small": cards[item.card_id].images_small if item.card_id in cards else None,

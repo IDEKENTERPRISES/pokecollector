@@ -814,13 +814,15 @@ class UnavailableTests(SwapBase):
         self.act(self.ash, offer_id, "confirm-swapped")
         self.assertEqual(self.act(self.misty, offer_id, "confirm-swapped").status_code, 409)
 
-    def test_a_different_condition_or_other_trainers_copy_does_not_count(self):
+    def test_a_different_condition_counts_but_another_trainers_copy_does_not(self):
         offer_id = self.accepted()
         self.remove(self.a2)
-        self.db.add(CollectionItem(card_id="tst-002_en", user_id=self.ash.id, quantity=1, variant="Normal", lang="en", condition="HP"))
         self.db.add(CollectionItem(card_id="tst-002_en", user_id=self.misty.id, quantity=1, variant="Normal", lang="en", condition="NM"))
         self.db.commit()
         self.assertEqual(len(self.problems(self.ash, offer_id)), 1)
+        self.db.add(CollectionItem(card_id="tst-002_en", user_id=self.ash.id, quantity=1, variant="Normal", lang="en", condition="HP"))
+        self.db.commit()
+        self.assertEqual(self.problems(self.ash, offer_id), [])
 
     def test_one_re_added_copy_cannot_cover_two_items(self):
         offer = self.propose([(self.a1, 1), (self.a2, 1), (self.m1, 1)])
