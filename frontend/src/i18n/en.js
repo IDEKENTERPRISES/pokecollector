@@ -3308,6 +3308,10 @@ const en = {
     comingNext: 'Coming next',
     draftNote: 'Draft — not released yet.',
     seeFullNotes: 'See full notes',
+    testHeader: "Test What's new",
+    testAsIfLast: 'As if I last had {name}',
+    testBefore: "As if I'm on a build before {name}",
+    testFooter: 'Reloads the app and opens the real sheet, as if you had updated from that release. Nonprod only.',
   },
 
   recap: {

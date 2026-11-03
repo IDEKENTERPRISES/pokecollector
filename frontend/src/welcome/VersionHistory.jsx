@@ -1,4 +1,5 @@
 import { ChevronRight } from 'lucide-react'
+import { lazy, Suspense } from 'react'
 import { Navigate, useParams } from 'react-router-dom'
 import Link from '../components/ios/TransitionLink'
 import { useSettings } from '../contexts/SettingsContext'
@@ -6,6 +7,9 @@ import { useNavBar } from '../navigation/useNavBar'
 import ReleaseBlock from './ReleaseBlock'
 import { isNonprod } from './channel'
 import { current, findRelease, formatReleaseDate, nextRelease, releaseTitle, releases } from './releases'
+
+// Only built for nonprod (and the dev server); a production build folds TEST_TOOLS to false and drops the chunk.
+const TestWhatsNew = (import.meta.env.DEV || __RELEASE_CHANNEL__ === 'nonprod') ? lazy(() => import('./TestWhatsNew')) : null
 
 const NAV_BAR = {}
 const ROW_CLASS = [
@@ -64,6 +68,7 @@ function List({ t }) {
   return (
     <div className="flex flex-col gap-3" data-testid="version-history">
       {draft && <ComingNext draft={draft} t={t} />}
+      {draft && TestWhatsNew && <Suspense fallback={null}><TestWhatsNew /></Suspense>}
       <div className="overflow-hidden rounded-xl bg-card">
         {releases().map((release) => <ReleaseRow key={release.id} release={release} running={release.id === running} t={t} />)}
       </div>

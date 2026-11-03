@@ -424,11 +424,32 @@ test.describe('Coming next', () => {
     await expect(detail.getByRole('heading', { name: 'New', level: 3 })).toBeVisible()
   })
 
+  test('Test What's new: a row reloads the app and opens the real sheet as if updated from that release', async ({ page }) => {
+    const puts = []
+    await install(page, { seen: '2026-10-30', channel: 'nonprod', puts })
+    await page.goto('/settings/about/versions')
+    await expect(page.getByTestId('test-whats-new-2026-10-29')).toContainText('As if I last had Squirtle')
+    await expect(page.getByTestId('test-whats-new-2026-10-23')).toContainText('As if I last had Charmander')
+    await expect(page.getByTestId('test-whats-new-2026-10-19')).toContainText('As if I last had Bulbasaur')
+    await expect(page.getByTestId('test-whats-new-before')).toContainText("As if I'm on a build before Bulbasaur")
+    await page.getByTestId('test-whats-new-2026-10-23').click()
+    await expect(sheet(page)).toBeVisible()
+    expect(await blockNames(page)).toEqual(['Chikorita', 'Squirtle'])
+    expect(await page.evaluate(() => localStorage.getItem('pc.whatsNew.test.1'))).toBeNull() // used once
+    await sheet(page).getByRole('button', { name: 'Done' }).click()
+    await expect.poll(() => puts).toEqual(['2026-10-30'])
+    await page.reload()
+    await expect(page.getByTestId('nav-bar')).toBeVisible()
+    await page.waitForTimeout(500)
+    await expect(sheet(page)).toHaveCount(0)
+  })
+
   test('is not shown on a deploy-style build, and its detail route goes back to the list', async ({ page }) => {
     await install(page, { seen: '2026-10-30' })
     await page.goto('/settings/about/versions')
     await expect(page.getByTestId('version-history')).toBeVisible()
     await expect(page.getByTestId('coming-next')).toHaveCount(0)
+    await expect(page.getByText("Test What's new")).toHaveCount(0)
     await expect(page.getByText('Cyndaquil')).toHaveCount(0)
     await page.goto('/settings/about/versions/next')
     await expect(page).toHaveURL(/\/settings\/about\/versions$/)

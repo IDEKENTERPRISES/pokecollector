@@ -17,7 +17,7 @@ export default function WhatsNewSheet({ isOpen, onClose, onSeeAll, releases }) {
       isOpen={isOpen}
       onClose={onClose}
       title={t('welcome.whatsNew')}
-      className="!bg-[rgba(28,28,30,0.92)]"
+      opaque
       leading={<span />}
       trailing={{ label: t('welcome.done'), onPress: onClose }}
       footer={<Button variant="gray" size="lg" full onClick={onSeeAll} data-testid="whats-new-see-all">{t('welcome.seeEverything')}</Button>}

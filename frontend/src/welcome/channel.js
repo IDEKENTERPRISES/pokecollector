@@ -10,3 +10,4 @@ export function releaseChannel() {
 export function isNonprod() {
   return releaseChannel() === 'nonprod'
 }
+

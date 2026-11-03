@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
@@ -39,4 +39,15 @@ test('a deploy-style build leaves `next` (and the Cyndaquil draft) out of the bu
   assert.equal(plugin.transform('{}', join(root, 'package.json')), null)
   assert.equal(releasesPlugin({ channel: 'production', command: 'serve' }).transform(text, file), null)
   assert.equal(releasesPlugin({ channel: 'nonprod', command: 'build' }).transform(text, file).code, text)
+})
+
+test('a built production bundle holds none of the nonprod test tools code (their English strings sit in the language file) (checked when dist/ exists)', { skip: !existsSync(join(root, 'dist', 'assets')) }, () => {
+  // Only meaningful for a production build; a nonprod build (VITE_RELEASE_CHANNEL=nonprod) keeps them on purpose.
+  if (releaseChannel() === 'nonprod') return
+  const files = readdirSync(join(root, 'dist', 'assets')).filter(name => name.endsWith('.js'))
+  for (const name of files) {
+    const code = readFileSync(join(root, 'dist', 'assets', name), 'utf-8')
+    assert.doesNotMatch(code, /pc\.whatsNew\.test\./, name)
+    assert.doesNotMatch(code, /Cyndaquil/, name)
+  }
 })

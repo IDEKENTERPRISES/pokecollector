@@ -4,7 +4,9 @@ import { setWhatsNewSeen } from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import WhatsNewSheet from './WhatsNewSheet'
 import { current, planWhatsNew } from './releases'
+import { isNonprod } from './channel'
 import { readLocalSeen, writeLocalSeen } from './seen'
+import { takeTestOverride } from './testOverride'
 import { useTourActive } from './tourBus'
 
 /**
@@ -37,7 +39,11 @@ export default function WhatsNewHost() {
     if (userId == null || !hasField || decidedFor.current === userId) return
     decidedFor.current = userId
     const running = current()?.id
-    const plan = planWhatsNew({ serverSeen, localSeen: readLocalSeen(userId) })
+    // Nonprod only: a "Test What's new" choice stands in for both seen values, once.
+    const override = (import.meta.env.DEV || __RELEASE_CHANNEL__ === 'nonprod') && isNonprod() ? takeTestOverride(userId) : null
+    const plan = override
+      ? planWhatsNew({ serverSeen: override, localSeen: override })
+      : planWhatsNew({ serverSeen, localSeen: readLocalSeen(userId) })
     if (plan.action === 'show') setMissed(plan.missed)
     else if ((plan.action === 'init' || plan.action === 'sync') && running) save(running)
   }, [userId, hasField, serverSeen, save])
