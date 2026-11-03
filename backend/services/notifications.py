@@ -44,6 +44,13 @@ QUIET_START_HOUR = 22
 QUIET_END_HOUR = 8
 QUEUE_RETENTION_DAYS = 30
 
+# Reactions and comments on a trainer's feed events (docs/SOCIAL_DESIGN.md §6.7).
+# The first activity on an event pushes at once; more within this many minutes folds into one follow-up push.
+FEED_PUSH_WINDOW_MINUTES = 15
+# Most pushes of this category per trainer per rolling hour; the rest waits as one summary.
+FEED_PUSH_HOURLY_CAP = 6
+FEED_PUSH_CAP_WINDOW_MINUTES = 60
+
 TIME_ZONE_KEY = "time_zone"
 DIGEST_HOUR_KEY = "notify_digest_hour"
 QUIET_ENABLED_KEY = "notify_quiet_hours"
@@ -78,6 +85,7 @@ CATEGORIES: dict[str, Category] = {
     "badges": Category("badges", True, INSTANT, "/achievements", "badge"),
     "goal_milestones": Category("goal_milestones", True, INSTANT, "/goals", "goal"),
     "swap_offers": Category("swap_offers", True, INSTANT, "/trades/offers", "swap offer"),
+    "feed_activity": Category("feed_activity", True, INSTANT, "/leaderboard/activity", "reaction or comment"),
 }
 # Swap offers are social: the frontend shows their Settings row only while the admin's switch is on.
 UI_CATEGORIES = [c.id for c in CATEGORIES.values() if c.timing]
@@ -834,6 +842,9 @@ def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, 
             row.send_after = quiet_hours_end(now, zone)
             _log("deferred", category, user_id, subject, f"reason=quiet_hours until={row.send_after.isoformat()}")
             return
+    if category == "feed_activity":  # sends every due row of the trainer, folded per event
+        flush_feed_activity(db, user_id, now, result)
+        return
     count = scans_needing_review(db, user_id) if category == "scans_ready" else 0
     row.sent_at = now
     if not category_enabled(db, user_id, category):
@@ -966,3 +977,259 @@ def on_scan_job_finished(db: Session, job, now: datetime.datetime | None = None)
                 _log("not queued", "scans_ready", job.user_id, f"job:{job.id}", "reason=nothing_to_review")
     except Exception:
         logger.exception("Could not queue the scans-ready notification for job %s", getattr(job, "id", None))
+
+
+# --- reactions and comments on feed events -------------------------------------------------------
+# Rows: subject `e{event}:r:{actor}:{kind}` (a reaction) or `e{event}:c:{comment}` (a comment), owner = the
+# event's trainer. `details`: kind, event_id, actor, label (what the event was, never an amount) and
+# `lead` (this row opened a window and pushes at once). Flags set at send time: `pushed`, `head` (the
+# first row of one push, so pushes can be counted), `capped` (held back by the hourly cap).
+
+
+def _feed_event_label(db: Session, event) -> str:
+    """What the event was, as the push names it: "Base Set completion", "Charizard ex pull". Never an amount."""
+    from services.progress.evaluator import (
+        EVENT_ACHIEVEMENT_UNLOCKED, EVENT_BIG_PULL, EVENT_GOAL_COMPLETED, EVENT_SET_COMPLETED,
+    )
+
+    payload = event.payload or {}
+    if event.kind == EVENT_SET_COMPLETED:
+        name = _clip(payload.get("set_name"), 50)
+        return f"{name} completion" if name else "set completion"
+    if event.kind == EVENT_BIG_PULL:
+        name = _clip(payload.get("name"), 50)
+        if not name and payload.get("card_id"):
+            card = db.query(Card).filter(Card.id == payload["card_id"]).first()
+            name = _clip(card.name, 50) if card else ""
+        return f"{name} pull" if name else "big pull"
+    if event.kind == EVENT_ACHIEVEMENT_UNLOCKED:
+        from services.achievements import registry_by_id
+
+        name = _clip((registry_by_id().get(payload.get("achievement_id") or event.subject_key) or {}).get("name"), 50)
+        return f"{name} badge" if name else "badge"
+    if event.kind == EVENT_GOAL_COMPLETED:
+        name = _clip(payload.get("title"), 50)
+        return f"{name} goal" if name else "goal"
+    return "challenge result"
+
+
+def feed_activity_link(event_id: int, comments: bool) -> str:
+    """Where the push opens: the feed at the event, with its comments sheet open for a comment."""
+    return f"/leaderboard/activity?event={int(event_id)}" + ("&comments=1" if comments else "")
+
+
+def _feed_window_end(db: Session, owner_id: int, event_id: int, now: datetime.datetime) -> datetime.datetime | None:
+    """When the current window on the event ends, or None when no window is open (the next activity leads)."""
+    window = datetime.timedelta(minutes=FEED_PUSH_WINDOW_MINUTES)
+    rows = db.query(NotificationQueue).filter(
+        NotificationQueue.user_id == owner_id,
+        NotificationQueue.category == "feed_activity",
+        NotificationQueue.subject_key.like(f"e{int(event_id)}:%"),
+        NotificationQueue.created_at > now - datetime.timedelta(hours=2),
+    ).all()
+    ends = []
+    for row in rows:
+        details = row.details or {}
+        if row.sent_at is not None and details.get("pushed"):
+            ends.append(row.sent_at + window)
+        elif row.sent_at is None and details.get("lead"):
+            ends.append(row.send_after + window)
+    end = max(ends, default=None)
+    return end if end is not None and end > now else None
+
+
+def _queue_feed_activity(db: Session, event, actor, subject: str, details: dict, now) -> bool:
+    from services.social_feature import social_enabled
+
+    if actor.id == event.user_id or not social_enabled(db):
+        return False
+    end = _feed_window_end(db, event.user_id, event.id, now)
+    details = {
+        **details, "event_id": event.id, "actor": actor.username,
+        "label": _feed_event_label(db, event), "lead": end is None,
+    }
+    key = f"e{event.id}:{subject}"
+    if not enqueue(db, event.user_id, "feed_activity", key, now=now, details=details):
+        return False
+    if end is not None:
+        db.flush()
+        row = db.query(NotificationQueue).filter_by(
+            user_id=event.user_id, category="feed_activity", subject_key=key
+        ).first()
+        row.send_after = max(row.send_after, end)
+    return True
+
+
+def notify_feed_reaction(db: Session, event, actor, kind: str, now: datetime.datetime | None = None) -> bool:
+    """Another trainer reacted to the event's owner. Never for your own event. The caller commits."""
+    return _queue_feed_activity(
+        db, event, actor, f"r:{actor.id}:{kind}", {"kind": "reaction", "reaction": kind},
+        now or datetime.datetime.utcnow(),
+    )
+
+
+def notify_feed_comment(db: Session, event, actor, comment, now: datetime.datetime | None = None) -> bool:
+    return _queue_feed_activity(
+        db, event, actor, f"c:{comment.id}", {"kind": "comment"}, now or datetime.datetime.utcnow()
+    )
+
+
+def cancel_feed_reaction(db: Session, event_id: int, actor_id: int, kind: str) -> None:
+    """A reaction was taken back: if its push has not gone out, it never does."""
+    from models import UserEvent
+
+    owner_id = db.query(UserEvent.user_id).filter(UserEvent.id == event_id).scalar()
+    if owner_id is None:
+        return
+    db.query(NotificationQueue).filter(
+        NotificationQueue.user_id == owner_id,
+        NotificationQueue.category == "feed_activity",
+        NotificationQueue.subject_key == f"e{event_id}:r:{actor_id}:{kind}",
+        NotificationQueue.sent_at.is_(None),
+    ).delete(synchronize_session=False)
+
+
+def _feed_row_still_there(db: Session, row: NotificationQueue) -> bool:
+    """False when the reaction was removed or the comment deleted while its push waited."""
+    from models import EventComment, EventReaction
+
+    parts = row.subject_key.split(":")
+    try:
+        event_id = int(parts[0][1:])
+        if parts[1] == "r":
+            return db.query(EventReaction.id).filter_by(
+                event_id=event_id, user_id=int(parts[2]), kind=parts[3]
+            ).first() is not None
+        return db.query(EventComment.id).filter_by(id=int(parts[2]), event_id=event_id).first() is not None
+    except (IndexError, ValueError):
+        return False
+
+
+def _names_phrase(names: list[str]) -> str:
+    names = [_clip(n, 24) for n in names]
+    if len(names) == 1:
+        return names[0]
+    if len(names) == 2:
+        return f"{names[0]} and {names[1]}"
+    return f"{names[0]} and {len(names) - 1} others"
+
+
+def build_feed_activity_payload(rows: list[dict], detailed: bool, event_id: int | None = None) -> str:
+    """One push about the activity on one event (or, without `event_id`, a summary of several).
+
+    Detailed: "Misty and 2 others reacted to your Base Set completion", "3 new comments on your Charizard ex
+    pull". Content-light: no names, no event. Never an amount. A push with a comment opens the comments sheet.
+    """
+    reactions = [r for r in rows if r.get("kind") == "reaction"]
+    comments = [r for r in rows if r.get("kind") == "comment"]
+    label = _clip(rows[0].get("label"), 70) if rows else ""
+    if event_id is None:
+        body = f"{len(rows)} new reactions and comments" if detailed else "You have new reactions and comments"
+        return push.encode_payload_fitted("New activity", body, CATEGORIES["feed_activity"].navigate)
+    navigate = feed_activity_link(event_id, bool(comments))
+    if reactions and comments:
+        title = "New activity"
+        body = (
+            f"{len(rows)} new reactions and comments on your {label}"
+            if detailed and label else "New reactions and comments on your activity"
+        )
+    elif comments:
+        title = "New comment" if len(comments) == 1 else "New comments"
+        if not detailed or not label:
+            body = "Someone commented on your activity" if len(comments) == 1 else "New comments on your activity"
+        elif len(comments) == 1:
+            body = f"{_clip(comments[0].get('actor'), 24) or 'Someone'} commented on your {label}"
+        else:
+            body = f"{len(comments)} new comments on your {label}"
+    else:
+        title = "New reaction" if len(reactions) == 1 else "New reactions"
+        if not detailed or not label:
+            body = "Someone reacted to your activity" if len(reactions) == 1 else "New reactions on your activity"
+        else:
+            actors = list(dict.fromkeys(r.get("actor") or "Someone" for r in reactions))
+            body = f"{_names_phrase(actors)} reacted to your {label}"
+    return push.encode_payload_fitted(title, body, navigate)
+
+
+def _feed_pushes_in_window(db: Session, user_id: int, now: datetime.datetime) -> list[datetime.datetime]:
+    """Send times of this trainer's feed pushes in the last hour, oldest first."""
+    rows = db.query(NotificationQueue).filter(
+        NotificationQueue.user_id == user_id,
+        NotificationQueue.category == "feed_activity",
+        NotificationQueue.sent_at > now - datetime.timedelta(minutes=FEED_PUSH_CAP_WINDOW_MINUTES),
+    ).all()
+    return sorted(r.sent_at for r in rows if (r.details or {}).get("head"))
+
+
+def _mark_feed_rows(rows, now: datetime.datetime, *, pushed: bool) -> None:
+    for index, row in enumerate(rows):
+        row.sent_at = now
+        if pushed:
+            row.details = {**(row.details or {}), "pushed": True, **({"head": True} if index == 0 else {})}
+
+
+def _hold_feed_rows(rows, until: datetime.datetime) -> None:
+    for row in rows:
+        row.send_after = until
+        row.details = {**(row.details or {}), "capped": True}
+
+
+def flush_feed_activity(db: Session, user_id: int, now: datetime.datetime, result: dict) -> None:
+    """Send what is due for one trainer: one push per event, or one summary after the cap held pushes back.
+    Handles every due row of the trainer at once, so the rows of one event fold into one push."""
+    from services.feed import visible_event
+    from services.social_feature import social_enabled
+
+    due = db.query(NotificationQueue).filter(
+        NotificationQueue.user_id == user_id,
+        NotificationQueue.category == "feed_activity",
+        NotificationQueue.sent_at.is_(None),
+        NotificationQueue.send_after <= now,
+    ).order_by(NotificationQueue.id).all()
+    if not due:
+        return
+    if not social_enabled(db) or not category_enabled(db, user_id, "feed_activity"):
+        _mark_feed_rows(due, now, pushed=False)
+        _log("skipped", "feed_activity", user_id, "feed", "reason=social_or_category_off")
+        return
+    groups: dict[int, list[NotificationQueue]] = {}
+    for row in due:
+        event_id = int(row.subject_key.split(":")[0][1:])
+        if _feed_row_still_there(db, row) and visible_event(db, user_id, event_id, include_own=True) is not None:
+            groups.setdefault(event_id, []).append(row)
+        else:
+            _mark_feed_rows([row], now, pushed=False)
+            _log("skipped", "feed_activity", user_id, row.subject_key, "reason=gone")
+    if not groups:
+        return
+    detailed = show_details(db, user_id)
+
+    def blocked() -> datetime.datetime | None:
+        sent = _feed_pushes_in_window(db, user_id, now)
+        if len(sent) < FEED_PUSH_HOURLY_CAP:
+            return None
+        return sent[len(sent) - FEED_PUSH_HOURLY_CAP] + datetime.timedelta(minutes=FEED_PUSH_CAP_WINDOW_MINUTES)
+
+    all_rows = [r for rs in groups.values() for r in rs]
+    held_before = any((r.details or {}).get("capped") for r in all_rows)
+    if held_before and len(groups) > 1:
+        until = blocked()
+        if until is not None:
+            _hold_feed_rows(all_rows, until)
+            return
+        outcome = _send(db, user_id, build_feed_activity_payload([r.details or {} for r in all_rows], detailed))
+        _mark_feed_rows(all_rows, now, pushed=True)
+        result["instant"] += 1
+        _log("flushed", "feed_activity", user_id, "summary", _sent_reason(outcome))
+        return
+    for event_id, rows in groups.items():
+        until = blocked()
+        if until is not None:
+            _hold_feed_rows(rows, until)
+            _log("deferred", "feed_activity", user_id, f"e{event_id}", f"reason=hourly_cap until={until.isoformat()}")
+            continue
+        outcome = _send(db, user_id, build_feed_activity_payload([r.details or {} for r in rows], detailed, event_id))
+        _mark_feed_rows(rows, now, pushed=True)
+        db.flush()
+        result["instant"] += 1
+        _log("flushed", "feed_activity", user_id, f"e{event_id}", _sent_reason(outcome))

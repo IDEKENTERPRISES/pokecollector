@@ -9,12 +9,14 @@ export const BIG_PULL_EUR = 20
 export const SHARE_ROWS = [
   { kind: 'set_completed', key: 'feed_share_set_completed', fallback: true },
   { kind: 'achievement_unlocked', key: 'feed_share_achievement_unlocked', fallback: true },
-  { kind: 'big_pull', key: 'feed_share_big_pull', fallback: false },
-  { kind: 'goal_completed', key: 'feed_share_goal_completed', fallback: false },
+  { kind: 'big_pull', key: 'feed_share_big_pull', fallback: true },
+  { kind: 'goal_completed', key: 'feed_share_goal_completed', fallback: true },
   // P13 adds this key; the row shows once the server reports it.
   { kind: 'challenge_finished', key: 'feed_share_challenge_finished', fallback: true, needsServerKey: true },
 ]
 export const SHARE_VALUES_KEY = 'feed_share_values'
+// Everything is shared until a trainer switches it off (mirrors services/feed.py).
+export const SHARE_VALUES_DEFAULT = true
 export const CHALLENGE_BOARD_KEY = 'challenge_on_board'
 export const INTRO_SEEN_KEY = 'feed_intro_seen'
 

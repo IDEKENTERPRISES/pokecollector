@@ -13,6 +13,7 @@ export const NOTIFY_CATEGORIES = [
   { id: 'wrapped', fallback: true, label: 'notifyPrefs.wrapped', desc: 'notifyPrefs.wrappedDesc' },
   { id: 'goal_milestones', fallback: true, label: 'notifyPrefs.goalMilestones', desc: 'notifyPrefs.goalMilestonesDesc' },
   { id: 'swap_offers', fallback: true, label: 'notifyPrefs.swapOffers', desc: 'notifyPrefs.swapOffersDesc', social: true },
+  { id: 'feed_activity', fallback: true, label: 'notifyPrefs.feedActivity', desc: 'notifyPrefs.feedActivityDesc', social: true },
 ]
 export const DIGEST_HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
 

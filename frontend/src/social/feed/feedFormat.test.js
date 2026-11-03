@@ -109,3 +109,13 @@ describe('isOn', () => {
     expect(isOn({}, 'a', true)).toBe(true)
   })
 })
+
+describe('shared by default', () => {
+  it('every sharing option is on until a trainer switches it off', async () => {
+    const { SHARE_ROWS, SHARE_VALUES_DEFAULT, isOn } = await import('./feedFormat')
+    expect(SHARE_ROWS.every(row => row.fallback === true)).toBe(true)
+    expect(SHARE_VALUES_DEFAULT).toBe(true)
+    expect(isOn({}, 'feed_share_big_pull', true)).toBe(true)
+    expect(isOn({ feed_share_big_pull: 'false' }, 'feed_share_big_pull', true)).toBe(false)
+  })
+})

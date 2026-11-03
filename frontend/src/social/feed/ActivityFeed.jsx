@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { CloudOff } from 'lucide-react'
-import { addFeedReaction, getFeed, removeFeedReaction } from '../../api/client'
+import { addFeedReaction, getFeed, getFeedEvent, removeFeedReaction } from '../../api/client'
 import Button from '../../components/ios/Button'
 import PokeBall from '../../components/ios/PokeBall'
 import { CardModal } from '../../components/CardItem'
@@ -19,6 +20,8 @@ const PAGE_SIZE = 20
 
 /** Apply `change(item)` to one feed item in every cached page. */
 function patchItem(queryClient, queryKey, eventId, change) {
+  // The event a push opened, kept on its own when it is not in the loaded pages.
+  queryClient.setQueryData([...FEED_QUERY_KEY, 'event', eventId], old => (old ? change(old) : old))
   queryClient.setQueryData(queryKey, (old) => {
     if (!old) return old
     return {
@@ -64,6 +67,10 @@ export default function ActivityFeed() {
   const [sharingOpen, setSharingOpen] = useState(false)
   const [commentsFor, setCommentsFor] = useState(null)
   const [selectedCard, setSelectedCard] = useState(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const linkedId = Number.parseInt(searchParams.get('event') || '', 10) || null
+  const linkedComments = searchParams.get('comments') === '1'
+  const handledLink = useRef(null)
   const queryKey = useMemo(() => [...FEED_QUERY_KEY, pricePrimaryField], [pricePrimaryField])
 
   const query = useInfiniteQuery({
@@ -74,6 +81,32 @@ export default function ActivityFeed() {
     refetchOnMount: 'always',
   })
   const items = useMemo(() => (query.data?.pages ?? []).flatMap(page => page.items), [query.data])
+  // A reaction or comment push opens the feed at its event (?event=ID, plus &comments=1 for the comments sheet).
+  // The event may be older than the loaded pages, so it is fetched on its own and pinned on top then.
+  const linkedQuery = useQuery({
+    queryKey: [...FEED_QUERY_KEY, 'event', linkedId],
+    enabled: Boolean(linkedId),
+    retry: false,
+    queryFn: () => getFeedEvent(linkedId, { price_field: pricePrimaryField }),
+  })
+  const linkedItem = linkedId ? (items.find(item => item.id === linkedId) ?? linkedQuery.data ?? null) : null
+  const pinned = linkedItem && !items.some(item => item.id === linkedItem.id) ? linkedItem : null
+  useEffect(() => {
+    if (!linkedId || handledLink.current === linkedId) return
+    if (linkedQuery.isError && !linkedItem) {
+      // Gone, or no longer shared: just the feed.
+      handledLink.current = linkedId
+      setSearchParams({}, { replace: true })
+      return
+    }
+    if (!linkedItem) return
+    handledLink.current = linkedId
+    if (linkedComments) setCommentsFor(linkedItem)
+    setSearchParams({}, { replace: true })
+    window.requestAnimationFrame(() => {
+      document.querySelector(`[data-event-id="${linkedId}"]`)?.scrollIntoView?.({ block: 'center' })
+    })
+  }, [linkedId, linkedItem, linkedComments, linkedQuery.isError, setSearchParams])
   // A request that got no answer at all means the server can't be reached, banner or not.
   const unreachable = query.isError && !query.error?.response
   const state = feedState({ offline: offline || unreachable, isLoading: query.isLoading, error: query.error, itemCount: items.length })
@@ -128,7 +161,18 @@ export default function ActivityFeed() {
           <Button variant="gray" size="sm" className="mt-3" onClick={() => query.refetch()}>{t('feed.retry')}</Button>
         </div>
       )}
-      {state === 'empty' && <EmptyState onShare={() => setSharingOpen(true)} />}
+      {pinned && (
+        <div data-event-id={pinned.id} className="scroll-mt-4">
+          <FeedEventRow
+            item={pinned}
+            reactionsDisabled={offline}
+            onReact={react}
+            onOpenCard={setSelectedCard}
+            onOpenComments={setCommentsFor}
+          />
+        </div>
+      )}
+      {state === 'empty' && !pinned && <EmptyState onShare={() => setSharingOpen(true)} />}
 
       {state === 'list' && groups.map((group, index) => (
         <Fragment key={`${group.label}-${group.items[0].id}`}>
@@ -147,14 +191,15 @@ export default function ActivityFeed() {
             <h2 className="mt-1 px-1 text-footnote text-text-secondary">{group.label}</h2>
           )}
           {group.items.map(item => (
-            <FeedEventRow
-              key={item.id}
-              item={item}
-              reactionsDisabled={offline}
-              onReact={react}
-              onOpenCard={setSelectedCard}
-              onOpenComments={setCommentsFor}
-            />
+            <div key={item.id} data-event-id={item.id} className="scroll-mt-4">
+              <FeedEventRow
+                item={item}
+                reactionsDisabled={offline}
+                onReact={react}
+                onOpenCard={setSelectedCard}
+                onOpenComments={setCommentsFor}
+              />
+            </div>
           ))}
         </Fragment>
       ))}

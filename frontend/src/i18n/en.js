@@ -2811,6 +2811,8 @@ const en = {
     wrappedDesc: 'Once a year, when your Wrapped is ready on 1 December.',
     goalMilestones: 'Goal milestones',
     swapOffers: 'Swap offers',
+    feedActivity: 'Reactions and comments',
+    feedActivityDesc: 'When another trainer reacts to or comments on your activity. The first one is sent right away, the rest are grouped.',
     swapOffersDesc: 'When someone offers, counters, accepts or declines a swap. Sent right away.',
     goalMilestonesDesc: 'When a goal first reaches 50, 75, 90 and 100 %. Sent right away, naming the goal.',
     digestTime: 'Daily digest time',
