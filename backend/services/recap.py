@@ -11,6 +11,7 @@ recap card and the share image mask them); the push text never names an amount.
 from __future__ import annotations
 
 import datetime
+import logging
 import os
 from collections import Counter, defaultdict
 from zoneinfo import ZoneInfo
@@ -30,6 +31,8 @@ from services.progress import daily
 from services.progress.evaluator import EVENT_SET_COMPLETED
 from services.progress.streak import compute_streak
 from services.progress.xp import level_for_xp, total_xp
+
+logger = logging.getLogger(__name__)
 
 RECAP_FROM_HOUR = 18  # Sunday, local time
 RECAP_SHOW_DAYS = (6, 0, 1)  # Sunday (from 18:00), Monday, Tuesday
@@ -538,9 +541,11 @@ def queue_wrapped_ready(db: Session, now: datetime.datetime | None = None) -> in
             if cards <= 0:
                 continue
             if notifications.enqueue(db, user_id, "wrapped", subject, now=now, details={"year": year, "cards": cards}):
+                db.commit()  # one trainer at a time: a failure for another trainer must not undo this row
                 queued += 1
         except Exception:
             db.rollback()
+            logger.exception("Wrapped-ready check failed for user %s", user_id)
             continue
     db.commit()
     return queued
