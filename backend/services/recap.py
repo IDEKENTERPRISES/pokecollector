@@ -246,11 +246,12 @@ def queue_weekly_recaps(db: Session, now: datetime.datetime | None = None) -> in
     week had activity. One per user per ISO week (the subject key is the week)."""
     from models import NotificationQueue, User
     from services import notifications
+    from services.job_isolation import trainer_savepoint
 
     now = now or datetime.datetime.utcnow()
     queued = 0
     for (user_id,) in db.query(User.id).filter(User.is_active == True).all():  # noqa: E712
-        try:
+        with trainer_savepoint(db, "Weekly recap queueing", user_id):
             if not notifications.category_enabled(db, user_id, "weekly_recap"):
                 continue
             zone = daily.user_zone(db, user_id)
@@ -272,9 +273,6 @@ def queue_weekly_recaps(db: Session, now: datetime.datetime | None = None) -> in
             if notifications.enqueue(db, user_id, "weekly_recap", f"week:{recap['week_key']}", now=now,
                                      details=details):
                 queued += 1
-        except Exception:
-            db.rollback()
-            continue
     db.commit()
     return queued
 
@@ -516,11 +514,12 @@ def queue_wrapped_ready(db: Session, now: datetime.datetime | None = None) -> in
     """
     from models import NotificationQueue, User
     from services import notifications
+    from services.job_isolation import trainer_savepoint
 
     now = now or datetime.datetime.utcnow()
     queued = 0
     for (user_id,) in db.query(User.id).filter(User.is_active == True).all():  # noqa: E712
-        try:
+        with trainer_savepoint(db, "Wrapped-ready check", user_id):
             if not notifications.category_enabled(db, user_id, "wrapped"):
                 continue
             zone = daily.user_zone(db, user_id)
@@ -541,11 +540,6 @@ def queue_wrapped_ready(db: Session, now: datetime.datetime | None = None) -> in
             if cards <= 0:
                 continue
             if notifications.enqueue(db, user_id, "wrapped", subject, now=now, details={"year": year, "cards": cards}):
-                db.commit()  # one trainer at a time: a failure for another trainer must not undo this row
                 queued += 1
-        except Exception:
-            db.rollback()
-            logger.exception("Wrapped-ready check failed for user %s", user_id)
-            continue
     db.commit()
     return queued
