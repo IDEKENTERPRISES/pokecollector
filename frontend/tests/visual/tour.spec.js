@@ -49,11 +49,11 @@ function account(overrides = {}) {
   }
 }
 
-async function install(page, { user = account(), social = true, multiUser = true, binders = [BINDER], goals = [GOAL], standalone = true, ios = false, camera = 'ok' } = {}) {
+async function install(page, { user = account(), social = true, multiUser = true, binders = [BINDER], goals = [GOAL], standalone = true, ios = false, camera = 'ok', queue = false, push = null } = {}) {
   const state = { user, puts: [], clears: 0 }
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.clock.setFixedTime(MID_WEEK)
-  await page.addInitScript(({ account: start, installed, camera: cameraState }) => {
+  await page.addInitScript(({ account: start, installed, camera: cameraState, queueOn, pushState }) => {
     localStorage.setItem('token', 'tour-test-token')
     if (!localStorage.getItem('user')) localStorage.setItem('user', JSON.stringify(start))
     localStorage.setItem('app_language', 'en')
@@ -80,7 +80,24 @@ async function install(page, { user = account(), social = true, multiUser = true
     } else {
       Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: fakeCamera, configurable: true, writable: true })
     }
-  }, { account: user, installed: standalone, camera: camera })
+    if (queueOn) {
+      const add = () => {
+        if (!document.head) return false
+        const meta = document.createElement('meta')
+        meta.name = 'pokecollector-pwa'
+        meta.content = 'sw=0;queue=1'
+        document.head.appendChild(meta)
+        return true
+      }
+      if (!add()) new MutationObserver((_, observer) => { if (add()) observer.disconnect() }).observe(document, { childList: true, subtree: true })
+    }
+    if (pushState) {
+      // Push where the engine has none: 'default' asks and is then declined, 'granted' is already on.
+      window.PushManager = window.PushManager || function PushManager() {}
+      const permission = pushState === 'granted' ? 'granted' : 'default'
+      window.Notification = { permission, requestPermission: async () => 'denied' }
+    }
+  }, { account: user, installed: standalone, camera: camera, queueOn: queue, pushState: push })
   await page.route('**/api/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
@@ -98,6 +115,8 @@ async function install(page, { user = account(), social = true, multiUser = true
       state.user = { ...state.user, tutorial_completed_at: null, tutorial_outcome: null }
       return route.fulfill({ json: { tutorial_completed_at: null, tutorial_outcome: null } })
     }
+    if (path === '/api/health') return route.fulfill({ json: { status: 'ok', service: 'pokemon-tcg-collection', version: '1.51.6', api_level: 1, features: ['idempotency-v1'] } })
+    if (path === '/api/offline/carddb/manifest') return route.fulfill({ json: { enabled: false, format: 1, languages: {} } })
     if (path === '/api/auth/me') return route.fulfill({ json: state.user })
     if (path === '/api/auth/mode') return route.fulfill({ json: { multi_user: multiUser, locked: false } })
     if (path === '/api/challenge') return social ? route.fulfill({ json: CHALLENGE }) : route.fulfill({ status: 404, json: { detail: 'Not found' } })
@@ -182,8 +201,10 @@ async function doStep(page, id, kind) {
     await card(page).getByRole('button', { name: /^(Next|Finish)$/ }).click()
     return
   }
-  if (id === 'view-switch') await page.locator('[data-tour="view-switch"] [data-tour-tap="book"]').click()
-  else await target(page, id).click()
+  // A finger, not a scroll: tap the middle of the control where it is on screen.
+  const control = id === 'view-switch' ? page.locator('[data-tour="view-switch"] [data-tour-tap="book"]').first() : target(page, id)
+  const box = await control.boundingBox()
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
 }
 
 const WALK = [
@@ -298,7 +319,7 @@ test('an account with no binders and no goals is pointed at +, and Book is left 
   expect(state.puts[0].outcome).toBe('finished')
 })
 
-test('with the social switch off there is no challenge, and Trades talks about trading in person', async ({ page }) => {
+test('with the social switch off there is no challenge, and Trades talks about trading in person', async ({ page }, testInfo) => {
   await install(page, { social: false })
   await begin(page)
   await page.getByRole('button', { name: 'Start the tour' }).click()
@@ -309,12 +330,14 @@ test('with the social switch off there is no challenge, and Trades talks about t
   }
   await stepIs(page, 'tile-trades')
   await expect(card(page)).toContainText('Trade cards in person')
+  await capture(page, testInfo, '026-tile-trades-social-off')
   await target(page, 'tile-trades').click()
   await stepIs(page, 'trades-offers')
   await expect(card(page)).toContainText('Live trade and History')
+  await capture(page, testInfo, '028-trades-social-off')
 })
 
-test('an older account gets the Take the tour card; Not now counts as done and the card never returns', async ({ page }) => {
+test('an older account gets the Take the tour card; Not now counts as done and the card never returns', async ({ page }, testInfo) => {
   const state = await install(page, { user: account({ created_at: OLD_ACCOUNT }) })
   await page.goto('/')
   const tourCard = page.getByTestId('take-tour-card')
@@ -322,6 +345,7 @@ test('an older account gets the Take the tour card; Not now counts as done and t
   await expect(tourCard).toContainText('Take the tour')
   await expect(tourCard).toContainText('A one-minute look around PokéCollector')
   await expect(page.getByTestId('tour-center')).toHaveCount(0) // an older account is not started by itself
+  await capture(page, testInfo, '100-home-take-the-tour')
   await page.getByTestId('take-tour-not-now').click()
   await expect(tourCard).toHaveCount(0)
   await expect.poll(() => state.puts.length).toBe(1)
@@ -416,3 +440,57 @@ for (const camera of ['denied', 'none']) {
     expect(state.puts).toHaveLength(0)
   })
 }
+
+/** Do each step the tour is on until it reaches `id` (empty-account variants included). */
+async function walkTo(page, id) {
+  const kinds = { ...Object.fromEntries(WALK), 'new-list': 'info', 'new-goal': 'info', 'row-offline': 'tap', 'offline-card': 'info' }
+  for (let guard = 0; guard < 40; guard += 1) {
+    await expect(card(page)).toHaveAttribute('data-step', /.+/, { timeout: 15000 })
+    const current = await card(page).getAttribute('data-step')
+    if (current === id) return
+    await doStep(page, current, kinds[current])
+    await expect(card(page)).not.toHaveAttribute('data-step', current, { timeout: 15000 })
+  }
+  throw new Error(`never reached ${id}`)
+}
+
+test('frames: the notifications ask (idle, declined), Sync & offline and the end with offline features on', async ({ page }, testInfo) => {
+  test.setTimeout(150000)
+  await install(page, { queue: true, push: 'default', binders: [], goals: [], social: false })
+  await begin(page)
+  await page.getByRole('button', { name: 'Start the tour' }).click()
+  await walkTo(page, 'scan-queue')
+  await expect(card(page).getByRole('button', { name: 'Turn on notifications' })).toBeVisible()
+  await capture(page, testInfo, '016-scan-queue-ask')
+  await card(page).getByRole('button', { name: 'Turn on notifications' }).click()
+  await expect(card(page)).toContainText('No problem. You can turn them on later')
+  await capture(page, testInfo, '017-scan-queue-declined')
+  await walkTo(page, 'row-offline')
+  await capture(page, testInfo, '033-row-offline')
+  await target(page, 'row-offline').click()
+  await stepIs(page, 'offline-card')
+  await capture(page, testInfo, '034-offline-card')
+  await card(page).getByRole('button', { name: 'Finish' }).click()
+  await expect(page.getByRole('heading', { name: "You're ready" })).toBeVisible()
+})
+
+test('frames: notifications already on, and an empty account (+ steps)', async ({ page }, testInfo) => {
+  test.setTimeout(150000)
+  await install(page, { push: 'granted', binders: [], goals: [] })
+  await begin(page)
+  await page.getByRole('button', { name: 'Start the tour' }).click()
+  for (const [id, kind] of WALK.slice(0, 3)) await doStep(page, id, kind)
+  await doStep(page, 'tab-collection', 'tap')
+  await doStep(page, 'collection-segments', 'tap')
+  await stepIs(page, 'new-list')
+  await capture(page, testInfo, '012-new-list')
+  await card(page).getByRole('button', { name: 'Next' }).click()
+  await doStep(page, 'tab-scan', 'tap')
+  await doStep(page, 'shutter', 'info')
+  await stepIs(page, 'scan-queue')
+  await expect(card(page)).toContainText('Notifications are on.')
+  await capture(page, testInfo, '016-scan-queue-on')
+  for (const [id, kind] of WALK.slice(WALK.findIndex(([item]) => item === 'scan-queue'), WALK.findIndex(([item]) => item === 'tile-goals') + 1)) await doStep(page, id, kind)
+  await stepIs(page, 'new-goal')
+  await capture(page, testInfo, '032-new-goal')
+})
