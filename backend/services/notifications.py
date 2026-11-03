@@ -45,8 +45,9 @@ QUIET_END_HOUR = 8
 QUEUE_RETENTION_DAYS = 30
 
 # Reactions and comments on a trainer's feed events (docs/SOCIAL_DESIGN.md §6.7).
-# The first activity on an event pushes at once; more within this many minutes folds into one follow-up push.
-FEED_PUSH_WINDOW_MINUTES = 15
+# The first activity on an event pushes at once; more within this many seconds folds into one follow-up push.
+# The scheduler's notification job runs every 30 s, so the follow-up leaves within about a minute of the window ending.
+FEED_PUSH_WINDOW_SECONDS = 30
 # Most pushes of this category per trainer per rolling hour; the rest waits as one summary.
 FEED_PUSH_HOURLY_CAP = 6
 FEED_PUSH_CAP_WINDOW_MINUTES = 60
@@ -99,7 +100,7 @@ def default_settings() -> dict[str, str]:
     """Defaults merged into the settings API response."""
     defaults = {pref_key(c.id): "true" if c.default else "false" for c in CATEGORIES.values()}
     defaults[DIGEST_HOUR_KEY] = str(DEFAULT_DIGEST_HOUR)
-    defaults[QUIET_ENABLED_KEY] = "true"
+    defaults[QUIET_ENABLED_KEY] = "false"
     defaults[SHOW_DETAILS_KEY] = "true"
     return defaults
 
@@ -144,7 +145,7 @@ def digest_hour(db: Session, user_id: int) -> int:
 
 def quiet_hours_enabled(db: Session, user_id: int) -> bool:
     value = _setting(db, user_id, QUIET_ENABLED_KEY)
-    return True if value is None else value.strip().lower() in {"true", "1", "yes", "on"}
+    return False if value is None else value.strip().lower() in {"true", "1", "yes", "on"}
 
 
 def show_details(db: Session, user_id: int) -> bool:
@@ -1020,7 +1021,7 @@ def feed_activity_link(event_id: int, comments: bool) -> str:
 
 def _feed_window_end(db: Session, owner_id: int, event_id: int, now: datetime.datetime) -> datetime.datetime | None:
     """When the current window on the event ends, or None when no window is open (the next activity leads)."""
-    window = datetime.timedelta(minutes=FEED_PUSH_WINDOW_MINUTES)
+    window = datetime.timedelta(seconds=FEED_PUSH_WINDOW_SECONDS)
     rows = db.query(NotificationQueue).filter(
         NotificationQueue.user_id == owner_id,
         NotificationQueue.category == "feed_activity",

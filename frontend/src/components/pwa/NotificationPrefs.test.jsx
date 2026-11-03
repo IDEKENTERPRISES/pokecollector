@@ -21,7 +21,8 @@ describe('NotificationPrefs', () => {
       ['scans_ready', true], ['wishlist_alerts', true], ['new_sets', true], ['wishlist_dips', true], ['big_movers', false], ['badges', true], ['weekly_recap', false], ['wrapped', true], ['goal_milestones', true], ['swap_offers', true], ['feed_activity', true],
     ])
     expect(digestHour({})).toBe(18)
-    expect(quietHoursEnabled({})).toBe(true)
+    expect(quietHoursEnabled({})).toBe(false)
+    expect(quietHoursEnabled({ notify_quiet_hours: 'true' })).toBe(true)
     expect(showDetailsEnabled({})).toBe(true)
   })
 
@@ -35,7 +36,7 @@ describe('NotificationPrefs', () => {
     const html = renderToStaticMarkup(<NotificationPrefs settings={{ notify_big_movers: 'true', notify_new_sets: 'false', notify_digest_hour: '9' }} save={vi.fn()} t={t} />)
     const tags = switches(html)
     expect(tags).toHaveLength(11)
-    expect(tags.map(checkedOf)).toEqual([true, true, false, true, true, true, false, true, true, true, true])
+    expect(tags.map(checkedOf)).toEqual([true, true, false, true, true, true, false, true, true, false, true])
     for (const key of ['notifyPrefs.scansReadyDesc', 'notifyPrefs.newSetsDesc', 'notifyPrefs.wishlistDipsDesc', 'notifyPrefs.bigMoversDesc', 'notifyPrefs.badgesDesc', 'notifyPrefs.weeklyRecapDesc', 'notifyPrefs.wrappedDesc', 'notifyPrefs.digestTime', 'notifyPrefs.quietHoursDesc', 'notifyPrefs.showDetails', 'notifyPrefs.showDetailsDesc']) {
       expect(html).toContain(key)
     }

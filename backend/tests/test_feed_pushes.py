@@ -22,6 +22,10 @@ def minutes(n):
     return T0 + datetime.timedelta(minutes=n)
 
 
+def seconds(n):
+    return T0 + datetime.timedelta(seconds=n)
+
+
 @unittest.skipUnless(DEPS_AVAILABLE, "FastAPI is not installed")
 class FeedPushBase(FeedBase):
     """ash (self.user) owns the events; misty (self.other), brock and dawn react and comment."""
@@ -82,20 +86,23 @@ class FeedPushTests(FeedPushBase):
         event = self.set_event(self.user)
         self.react(event, self.other)
         self.assertEqual(len(self.flush(T0)), 1)
-        self.react(event, self.brock, at=minutes(3))
-        self.react(event, self.dawn, kind="fire", at=minutes(5))
-        self.assertEqual(self.flush(minutes(5)), [])
-        self.assertEqual(self.flush(minutes(14)), [])
-        pushes = self.flush(minutes(notifications.FEED_PUSH_WINDOW_MINUTES))
+        self.react(event, self.brock, at=seconds(8))
+        self.react(event, self.dawn, kind="fire", at=seconds(20))
+        self.assertEqual(self.flush(seconds(20)), [])
+        self.assertEqual(self.flush(seconds(29)), [])
+        pushes = self.flush(seconds(notifications.FEED_PUSH_WINDOW_SECONDS))
         self.assertEqual([p["body"] for p in pushes], ["brock and dawn reacted to your Test Set completion"])
         self.assertEqual(self.flush(minutes(40)), [])
+
+    def test_the_window_is_thirty_seconds(self):
+        self.assertEqual(notifications.FEED_PUSH_WINDOW_SECONDS, 30)
 
     def test_activity_after_the_window_leads_again(self):
         event = self.set_event(self.user)
         self.react(event, self.other)
         self.flush(T0)
-        self.react(event, self.brock, at=minutes(20))
-        self.assertEqual(len(self.flush(minutes(20))), 1)
+        self.react(event, self.brock, at=seconds(45))
+        self.assertEqual(len(self.flush(seconds(45))), 1)
 
     def test_three_names_become_and_n_others(self):
         rows = [{"kind": "reaction", "actor": name, "label": "Base Set completion"} for name in ("Misty", "Brock", "Dawn")]
@@ -106,10 +113,10 @@ class FeedPushTests(FeedPushBase):
         event = self.pull(self.user)
         self.comment(event, self.other)
         self.flush(T0)
-        self.comment(event, self.brock, at=minutes(2))
-        self.comment(event, self.dawn, at=minutes(4))
-        self.comment(event, self.dawn, at=minutes(6))
-        pushes = self.flush(minutes(15))
+        self.comment(event, self.brock, at=seconds(5))
+        self.comment(event, self.dawn, at=seconds(10))
+        self.comment(event, self.dawn, at=seconds(15))
+        pushes = self.flush(seconds(30))
         self.assertEqual(pushes[0]["body"], "3 new comments on your Big-001 pull")
         self.assertTrue(pushes[0]["navigate"].endswith("&comments=1"))
 
@@ -154,10 +161,10 @@ class FeedPushTests(FeedPushBase):
         event = self.set_event(self.user)
         self.react(event, self.other)
         self.flush(T0)
-        self.react(event, self.brock, at=minutes(2))
+        self.react(event, self.brock, at=seconds(5))
         feed_service.remove_reaction(self.db, event.id, self.brock.id, "cheer")
         self.db.commit()  # the row is still queued; the flush notices it is gone
-        self.assertEqual(self.flush(minutes(15)), [])
+        self.assertEqual(self.flush(seconds(30)), [])
 
     def test_a_deleted_comment_does_not_push(self):
         event = self.set_event(self.user)
@@ -167,6 +174,7 @@ class FeedPushTests(FeedPushBase):
         self.assertEqual(self.flush(T0), [])
 
     def test_quiet_hours_hold_the_push_until_morning(self):
+        self.setting(self.user, "notify_quiet_hours", "true")
         event = self.set_event(self.user)
         night = datetime.datetime(2026, 10, 30, 23, 30)
         self.react(event, self.other, at=night)

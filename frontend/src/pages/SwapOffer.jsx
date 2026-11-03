@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
@@ -151,11 +151,17 @@ export default function SwapOffer() {
   const [problems, setProblems] = useState(null)
   const [openedCard, setOpenedCard] = useState(null)
   const queryKey = [...SWAPS_QUERY_KEY, Number(offerId)]
-  const { data: offer, isLoading, error, refetch } = useQuery({
+  const { data: offer, isLoading, error, refetch, dataUpdatedAt } = useQuery({
     queryKey,
     queryFn: () => getSwap(offerId),
     enabled: social,
+    // The "card missing" warning follows the giver's collection, which changes elsewhere: never trust a cached copy.
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   })
+  // A 409 on Accept keeps its own list of problems on screen; the next fresh copy of the offer replaces it.
+  useEffect(() => { setProblems(null) }, [dataUpdatedAt])
 
   const refresh = (next) => {
     if (next) queryClient.setQueryData(queryKey, next)

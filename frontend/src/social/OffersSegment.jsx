@@ -36,7 +36,7 @@ export default function OffersSegment() {
   const offline = useOffline()
   const [picking, setPicking] = useState(false)
   const { start, element } = useSwapStarter()
-  const { data, isLoading, error } = useQuery({ queryKey: SWAPS_QUERY_KEY, queryFn: getSwaps })
+  const { data, isLoading, error } = useQuery({ queryKey: SWAPS_QUERY_KEY, queryFn: getSwaps, staleTime: 0, refetchOnMount: 'always', refetchOnWindowFocus: true })
   const trainers = useQuery({
     queryKey: ['leaderboard', pricePrimaryField],
     queryFn: () => getLeaderboard({ price_field: pricePrimaryField }).then(response => response.data),
