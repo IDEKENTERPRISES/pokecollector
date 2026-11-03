@@ -25,6 +25,7 @@ from models import (
     Card, CollectionItem, NotificationQueue, Set, User, UserAchievement, UserSetting, WishlistItem,
 )
 from services import push, telegram
+from services.job_isolation import trainer_savepoint
 from services.card_values import effective_market_price, normalize_price_field
 
 logger = logging.getLogger(__name__)
@@ -296,14 +297,15 @@ def on_new_sets(db: Session, set_ids: list[str]) -> None:
     rows = db.query(Set).filter(Set.id.in_(set_ids)).all()
     new_sets = [{"name": s.name, "series": s.series or ""} for s in rows]
     for user_id in _active_user_ids(db):
-        if not category_enabled(db, user_id, "new_sets"):
-            continue
-        try:
-            telegram.send_new_sets_notification(new_sets, db=db, user_id=user_id)
-        except Exception:
-            logger.exception("Telegram new-sets notification failed for user %s", user_id)
-        for s in rows:
-            enqueue(db, user_id, "new_sets", f"set:{s.id}", details={"name": s.name, "series": s.series or ""})
+        with trainer_savepoint(db, "New-sets notification", user_id):
+            if not category_enabled(db, user_id, "new_sets"):
+                continue
+            try:
+                telegram.send_new_sets_notification(new_sets, db=db, user_id=user_id)
+            except Exception:
+                logger.exception("Telegram new-sets notification failed for user %s", user_id)
+            for s in rows:
+                enqueue(db, user_id, "new_sets", f"set:{s.id}", details={"name": s.name, "series": s.series or ""})
     db.commit()
 
 
@@ -359,41 +361,43 @@ def queue_price_events(db: Session, card_ids: list[str], now: datetime.datetime 
         WishlistItem.card_id.in_(ids)
     ).all()
     for item in wishlist:
-        if not category_enabled(db, item.user_id, "wishlist_dips"):
-            continue
-        price = effective_market_price(item.card, price_field=_price_field(db, item.user_id))
-        if is_dip(price, item.card.price_avg30):
-            avg30 = item.card.price_avg30
-            details = _card_details(
-                db, item.card,
-                price=round(price, 2), avg30=round(avg30, 2), drop_pct=round((avg30 - price) / avg30 * 100, 1),
-            )
-            queued += enqueue(
-                db, item.user_id, "wishlist_dips", f"card:{item.card_id}", now=now, repeat_days=REPEAT_DAYS,
-                details=details,
-            )
+        with trainer_savepoint(db, "Wishlist dip check", item.user_id):
+            if not category_enabled(db, item.user_id, "wishlist_dips"):
+                continue
+            price = effective_market_price(item.card, price_field=_price_field(db, item.user_id))
+            if is_dip(price, item.card.price_avg30):
+                avg30 = item.card.price_avg30
+                details = _card_details(
+                    db, item.card,
+                    price=round(price, 2), avg30=round(avg30, 2), drop_pct=round((avg30 - price) / avg30 * 100, 1),
+                )
+                queued += enqueue(
+                    db, item.user_id, "wishlist_dips", f"card:{item.card_id}", now=now, repeat_days=REPEAT_DAYS,
+                    details=details,
+                )
 
     owned = db.query(CollectionItem).join(Card, Card.id == CollectionItem.card_id).filter(
         CollectionItem.card_id.in_(ids)
     ).all()
     seen: set[tuple[int, str]] = set()
     for item in owned:
-        key = (item.user_id, item.card_id)
-        if key in seen or not category_enabled(db, item.user_id, "big_movers"):
-            continue
-        seen.add(key)
-        price = effective_market_price(item.card, price_field=_price_field(db, item.user_id))
-        if is_big_move(price, item.card.price_avg7, mover_threshold(db, item.user_id)):
-            baseline = item.card.price_avg7
-            details = _card_details(
-                db, item.card,
-                price=round(price, 2), baseline=round(baseline, 2),
-                change_pct=round((price - baseline) / baseline * 100, 1),
-            )
-            queued += enqueue(
-                db, item.user_id, "big_movers", f"card:{item.card_id}", now=now, repeat_days=REPEAT_DAYS,
-                details=details,
-            )
+        with trainer_savepoint(db, "Big-mover check", item.user_id):
+            key = (item.user_id, item.card_id)
+            if key in seen or not category_enabled(db, item.user_id, "big_movers"):
+                continue
+            seen.add(key)
+            price = effective_market_price(item.card, price_field=_price_field(db, item.user_id))
+            if is_big_move(price, item.card.price_avg7, mover_threshold(db, item.user_id)):
+                baseline = item.card.price_avg7
+                details = _card_details(
+                    db, item.card,
+                    price=round(price, 2), baseline=round(baseline, 2),
+                    change_pct=round((price - baseline) / baseline * 100, 1),
+                )
+                queued += enqueue(
+                    db, item.user_id, "big_movers", f"card:{item.card_id}", now=now, repeat_days=REPEAT_DAYS,
+                    details=details,
+                )
     db.commit()
     return queued
 
@@ -783,6 +787,17 @@ def _sent_reason(outcome: dict | None) -> str:
     return f"sent={outcome.get('sent', 0)} removed={outcome.get('removed', 0)}{delivered}"
 
 
+def _flush_isolated(db: Session, label: str, user_id: int, step, *args) -> None:
+    """One flush step, committed on its own. Sending commits inside `push.send_to_user`, which a savepoint
+    cannot span, so a failure rolls back only the uncommitted work of this step; steps already committed stay."""
+    try:
+        step(db, *args)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("%s failed for user %s", label, user_id)
+
+
 def flush_due(db: Session, now: datetime.datetime | None = None) -> dict:
     """Send what is due. Run every 30 seconds by the scheduler."""
     now = now or datetime.datetime.utcnow()
@@ -798,12 +813,12 @@ def flush_due(db: Session, now: datetime.datetime | None = None) -> dict:
         if spec is None or spec.timing is None:
             continue
         if spec.timing == INSTANT:
-            _flush_instant(db, row, now, result)
+            _flush_isolated(db, "Notification flush", row.user_id, _flush_instant, row, now, result)
         else:
             by_user_digest.setdefault(row.user_id, []).append(row)
 
     for user_id, rows in by_user_digest.items():
-        _flush_digest(db, user_id, rows, now, result)
+        _flush_isolated(db, "Digest flush", user_id, _flush_digest, user_id, rows, now, result)
 
     cutoff = now - datetime.timedelta(days=QUEUE_RETENTION_DAYS)
     db.query(NotificationQueue).filter(NotificationQueue.created_at < cutoff).delete(synchronize_session=False)
