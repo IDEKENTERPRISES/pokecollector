@@ -49,11 +49,11 @@ function account(overrides = {}) {
   }
 }
 
-async function install(page, { user = account(), social = true, multiUser = true, binders = [BINDER], goals = [GOAL], standalone = true, ios = false } = {}) {
+async function install(page, { user = account(), social = true, multiUser = true, binders = [BINDER], goals = [GOAL], standalone = true, ios = false, camera = 'ok' } = {}) {
   const state = { user, puts: [], clears: 0 }
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.clock.setFixedTime(MID_WEEK)
-  await page.addInitScript(({ account: start, installed }) => {
+  await page.addInitScript(({ account: start, installed, camera: cameraState }) => {
     localStorage.setItem('token', 'tour-test-token')
     if (!localStorage.getItem('user')) localStorage.setItem('user', JSON.stringify(start))
     localStorage.setItem('app_language', 'en')
@@ -73,8 +73,14 @@ async function install(page, { user = account(), social = true, multiUser = true
       return { getTracks: () => [{ stop() {} }] }
     }
     if (!navigator.mediaDevices) Object.defineProperty(navigator, 'mediaDevices', { value: {}, configurable: true })
-    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: fakeCamera, configurable: true, writable: true })
-  }, { account: user, installed: standalone })
+    if (cameraState === 'denied') {
+      Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: async () => { throw new DOMException('denied', 'NotAllowedError') }, configurable: true, writable: true })
+    } else if (cameraState === 'none') {
+      Object.defineProperty(navigator, 'mediaDevices', { value: undefined, configurable: true })
+    } else {
+      Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: fakeCamera, configurable: true, writable: true })
+    }
+  }, { account: user, installed: standalone, camera: camera })
   await page.route('**/api/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
@@ -393,3 +399,20 @@ test('"I\'ll add it now" ends the tour part-way: nothing is written and Home say
   await page.waitForTimeout(1500)
   await expect(page.getByTestId('tour-center')).toHaveCount(0)
 })
+
+for (const camera of ['denied', 'none']) {
+  test(`the Scan steps and the notifications ask still show when the camera is ${camera}`, async ({ page, browserName }, testInfo) => {
+    test.setTimeout(90000)
+    const state = await install(page, { camera })
+    await begin(page)
+    await page.getByRole('button', { name: 'Start the tour' }).click()
+    for (const [id, kind] of WALK.slice(0, WALK.findIndex(([item]) => item === 'scan-queue'))) await doStep(page, id, kind)
+    await stepIs(page, 'scan-queue')
+    await expect(card(page)).toContainText('Scans take a little while')
+    if (browserName === 'chromium') await expect(card(page).getByRole('button', { name: 'Turn on notifications' })).toBeVisible()
+    await capture(page, testInfo, `016-scan-queue-camera-${camera}`)
+    await target(page, 'scan-queue').click()
+    await stepIs(page, 'queue-list')
+    expect(state.puts).toHaveLength(0)
+  })
+}
