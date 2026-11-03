@@ -73,6 +73,7 @@ CATEGORIES: dict[str, Category] = {
     "wishlist_dips": Category("wishlist_dips", True, DIGEST, "/wishlist", "wishlist dip"),
     "big_movers": Category("big_movers", False, DIGEST, "/collection", "big mover"),
     "weekly_recap": Category("weekly_recap", False, INSTANT, "/", "recap"),
+    "wrapped": Category("wrapped", True, INSTANT, "/", "Wrapped"),
     "badges": Category("badges", True, INSTANT, "/achievements", "badge"),
     "goal_milestones": Category("goal_milestones", True, INSTANT, "/goals", "goal"),
     "swap_offers": Category("swap_offers", True, INSTANT, "/trades/offers", "swap offer"),
@@ -879,6 +880,13 @@ def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, 
 
         title, body = build_recap_push(row.details if show_details(db, user_id) else None)
         outcome = _send(db, user_id, push.encode_payload_fitted(title, body, CATEGORIES[category].navigate))
+        result["instant"] += 1
+        _log("flushed", category, user_id, subject, _sent_reason(outcome))
+    elif category == "wrapped":
+        from services.recap import build_wrapped_push
+
+        title, body, navigate = build_wrapped_push(subject, row.details if show_details(db, user_id) else None)
+        outcome = _send(db, user_id, push.encode_payload_fitted(title, body, navigate))
         result["instant"] += 1
         _log("flushed", category, user_id, subject, _sent_reason(outcome))
 

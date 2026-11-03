@@ -213,6 +213,19 @@ def run_progress_nightly_job():
         db.close()
 
 
+_WRAPPED_CHECK_EVERY = datetime.timedelta(minutes=10)
+_last_wrapped_check: datetime.datetime | None = None
+
+
+def _wrapped_check_due(now: datetime.datetime) -> bool:
+    """The Wrapped check loads each trainer's year, so it runs on the first tick and then every 10 minutes."""
+    global _last_wrapped_check
+    if _last_wrapped_check is not None and now - _last_wrapped_check < _WRAPPED_CHECK_EVERY:
+        return False
+    _last_wrapped_check = now
+    return True
+
+
 def run_notification_job():
     """Send due notifications: instant ones after quiet hours, and the daily digest."""
     from database import SessionLocal
@@ -223,6 +236,10 @@ def run_notification_job():
         from services.recap import queue_weekly_recaps
 
         queue_weekly_recaps(db)
+        from services.recap import queue_wrapped_ready
+
+        if _wrapped_check_due(datetime.datetime.utcnow()):
+            queue_wrapped_ready(db)
         flush_due(db)
     except Exception:
         db.rollback()

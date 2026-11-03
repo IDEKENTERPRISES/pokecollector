@@ -282,6 +282,9 @@ class WrappedUnavailable(Exception):
     pass
 
 
+WRAPPED_PUSH_HOUR = 10  # local time on 1 December at which the "ready" push may go out
+
+
 def preview_enabled() -> bool:
     return os.getenv(PREVIEW_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -467,3 +470,77 @@ def wrapped(db: Session, user_id: int, year: int, today: datetime.date | None = 
             "spent": round(sum(float(p.purchase_price or 0) for p in products), 2),
         },
     }
+
+
+def wrapped_push_year(local: datetime.datetime) -> int | None:
+    """The Wrapped year a trainer may be told about at this local time, or None.
+
+    Real mode: from 10:00 local on 1 December until the window closes on 15 January.
+    Preview mode (WRAPPED_PREVIEW): the date and the 10:00 gate are skipped.
+    """
+    year = local.year - 1 if local.month == 1 else local.year
+    if preview_enabled():
+        return year
+    if local.month not in (1, 12):
+        return None
+    if not wrapped_available(year, local.date()):
+        return None
+    if local.date() == datetime.date(year, *WRAPPED_START) and local.hour < WRAPPED_PUSH_HOUR:
+        return None
+    return year
+
+
+def build_wrapped_push(subject_key: str, details: dict | None) -> tuple[str, str, str]:
+    """Title, body and the route the tap opens. The detailed text names the card count, never an amount."""
+    try:
+        year = int(str(subject_key).split("wrapped:", 1)[-1])
+    except ValueError:
+        year = datetime.date.today().year
+    title = f"Your {year} Wrapped is ready"
+    cards = int((details or {}).get("cards") or 0)
+    if cards > 0:
+        body = f"{cards} card{'' if cards == 1 else 's'} added in {year}. See your year in cards"
+    else:
+        body = "See your year in cards"
+    return title, body, f"/wrapped/{year}"
+
+
+def queue_wrapped_ready(db: Session, now: datetime.datetime | None = None) -> int:
+    """Queue "Your Wrapped is ready" once per trainer per year (subject `wrapped:<year>`).
+
+    Only active trainers whose Wrapped has something to show (at least one card added in the year;
+    the Home banner shows whenever the API answers, and an empty story is not worth a push).
+    """
+    from models import NotificationQueue, User
+    from services import notifications
+
+    now = now or datetime.datetime.utcnow()
+    queued = 0
+    for (user_id,) in db.query(User.id).filter(User.is_active == True).all():  # noqa: E712
+        try:
+            if not notifications.category_enabled(db, user_id, "wrapped"):
+                continue
+            zone = daily.user_zone(db, user_id)
+            local = now.replace(tzinfo=datetime.timezone.utc).astimezone(zone)
+            year = wrapped_push_year(local)
+            if year is None:
+                continue
+            subject = f"wrapped:{year}"
+            if db.query(NotificationQueue.id).filter_by(
+                user_id=user_id, category="wrapped", subject_key=subject
+            ).first() is not None:
+                continue  # already queued: skip before loading the collection
+            try:
+                data = wrapped(db, user_id, year, now=now)
+            except WrappedUnavailable:
+                continue
+            cards = int((data.get("totals") or {}).get("cards") or 0)
+            if cards <= 0:
+                continue
+            if notifications.enqueue(db, user_id, "wrapped", subject, now=now, details={"year": year, "cards": cards}):
+                queued += 1
+        except Exception:
+            db.rollback()
+            continue
+    db.commit()
+    return queued

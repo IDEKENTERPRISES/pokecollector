@@ -10,6 +10,7 @@ export const NOTIFY_CATEGORIES = [
   { id: 'big_movers', fallback: false, label: 'notifyPrefs.bigMovers', desc: 'notifyPrefs.bigMoversDesc' },
   { id: 'badges', fallback: true, label: 'notifyPrefs.badges', desc: 'notifyPrefs.badgesDesc' },
   { id: 'weekly_recap', fallback: false, label: 'notifyPrefs.weeklyRecap', desc: 'notifyPrefs.weeklyRecapDesc' },
+  { id: 'wrapped', fallback: true, label: 'notifyPrefs.wrapped', desc: 'notifyPrefs.wrappedDesc' },
   { id: 'goal_milestones', fallback: true, label: 'notifyPrefs.goalMilestones', desc: 'notifyPrefs.goalMilestonesDesc' },
   { id: 'swap_offers', fallback: true, label: 'notifyPrefs.swapOffers', desc: 'notifyPrefs.swapOffersDesc', social: true },
 ]

@@ -2803,6 +2803,8 @@ const en = {
     badgesDesc: 'When you earn a badge. Sent right away, naming the badge.',
     weeklyRecap: 'Weekly recap',
     weeklyRecapDesc: 'Sunday at 18:00, only after a week with something in it. Off by default.',
+    wrapped: 'Wrapped',
+    wrappedDesc: 'Once a year, when your Wrapped is ready on 1 December.',
     goalMilestones: 'Goal milestones',
     swapOffers: 'Swap offers',
     swapOffersDesc: 'When someone offers, counters, accepts or declines a swap. Sent right away.',
