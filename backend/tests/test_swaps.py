@@ -167,26 +167,28 @@ class CreateTests(SwapBase):
         self.assertEqual(offer["values"]["partner"]["gives"], 20.0)
         self.assertEqual(offer["values"]["partner"]["price_field"], "price_market")
 
-    def test_asking_for_a_card_without_a_spare_copy_is_refused(self):
+    def test_asking_for_the_partners_only_copy_is_allowed(self):
         self.as_user(self.ash)
         response = self.client.post("/api/swaps", json=self.body([(self.a2, 1), (self.m2, 1)]))
-        self.assertEqual(response.status_code, 409)
-        self.assertIn("spare", response.json()["detail"])
+        self.assertEqual(response.status_code, 200, response.text)
 
-    def test_cannot_ask_for_more_than_the_spare_copies(self):
+    def test_can_ask_for_every_copy_the_partner_owns_but_not_more(self):
         self.as_user(self.ash)
-        response = self.client.post("/api/swaps", json=self.body([(self.a2, 1), (self.m1, 2)]))
-        self.assertEqual(response.status_code, 409)
+        every = self.client.post("/api/swaps", json=self.body([(self.a2, 1), (self.m1, 2)]))
+        self.assertEqual(every.status_code, 200, every.text)
+        too_many = self.client.post("/api/swaps", json=self.body([(self.a2, 1), (self.m1, 3)]))
+        self.assertEqual(too_many.status_code, 409)
+        self.assertIn("only have 2", too_many.json()["detail"])
 
-    def test_binder_allocated_copies_are_not_spare(self):
+    def test_binder_allocated_copies_can_be_asked_for(self):
         binder = Binder(name="mine", user_id=self.misty.id, binder_type="collection")
         self.db.add(binder)
         self.db.commit()
         self.db.add(BinderCard(binder_id=binder.id, card_id=self.m1.card_id, collection_item_id=self.m1.id, required_quantity=2))
         self.db.commit()
         self.as_user(self.ash)
-        response = self.client.post("/api/swaps", json=self.body([(self.a2, 1), (self.m1, 1)]))
-        self.assertEqual(response.status_code, 409)
+        response = self.client.post("/api/swaps", json=self.body([(self.a2, 1), (self.m1, 2)]))
+        self.assertEqual(response.status_code, 200, response.text)
 
     def test_own_cards_need_the_quantity_but_no_spare(self):
         self.as_user(self.ash)
@@ -746,8 +748,8 @@ class CandidateTests(SwapBase):
             self.assertEqual(set(by_card), {"tst-001_en", "tst-002_en"})
             self.assertTrue(by_card["tst-001_en"]["on_wishlist"])
             self.assertFalse(by_card["tst-002_en"]["on_wishlist"])
-            self.assertEqual((by_card["tst-001_en"]["offerable"], by_card["tst-001_en"]["spare"]), (2, True))
-            self.assertEqual(by_card["tst-002_en"]["spare"], False)
+            self.assertEqual((by_card["tst-001_en"]["offerable"], by_card["tst-001_en"]["spare"]), (2, 1))
+            self.assertEqual(by_card["tst-002_en"]["spare"], 0)
             self.assertEqual(data["counts"], {"all": 2, "spares": 1, "wishlist": 1})
             self.assertEqual([i["card_id"] for i in self.get(self.ash, side="give", filter="wishlist").json()["items"]], ["tst-001_en"])
             self.assertEqual([i["card_id"] for i in self.get(self.ash, side="give", filter="spares").json()["items"]], ["tst-001_en"])
@@ -762,16 +764,31 @@ class CandidateTests(SwapBase):
         self.assertEqual(data["counts"]["wishlist"], 0)
         self.assertFalse(any(i["on_wishlist"] for i in data["items"]))
 
-    def test_only_the_partners_spares_can_be_asked_for(self):
+    def test_every_copy_of_the_partner_is_listed_with_its_spare_count(self):
         data = self.get(self.ash, side="get").json()
-        self.assertEqual([(i["card_id"], i["offerable"]) for i in data["items"]], [("big-001_en", 1)])
-        # a binder holding the spare copy makes it not spare any more
+        self.assertEqual(
+            [(i["card_id"], i["offerable"], i["spare"]) for i in data["items"]],
+            [("big-001_en", 2, 1), ("big-002_en", 1, 0)],
+        )
+        self.assertEqual(data["counts"]["all"], 2)
+        self.assertEqual(data["counts"]["spares"], 1)
+        self.assertEqual([i["card_id"] for i in self.get(self.ash, side="get", filter="spares").json()["items"]], ["big-001_en"])
+        # a binder holding the extra copy makes it not spare any more, but it is still listed
         binder = Binder(user_id=self.misty.id, name="B", binder_type="collection")
         self.db.add(binder)
         self.db.flush()
         self.db.add(BinderCard(binder_id=binder.id, card_id="big-001_en", collection_item_id=self.m1.id, required_quantity=2))
         self.db.commit()
-        self.assertEqual(self.get(self.ash, side="get").json()["items"], [])
+        data = self.get(self.ash, side="get").json()
+        self.assertEqual([(i["card_id"], i["offerable"], i["spare"]) for i in data["items"]], [("big-001_en", 2, 0), ("big-002_en", 1, 0)])
+        self.assertEqual(data["counts"]["spares"], 0)
+
+    def test_candidates_carry_the_fields_the_filters_read(self):
+        item = self.get(self.ash, side="get").json()["items"][0]
+        for key in ("set_key", "set_name", "rarity", "supertype", "subtypes", "trainer_type", "energy_type", "stage",
+                    "standard_legal", "printing_details", "condition", "lang", "variant", "types", "value"):
+            self.assertIn(key, item)
+        self.assertEqual(item["printing_details"], [])
 
     def test_your_wishlist_marks_the_partners_spares(self):
         from models import WishlistItem

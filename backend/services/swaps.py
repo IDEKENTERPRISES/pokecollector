@@ -20,7 +20,7 @@ import logging
 import math
 
 from sqlalchemy import or_
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from models import (
     Binder,
@@ -35,7 +35,7 @@ from models import (
     WishlistItem,
 )
 from services import notifications
-from services.binder_allocations import collection_item_allocated_quantity
+from services.binder_allocations import collection_binder_allocation_counts
 from services.card_visibility import visible_card_filter
 
 logger = logging.getLogger(__name__)
@@ -169,9 +169,11 @@ def build_items(db: Session, actor_id: int, partner_id: int, requested) -> list[
     """Check what the acting trainer put on the table and snapshot it.
 
     Each entry names a collection copy; whoever owns it is the giver (it must be the actor or the
-    partner). Cards asked from the partner follow the Compare page's trade-suggestion rules: a real
-    (not custom) card visible to the partner, with a spare copy (more than one owned), and not
-    promised to binders beyond what is spare. The actor's own cards just have to be theirs.
+    partner). From either side it must be a real (not custom) card the giver may show, and the quantity
+    can be anything up to what the giver owns: the picker lists every card, and spares are only a filter
+    and a hint (Compare's suggestions stay spares-first). The other trainer decides by accepting or
+    declining, and a binder or deck slot the copy held is freed when the swap completes
+    (`complete_offer` / `release_allocations`).
     """
     if not requested:
         raise SwapError(422, "Put at least one card on the table")
@@ -198,13 +200,9 @@ def build_items(db: Session, actor_id: int, partner_id: int, requested) -> list[
         if db.query(Card.id).filter(Card.id == card.id, visible_card_filter(db, giver_id, "all")).first() is None:
             raise SwapError(404, "Card not found")
         have = int(copy.quantity or 0)
-        if giver_id == partner_id:
-            # one copy always stays with its owner; binder and deck allocations are not spare either
-            spare = have - max(collection_item_allocated_quantity(db, giver_id, copy.id), 1)
-            if have <= 1 or quantity > spare:
-                raise SwapError(409, f"{card.name} has no spare copy to ask for")
-        elif quantity > have:
-            raise SwapError(409, f"You only have {have} of {card.name}")
+        if quantity > have:
+            who = "You only have" if giver_id == actor_id else "They only have"
+            raise SwapError(409, f"{who} {have} of {card.name}")
         field = notifications._price_field(db, giver_id)
         items.append(SwapOfferItem(
             giver_user_id=giver_id,
@@ -758,17 +756,24 @@ def _wishlist_ids(db: Session, owner_id: int) -> set[str]:
 
 
 def candidates(db: Session, viewer: User, partner: User, side: str, flt: str = "all", q: str | None = None,
-               limit: int = 300) -> dict:
+               limit: int = 10000) -> dict:
     """Copies that can go on the table, in the shape the picker and Compare need.
 
-    `side="give"` lists the viewer's own copies (any quantity); `"get"` the partner's spare copies (the rule
-    `build_items` enforces). `on_wishlist` marks cards the other trainer is looking for: the partner's wishlist
-    for `give` (only when Compare may show it) and the viewer's own for `get`. `counts` ignore the filter."""
+    `side="give"` lists the viewer's own copies, `"get"` all of the partner's visible copies (not only spares;
+    `build_items` accepts any quantity up to what is owned). `offerable` is the quantity owned and `spare` how many
+    of them are spare: the trainer keeps one, and copies in binders or decks are not spare either (0 when none).
+    `on_wishlist` marks cards the other trainer is looking for: the partner's wishlist for `give` (only when
+    Compare may show it) and the viewer's own for `get`. Each entry also carries the card fields the picker's
+    filters need (rarity, set, types, category, subtypes, legality, printing details). `counts` ignore the filter."""
+    from api.collection import _collection_standard_legal_fingerprints
     from services.public_profile_feature import public_profiles_enabled
+    from services.standard_legality import is_standard_legal_card
 
     giving = side == "give"
     owner = viewer if giving else partner
-    rows = db.query(CollectionItem).options(joinedload(CollectionItem.card)).join(
+    rows = db.query(CollectionItem).options(
+        joinedload(CollectionItem.card), selectinload(CollectionItem.printing_detail_tags),
+    ).join(
         Card, Card.id == CollectionItem.card_id
     ).filter(
         CollectionItem.user_id == owner.id, Card.is_custom == False,  # noqa: E712
@@ -786,18 +791,23 @@ def candidates(db: Session, viewer: User, partner: User, side: str, flt: str = "
     wanted = _wishlist_ids(db, partner.id if giving else viewer.id) if wishlist_visible else set()
     field = notifications._price_field(db, viewer.id)
     codes = _set_codes(db, [c.card for c in copies])
+    set_pairs = {(c.card.set_id, c.card.lang) for c in copies if c.card.set_id}
+    set_info = {}
+    if set_pairs:
+        for set_row in db.query(Set.id, Set.tcg_set_id, Set.lang, Set.name).filter(
+            Set.tcg_set_id.in_({pair[0] for pair in set_pairs})
+        ).all():
+            set_info[(set_row.tcg_set_id, set_row.lang)] = (set_row.id, set_row.name)
+    allocated = collection_binder_allocation_counts(db, owner.id) if copies else {}
+    legal = _collection_standard_legal_fingerprints(db) if copies else set()
     entries = []
     for copy in copies:
         have = int(copy.quantity or 0)
-        if giving:
-            offerable = have
-            spare = have > 1
-        else:
-            offerable = max(have - max(collection_item_allocated_quantity(db, owner.id, copy.id), 1), 0)
-            if have <= 1 or offerable < 1:
-                continue
-            spare = True
+        # the owner keeps one copy, and copies held by binders or decks are not spare either
+        spare = max(have - max(int(allocated.get(copy.id, 0)), 1), 0) if have > 1 else 0
+        offerable = have
         card = copy.card
+        set_key, set_name = set_info.get((card.set_id, card.lang), (card.set_id, None))
         entries.append({
             "collection_item_id": copy.id,
             "card_id": card.id,
@@ -815,14 +825,25 @@ def candidates(db: Session, viewer: User, partner: User, side: str, flt: str = "
             "on_wishlist": card.id in wanted,
             "spare": spare,
             "value": _price(card, copy.variant, field),
+            # what the picker's Collection-style filters read
+            "set_key": set_key,
+            "set_name": set_name,
+            "rarity": card.rarity,
+            "supertype": card.supertype,
+            "subtypes": card.subtypes or [],
+            "trainer_type": card.trainer_type,
+            "energy_type": card.energy_type,
+            "stage": card.stage,
+            "standard_legal": bool(is_standard_legal_card(card, legal)),
+            "printing_details": [tag.name for tag in copy.printing_detail_tags],
         })
     counts = {
         "all": len(entries),
-        "spares": sum(1 for e in entries if e["spare"]),
+        "spares": sum(1 for e in entries if e["spare"] > 0),
         "wishlist": sum(1 for e in entries if e["on_wishlist"]),
     }
     if flt == "wishlist":
         entries = [e for e in entries if e["on_wishlist"]]
     elif flt == "spares":
-        entries = [e for e in entries if e["spare"]]
+        entries = [e for e in entries if e["spare"] > 0]
     return {"items": entries[:limit], "counts": counts, "wishlist_visible": wishlist_visible}

@@ -459,10 +459,10 @@ for (const hide of [false, true]) {
     await page.getByRole('button', { name: /^Mew ex, MEW 151/ }).click()
     await page.getByRole('button', { name: 'Done' }).click()
 
-    await sheet.getByRole('button', { name: "Add from Misty's spares" }).click()
-    await expect(page.getByRole('dialog', { name: "Misty's spares" })).toBeVisible()
+    await sheet.getByRole('button', { name: "Add from Misty's cards" }).click()
+    await expect(page.getByRole('dialog', { name: "Misty's cards" })).toBeVisible()
     await expect(page.getByRole('radio', { name: 'On your wishlist · 2' })).toBeVisible()
-    await page.getByRole('radio', { name: 'All spares · 31' }).click()
+    await page.getByRole('radio', { name: 'All · 31' }).click()
     await page.getByRole('button', { name: /^Squirtle, MEW 170/ }).click()
     await expect(page.getByRole('button', { name: /^Squirtle, MEW 170.*selected/ })).toHaveAttribute('aria-pressed', 'true')
     await capture(page, testInfo, `09-picker${suffix}`)

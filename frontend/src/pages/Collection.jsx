@@ -1,7 +1,7 @@
 import { useState, useMemo, useId, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Trash2, Check, X, Download, Upload, Loader2, ChevronDown, Search, PenLine, Grid2X2, List, Copy, ArrowLeft, Package, Tags, Plus, MoreHorizontal, ScanLine, ArrowUpDown, SlidersHorizontal } from 'lucide-react'
+import { Trash2, Check, X, Download, Upload, Loader2, Search, PenLine, Grid2X2, List, Copy, ArrowLeft, Package, Tags, Plus, MoreHorizontal, ScanLine, ArrowUpDown } from 'lucide-react'
 import { getCollection, updateCollectionItem, updateCardCustomImage, removeFromCollection, importCollectionCsv, exportCSV, exportPDF, getSets, addToCollection, getBinders, addCollectionItemToBinder, getWishlist, getApiErrorMessage, uploadCollectionItemPhoto, deleteCollectionItemPhoto } from '../api/client'
 import { CustomCardModal } from '../components/CardItem'
 import { useSettings } from '../contexts/SettingsContext'
@@ -11,10 +11,8 @@ import { CardDialog, CardLegend, CardPriceDetails, withCollectionItemState } fro
 import { CollectionCardDisplay, CollectionCardIdentity, CollectionCardRow, OwnPhotoOverlayBadge, useCollectionPhotoUrl } from '../components/CollectionCardImage'
 import MoneyInput from '../components/MoneyInput'
 import CollectionHeader from '../components/collection/CollectionHeader'
-import Badge from '../components/ios/Badge'
 import IconButton from '../components/ios/IconButton'
 import Menu from '../components/ios/Menu'
-import PageSheet from '../components/ios/PageSheet'
 import SearchField from '../components/ios/SearchField'
 import TypeChip from '../components/ios/TypeChip'
 import { typeKeyFor, typeVar } from '../components/ios/pokemon'
@@ -30,7 +28,6 @@ import { getEffectiveCardPrice } from '../utils/prices'
 import TcgdexLanguageSelect from '../components/TcgdexLanguageSelect'
 import { tcgdexLanguageLabel } from '../utils/tcgdexLanguages'
 import { invalidateCardState, invalidateCollectionPhotoState, invalidateTcgdexFilterLanguages } from '../utils/queryInvalidation'
-import { useVisibleTcgdexLanguages } from '../hooks/useVisibleTcgdexLanguages'
 import { formatMoneyInputValue, parseMoneyInputValue } from '../utils/moneyInput'
 import { useDynamicFilterUrlState } from '../hooks/useDynamicFilterUrlState'
 import { readFilterUrlState } from '../utils/filterUrlState'
@@ -40,10 +37,24 @@ import AcquiredDateField from '../components/AcquiredDateField'
 import { formatAcquiredDate, oldestAcquiredByCard } from '../utils/acquiredDate'
 import PrintingDetailSelector from '../components/PrintingDetailSelector'
 import PrintingDetailTagManager from '../components/PrintingDetailTagManager'
-import { normalizePrintingDetailName, printingDetailNames } from '../utils/printingDetails'
+import { printingDetailNames } from '../utils/printingDetails'
 import { CARD_VARIANTS } from '../utils/cardVariants'
+import CardFilterSheet, { CardFilterButton, useCardFilterSheet } from '../components/CardFilterPanel'
+import { CONDITIONS, buildCardFacets, countActiveCardFilters, hasAdvancedCardFilters, matchesCardFilters } from '../utils/cardFilters'
 
-const CONDITIONS = ['Mint', 'NM', 'LP', 'MP', 'HP']
+// How the shared card filters read a collection item.
+const collectionFilterParts = (item) => ({
+  card: item.card,
+  condition: item.condition,
+  variant: item.variant,
+  printingDetails: item.printing_details,
+  setKey: item.card?.set_ref?.id,
+  setName: item.card?.set_ref?.name,
+  standardLegal: item.standard_legal,
+  lang: item.lang,
+  quantity: item.quantity,
+})
+
 const CONDITION_COLORS = {
   Mint: 'badge-green',
   NM: 'badge-blue',
@@ -58,8 +69,6 @@ const VARIANT_COLORS = {
   'Normal': 'badge-gray',
 }
 
-const CARD_CATEGORY_OPTIONS = ['Pokémon', 'Trainer', 'Energy']
-const CARD_SUBTYPE_OPTIONS = ['Item', 'Supporter', 'Stadium', 'Pokémon Tool', 'EX', 'ex', 'GX', 'Stage 1', 'Stage 2', 'Basic']
 const COLLECTION_FILTER_DEFINITIONS = {
   filterRarity: { param: 'rarity', default: '' },
   filterCondition: { param: 'condition', default: '' },
@@ -90,59 +99,6 @@ export function buildCollectionQuery(ruleText) {
     placeholderData: (previousData) => previousData,
   }
 }
-
-const normalizeCardFilterValue = (value) => String(value || '')
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g, '')
-  .trim()
-  .toLowerCase()
-
-const normalizeCardFilterLabelKey = (value) => String(value || '')
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g, '')
-  .trim()
-
-const CARD_FILTER_DISPLAY_LABELS = new Map(
-  [...CARD_CATEGORY_OPTIONS, ...CARD_SUBTYPE_OPTIONS].map(label => [normalizeCardFilterLabelKey(label), label])
-)
-
-const getPreferredCardFilterLabel = (value) => (
-  CARD_FILTER_DISPLAY_LABELS.get(normalizeCardFilterLabelKey(value)) || String(value || '').trim()
-)
-
-const getCardCategoryLabel = (card) => {
-  const supertype = String(card?.supertype || '').trim()
-  if (normalizeCardFilterValue(supertype) === 'pokemon') return 'Pokémon'
-  if (supertype) return getPreferredCardFilterLabel(supertype)
-  return ''
-}
-
-const getCardSubtypeLabels = (card) => {
-  const labels = new Set()
-  ;(card?.subtypes || []).forEach(subtype => {
-    if (subtype) labels.add(getPreferredCardFilterLabel(subtype))
-  })
-  ;[card?.trainer_type, card?.energy_type, card?.stage].forEach(subtype => {
-    if (subtype) labels.add(getPreferredCardFilterLabel(subtype))
-  })
-  return [...labels].filter(Boolean)
-}
-
-const sortCardFilterLabels = (preferredOrder, labels) => {
-  const preferredIndex = new Map(preferredOrder.map((label, index) => [normalizeCardFilterLabelKey(label), index]))
-  return [...labels].sort((a, b) => {
-    const indexA = preferredIndex.get(normalizeCardFilterLabelKey(a))
-    const indexB = preferredIndex.get(normalizeCardFilterLabelKey(b))
-    if (indexA !== undefined || indexB !== undefined) {
-      return (indexA ?? Number.MAX_SAFE_INTEGER) - (indexB ?? Number.MAX_SAFE_INTEGER)
-    }
-    return a.localeCompare(b)
-  })
-}
-
-const toggleFilterValue = (values, value) => (
-  values.includes(value) ? values.filter(item => item !== value) : [...values, value]
-)
 
 const getProductSourceSummary = (item) => {
   const sources = (item?.product_sources || []).filter(source => (source?.active_quantity || 0) > 0)
@@ -1113,14 +1069,11 @@ export default function Collection() {
   const { t, settings, formatPrice, pricePrimaryField, currency, exchangeRate, language } = useSettings()
   const navigate = useNavigate()
   const { openScanner } = useScanner()
-  const visibleLanguages = useVisibleTcgdexLanguages()
   const [viewMode, setViewMode] = useState('grid')
   const [editingCollectionItem, setEditingCollectionItem] = useState(null) // for CollectionEditModal
   const [showCustomModal, setShowCustomModal] = useState(false)
   const [editCard, setEditCard] = useState(null)
   const [searchText, setSearchText] = useState('')
-  const [showFilters, setShowFilters] = useState(false)
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
   const [showCsvImportModal, setShowCsvImportModal] = useState(false)
   const [showPrintingDetailManager, setShowPrintingDetailManager] = useState(false)
   const csvImportInputRef = useRef(null)
@@ -1264,77 +1217,22 @@ export default function Collection() {
   }
 
   const facetItems = queryClient.getQueryData(['collection', {}]) || items
-  const rarities = useMemo(() => [...new Set(facetItems.map(i => i.card?.rarity).filter(Boolean))].sort(), [facetItems])
-  const sets = useMemo(() => {
-    const map = new Map()
-    facetItems.forEach(i => {
-      const s = i.card?.set_ref
-      if (s?.id) map.set(s.id, s.name)
-    })
-    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]))
-  }, [facetItems])
-  const types = useMemo(() => {
-    const all = new Set()
-    facetItems.forEach(i => (i.card?.types || []).forEach(tp => all.add(tp)))
-    return [...all].sort()
-  }, [facetItems])
-  const cardCategories = useMemo(() => {
-    const all = new Set(CARD_CATEGORY_OPTIONS)
-    facetItems.forEach(i => {
-      const label = getCardCategoryLabel(i.card)
-      if (label) all.add(label)
-    })
-    return sortCardFilterLabels(CARD_CATEGORY_OPTIONS, all)
-  }, [facetItems])
-  const cardSubtypes = useMemo(() => {
-    const all = new Set(CARD_SUBTYPE_OPTIONS)
-    facetItems.forEach(i => getCardSubtypeLabels(i.card).forEach(label => all.add(label)))
-    return sortCardFilterLabels(CARD_SUBTYPE_OPTIONS, all)
-  }, [facetItems])
+  const facets = useMemo(() => buildCardFacets(facetItems, collectionFilterParts), [facetItems])
+  const { types } = facets
 
-  const printingDetailOptions = useMemo(() => [...new Set(
-    facetItems.flatMap(item => printingDetailNames(item.printing_details))
-  )].sort((left, right) => left.localeCompare(right)), [facetItems])
-
-  const hasActiveFilters = filterRarity || filterCondition || filterVariant || filterPrintingDetail || filterSet || filterType || filterCategories.length > 0 || filterSubtypes.length > 0 || filterLegality || filterLang || filterMinPrice || filterMaxPrice || filterDuplicates || ruleText.trim()
-  const hasAdvancedFilters = filterCategories.length > 0 || filterSubtypes.length > 0 || filterLegality || filterLang || filterMinPrice || filterMaxPrice || filterDuplicates || ruleText.trim()
-  const activeFilterCount = [
-    filterRarity, filterCondition, filterVariant, filterPrintingDetail, filterSet, filterType,
-    filterLegality, filterLang, filterMinPrice, filterMaxPrice, filterDuplicates, ruleText.trim(),
-  ].filter(Boolean).length + (filterCategories.length > 0 ? 1 : 0) + (filterSubtypes.length > 0 ? 1 : 0)
+  const filterValues = useMemo(() => ({
+    filterRarity, filterCondition, filterVariant, filterPrintingDetail, filterSet, filterType, filterCategories,
+    filterSubtypes, filterLegality, filterLang, filterMinPrice, filterMaxPrice, filterDuplicates,
+  }), [filterRarity, filterCondition, filterVariant, filterPrintingDetail, filterSet, filterType, filterCategories, filterSubtypes, filterLegality, filterLang, filterMinPrice, filterMaxPrice, filterDuplicates])
+  const activeFilterCount = countActiveCardFilters(filterValues, [ruleText.trim()])
+  const hasActiveFilters = activeFilterCount > 0
+  const hasAdvancedFilters = hasAdvancedCardFilters(filterValues, [ruleText.trim()])
+  const filterSheet = useCardFilterSheet(hasAdvancedFilters)
 
   const filtered = useMemo(() => {
     let result = items.filter(item => {
       const card = item.card
-      const marketPrice = getEffectivePrice(card, item.variant)
-      if (filterRarity && card?.rarity !== filterRarity) return false
-      if (filterCondition && item.condition !== filterCondition) return false
-      if (filterVariant && item.variant !== filterVariant) return false
-      if (
-        filterPrintingDetail
-        && !printingDetailNames(item.printing_details).some(
-          name => normalizePrintingDetailName(name) === normalizePrintingDetailName(filterPrintingDetail)
-        )
-      ) return false
-      if (filterSet) {
-        if (item.card?.set_ref?.id !== filterSet) return false
-      }
-      if (filterType && !(card?.types || []).includes(filterType)) return false
-      if (filterCategories.length > 0) {
-        const category = normalizeCardFilterValue(getCardCategoryLabel(card))
-        const categoryMatches = filterCategories.some(filter => normalizeCardFilterValue(filter) === category)
-        if (!categoryMatches) return false
-      }
-      if (filterSubtypes.length > 0) {
-        const subtypes = getCardSubtypeLabels(card).map(normalizeCardFilterLabelKey)
-        const subtypeMatches = filterSubtypes.some(filter => subtypes.includes(normalizeCardFilterLabelKey(filter)))
-        if (!subtypeMatches) return false
-      }
-      if (filterLegality === 'standard' && !item.standard_legal) return false
-      if (filterLang && item.lang !== filterLang) return false
-      if (filterMinPrice && marketPrice < parseFloat(filterMinPrice)) return false
-      if (filterMaxPrice && marketPrice > parseFloat(filterMaxPrice)) return false
-      if (filterDuplicates && item.quantity < 2) return false
+      if (!matchesCardFilters({ ...collectionFilterParts(item), price: getEffectivePrice(card, item.variant) }, filterValues)) return false
       if (searchText) {
         const q = normalizeSearchText(searchText)
         const nameMatch = textIncludes(card?.name, q)
@@ -1377,7 +1275,7 @@ export default function Collection() {
     })
 
     return result
-  }, [items, filterRarity, filterCondition, filterVariant, filterPrintingDetail, filterSet, filterType, filterCategories, filterSubtypes, filterLegality, filterLang, filterMinPrice, filterMaxPrice, filterDuplicates, searchText, sortBy, sortOrder, pricePrimaryField, oldestAcquired])
+  }, [items, filterValues, searchText, sortBy, sortOrder, pricePrimaryField, oldestAcquired])
 
   const totalValue = filtered.reduce((sum, item) => sum + (getEffectivePrice(item.card, item.variant) * item.quantity), 0)
   const totalCards = filtered.reduce((sum, item) => sum + item.quantity, 0)
@@ -1392,12 +1290,7 @@ export default function Collection() {
       sortBy: current.sortBy,
       sortOrder: current.sortOrder,
     }))
-    setShowAdvancedFilters(false)
-  }
-
-  const openFilters = () => {
-    setShowAdvancedFilters(Boolean(hasAdvancedFilters))
-    setShowFilters(true)
+    filterSheet.setAdvancedOpen(false)
   }
 
   // Nav bar menus (design doc 5.2): "+" adds cards, "⋯" exports and manages tags.
@@ -1520,15 +1413,7 @@ export default function Collection() {
           )}
           sections={sortSections}
         />
-        <button
-          type="button"
-          onClick={openFilters}
-          aria-label={t('common.filter')}
-          className="ios-press inline-flex h-9 items-center gap-1.5 rounded-full bg-fill-tertiary px-3 text-footnote font-semibold text-text-primary"
-        >
-          <SlidersHorizontal size={15} aria-hidden="true" /> {t('collection.filtersButton')}
-          <Badge count={activeFilterCount} tone="accent" />
-        </button>
+        <CardFilterButton count={activeFilterCount} onPress={filterSheet.open} />
         <div className="ml-auto flex items-center gap-0.5 rounded-full bg-fill-tertiary p-0.5" role="group" aria-label={t('collection.viewMode')}>
           <button
             type="button"
@@ -1553,150 +1438,17 @@ export default function Collection() {
         </div>
       </div>
 
-      <PageSheet
-        isOpen={showFilters}
-        onClose={() => setShowFilters(false)}
-        title={t('collection.filtersTitle')}
-        leading={{ label: t('common.clear'), onPress: clearDynamicFilters, disabled: !hasActiveFilters }}
-        trailing={{ label: t('ios.done'), onPress: () => setShowFilters(false) }}
-      >
-        <div className="space-y-3 p-4">
-          <h3 className="text-sm font-semibold text-text-primary">{t('common.normalFilters')}</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="collection-filter-rarity" className="text-xs text-text-muted mb-1 block">{t('common.rarity')}</label>
-              <select id="collection-filter-rarity" className="select py-1.5 text-sm" value={filterRarity} onChange={(e) => setDynamicFilter('filterRarity', e.target.value)}>
-                <option value="">{t('common.allRarities')}</option>
-                {rarities.map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="collection-filter-condition" className="text-xs text-text-muted mb-1 block">{t('common.condition')}</label>
-              <select id="collection-filter-condition" className="select py-1.5 text-sm" value={filterCondition} onChange={(e) => setDynamicFilter('filterCondition', e.target.value)}>
-                <option value="">{t('common.allConditions')}</option>
-                {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="collection-filter-variant" className="text-xs text-text-muted mb-1 block">✨ {t('variants.filterVariant')}</label>
-              <select id="collection-filter-variant" className="select py-1.5 text-sm" value={filterVariant} onChange={(e) => setDynamicFilter('filterVariant', e.target.value)}>
-                <option value="">{t('variants.allVariants')}</option>
-                {CARD_VARIANTS.map(v => <option key={v} value={v}>{v}</option>)}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="collection-filter-printing-detail" className="text-xs text-text-muted mb-1 block">{t('printingDetails.label')}</label>
-              <select id="collection-filter-printing-detail" className="select py-1.5 text-sm" value={filterPrintingDetail} onChange={(e) => setDynamicFilter('filterPrintingDetail', e.target.value)}>
-                <option value="">{t('printingDetails.all')}</option>
-                {printingDetailOptions.map(name => <option key={name} value={name}>{name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="collection-filter-set" className="text-xs text-text-muted mb-1 block">{t('collection.filterSet')}</label>
-              <select id="collection-filter-set" className="select py-1.5 text-sm" value={filterSet} onChange={(e) => setDynamicFilter('filterSet', e.target.value)}>
-                <option value="">{t('collection.allSets')}</option>
-                {sets.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="collection-filter-energy-type" className="text-xs text-text-muted mb-1 block">{t('collection.filterEnergyType')}</label>
-              <select id="collection-filter-energy-type" className="select py-1.5 text-sm" value={filterType} onChange={(e) => setDynamicFilter('filterType', e.target.value)}>
-                <option value="">{t('collection.allEnergyTypes')}</option>
-                {types.map(tp => <option key={tp} value={tp}>{tp}</option>)}
-              </select>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            className="btn-ghost w-full justify-between"
-            aria-expanded={showAdvancedFilters}
-            aria-controls="collection-advanced-filters"
-            onClick={() => setShowAdvancedFilters(value => !value)}
-          >
-            <span>{t('common.advancedFilters')}</span>
-            <ChevronDown size={16} className={`transition-transform ${showAdvancedFilters ? 'rotate-180' : ''}`} />
-          </button>
-
-          {showAdvancedFilters && (
-            <div id="collection-advanced-filters" className="grid grid-cols-2 gap-3 rounded-xl border border-border p-3">
-              <div className="col-span-2">
-                <label htmlFor="collection-filter-rule-text" className="text-xs text-text-muted mb-1 block">{t('collection.ruleText')}</label>
-                <input id="collection-filter-rule-text" type="text" value={ruleText} onChange={(e) => setDynamicFilter('ruleText', e.target.value)} className="input py-1.5 text-sm" />
-              </div>
-              <fieldset className="col-span-2">
-                <legend className="text-xs text-text-muted mb-1 block">{t('collection.filterCardCategory')}</legend>
-                <div className="min-h-[34px] rounded-lg border border-border bg-bg px-2 py-1.5 flex flex-wrap gap-x-3 gap-y-1.5">
-                  {cardCategories.map(category => (
-                    <label key={category} className="inline-flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer whitespace-nowrap">
-                      <input
-                        type="checkbox"
-                        checked={filterCategories.includes(category)}
-                        onChange={() => setDynamicFilter('filterCategories', toggleFilterValue(filterCategories, category))}
-                        className="w-3.5 h-3.5 accent-brand-red"
-                      />
-                      <span>{category}</span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-              <fieldset className="col-span-2">
-                <legend className="text-xs text-text-muted mb-1 block">{t('collection.filterSubtype')}</legend>
-                <div className="min-h-[34px] rounded-lg border border-border bg-bg px-2 py-1.5 flex flex-wrap gap-x-3 gap-y-1.5">
-                  {cardSubtypes.map(subtype => (
-                    <label key={subtype} className="inline-flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer whitespace-nowrap">
-                      <input
-                        type="checkbox"
-                        checked={filterSubtypes.includes(subtype)}
-                        onChange={() => setDynamicFilter('filterSubtypes', toggleFilterValue(filterSubtypes, subtype))}
-                        className="w-3.5 h-3.5 accent-brand-red"
-                      />
-                      <span>{subtype}</span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-              <div>
-                <label htmlFor="collection-filter-legality" className="text-xs text-text-muted mb-1 block">{t('collection.filterLegality')}</label>
-                <select id="collection-filter-legality" className="select py-1.5 text-sm" value={filterLegality} onChange={(e) => setDynamicFilter('filterLegality', e.target.value)}>
-                  <option value="">{t('collection.allLegalities')}</option>
-                  <option value="standard">{t('collection.standardLegal')}</option>
-                </select>
-              </div>
-              <div>
-                <label htmlFor="collection-filter-language" className="text-xs text-text-muted mb-1 block">{t('lang.filter')}</label>
-                <TcgdexLanguageSelect
-                  id="collection-filter-language"
-                  value={filterLang || 'all'}
-                  includeAll
-                  allLabel={t('lang.all')}
-                  compact
-                  languages={visibleLanguages}
-                  onChange={(value) => setDynamicFilter('filterLang', value === 'all' ? '' : value)}
-                  className="select py-1.5 text-sm"
-                />
-              </div>
-              <div>
-                <label htmlFor="collection-filter-min-price" className="text-xs text-text-muted mb-1 block">{t('collection.filterMinPrice')}</label>
-                <input id="collection-filter-min-price" type="number" min="0" step="0.01" placeholder="0" value={filterMinPrice}
-                  onChange={(e) => setDynamicFilter('filterMinPrice', e.target.value)} className="input py-1.5 text-sm" />
-              </div>
-              <div>
-                <label htmlFor="collection-filter-max-price" className="text-xs text-text-muted mb-1 block">{t('collection.filterMaxPrice')}</label>
-                <input id="collection-filter-max-price" type="number" min="0" step="0.01" placeholder="∞" value={filterMaxPrice}
-                  onChange={(e) => setDynamicFilter('filterMaxPrice', e.target.value)} className="input py-1.5 text-sm" />
-              </div>
-              <div className="col-span-2 flex items-center gap-2">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={filterDuplicates} onChange={(e) => setDynamicFilter('filterDuplicates', e.target.checked)}
-                    className="w-4 h-4 accent-brand-red" />
-                  <span className="text-xs text-text-secondary">{t('collection.filterDuplicates')}</span>
-                </label>
-              </div>
-            </div>
-          )}
-        </div>
-      </PageSheet>
+      <CardFilterSheet
+        sheet={filterSheet}
+        filters={filters}
+        onChange={setDynamicFilter}
+        onClear={clearDynamicFilters}
+        hasActive={hasActiveFilters}
+        facets={facets}
+        idPrefix="collection"
+        ruleText={ruleText}
+        onRuleTextChange={(value) => setDynamicFilter('ruleText', value)}
+      />
 
       {error && (
         <div role="alert" className="rounded-xl border border-brand-red/40 bg-brand-red/10 px-4 py-3 text-sm text-brand-red">

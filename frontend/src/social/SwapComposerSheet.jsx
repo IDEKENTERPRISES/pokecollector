@@ -18,6 +18,9 @@ import { parseMoneyInputValue } from '../utils/moneyInput'
 import { SWAPS_QUERY_KEY, SWAPS_WAITING_QUERY_KEY } from './social'
 import { CardArt, FairTradeMeter, WishlistHeart } from './SwapParts'
 import { pickedToBody } from './swapHelpers'
+import CardFilterSheet, { CardFilterButton, useCardFilterSheet } from '../components/CardFilterPanel'
+import { CARD_FILTER_DEFAULTS, countActiveCardFilters, hasAdvancedCardFilters } from '../utils/cardFilters'
+import { candidateFacets, defaultQuickChoice, filterCandidates, prepareCandidates } from './swapPicker'
 
 const fill = (text, values) => Object.entries(values).reduce((out, [key, value]) => out.replace(`{${key}}`, value), text)
 
@@ -86,7 +89,7 @@ function SwapSide({ title, entries, addLabel, onAdd, onRemove, wishlistLabel, fo
 
 function PickerTile({ item, quantity, formatPrice, t }) {
   const selected = quantity > 0
-  const spare = Number(item.offerable) > 1 ? fill(t('swaps.spareCount'), { count: item.offerable }) : null
+  const spare = Number(item.spare) > 0 ? fill(t('swaps.spareCount'), { count: item.spare }) : null
   const label = [
     item.card_name,
     cardCode(item),
@@ -133,8 +136,30 @@ function PickerTile({ item, quantity, formatPrice, t }) {
   )
 }
 
+const PAGE_SIZE = 60
+
+/** Renders `items` a page at a time: the next page loads when the end of the grid scrolls into view. */
+function usePagedItems(items, resetKey) {
+  const [count, setCount] = useState(PAGE_SIZE)
+  const sentinel = useRef(null)
+  useEffect(() => { setCount(PAGE_SIZE) }, [resetKey])
+  const more = count < items.length
+  useEffect(() => {
+    const node = sentinel.current
+    if (!more || !node) return undefined
+    if (typeof IntersectionObserver === 'undefined') { setCount(items.length); return undefined }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some(entry => entry.isIntersecting)) setCount(current => current + PAGE_SIZE)
+    }, { rootMargin: '600px 0px' })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [more, count, items.length])
+  return { visible: items.slice(0, count), more, sentinel }
+}
+
 function Picker({ owner, partnerName, picked, onToggle, candidatesFor, t, formatPrice }) {
   const [search, setSearch] = useState('')
+  const [filters, setFilters] = useState(CARD_FILTER_DEFAULTS)
   const mine = owner === 'me'
   const base = useQuery({
     queryKey: ['swap-candidates', candidatesFor.partnerId, mine ? 'give' : 'get', 'all', ''],
@@ -142,54 +167,91 @@ function Picker({ owner, partnerName, picked, onToggle, candidatesFor, t, format
     staleTime: 15000,
   })
   const counts = base.data?.counts ?? { all: 0, spares: 0, wishlist: 0 }
-  const options = mine
-    ? [
-      { value: 'wishlist', label: fill(t('swaps.pickerTheirWishlist'), { name: partnerName, count: counts.wishlist }) },
-      { value: 'spares', label: fill(t('swaps.pickerSpares'), { count: counts.spares }) },
-      { value: 'all', label: fill(t('swaps.pickerAll'), { count: counts.all }) },
-    ]
-    : [
-      { value: 'wishlist', label: fill(t('swaps.pickerYourWishlist'), { count: counts.wishlist }) },
-      { value: 'all', label: fill(t('swaps.pickerAllSpares'), { count: counts.all }) },
-    ]
-  const [filter, setFilter] = useState(null)
-  const active = filter ?? (counts.wishlist > 0 && base.data?.wishlist_visible ? 'wishlist' : (mine ? 'spares' : 'all'))
-  const effective = options.some(option => option.value === active) ? active : options[options.length - 1].value
-  const term = search.trim().toLowerCase()
-  const items = (base.data?.items ?? []).filter(item => {
-    if (effective === 'wishlist' && !item.on_wishlist) return false
-    if (effective === 'spares' && !item.spare) return false
-    return !term || item.card_name.toLowerCase().includes(term)
-  })
+  const options = [
+    {
+      value: 'wishlist',
+      label: fill(t('swaps.pickerWishlist'), { count: counts.wishlist }),
+      ariaLabel: fill(t(mine ? 'swaps.pickerTheirWishlist' : 'swaps.pickerYourWishlist'), { name: partnerName, count: counts.wishlist }),
+    },
+    { value: 'spares', label: fill(t('swaps.pickerSpares'), { count: counts.spares }) },
+    { value: 'all', label: fill(t('swaps.pickerAll'), { count: counts.all }) },
+  ]
+  const [quick, setQuick] = useState(null)
+  const effective = quick ?? defaultQuickChoice({ counts, wishlistVisible: base.data?.wishlist_visible })
+
+  const prepared = useMemo(() => prepareCandidates(base.data?.items), [base.data])
+  const facets = useMemo(() => candidateFacets(prepared), [prepared])
+  const items = useMemo(
+    () => filterCandidates(prepared, { quick: effective, term: search, filters }),
+    [prepared, effective, search, filters],
+  )
+
+  const activeFilterCount = countActiveCardFilters(filters)
+  const hasAdvanced = hasAdvancedCardFilters(filters)
+  const sheet = useCardFilterSheet(hasAdvanced)
+  const setFilter = (key, value) => setFilters(current => ({ ...current, [key]: value }))
+  const clearFilters = () => { setFilters(CARD_FILTER_DEFAULTS); sheet.setAdvancedOpen(false) }
+  const clearAll = () => { clearFilters(); setSearch(''); setQuick(null) }
+  const narrowed = activeFilterCount > 0 || search.trim() !== '' || (quick !== null && quick !== 'all')
+  const paged = usePagedItems(items, `${effective}|${search}|${JSON.stringify(filters)}`)
+
   const placeholder = fill(t(mine ? 'swaps.searchYours' : 'swaps.searchTheirs'), { name: partnerName })
+  const total = base.data?.items?.length ?? 0
   return (
     <div className="flex flex-col gap-3 p-4">
       <SearchField value={search} onChange={setSearch} placeholder={placeholder} ariaLabel={placeholder} />
-      <SegmentedControl options={options} value={effective} onChange={setFilter} ariaLabel={t('swaps.show')} />
+      <SegmentedControl options={options} value={effective} onChange={setQuick} ariaLabel={t('swaps.show')} />
+      <div className="flex items-center gap-2">
+        <CardFilterButton count={activeFilterCount} onPress={sheet.open} />
+        {narrowed && (
+          <button type="button" onClick={clearAll} className="ios-press inline-flex min-h-[44px] items-center px-1 text-footnote font-semibold text-tint">
+            {t('swaps.clearAll')}
+          </button>
+        )}
+        {!base.isLoading && total > 0 && (
+          <span role="status" className="ml-auto text-footnote tabular-nums text-text-secondary">
+            {fill(t('swaps.pickerShowing'), { shown: items.length, total })}
+          </span>
+        )}
+      </div>
+      <CardFilterSheet
+        sheet={sheet}
+        filters={filters}
+        onChange={setFilter}
+        onClear={clearFilters}
+        hasActive={activeFilterCount > 0}
+        facets={facets}
+        idPrefix="swap-picker"
+      />
       {base.isLoading ? (
         <ul className="mt-1 grid grid-cols-3 gap-2.5">{[...Array(6)].map((_, index) => <li key={index} className="skeleton rounded-lg" style={{ aspectRatio: '5 / 7' }} />)}</ul>
       ) : items.length === 0 ? (
-        <p className="py-8 text-center text-footnote text-text-secondary">{t(mine ? 'swaps.pickerEmptyYours' : 'swaps.pickerEmptyTheirs').replace('{name}', partnerName)}</p>
+        <p className="py-8 text-center text-footnote text-text-secondary">
+          {total > 0 ? t('swaps.pickerNoMatch') : t(mine ? 'swaps.pickerEmptyYours' : 'swaps.pickerEmptyTheirs').replace('{name}', partnerName)}
+        </p>
       ) : (
-        <ul className="mt-1 grid grid-cols-3 gap-2.5">
-          {items.map(item => {
-            const quantity = picked[item.collection_item_id]?.quantity ?? 0
-            const detail = `${item.card_name}, ${cardCode(item)}, ${formatPrice(item.value)}${item.on_wishlist ? `, ${t('swaps.onWishlistShort')}` : ''}${quantity ? `, ${t('swaps.selected')}` : ''}`
-            return (
-              <li key={item.collection_item_id}>
-                <button
-                  type="button"
-                  aria-pressed={quantity > 0}
-                  aria-label={detail}
-                  onClick={() => onToggle(item)}
-                  className="ios-press w-full min-w-0"
-                >
-                  <PickerTile item={item} quantity={quantity} formatPrice={formatPrice} t={t} />
-                </button>
-              </li>
-            )
-          })}
-        </ul>
+        <>
+          <ul className="mt-1 grid grid-cols-3 gap-2.5">
+            {paged.visible.map(item => {
+              const quantity = picked[item.collection_item_id]?.quantity ?? 0
+              const detail = `${item.card_name}, ${cardCode(item)}, ${formatPrice(item.value)}${item.on_wishlist ? `, ${t('swaps.onWishlistShort')}` : ''}${quantity ? `, ${t('swaps.selected')}` : ''}`
+              return (
+                <li key={item.collection_item_id}>
+                  <button
+                    type="button"
+                    aria-pressed={quantity > 0}
+                    aria-label={detail}
+                    onClick={() => onToggle(item)}
+                    className="ios-press w-full min-w-0"
+                  >
+                    <PickerTile item={item} quantity={quantity} formatPrice={formatPrice} t={t} />
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+          {paged.more && <div ref={paged.sentinel} aria-hidden="true" className="h-10" />}
+        </>
       )}
     </div>
   )
@@ -340,6 +402,7 @@ export default function SwapComposerSheet({ isOpen, onClose, partner, mode = 'ne
       isOpen={isOpen}
       onClose={onClose}
       title={title}
+      opaque
       isDirty={dirty && !send.isPending}
       className="!h-[92dvh]"
       leading={step ? (
