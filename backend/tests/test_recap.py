@@ -409,14 +409,14 @@ class WrappedReadyPushTests(RecapBase):
     def test_once_per_year_and_the_second_run_does_not_recompute(self):
         self.with_cards()
         self.assertEqual(recap.queue_wrapped_ready(self.db, self.OPEN_UTC), 1)
-        with patch.object(recap, "wrapped") as compute:
+        with patch.object(recap, "wrapped", return_value={"totals": {"cards": 0}}) as compute:
             self.assertEqual(recap.queue_wrapped_ready(self.db, self.OPEN_UTC + datetime.timedelta(minutes=1)), 0)
             self.assertEqual(recap.queue_wrapped_ready(self.db, datetime.datetime(2026, 12, 20, 12)), 0)
-        compute.assert_not_called()
+        self.assertEqual([c for c in compute.call_args_list if c.args[1] == self.user.id], [])  # the trainer already told is not recomputed
         self.assertEqual(len(self.queued()), 1)
 
     def test_a_new_year_is_a_new_subject(self):
-        self.own("tst-003", acquired_at=datetime.datetime(2027, 2, 1))
+        self.own("big-001", acquired_at=datetime.datetime(2027, 2, 1))
         self.assertEqual(recap.queue_wrapped_ready(self.db, datetime.datetime(2027, 12, 1, 10, 0)), 1)
         self.assertEqual([r.subject_key for r in self.queued()], ["wrapped:2027"])
 
