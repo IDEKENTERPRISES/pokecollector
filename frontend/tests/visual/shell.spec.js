@@ -75,6 +75,7 @@ const SAMPLE = {
   '/collection/user/:userId': '/collection/user/2',
   '/achievements/:userId': '/achievements/2',
   '/settings/:section': '/settings/appearance',
+  '/settings/about/versions/:id': '/settings/about/versions/2026-10-30',
 }
 const sample = pattern => SAMPLE[pattern] ?? pattern
 
