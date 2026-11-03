@@ -1,6 +1,6 @@
 # Welcome and What's new — design for PokéCollector
 
-Status: design for owner approval (2026-11-02). Mockups: the Design canvas, row **"Wave 4 — Welcome and what's new"** (https://claude.ai/artifact/QNJ3UNo7XYj1ze96mkcFGF). The build (P15, P16) starts only after the owner approves them.
+Status: build started 3 November 2026 at the owner's request (P15, P16). Mockups: the Design canvas, row **"Wave 4 — Welcome and what's new"** (https://claude.ai/artifact/QNJ3UNo7XYj1ze96mkcFGF). The owner's review of the mockups (a6) and the release notes (a7) is still open; any changes from it are folded into this doc and the build.
 
 What this builds on:
 - The plan of record is `docs/ENGAGEMENT_DESIGN.md` §7 milestone E, including both "Owner's answers" blocks (2 November 2026), which override its bullets.
