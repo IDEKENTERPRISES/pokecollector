@@ -124,6 +124,7 @@ async function install(page, { now = MID_WEEK, challenge = midWeek(), social = t
       return route.fulfill({ json: { marked: 1 } })
     }
     if (path === '/api/social/leaderboard') return route.fulfill({ json: [ASH, MISTY, BROCK, DAWN].map(stats) })
+    if (path === '/api/feed') return route.fulfill({ json: { items: [], next_before: null, reaction_kinds: ['cheer', 'wow', 'fire', 'heart'] } })
     if (path === '/api/settings/exchange-rate') return route.fulfill({ json: { rate: 1 } })
     if (path === '/api/progress/recap/weekly') return route.fulfill({ json: { show: false, has_activity: false } })
     const responses = {
@@ -428,4 +429,58 @@ test('Reduce Motion: the podium blocks rise once, and stand still under Reduce M
   expect(await block.evaluate(node => getComputedStyle(node).animationName)).toBe('none')
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   expect(await block.evaluate(node => getComputedStyle(node).animationName)).toBe('podium-rise')
+})
+
+// A pushed page opens at the top (Layout scrolls the document on PUSH), so the segments are never
+// left above the viewport by the previous page's scroll offset.
+const segmentsInView = async page => {
+  const group = page.getByRole('radiogroup', { name: 'Leaderboard' })
+  await expect(group).toBeVisible()
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
+  const top = (await group.boundingBox()).y
+  expect(top).toBeGreaterThanOrEqual(0)
+  expect(top).toBeLessThan(300)
+}
+// Makes the page scrollable and scrolls `locator` into view, so the offset is non-zero.
+const scrollTo = async (page, locator) => {
+  await page.evaluate(() => {
+    const spacer = document.createElement('div')
+    spacer.style.height = '1600px'
+    document.querySelector('main').parentElement.appendChild(spacer) // outside <main>: React inserts the next page there
+  })
+  await locator.evaluate(node => node.scrollIntoView({ block: 'end' }))
+  await page.evaluate(() => window.scrollBy(0, 120))
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(50)
+}
+
+test('Leaderboard opens at the top with its tabs visible, from a scrolled Profile', async ({ page }) => {
+  await install(page)
+  await page.goto('/profile')
+  const tile = page.getByTestId('profile-tiles').getByRole('link', { name: /Leaderboard/ })
+  await expect(tile).toBeVisible()
+  await scrollTo(page, tile)
+  await tile.click()
+  await expect(page).toHaveURL(/\/leaderboard$/)
+  await segmentsInView(page)
+  // The other segments stay at the top too.
+  await page.getByRole('radio', { name: 'Challenge' }).click()
+  await expect(page).toHaveURL(/\/leaderboard\/challenge$/)
+  await segmentsInView(page)
+  await page.getByRole('radio', { name: 'Activity' }).click()
+  await expect(page).toHaveURL(/\/leaderboard\/activity$/)
+  await segmentsInView(page)
+})
+
+test('Leaderboard opens at the top from Home\'s challenge row, and back restores Home', async ({ page }) => {
+  await install(page)
+  await page.goto('/')
+  const link = page.getByTestId('challenge-today-row').getByRole('link')
+  await expect(link).toBeVisible()
+  await scrollTo(page, link)
+  await link.click()
+  await expect(page).toHaveURL(/\/leaderboard\/challenge$/)
+  await segmentsInView(page)
+  await page.goBack()
+  await expect(page).not.toHaveURL(/\/leaderboard/)
+  await expect(page.getByTestId('challenge-today-row')).toBeVisible()
 })

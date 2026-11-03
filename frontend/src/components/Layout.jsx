@@ -49,6 +49,19 @@ export default function Layout() {
 
   useEffect(() => restorePendingScroll(locationId(location)), [location.key]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The document is the scroller, so a pushed page would otherwise open at the previous page's
+  // offset (Leaderboard landing below its tabs). A push opens at the top; back (POP) is left to the
+  // browser/restoration. Layout effects run before child effects, so a page that scrolls to
+  // something itself (the Activity feed's ?event link) still wins.
+  const firstScroll = useRef(true)
+  useLayoutEffect(() => {
+    if (firstScroll.current) {
+      firstScroll.current = false
+      return
+    }
+    if (navigationType === 'PUSH') window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+  }, [location.key]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // A slide transition waits for the new location to commit before it captures the new page.
   useLayoutEffect(() => { notifyLocationCommitted() }, [location.key])
 
