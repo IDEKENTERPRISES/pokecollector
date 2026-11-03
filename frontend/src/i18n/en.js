@@ -3290,6 +3290,26 @@ const en = {
     binderFailed: "Couldn't make the binder.",
   },
 
+  welcome: {
+    whatsNew: "What's new",
+    done: 'Done',
+    seeEverything: 'See everything',
+    earlierOne: '…and 1 earlier release',
+    earlier: '…and {count} earlier releases',
+    sectionHeader: 'Welcome and releases',
+    versionHistory: 'Version history',
+    versionHistoryDesc: 'What changed in each release',
+    youHaveThis: 'You have this',
+    namesFooter: 'Releases are named after starter Pokémon. Smaller updates take their evolutions.',
+    groupNew: 'New',
+    groupBetter: 'Better',
+    groupFixed: 'Fixed',
+    groupHood: 'Under the hood',
+    comingNext: 'Coming next',
+    draftNote: 'Draft — not released yet.',
+    seeFullNotes: 'See full notes',
+  },
+
   recap: {
     title: 'Your week',
     cardsAdded: 'Cards added',

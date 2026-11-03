@@ -97,6 +97,7 @@ export const logoutSession = () => api.post('/auth/logout', null, {
 export const logoutOtherDevices = () => api.post('/auth/logout-others').then(r => r.data)
 export const forceChangePassword = (newPassword) => api.put('/auth/me/force-password', { new_password: newPassword }).then(r => r.data)
 export const changeAvatar = (avatarId) => api.put('/auth/me/avatar', { avatar_id: avatarId }).then(r => r.data)
+export const setWhatsNewSeen = (id) => api.put('/auth/me/whats-new-seen', { id }).then(r => r.data)
 export const changeUsername = (username) => api.put('/auth/me/username', { username }).then(r => r.data)
 
 
