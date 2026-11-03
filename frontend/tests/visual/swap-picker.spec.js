@@ -257,3 +257,22 @@ test('a partner with thousands of cards renders a page at a time', async ({ page
   await tiles(page).last().scrollIntoViewIfNeeded()
   await expect.poll(() => tiles(page).count()).toBeGreaterThan(first)
 })
+
+for (const width of [390, 375]) {
+  test(`every quick choice fits on one line at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 })
+    await install(page)
+    const sheet = await openComposer(page)
+    for (const step of ['yours', 'theirs']) {
+      await openStep(page, sheet, step)
+      const group = page.getByRole('radiogroup', { name: 'Show' })
+      await expect(group.getByRole('radio')).toHaveCount(3)
+      for (const radio of await group.getByRole('radio').all()) {
+        expect((await radio.boundingBox()).height).toBeLessThan(34)
+      }
+      const full = step === 'yours' ? 'Your cards on Misty’s wishlist · 0' : "Misty's cards on your wishlist · 0"
+      await expect(group.getByRole('radio', { name: full })).toContainText('Wishlist · 0')
+      await page.getByRole('button', { name: 'Done' }).click()
+    }
+  })
+}

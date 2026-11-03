@@ -170,7 +170,8 @@ function Picker({ owner, partnerName, picked, onToggle, candidatesFor, t, format
   const options = [
     {
       value: 'wishlist',
-      label: fill(t(mine ? 'swaps.pickerTheirWishlist' : 'swaps.pickerYourWishlist'), { name: partnerName, count: counts.wishlist }),
+      label: fill(t('swaps.pickerWishlist'), { count: counts.wishlist }),
+      ariaLabel: fill(t(mine ? 'swaps.pickerTheirWishlist' : 'swaps.pickerYourWishlist'), { name: partnerName, count: counts.wishlist }),
     },
     { value: 'spares', label: fill(t('swaps.pickerSpares'), { count: counts.spares }) },
     { value: 'all', label: fill(t('swaps.pickerAll'), { count: counts.all }) },
