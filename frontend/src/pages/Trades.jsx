@@ -499,10 +499,12 @@ export default function Trades() {
         <SegmentedControl
           size="md"
           ariaLabel={t('trades.title')}
+          tour={social ? undefined : 'trades-offers'}
           options={[
             { value: 'live', label: t('trades.liveTrade') },
             ...(social ? [{
               value: 'offers',
+              tour: 'trades-offers',
               ariaLabel: waitingCount > 0 ? t('swaps.offersTabLabel').replace('{count}', waitingCount) : undefined,
               label: (
                 <span className="inline-flex items-center justify-center gap-1.5">

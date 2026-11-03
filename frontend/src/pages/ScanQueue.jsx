@@ -375,13 +375,13 @@ export default function ScanQueue() {
                 <Loader2 size={28} className="animate-spin text-tint" />
               </div>
             ) : jobs.length === 0 ? (
-              <div className="space-y-4 rounded-[20px] bg-card px-4 py-10 text-center">
+              <div className="space-y-4 rounded-[20px] bg-card px-4 py-10 text-center" data-tour="queue-list">
                 <PokeBall size={56} top="var(--color-fill)" className="mx-auto" />
                 <p className="text-subheadline text-text-secondary">{t('scanner.noScans')}</p>
                 <Button onClick={openScanner}>{t('scanner.goScan')}</Button>
               </div>
             ) : (
-              <ListSection className="!mx-0">
+              <ListSection className="!mx-0" data-tour="queue-list">
                 {jobs.map(job => <JobRow key={job.id} job={job} onOpen={id => navigate(`/scans/${id}`)} retryNow={retryNow} t={t} />)}
               </ListSection>
             )}

@@ -60,6 +60,7 @@ function Tab({ tab, active, onPress, avatarId, label }) {
       href={tab.root}
       aria-current={active ? 'page' : undefined}
       data-testid={`tab-${tab.key}`}
+      data-tour={`tab-${tab.key}`}
       onPointerDown={tab.key === 'profile' ? preloadProfile : undefined}
       onPointerEnter={tab.key === 'profile' ? preloadProfile : undefined}
       onClick={event => {

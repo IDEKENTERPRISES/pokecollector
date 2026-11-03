@@ -44,6 +44,8 @@ import { readSplashEnabled, writeSplashEnabled } from '../components/splash/laun
 import { readShowDaily, writeShowDaily } from '../progress/daily'
 import SplashCacheSection from '../components/splash/SplashCacheSection'
 import { ServerPicturesSection } from '../components/settings/OfflineCardDbSection'
+import { requestTour } from '../welcome/tourControl'
+import { resetTourDone } from '../welcome/tourStorage'
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -1516,6 +1518,25 @@ export default function Settings() {
                 to="/settings/about/versions"
                 testId="settings-version-history"
               />
+              {/* The hands-on tour (docs/WELCOME_DESIGN.md §3.1): multi-user mode only. Clears the completion, then starts it. */}
+              {multiUser && (
+                <ListRow
+                  title={t('tour.settingsRow')}
+                  subtitle={t('tour.settingsRowDetail')}
+                  chevron
+                  testId="settings-show-tour"
+                  onClick={async () => {
+                    try {
+                      await resetTourDone(user, updateCurrentUser)
+                    } catch {
+                      toast.error(t('common.error'))
+                      return
+                    }
+                    navigate('/')
+                    requestTour()
+                  }}
+                />
+              )}
             </ListSection>
             <section className="space-y-1">
             <SectionHeader title={t('settings.sectionAbout')} />

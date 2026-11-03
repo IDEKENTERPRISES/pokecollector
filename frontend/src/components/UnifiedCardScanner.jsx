@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Camera, Check, ImagePlus, Loader2, Upload, X } from 'lucide-react'
+import { Camera, Check, ImagePlus, Inbox, Loader2, Upload, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 import { enqueueScanJob, getScanJobs, getScannerConfiguration } from '../api/client'
@@ -326,6 +326,7 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
               type="button"
               onClick={() => (cameraMode ? setReviewOpen(false) : cameraRef.current?.click())}
               disabled={atLimit}
+              data-tour={cameraMode ? undefined : 'shutter'}
               className="btn-secondary flex items-center justify-center gap-2"
             >
               <Camera size={16} />
@@ -341,6 +342,18 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
               <span>{t('scanner.chooseFromLibrary')}</span>
             </button>
           </div>
+          {!cameraMode && (
+            // Without a camera there is no inbox button in the viewfinder: the queue stays reachable from here.
+            <button
+              type="button"
+              data-tour="scan-queue"
+              onClick={() => requestClose(() => navigate('/scans'))}
+              className="btn-secondary flex w-full items-center justify-center gap-2"
+            >
+              <Inbox size={16} />
+              <span>{t('scanner.inbox')}</span>
+            </button>
+          )}
           {!cameraMode && liveCameraSupported() && (
             <button type="button" onClick={retryCamera} className="ios-press w-full py-2 text-center text-body text-tint">
               {t('scanner.tryCameraAgain')}

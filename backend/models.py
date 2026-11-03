@@ -159,6 +159,8 @@ class User(Base):
     role = Column(String, default="trainer")  # "admin" or "trainer"
     is_active = Column(Boolean, default=True)
     avatar_id = Column(Integer, nullable=True)  # Pokemon number (1-151) for avatar sprite
+    tutorial_completed_at = Column(DateTime, nullable=True)  # engagement P15: when the tour was finished, skipped or dismissed
+    tutorial_outcome = Column(String(12), nullable=True)  # 'finished', 'skipped' or 'dismissed'
     # Last release id the trainer has seen in What's new (docs/WELCOME_DESIGN.md §5.5), or a
     # "since:YYYY-MM-DD" marker the migration wrote for accounts that existed before it.
     whats_new_seen = Column(String(24), nullable=True)

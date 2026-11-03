@@ -141,6 +141,7 @@ export default {
         sheet: 'var(--z-sheet)',
         menu: 'var(--z-menu)',
         scanner: 'var(--z-scanner)',
+        tour: 'var(--z-tour)',
       },
 
       transitionTimingFunction: {

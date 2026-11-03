@@ -30,7 +30,7 @@ export default function TodayCard() {
   const text = splashText(entry, { t, language, units: UNITS })
   const light = 'color-mix(in srgb, var(--today-type) 70%, #fff)'
   return (
-    <section aria-labelledby="pokemon-of-the-day" className="space-y-2" data-testid="pokemon-of-the-day">
+    <section aria-labelledby="pokemon-of-the-day" className="space-y-2" data-testid="pokemon-of-the-day" data-tour="today">
       <h2 id="pokemon-of-the-day" className="px-1 text-title-3 text-text-primary">{t('splash.todayTitle')}</h2>
       <div className="relative isolate overflow-hidden rounded-[22px] bg-card" style={{ '--today-type': typeColour(entry.types) }}>
         <div

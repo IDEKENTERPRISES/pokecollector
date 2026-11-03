@@ -166,10 +166,11 @@ export default function Profile() {
           value={swapsWaiting > 0 ? swapsWaiting : tileIcon(ArrowLeftRight)}
           detail={swapsWaiting > 0 ? t(swapsWaiting === 1 ? 'swaps.offersWaitingOne' : 'swaps.offersWaiting') : undefined}
           to={swapsWaiting > 0 ? '/trades/offers' : '/trades'}
+          tour="tile-trades"
         />
         {multiUser && <StatTile type="psychic" icon={Trophy} label={t('nav.leaderboard')} value={tileIcon(Trophy)} to="/leaderboard" />}
         <StatTile type="fairy" icon={Award} label={t('profile.badges')} value={tileIcon(Award)} to="/achievements" />
-        <StatTile type="fire" icon={Target} label={t('goals.title')} value={tileIcon(Target)} to="/goals" />
+        <StatTile type="fire" icon={Target} label={t('goals.title')} value={tileIcon(Target)} to="/goals" tour="tile-goals" />
         {multiUser && handle && <StatTile type="dragon" icon={Globe} label={t('profile.publicPage')} value={tileIcon(Users)} to={`/u/${handle}`} />}
       </div>
 
@@ -198,6 +199,7 @@ export default function Profile() {
             title={t('profile.syncOffline')}
             value={items.length > 0 ? items.length : undefined}
             to="/offline"
+            data-tour="row-offline"
           />
         )}
         {customMatches.length > 0 && (

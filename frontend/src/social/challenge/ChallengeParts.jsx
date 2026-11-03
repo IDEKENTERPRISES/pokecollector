@@ -137,7 +137,7 @@ export function ChallengeTodayRow({ enabled = true }) {
           {leftText(t, data.ends_at, now)}
         </span>
       </div>
-      <Link to="/leaderboard/challenge" aria-label={ariaLabel} className="ios-press flex min-h-[44px] items-center gap-3">
+      <Link to="/leaderboard/challenge" aria-label={ariaLabel} data-tour="challenge-row" className="ios-press flex min-h-[44px] items-center gap-3">
         <span
           aria-hidden="true"
           className="grid h-10 w-10 flex-shrink-0 place-items-center rounded-full"
@@ -185,6 +185,7 @@ export function ChallengeHero({ data, now, thisWeek = false }) {
     <section
       aria-labelledby="challenge-title"
       data-testid="challenge-hero"
+      data-tour="challenge-hero"
       className="relative overflow-hidden rounded-[22px] p-4"
       style={{
         color: ink,

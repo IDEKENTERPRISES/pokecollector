@@ -16,6 +16,7 @@ import UpdateBanner from './components/pwa/UpdateBanner'
 import { OfflineProvider, useRestoreGate } from './offline/OfflineProvider'
 import { CardDbAutoSync } from './offline/carddb/useCardDb'
 import LaunchSplash from './components/splash/LaunchSplash'
+import TourHost from './welcome/TourHost'
 import WhatsNewHost from './welcome/WhatsNewHost'
 
 const HomeScreen = lazy(() => import('./pages/HomeScreen'))
@@ -296,6 +297,8 @@ export default function App() {
               </Route>
               <Route path="/*" element={<ProtectedRoutes />} />
             </Routes>
+            {/* The hands-on tour for new trainers (docs/WELCOME_DESIGN.md); shows nothing in single-user mode. */}
+            <TourHost />
           </BrowserRouter>
           <UpdateBanner />
           {/* Fresh launches only; portaled above everything while the app renders underneath. */}

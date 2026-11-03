@@ -102,6 +102,7 @@
   --z-sheet:   50;
   --z-menu:    55;
   --z-scanner: 58;
+  --z-tour:    59;
 
   --ease-ios: cubic-bezier(0.32, 0.72, 0, 1);
 

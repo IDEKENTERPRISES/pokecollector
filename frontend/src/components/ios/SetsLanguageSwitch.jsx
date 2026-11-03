@@ -24,6 +24,7 @@ export default function SetsLanguageSwitch({ current, languages, onSelect }) {
         <button
           type="button"
           data-testid="sets-language-switch"
+          data-tour="sets-language"
           aria-label={`${t('sets.languageSwitch')}: ${language.name}`}
           className="glass inline-flex h-11 items-center gap-1.5 rounded-full px-3 text-text-primary ios-press"
         >

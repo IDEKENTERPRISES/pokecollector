@@ -41,9 +41,9 @@ function readBuildId() {
   })
 }
 
-function Section({ title, children }) {
+function Section({ title, children, tour }) {
   return (
-    <section className="space-y-3 rounded-xl border border-border bg-card p-4">
+    <section className="space-y-3 rounded-xl border border-border bg-card p-4" data-tour={tour}>
       <h2 className="text-sm font-semibold text-text-primary">{title}</h2>
       {children}
     </section>
@@ -134,7 +134,7 @@ export default function OfflineCenter() {
 
       <OfflineCardDbSection />
 
-      <Section title={t('sync.storageTitle')}>
+      <Section title={t('sync.storageTitle')} tour="offline-card">
         {unavailable ? <p className="text-sm text-text-secondary">{t('sync.storageUnavailable')}</p> : <StorageSummary />}
       </Section>
 

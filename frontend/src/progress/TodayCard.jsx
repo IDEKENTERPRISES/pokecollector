@@ -229,7 +229,7 @@ export default function DailyTodayCard() {
   const xp = summary?.xp
   const tint = entry ? typeColour(entry.types) : 'var(--type-colorless)'
   return (
-    <section id="today-card" aria-labelledby="today-card-title" className="scroll-mt-20 space-y-2" data-testid="today-card">
+    <section id="today-card" aria-labelledby="today-card-title" className="scroll-mt-20 space-y-2" data-testid="today-card" data-tour="today">
       <div className="flex items-center justify-between gap-2 px-1">
         <h2 id="today-card-title" className="text-title-3 font-display text-text-primary">{t('today.title')}</h2>
         {summary && <Streak streak={summary.streak} t={t} />}

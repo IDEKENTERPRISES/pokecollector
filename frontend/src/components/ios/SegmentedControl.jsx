@@ -29,7 +29,7 @@ export function nextSegmentIndex(key, index, count) {
  *
  * Props: options [{ value, label }], value, onChange(value), ariaLabel, size 'sm' (32 px) | 'md' (36 px).
  */
-export default function SegmentedControl({ options, value, onChange, ariaLabel, size = 'sm', className = '' }) {
+export default function SegmentedControl({ options, value, onChange, ariaLabel, size = 'sm', className = '', tour }) {
   const refs = useRef([])
   const count = options.length
   const selectedIndex = Math.max(0, options.findIndex(option => option.value === value))
@@ -46,6 +46,7 @@ export default function SegmentedControl({ options, value, onChange, ariaLabel, 
     <div
       role="radiogroup"
       aria-label={ariaLabel}
+      data-tour={tour}
       onKeyDown={handleKeyDown}
       className={clsx(
         'relative flex w-full rounded-full p-0.5 bg-fill-tertiary',
@@ -74,6 +75,7 @@ export default function SegmentedControl({ options, value, onChange, ariaLabel, 
             role="radio"
             aria-checked={selected}
             aria-label={option.ariaLabel}
+            data-tour={option.tour}
             tabIndex={selected ? 0 : -1}
             onClick={() => onChange?.(option.value)}
             className={clsx(

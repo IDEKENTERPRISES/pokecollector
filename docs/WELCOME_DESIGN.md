@@ -120,7 +120,7 @@ Social **on** is shown; social-off differences are in the last column. Numbers a
 | Collection | 013 | Binder | `view-switch` | tap | **Grid or Book** — Grid shows your cards in rows. Book shows pockets, like a real binder — you can even drag cards between them. Tap **Book**. | skipped after 012 |
 | Scan | 014 | any | `tab-scan` | tap | **Scan your cards** — The red-and-white button opens the camera. Point it at a card and PokéCollector finds it. | same |
 | Scan | 015 | Scanner | `shutter` | info | **This is the shutter** — Fit one card in the frame and tap it. You can take several photos in a row and send them together. | same |
-| Scan | 016–018 | Scanner | `scan-queue` | tap | **Scans take a little while** — Recognising a card can take a minute, so you can leave and come back. Tap the queue to see your scans. Plus the notifications ask (§3.7). | same |
+| Scan | 016–018 | Scanner | `scan-queue` | tap | **Scans take a little while** — Recognising a card can take a minute, so you can leave and come back. Tap Inbox to see your scans. Plus the notifications ask (§3.7). The control is the Inbox button at the top right of the scanner, so the hint and the tap line ("Tap Inbox") use that name. | same |
 | Scan | 019 | Scan queue | `queue-list` | info | **Photos wait here** — Each photo shows as recognising, then ready to review. Review a scan to add it to your collection. Even offline, photos wait here and are recognised once you're back online. | empty queue: the page header |
 | Search | 020 | any | `tab-search` | tap | **Find any card or set** — Search is where you look things up, in sets or the Pokédex. | same |
 | Search | 021 | Search | `search-field` | info | **Type it any way you like** — Name, set and number in any order — "umbreon 161" works. Small typos get corrected for you. | same |
@@ -146,7 +146,7 @@ The hint layer never guesses from text or layout. It finds a target by a stable 
 <button data-tour="shutter" …>
 ```
 
-- **Hooks live in the real components**, one attribute each, no styling: `today` (Today card wrapper), `challenge-row`, `challenge-hero`, `tab-collection`, `tab-scan`, `tab-search`, `tab-profile` (TabBar and SidebarNav links, so it works on iPad and desktop), `collection-segments`, `first-binder`, `new-list`, `view-switch` (BookViewSwitch), `shutter`, `scan-queue` (the scanner's inbox button), `queue-list`, `search-field`, `browse-sets`, `sets-language`, `tile-trades`, `tile-goals`, `trades-offers`, `back` (the NavBar's back button), `first-goal`, `new-goal`, `row-offline`, `offline-card`. A unit test lists every id the tour uses and checks it exists in the source, so a refactor can't silently drop one.
+- **Hooks live in the real components**, one attribute each, no styling: `today` (Today card wrapper), `challenge-row`, `challenge-hero`, `tab-collection`, `tab-scan`, `tab-search`, `tab-profile` (TabBar and SidebarNav links, so it works on iPad and desktop), `collection-segments`, `first-binder`, `new-list`, `view-switch` (BookViewSwitch), `shutter`, `scan-queue` (the scanner's inbox button), `queue-list`, `search-field`, `browse-sets`, `sets-language`, `tile-trades`, `tile-goals`, `trades-offers`, `back` (the NavBar's back button), `first-goal`, `new-goal`, `row-offline`, `offline-card` (the Storage card of Sync & offline, which shows what is saved on the phone). A unit test lists every id the tour uses and checks it exists in the source, so a refactor can't silently drop one.
 - **A step names its route and its hook.** The step table is data (`tourSteps()`), for example `{ id: 'binder-view', route: /^\/binders\/\d+$/, target: 'view-switch', kind: 'tap' }`.
 - **Waiting for a screen.** After a tap the route changes. `TourSpotlight` waits for the hook with a `MutationObserver` for up to 1.5 s (the page may be a lazy chunk); the screen stays dimmed and the hint hidden until then.
 - **Measuring.** The hole is the target's `getBoundingClientRect()` plus 6 px padding, re-measured on resize, orientation change, `document.fonts.ready`, scroll end and each animation frame while the page is sliding in (the shell's slide transition). If the target is off screen, the page is scrolled until it is centred, with the scrim up so nothing is tappable meanwhile.
@@ -199,7 +199,7 @@ A new account has no binders, no goals and an empty scan queue. The tour never n
 **Other browsers (E7, yes).** When the browser has offered an install (`beforeinstallprompt` was captured), the step reads **Install PokéCollector** with one **Install** button that calls the saved prompt; the two confirmations are the same. If the browser offers nothing, the step is left out.
 
 **Notifications ask (scan-queue step, 016–018).**
-- In the Home Screen app: a paragraph "Want a nudge when scans are ready?" and a tinted **Turn on notifications** button that runs `enablePush()` (`pwa/push.js`) and asks iOS. Tapping the queue button is still the way on.
+- In the Home Screen app: a paragraph "Want a nudge when scans are ready?" and a tinted **Turn on notifications** button that runs `enablePush()` (`pwa/push.js`) and asks iOS. Tapping the Inbox button is still the way on.
 - States: *Declined* — "No problem. You can turn them on later in Settings › Notifications." *On* — "Notifications are on." *Unsupported or offline* — the button is left out.
 - In the browser: no button; "Notifications need the Home Screen app. Add it later and turn them on in Settings › Notifications."
 
@@ -495,3 +495,18 @@ The Home Screen, Skip and "are you sure?" screens are centre cards over the dimm
 - **Z-order.** The update banner (60/70) must stay above the tour. A test asserts the order of the z-index values (tour 59, scanner 58, banner 60).
 - **Two layers.** The tour and What's new never show together: What's new waits for the tour.
 - **Release file discipline.** The only guard is the test in §5.5 plus the promotion step. A forgotten entry means the sheet says nothing, which is safe.
+
+---
+
+## 11. Build notes (P15, 3 November 2026)
+
+Where the build differs from, or had to decide beyond, the doc:
+
+- **New or existing account.** The doc does not say how to tell them apart. The user payload now carries `created_at`; an account made in the last two days starts the tour by itself, an older one gets the Take the tour card (`NEW_ACCOUNT_DAYS` in `welcome/tourStorage.js`).
+- **Starting from the card.** Per the build brief, only Finish, a confirmed Skip or "Not now" writes completion; Start on the card does not (§3.9 said it counts as done).
+- **Scrim.** The dim and ring are one pointer-events:none element with the artboards' 9999 px shadow; four transparent panels take the taps (so the hole keeps its rounded corners).
+- **Hooks that sit differently from the artboards.** `collection-segments` is on the Card Lists segment; `view-switch` exists only once a binder has cards (the real Binder page hides it for an empty binder, so the step is then skipped after 1.5 s); `sets-language` is the language list on `/sets` or the language switch on a language page, and is skipped for a one-language account; `offline-card` is the first card of Sync & offline; `queue-list` is the job list, or the empty card.
+- **Empty variants** are decided once at the start from the binders and goals lists.
+- **Offline features off:** the tour ends on the last goals step with Finish, and the end card carries one offline sentence.
+- **Next to another screen.** Next on the goals step goes back to Profile for the Sync & offline step.
+- **Server.** `PUT /api/auth/me/tutorial` (`outcome`, optional `completed_at`, earliest wins) and `DELETE /api/auth/me/tutorial`.
