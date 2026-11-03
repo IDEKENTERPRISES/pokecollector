@@ -22,6 +22,7 @@ export default function Alert({
   container,
   zIndex = 'var(--z-menu)',
   stacked: forceStacked,
+  opaque = false,
 }) {
   const { t } = useSettings()
   const titleId = useId()
@@ -44,6 +45,7 @@ export default function Alert({
         tabIndex={-1}
         onKeyDown={onDialogKeyDown}
         className="ios-alert-in glass relative w-[270px] overflow-hidden rounded-[14px] text-center outline-none"
+        style={opaque ? { background: 'var(--color-elevated)' } : undefined}
       >
         <div className="px-4 pb-4 pt-5">
           {title && <h2 id={titleId} className="text-headline text-text-primary">{title}</h2>}

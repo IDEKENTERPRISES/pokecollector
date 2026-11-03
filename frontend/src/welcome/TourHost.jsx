@@ -272,6 +272,7 @@ export default function TourHost() {
         message={t('tour.skipAlertMessage')}
         zIndex={70}
         stacked
+        opaque
         actions={[
           { label: t('tour.keepGoing'), preferred: true, onSelect: () => setAlert(null) },
           { label: t('tour.skip'), onSelect: () => finishWith('skipped') },
@@ -284,6 +285,7 @@ export default function TourHost() {
         message={t('tour.sureMessage')}
         zIndex={70}
         stacked
+        opaque
         actions={[
           { label: t('tour.addFirst'), preferred: true, onSelect: () => setAlert(null) },
           { label: t('tour.carryOnBrowser'), onSelect: () => setAlert('sure2') },
@@ -296,6 +298,7 @@ export default function TourHost() {
         message={t('tour.reallyMessage')}
         zIndex={70}
         stacked
+        opaque
         actions={[
           { label: t('tour.addFirst'), preferred: true, onSelect: () => setAlert(null) },
           { label: t('tour.yesCarryOn'), onSelect: goToSteps },
