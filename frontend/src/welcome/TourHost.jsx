@@ -149,7 +149,7 @@ export default function TourHost() {
     Promise.allSettled([getBinders(), getGoals()]).then(([binders, goals]) => {
       setEmpty({
         binders: binders.status === 'fulfilled' && Array.isArray(binders.value?.data) && binders.value.data.length === 0,
-        goals: goals.status === 'fulfilled' && Array.isArray(goals.value) && goals.value.length === 0,
+        goals: goals.status === 'fulfilled' && Array.isArray(goals.value?.goals) && goals.value.goals.length === 0,
       })
     })
   }, [])
