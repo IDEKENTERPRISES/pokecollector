@@ -390,7 +390,7 @@ test('targets are 44 px and nothing scrolls sideways', async ({ page }) => {
 test('a reaction link opens the feed at that event and then drops the query', async ({ page }) => {
   await install(page)
   await page.goto('/leaderboard/activity?event=9002')
-  await expect(events(page)).toHaveCount(3)
+  await expect(events(page)).toHaveCount(6)
   await expect(page.locator('[data-event-id="9002"]')).toBeInViewport()
   await expect(page.getByRole('dialog', { name: 'Comments' })).toHaveCount(0)
   await expect.poll(() => new URL(page.url()).search).toBe('')
@@ -410,6 +410,6 @@ test('a link to an event beyond the loaded page pins it on top; an unknown one j
   await expect(page.locator('[data-event-id="8700"]')).toBeVisible()
   expect(state.eventCalls).toContain('8700')
   await page.goto('/leaderboard/activity?event=1')
-  await expect(events(page)).toHaveCount(3)
+  await expect(events(page)).toHaveCount(6)
   await expect(page.getByRole('alert')).toHaveCount(0)
 })
