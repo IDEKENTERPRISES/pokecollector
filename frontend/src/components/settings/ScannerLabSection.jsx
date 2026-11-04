@@ -115,7 +115,7 @@ export function Report({ report, title }) {
   )
 }
 
-const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', tta: 'extra views', art: 'artwork', base: 'DINOv2-base' }
+const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base' }
 const describeOptions = label => (label === 'baseline' ? OPTION_NAMES.baseline : label.split('+').map(word => OPTION_NAMES[word] || word).join(' + '))
 
 /** The option sets side by side on the same photos: pick the row with the best top 20 and decided rate with 0 wrong. */
