@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import os
 import threading
 import uuid
 from dataclasses import dataclass
@@ -24,6 +25,8 @@ from services.scan_storage import (
     ScanUploadError,
     delete_job_directory,
     delete_scan_image,
+    downscale_for_recognition,
+    read_recognition_image,
     resolve_scan_path,
 )
 
@@ -39,7 +42,20 @@ TRANSIENT_BACKOFF_SECONDS = (30, 120, 600, 1800, 3600, 21600)
 RECOGNITION_BACKOFF_SECONDS = (2, 10, 30)
 TERMINAL_ITEM_STATUSES = {"done", "failed"}
 
-MAX_CONCURRENT_SCAN_PROCESSING = 3
+def _env_positive_int(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, "").strip() or default)
+    except ValueError:
+        return default
+    return value if value >= 1 else default
+
+
+# Gemini is a cloud service that serves several photos at once.
+MAX_CONCURRENT_SCAN_PROCESSING = _env_positive_int("SCAN_MAX_CONCURRENT_GEMINI", 3)
+# An OpenAI-compatible endpoint (Ollama on a gaming PC) serves one photo at a
+# time; letting three wait on it made the queued ones time out. Raise this only
+# for a server that really runs requests in parallel (OLLAMA_NUM_PARALLEL).
+MAX_CONCURRENT_OPENAI_SCANS = _env_positive_int("SCAN_MAX_CONCURRENT_OPENAI", 1)
 _SCAN_PROCESSING_SLOT_POLL_SECONDS = 0.1
 
 
@@ -68,6 +84,57 @@ _scan_processing_semaphore = _ProcessWideAsyncSemaphore(
 )
 
 
+_endpoint_gates: dict[tuple[str, int], _ProcessWideAsyncSemaphore] = {}
+_endpoint_gates_lock = threading.Lock()
+
+
+def _endpoint_gate(url: str) -> _ProcessWideAsyncSemaphore:
+    """One process-wide gate per endpoint (and per configured limit)."""
+    key = (url, MAX_CONCURRENT_OPENAI_SCANS)
+    with _endpoint_gates_lock:
+        gate = _endpoint_gates.get(key)
+        if gate is None:
+            gate = _ProcessWideAsyncSemaphore(MAX_CONCURRENT_OPENAI_SCANS)
+            _endpoint_gates[key] = gate
+        return gate
+
+
+def _openai_endpoint_for_user(db: Session, user_id: int) -> str | None:
+    """The endpoint URL when this user scans through an OpenAI-compatible provider."""
+    from services.scan_providers import OPENAI, get_provider, openai_base_url
+
+    try:
+        return openai_base_url() if get_provider(db, user_id).name == OPENAI else None
+    except Exception:
+        return None
+
+
+class _ProcessingSlots:
+    """Endpoint gate first, then the shared slot, so waiters never hog global slots."""
+
+    def __init__(self, claim):
+        self._claim = claim
+        self._gate = None
+
+    async def __aenter__(self):
+        endpoint = getattr(self._claim, "openai_endpoint", None)
+        self._gate = _endpoint_gate(endpoint) if endpoint else None
+        if self._gate is not None:
+            await self._gate.__aenter__()
+        try:
+            await _scan_processing_semaphore.__aenter__()
+        except BaseException:
+            if self._gate is not None:
+                await self._gate.__aexit__(None, None, None)
+            raise
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        await _scan_processing_semaphore.__aexit__(exc_type, exc, traceback)
+        if self._gate is not None:
+            await self._gate.__aexit__(exc_type, exc, traceback)
+
+
 @dataclass(frozen=True)
 class ClaimedScanItem:
     item_id: int
@@ -75,6 +142,9 @@ class ClaimedScanItem:
     item_ids: tuple[int, ...] = ()
     composite: bool = False
     recognition_cache_item_ids: tuple[int, ...] = ()
+    # Set when the owner scans through an OpenAI-compatible endpoint, which
+    # serves one photo at a time (see MAX_CONCURRENT_OPENAI_SCANS).
+    openai_endpoint: str | None = None
 
     @property
     def all_item_ids(self) -> tuple[int, ...]:
@@ -222,8 +292,10 @@ def claim_next_scan_item(
     if not job.started_at:
         job.started_at = now
     job.updated_at = now
+    openai_endpoint = _openai_endpoint_for_user(db, item.user_id)
     db.commit()
     return ClaimedScanItem(
+        openai_endpoint=openai_endpoint,
         item_id=item.id,
         item_ids=tuple(claimed_item.id for claimed_item in items),
         lease_token=lease_token,
@@ -511,6 +583,15 @@ async def _require_scanner_reachable(provider) -> None:
         raise ScannerWaitingError("Waiting for the scanner")
 
 
+def _fit_image_for_provider(provider, image_bytes: bytes, content_type: str):
+    """A self-hosted model is sent about 1024 px, never the 2048 px review photo."""
+    from services.scan_providers import openai_is_self_hosted
+
+    if provider.is_gemini or not openai_is_self_hosted():
+        return image_bytes, content_type
+    return downscale_for_recognition(image_bytes, content_type)
+
+
 async def default_scan_processor(
     db: Session,
     user_id: int,
@@ -539,6 +620,7 @@ async def default_scan_processor(
             detail=provider.missing_credential_message(),
         )
     await _require_scanner_reachable(provider)
+    image_bytes, content_type = _fit_image_for_provider(provider, image_bytes, content_type)
     trace = create_scan_trace(
         db,
         user_id,
@@ -649,6 +731,9 @@ async def default_composite_processor(
         )
     await _require_scanner_reachable(provider)
 
+    images = [
+        _fit_image_for_provider(provider, image, "image/jpeg")[0] for image in images
+    ]
     trace_item_ids = list(item_ids or [])
     traces = [
         create_scan_trace(
@@ -766,7 +851,7 @@ async def process_claimed_scan_item(
     # Bounds how many of these run at once — see MAX_CONCURRENT_SCAN_PROCESSING
     # for why: the DB session opened just below stays checked out for the
     # entire recognition call, including the slow vision-model HTTP work.
-    async with _scan_processing_semaphore:
+    async with _ProcessingSlots(claim):
         db = SessionLocal()
         try:
             try:
@@ -774,7 +859,7 @@ async def process_claimed_scan_item(
                 if len(items) != len(claim.all_item_ids):
                     db.rollback()
                     return
-                image_bytes = [resolve_scan_path(item.image_path).read_bytes() for item in items]
+                image_bytes = [read_recognition_image(item.image_path) for item in items]
                 user_id = items[0].user_id
                 content_types = [item.content_type for item in items]
                 job_id = items[0].job_id
