@@ -17,8 +17,8 @@ from typing import Callable
 
 import numpy as np
 
-from . import config, detect as detect_module
-from .index import CardIndex, tcg_card_id
+from . import config, constrained, detect as detect_module
+from .index import CardIndex, merge_hits, tcg_card_id
 
 TOP_K = 20
 
@@ -36,6 +36,11 @@ RANK_MAX_WITH_RULES = 10  # the rule-chosen printing must be within this many cl
 # With no usable number: the picture alone must be this sure.
 SIM_MIN_PICTURE_ONLY = _env_float("CARD_MATCH_SIM_MIN_PICTURE_ONLY", 0.80)
 LEAD_MIN_PICTURE_ONLY = _env_float("CARD_MATCH_LEAD_MIN_PICTURE_ONLY", 0.06)
+# The number was read but names nothing among the closest pictures (a misread that could not be corrected):
+# the picture alone may still decide, but only on a much bigger similarity and lead than with no number at
+# all, because a reprint with the same artwork scores almost the same as the card itself.
+SIM_MIN_PICTURE_STRONG = _env_float("CARD_MATCH_SIM_MIN_PICTURE_STRONG", 0.88)
+LEAD_MIN_PICTURE_STRONG = _env_float("CARD_MATCH_LEAD_MIN_PICTURE_STRONG", 0.10)
 
 
 @dataclass
@@ -116,6 +121,8 @@ def decide(card_info: dict, candidates: list[dict]) -> tuple[dict | None, str | 
                 return {"candidate": chosen, "mechanism": mechanism, "lead": round(lead, 4)}, None
             return None, "rules_choice_not_close_in_picture"
         if not number_hits:
+            if top_picture["_similarity"] >= SIM_MIN_PICTURE_STRONG and lead >= LEAD_MIN_PICTURE_STRONG:
+                return {"candidate": top_picture, "mechanism": "picture_lead_strong", "lead": round(lead, 4)}, None
             return None, "number_not_among_picture_matches"
         # The number matches several printings: the picture breaks the tie only when it is clear.
         if len(number_hits) > 1:
@@ -127,6 +134,25 @@ def decide(card_info: dict, candidates: list[dict]) -> tuple[dict | None, str | 
     if top_picture["_similarity"] >= SIM_MIN_PICTURE_ONLY and lead >= LEAD_MIN_PICTURE_ONLY:
         return {"candidate": top_picture, "mechanism": "picture_lead", "lead": round(lead, 4)}, None
     return None, "no_number_and_picture_not_clear"
+
+
+def correct_number(card_info: dict, candidates: list[dict], lines: list[str]) -> dict | None:
+    """When the number OCR read names none of the closest printings (or none was read), look for the one
+    printing whose "number/total" the recognised text is a damaged copy of, and read that number instead.
+    Changes ``card_info`` in place; returns what changed, for the trace, or None."""
+    from api import recognize as rules
+
+    if not candidates or not lines:
+        return None
+    read = card_info.get("number_local")
+    if read and any(rules._numbers_match(read, c.get("number")) for c in candidates):
+        return None
+    found = constrained.constrain(lines, candidates)
+    if found is None:
+        return None
+    card_info["number_local"] = found.number
+    card_info["number_total"] = found.total
+    return {"read": read, "number": found.number, "total": found.total, "distance": found.distance}
 
 
 class CardMatcher:
@@ -151,18 +177,21 @@ class CardMatcher:
         timings["embed"] = (_timer() - t0) * 1000
 
         t0 = _timer()
-        hits = self.index.search_merged(vectors, top_k)
+        per_view = self.index.search(vectors, top_k)
+        hits = merge_hits(per_view, top_k)
+        # Which way up the card is, from the picture: the view that matches a catalogue picture better.
+        flipped = len(per_view) > 1 and bool(per_view[1]) and (not per_view[0] or per_view[1][0][1] > per_view[0][0][1])
         timings["search"] = (_timer() - t0) * 1000
 
         ocr_info: dict = {}
         ocr_result = None
         if use_ocr and self.ocr_reader is not None:
             t0 = _timer()
-            ocr_result = self.ocr_reader.read(upright, read_hp=self.read_hp)
+            ocr_result = self.ocr_reader.read(upright, read_hp=self.read_hp, flipped=flipped)
             timings["ocr"] = (_timer() - t0) * 1000
             ocr_info = {
                 "number_local": ocr_result.number_local, "number_total": ocr_result.number_total, "hp": ocr_result.hp,
-                "tokens": ocr_result.tokens[:12],
+                "tokens": ocr_result.tokens[:12], "flipped": ocr_result.flipped, "lines": ocr_result.lines[:8],
             }
 
         t0 = _timer()
@@ -178,6 +207,9 @@ class CardMatcher:
             if ocr_result else {}
         )
         card_info["language"] = None  # English-only index: language is not evidence
+        corrected = correct_number(card_info, candidates, ocr_result.lines if ocr_result else [])
+        if corrected:
+            ocr_info["corrected"] = corrected
         chosen, reason = decide(card_info, candidates)
         timings["decide"] = (_timer() - t0) * 1000
         timings["total"] = sum(timings.values())

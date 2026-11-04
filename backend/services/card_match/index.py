@@ -73,12 +73,17 @@ class CardIndex:
 
     def search_merged(self, queries: np.ndarray, k: int = 20) -> list[tuple[str, float]]:
         """Search several views of one card (for example 0 and 180 degrees); a card keeps its best score."""
-        best: dict[str, float] = {}
-        for hits in self.search(queries, k):
-            for card_id, score in hits:
-                if score > best.get(card_id, -2.0):
-                    best[card_id] = score
-        return sorted(best.items(), key=lambda item: -item[1])[:k]
+        return merge_hits(self.search(queries, k), k)
+
+
+def merge_hits(per_view: list[list[tuple[str, float]]], k: int = 20) -> list[tuple[str, float]]:
+    """One ranking from the hits of several views: each card keeps its best score."""
+    best: dict[str, float] = {}
+    for hits in per_view:
+        for card_id, score in hits:
+            if score > best.get(card_id, -2.0):
+                best[card_id] = score
+    return sorted(best.items(), key=lambda item: -item[1])[:k]
 
 
 def _atomic_write(path: Path, write: Callable[[Path], None]) -> None:

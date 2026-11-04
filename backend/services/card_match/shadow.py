@@ -66,9 +66,12 @@ def default_matcher():
 
 
 def _read_stored_photo(relative_path: str) -> bytes:
+    """The same bytes the scan trace stores (and the labelled benchmark re-runs): the guide-frame crop made
+    for recognition when there is one, else the stored photo. Reading the full photo instead gave the matcher
+    a card much smaller in the frame, with the bottom-line text too small to read."""
     from services import scan_storage
 
-    return scan_storage.resolve_scan_path(relative_path).read_bytes()
+    return scan_storage.read_recognition_image(relative_path)
 
 
 def _trainer_consents(user_id: int) -> bool:
@@ -82,7 +85,7 @@ def _trainer_consents(user_id: int) -> bool:
         db.close()
 
 
-def _shadow_payload(result) -> dict:
+def _shadow_payload(result, *, input_info: dict | None = None, matcher=None) -> dict:
     return {
         "schema_version": 1,
         "status": "ok",
@@ -96,6 +99,10 @@ def _shadow_payload(result) -> dict:
         "ocr": result.ocr,
         "detection": result.detection,
         "timings_ms": result.timings_ms,
+        # So a future difference from the benchmark is visible: what went in, and what was loaded.
+        "input": input_info or {},
+        "ocr_available": bool(getattr(matcher, "ocr_reader", None)) if matcher is not None else None,
+        "index_count": len(matcher.index) if matcher is not None and getattr(matcher, "index", None) is not None else None,
     }
 
 
@@ -234,7 +241,8 @@ class ShadowRunner:
             self._skip(user_id, job_id, item_id, reason or "not_ready")
             return
         try:
-            photo = decode_rgb(self._photo_reader(image_path), max_side=MAX_SIDE)
+            raw = self._photo_reader(image_path)
+            photo = decode_rgb(raw, max_side=MAX_SIDE)
         except Exception:
             self._skip(user_id, job_id, item_id, "photo_unavailable")
             return
@@ -244,7 +252,8 @@ class ShadowRunner:
             logger.warning("Shadow match failed: %s", exc)
             self._skip(user_id, job_id, item_id, "match_failed")
             return
-        if scan_trace.record_shadow(user_id, job_id, item_id, _shadow_payload(result)):
+        input_info = {"bytes": len(raw), "width": int(photo.shape[1]), "height": int(photo.shape[0])}
+        if scan_trace.record_shadow(user_id, job_id, item_id, _shadow_payload(result, input_info=input_info, matcher=matcher)):
             with self._lock:
                 self._counts["ran"] += 1
 
