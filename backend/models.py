@@ -1107,6 +1107,8 @@ class SwapOffer(Base):
     note = Column(String(140), nullable=True)
     # What the last counter changed against the previous revision (see services.swaps.diff_revisions).
     changes = Column(JSON, nullable=True)
+    # Who cancelled it (either trainer once accepted); NULL on rows cancelled before this column existed.
+    cancelled_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     expires_at = Column(DateTime, nullable=False)
     from_confirmed_at = Column(DateTime, nullable=True)
     to_confirmed_at = Column(DateTime, nullable=True)

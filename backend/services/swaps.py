@@ -479,10 +479,14 @@ def cancel_offer(db: Session, offer: SwapOffer, actor: User, now: datetime.datet
             raise SwapError(404, "Swap offer not found")
     elif actor.id != offer.from_user_id:
         raise SwapError(403, "Only the trainer who made the offer can cancel it")
+    was_accepted = offer.state == ACCEPTED
     offer.state = CANCELLED
+    offer.cancelled_by_user_id = actor.id
     offer.turn_user_id = None
     offer.updated_at = now
     db.flush()
+    if was_accepted:
+        _notify(db, offer, other_party(offer, actor.id), "cancelled", actor, now)
     return offer
 
 
@@ -658,7 +662,7 @@ def _card_labels(db: Session, offer: SwapOffer) -> dict[int, str]:
 
 def _notify(db: Session, offer: SwapOffer, recipient_id: int, kind: str, actor: User,
             now: datetime.datetime) -> None:
-    """One push per offer, revision and kind. `kind`: offer, counter, accepted, swapped, completed, declined.
+    """One push per offer, revision and kind. `kind`: offer, counter, accepted, swapped, completed, declined, cancelled.
     The details name the cards, never amounts; cash is only a flag."""
     try:
         labels = _card_labels(db, offer)
@@ -770,6 +774,8 @@ def serialize_offers(db: Session, offers: list[SwapOffer], viewer_id: int) -> li
             "state": offer.state,
             "revision": int(offer.revision),
             "role": "proposer" if viewer_id == offer.from_user_id else "recipient",
+            # Who cancelled it; old rows have no value, so the proposer, as before.
+            "cancelled_by_user_id": (offer.cancelled_by_user_id or offer.from_user_id) if offer.state == CANCELLED else None,
             "from_user": user_view(offer.from_user_id),
             "to_user": user_view(offer.to_user_id),
             "partner": user_view(partner_id),

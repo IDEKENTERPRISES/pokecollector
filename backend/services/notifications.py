@@ -677,6 +677,7 @@ _SWAP_TITLES = {
     "swapped": "Confirm your swap",
     "completed": "Swap complete",
     "declined": "Swap declined",
+    "cancelled": "Swap called off",
 }
 _SWAP_LIGHT = {
     "offer": "You have a new swap offer",
@@ -685,6 +686,7 @@ _SWAP_LIGHT = {
     "swapped": "Your swap partner tapped Swapped",
     "completed": "Your swap is complete",
     "declined": "A swap offer was declined",
+    "cancelled": "A swap was called off",
 }
 SWAP_NAMED_CARDS = 2  # a side with more cards than this is counted ("3 cards") instead of listed
 
@@ -742,10 +744,12 @@ def build_swap_payload(details: dict | None, detailed: bool, badge: int | None =
             body = f"Your swap with {who} is complete"
         elif kind == "declined":
             body = f"{who} declined your swap offer"
+        elif kind == "cancelled":
+            body = f"{who} called off your swap"
         else:
             body = f"{who} sent a swap offer"
     payload = json.loads(push.encode_payload_fitted(_SWAP_TITLES[kind], body, navigate))
-    if badge is not None and kind != "declined":
+    if badge is not None and kind not in ("declined", "cancelled"):
         payload["app_badge"] = int(badge)
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
@@ -772,6 +776,8 @@ def swap_push_still_relevant(db: Session, row: NotificationQueue) -> bool:
         return offer.state == "accepted" and mine is None
     if kind == "declined":
         return offer.state == "declined"
+    if kind == "cancelled":
+        return offer.state == "cancelled"
     return offer.state == "completed"
 
 

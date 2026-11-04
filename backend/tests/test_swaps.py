@@ -687,6 +687,44 @@ class PushTextTests(SwapBase):
         self.assertEqual(self.queue(self.ash), [])
 
 
+    def test_cancelling_an_accepted_swap_pushes_the_other_trainer(self):
+        for canceller, other in (("ash", "misty"), ("misty", "ash")):
+            offer_id = self.accepted()
+            self.act(getattr(self, canceller), offer_id, "cancel")
+            rows = [r for r in self.queue(getattr(self, other)) if r.details["kind"] == "cancelled" and r.details["offer_id"] == offer_id]
+            self.assertEqual([r.subject_key for r in rows], [f"swap:{offer_id}:r1:cancelled"])
+            self.assertEqual(rows[0].details["partner"], canceller)
+            self.assertEqual([r for r in self.queue(getattr(self, canceller)) if r.details["kind"] == "cancelled" and r.details["offer_id"] == offer_id], [])
+            payload = self.payload(rows[0].details, True, 4)
+            self.assertEqual(payload["notification"]["body"], f"{canceller} called off your swap")
+            self.assertEqual(payload["notification"]["navigate"], f"/trades/offers/{offer_id}")
+            self.assertNotIn("app_badge", payload)
+            light = self.payload(rows[0].details, False)
+            self.assertEqual(light["notification"]["body"], "A swap was called off")
+            self.assertNotIn(canceller, json.dumps(light))
+
+
+class CancelledByTests(SwapBase):
+    def test_who_cancelled_is_recorded_and_returned(self):
+        offer = self.propose()
+        response = self.act(self.ash, offer["id"], "cancel")
+        self.assertEqual(response.json()["cancelled_by_user_id"], self.ash.id)
+        offer_id = self.accepted()
+        self.assertIsNone(self.act(self.misty, offer_id, "confirm-swapped").json()["cancelled_by_user_id"])
+        self.assertEqual(self.act(self.misty, offer_id, "cancel").json()["cancelled_by_user_id"], self.misty.id)
+        offer_id = self.accepted()
+        self.assertEqual(self.act(self.ash, offer_id, "cancel").json()["cancelled_by_user_id"], self.ash.id)
+
+    def test_an_old_row_without_the_value_falls_back_to_the_proposer(self):
+        offer = self.propose()
+        self.act(self.ash, offer["id"], "cancel")
+        row = self.db.query(SwapOffer).filter(SwapOffer.id == offer["id"]).first()
+        row.cancelled_by_user_id = None
+        self.db.commit()
+        view = swaps.serialize_offers(self.db, [row], self.misty.id)[0]
+        self.assertEqual(view["cancelled_by_user_id"], self.ash.id)
+
+
 class ChangesTests(SwapBase):
     def test_a_first_revision_has_no_changes(self):
         offer = self.propose()

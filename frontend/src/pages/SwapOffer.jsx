@@ -21,7 +21,7 @@ import {
 } from '../social/SwapParts'
 import { useSwapStarter } from '../social/SwapStarter'
 import {
-  clockTime, daysLeft, dayMonth, isOpen, isSameDay, minutesAgo,
+  clockTime, daysLeft, dayMonth, endedSentenceKey, isOpen, isSameDay, minutesAgo,
 } from '../social/swapHelpers'
 
 const NAV_BAR = { trailing: <HideValuesToggle /> }
@@ -211,11 +211,7 @@ export default function SwapOffer() {
 
   const endedSentence = () => {
     const date = dayMonth(offer.updated_at)
-    if (offer.state === 'declined') return fill(t('swaps.endedDeclined'), { name: partner, date })
-    if (offer.state === 'cancelled') {
-      return fill(t(offer.role === 'proposer' ? 'swaps.endedCancelledYou' : 'swaps.endedCancelledThem'), { name: partner, date })
-    }
-    return fill(t('swaps.endedExpired'), { date })
+    return fill(t(endedSentenceKey(offer, viewerId)), { name: partner, date })
   }
 
   return (

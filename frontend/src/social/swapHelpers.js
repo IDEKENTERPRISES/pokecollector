@@ -176,3 +176,18 @@ export function offerToPicked(offer, items = offer?.items ?? []) {
   })
   return picked
 }
+
+/** i18n key for the sentence on an ended offer, worded for the viewer: "You cancelled…" vs "Misty cancelled…".
+ *  Declined is always the receiver; cancelled is `cancelled_by_user_id` (rows from before it was kept: the proposer);
+ *  expired has no one to name. */
+export function endedSentenceKey(offer, viewerId) {
+  if (offer.state === 'declined') {
+    return viewerId != null && viewerId === offer.to_user?.id ? 'swaps.endedDeclinedYou' : 'swaps.endedDeclined'
+  }
+  if (offer.state === 'cancelled') {
+    const by = offer.cancelled_by_user_id ?? offer.from_user?.id
+    const mine = viewerId != null && by != null ? by === viewerId : offer.role === 'proposer'
+    return mine ? 'swaps.endedCancelledYou' : 'swaps.endedCancelledThem'
+  }
+  return 'swaps.endedExpired'
+}
