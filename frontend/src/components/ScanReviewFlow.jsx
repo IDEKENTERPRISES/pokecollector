@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Camera, Check, ChevronLeft, Loader2, Plus, Search, SkipForward, Trash2, X } from 'lucide-react'
@@ -8,7 +8,9 @@ import {
   resolveAndAddScanJobItem,
   resolveScanJobItem,
   searchCards,
+  waitForScannerJobItem,
 } from '../api/client'
+import AuthContext from '../contexts/AuthContext'
 import { useSettings } from '../contexts/SettingsContext'
 import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { attachCollectionPhoto } from '../utils/collectionPhoto'
@@ -115,7 +117,7 @@ export const itemKind = item => {
   return 'processing'
 }
 
-function ItemCard({ item, session, onAdded, onDismiss, onSkip, t, overlayEl }) {
+function ItemCard({ item, onAdded, onDismiss, onSkip, onWaited, t, overlayEl }) {
   const photoUrl = useScanItemPhoto(item.job_id, item)
   const kind = itemKind(item)
   const matches = useMemo(() => item.matches || [], [item.matches])
@@ -129,6 +131,13 @@ function ItemCard({ item, session, onAdded, onDismiss, onSkip, t, overlayEl }) {
   const [adding, setAdding] = useState(false)
   const [confirmDismiss, setConfirmDismiss] = useState(false)
   const queryClient = useQueryClient()
+  const isAdmin = useContext(AuthContext)?.user?.role === 'admin'
+  // "Picture match first" (docs/CARD_MATCH.md): the picture decided the card, or was unsure while the scanner
+  // was unreachable and sent the scan here with its best matches.
+  const picture = item.recognized?._picture
+  const pictureUnsure = item.status === 'done' && !item.resolved && picture?.path === 'unsure_inbox'
+  const matchedByPicture = isAdmin && picture?.path === 'decided'
+  const [waiting, setWaiting] = useState(false)
 
   const chosen = picked || toView(matches[index])
   const variant = variantOverride || (chosen ? getDefaultVariant(chosen.raw) : 'Normal')
@@ -169,7 +178,7 @@ function ItemCard({ item, session, onAdded, onDismiss, onSkip, t, overlayEl }) {
     }
   }
 
-  const waiting = kind === 'waiting'
+  const scannerDown = kind === 'waiting'
   const noResult = kind === 'none'
   const heading = useRef(null)
   useEffect(() => { heading.current?.focus() }, [item.id])
@@ -190,11 +199,16 @@ function ItemCard({ item, session, onAdded, onDismiss, onSkip, t, overlayEl }) {
           </h2>
           {chosen && !searching && <p className="text-subheadline text-text-secondary" data-testid="scan-flow-chosen">{setAndNumber(chosen)}</p>}
           {!searching && picked && <p className="mt-1 text-footnote text-text-secondary">{t('scanner.flowFoundBySearch')}</p>}
-          {session?.note && <p className="mt-1 text-footnote text-text-secondary">{session.note}</p>}
+          {matchedByPicture && <p className="mt-1 text-caption-1 text-text-tertiary" data-testid="scan-matched-by-picture">{t('scanner.matchedByPicture')}</p>}
         </div>
       </div>
 
-      {waiting && (
+      {pictureUnsure && (
+        <p role="status" data-testid="scan-picture-unsure" className="rounded-xl bg-fill-tertiary px-3 py-2 text-subheadline text-text-secondary">
+          {t('scanner.pictureUnsure')}
+        </p>
+      )}
+      {scannerDown && (
         <p role="status" className="rounded-xl bg-fill-tertiary px-3 py-2 text-subheadline text-text-secondary">
           {t('scanner.flowWaitingHint')}
         </p>
@@ -292,8 +306,28 @@ function ItemCard({ item, session, onAdded, onDismiss, onSkip, t, overlayEl }) {
               {matches.length && !picked ? t('scanner.flowNoneOfThese') : t('scanner.flowSearch')}
             </Button>
           )}
+          {pictureUnsure && item.has_image && (
+            <Button
+              variant="gray"
+              loading={waiting}
+              onClick={async () => {
+                setWaiting(true)
+                try {
+                  await waitForScannerJobItem(item.job_id, item.id)
+                  onWaited(item)
+                } catch (error) {
+                  toast.error(error?.response?.data?.detail || t('scanner.actionFailed'))
+                } finally {
+                  setWaiting(false)
+                }
+              }}
+              data-testid="scan-flow-wait"
+            >
+              {t('scanner.waitForScanner')}
+            </Button>
+          )}
           <Button variant="gray" icon={SkipForward} onClick={() => onSkip(item)} data-testid="scan-flow-skip">
-            {waiting ? t('scanner.flowWaitForScanner') : t('scanner.flowSkip')}
+            {scannerDown ? t('scanner.flowWaitForScanner') : t('scanner.flowSkip')}
           </Button>
           <Button variant="gray" destructive icon={Trash2} onClick={() => setConfirmDismiss(true)} data-testid="scan-flow-dismiss">
             {t('scanner.dismissScan')}
@@ -367,6 +401,11 @@ export default function ScanReviewFlow({ items, startItemId = null, onClose }) {
       toast.error(error?.response?.data?.detail || t('scanner.actionFailed'))
     }
   }
+  // "Wait for the scanner": the scan goes back to waiting, so it leaves this pass like a skipped one.
+  const waited = item => {
+    skip(item)
+    refresh()
+  }
   const skip = item => {
     setStartId(null)
     setSkipped(list => (list.includes(item.id) ? list : [...list, item.id]))
@@ -384,7 +423,7 @@ export default function ScanReviewFlow({ items, startItemId = null, onClose }) {
   const stillRecognising = ordered.processing.length
   let body
   if (current) {
-    body = <ItemCard key={current.id} item={current} onAdded={item => finish(item, 'added')} onDismiss={dismiss} onSkip={skip} t={t} overlayEl={overlayEl} />
+    body = <ItemCard key={current.id} item={current} onAdded={item => finish(item, 'added')} onDismiss={dismiss} onSkip={skip} onWaited={waited} t={t} overlayEl={overlayEl} />
   } else if (stillRecognising) {
     body = (
       <div role="status" className="space-y-4 py-10 text-center" data-testid="scan-flow-recognising">

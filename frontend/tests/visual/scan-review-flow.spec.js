@@ -217,3 +217,19 @@ test('a scan with no result searches straight away and the pick is added', async
   await expect(page.getByText('1 added')).toBeVisible()
   await capture(page, testInfo, '06-flow-done')
 })
+
+test('a scan the picture was unsure about shows its matches, None of these and Wait for the scanner', async ({ page }, testInfo) => {
+  const items = [item(21, 1, 0, {
+    recognized: { language: 'en', _picture: { path: 'unsure_inbox' } },
+    matches: [match('base1-025', 'Pikachu', '25'), match('base1-026', 'Raichu', '26')],
+  })]
+  await install(page, items)
+  await page.goto('/scans')
+  await page.getByTestId('scan-review-all').click()
+  await expect(page.getByTestId('scan-picture-unsure')).toBeVisible()
+  await expect(page.getByTestId('scan-flow-none')).toBeVisible()
+  await expect(page.getByTestId('scan-flow-candidates')).toBeVisible()
+  await capture(page, testInfo, '07-flow-picture-unsure')
+  await page.getByTestId('scan-flow-wait').click()
+  await expect(page.getByTestId('scan-flow-done')).toBeVisible()
+})
