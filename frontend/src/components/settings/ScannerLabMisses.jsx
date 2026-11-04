@@ -154,6 +154,13 @@ export function MissesView({ data, tag, onTag, onMore }) {
           {data.options ? ` (options: ${data.options})` : ''} · {data.created_at?.slice(0, 16).replace('T', ' ')} UTC. A scan can have several likely causes.
         </p>
       </div>
+      {data.orientation_check?.with_margin > 0 && (
+        <p className="text-footnote text-text-secondary" data-testid="scanner-lab-miss-orientation">
+          Orientation: the old rule (turned view merely scores higher) would have turned {data.orientation_check.old_rule_would_turn} of these {data.orientation_check.with_margin};
+          the picture is now sure about {data.orientation_check.picture_sure_turned}; measured against the confirmed card, {data.orientation_check.measured_rotated} really are turned
+          and {data.orientation_check.measured_upright} are upright.
+        </p>
+      )}
       <div className="flex flex-wrap gap-1.5" data-testid="scanner-lab-miss-counts">
         <button type="button" className={`${chip} ${!tag ? 'bg-accent/30 font-semibold text-tint' : 'bg-fill'}`} onClick={() => onTag(null)}>All ({data.misses})</button>
         {Object.entries(labels).filter(([key]) => counts[key]).map(([key, label]) => (

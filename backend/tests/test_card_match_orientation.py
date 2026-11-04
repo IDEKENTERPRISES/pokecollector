@@ -155,6 +155,18 @@ class OrientationTests(OrientationBase):
         with self.assertRaises(TypeError):  # the old "the matcher turned it" input is gone
             misses.tag_miss(flipped=True, **base)
 
+    def test_the_report_says_how_the_misses_split_on_orientation(self):
+        items = [
+            {"orientation": {"picture_margin": 0.02}, "rotation": {"rotated": False}},  # the old rule would turn it
+            {"orientation": {"picture_margin": -0.2}, "rotation": {"rotated": False}},
+            {"orientation": {"picture_margin": 0.4}, "rotation": {"rotated": True}},
+            {"orientation": None, "rotation": None},
+        ]
+        self.assertEqual(
+            misses.orientation_check(items),
+            {"misses": 4, "with_margin": 3, "old_rule_would_turn": 2, "picture_sure_turned": 1, "measured_rotated": 1, "measured_upright": 2},
+        )
+
     def test_an_upright_miss_is_not_tagged_upside_down_even_when_the_matcher_turned_it(self):
         matcher = self.matcher(RecordingReader("turned"), margin=0.30)  # the picture search wrongly says "turned"
         outcome = matcher.match(self.photo)

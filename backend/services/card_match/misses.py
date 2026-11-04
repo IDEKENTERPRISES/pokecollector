@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import MATCHER_VERSION, config
+from .pipeline import ORIENT_MARGIN
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,21 @@ def card_stats(card_rgb) -> dict:
     return {
         "glare": round(float(blown.mean()), 4), "mean": round(float(gray.mean()), 1),
         "sharpness": round(float(cv2.Laplacian(gray, cv2.CV_64F).var()), 1),
+    }
+
+
+def orientation_check(items: list[dict]) -> dict:
+    """How the misses split on orientation, so the cause of "Upside down" is visible in the report: how many the
+    old rule (the picture's turned view merely scoring higher) would have turned, how many the picture is now
+    sure about, and how many are really turned (measured against the confirmed card)."""
+    margins = [(item.get("orientation") or {}).get("picture_margin") for item in items]
+    known = [m for m in margins if m is not None]
+    return {
+        "misses": len(items), "with_margin": len(known),
+        "old_rule_would_turn": sum(1 for m in known if m > 0),
+        "picture_sure_turned": sum(1 for m in known if m >= ORIENT_MARGIN),
+        "measured_rotated": sum(1 for item in items if (item.get("rotation") or {}).get("rotated")),
+        "measured_upright": sum(1 for item in items if item.get("rotation") and not item["rotation"]["rotated"]),
     }
 
 
@@ -234,7 +250,7 @@ class MissCollector:
             "options": label, "scans": self.scans, "misses": len(self.items),
             "tags": {tag: TAGS.get(tag, tag) for tag in TAGS}, "counts": count_tags(self.items),
             "primary_counts": {tag: sum(1 for item in self.items if item["primary"] == tag) for tag in TAGS if any(item["primary"] == tag for item in self.items)},
-            "run": self.run_dir.name, "items": self.items,
+            "run": self.run_dir.name, "items": self.items, "orientation_check": orientation_check(self.items),
         }
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.root.mkdir(parents=True, exist_ok=True)
@@ -285,5 +301,5 @@ def page(tag: str | None = None, offset: int = 0, limit: int = PAGE_SIZE, data_d
     return {
         "available": True, "created_at": report["created_at"], "matcher_version": report["matcher_version"], "options": report.get("options"),
         "scans": report["scans"], "misses": report["misses"], "tags": report["tags"], "counts": report["counts"],
-        "primary_counts": report.get("primary_counts", {}), "filter": tag, "offset": offset, "total": len(items), "items": window,
+        "primary_counts": report.get("primary_counts", {}), "orientation_check": report.get("orientation_check"), "filter": tag, "offset": offset, "total": len(items), "items": window,
     }
