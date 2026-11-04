@@ -2,10 +2,13 @@
 
 Options (all measured side by side by the labelled benchmark, "Compare options" in Scanner lab):
   - ``names``: read the name line and bring the catalogue's close names in as text candidates (names.py);
+  - ``number``: look up every card with the printed number/total (and set code) the text holds (lookup.py);
+  - ``text``: match attack, ability and effect text to the card table (lookup.py);
+  - ``reprint``: break ties between reprints by the artwork-only similarity (needs, and so turns on, ``art``);
   - ``tta``: test-time augmentation, two extra views of the card (tighter crop, normalised brightness);
   - ``art``: a second picture index of the artwork window only, averaged with the whole-card one;
   - ``base``: a second index from the bigger DINOv2-base model, averaged with the first.
-A label is the options joined by ``+``: ``baseline`` (none), ``names``, ``names+tta``, ``names+art+tta`` ...
+A label is the options joined by ``+``: ``baseline`` (none), ``names``, ``names+number``, ``names+number+text+tta`` ...
 
 The label in use comes from ``CARD_MATCH_OPTIONS``, else from ``chosen.json`` (written when a comparison
 finds a clear winner), else ``names``. Indexes an option needs that are not built yet make that label
@@ -27,15 +30,22 @@ logger = logging.getLogger(__name__)
 
 BASE_MODEL = "dinov2-base"
 ART_INDEX = f"{DEFAULT_MODEL}-art"  # the artwork-window index of the default model
-DEFAULT_LABEL = "names"
+DEFAULT_LABEL = "names+number+text"
 # The labels the comparison runs, cheapest first.
-COMPARE_LABELS = ("baseline", "names", "names+tta", "names+art", "names+art+tta", "names+base", "names+art+base")
-ORDER = ("names", "art", "base", "tta")
+# The lookup lanes come one at a time right after ``names`` so each one's gain shows as its own row.
+COMPARE_LABELS = (
+    "baseline", "names", "names+number", "names+number+text", "names+number+text+tta", "names+number+text+art",
+    "names+number+text+art+reprint", "names+number+text+art+tta", "names+number+text+base", "names+number+text+art+base",
+)
+ORDER = ("names", "number", "text", "art", "reprint", "base", "tta")
 
 
 @dataclass(frozen=True)
 class Options:
     names: bool = False
+    number: bool = False
+    text: bool = False
+    reprint: bool = False
     tta: bool = False
     art: bool = False
     base: bool = False
@@ -49,6 +59,8 @@ class Options:
 def parse(label: str | None) -> Options:
     """``"names+art"`` -> Options. Unknown words are ignored; ``baseline`` / empty = nothing on."""
     words = {word.strip().lower() for word in str(label or "").replace(",", "+").split("+")}
+    if "reprint" in words:
+        words.add("art")  # the tie-break reads the artwork-only similarity
     return Options(**{name: name in words for name in ORDER})
 
 
@@ -115,7 +127,7 @@ def build_matcher(options: Options, session_factory, *, data_dir: Path | None = 
 def _build_matcher(options: Options, session_factory, *, data_dir: Path | None = None, ocr_reader=None, read_hp: bool = False):
     """A CardMatcher with these options. Raises RuntimeError when the default index is missing; an extra
     index that is not built leaves that option out (logged), so a half-built setup still answers."""
-    from . import embed, index as index_module, names as names_module, pipeline
+    from . import embed, index as index_module, lookup as lookup_module, names as names_module, pipeline
     from .ocr import get_reader
 
     index = index_module.get_index(DEFAULT_MODEL, data_dir)
@@ -135,9 +147,11 @@ def _build_matcher(options: Options, session_factory, *, data_dir: Path | None =
         else:
             logger.info("Card-match: the DINOv2-base index is not built; running without it")
     names = names_module.get_name_index(session_factory, index) if options.names else None
+    lookup = lookup_module.get_lookup_index(session_factory, index) if (options.number or options.text) else None
     return pipeline.CardMatcher(
         index, embed.get_embedder(DEFAULT_MODEL), pipeline.db_candidate_loader(session_factory), ocr_reader or get_reader(),
         read_hp=read_hp, extra_signals=signals, tta=options.tta, names=names, label=options.label,
+        lookup=lookup, use_number=options.number, use_text=options.text, reprint=options.reprint,
     )
 
 
