@@ -203,6 +203,36 @@ class IndexAndPipelineTests(unittest.TestCase):
         self.assertIn(no_reader.status, {"decided", "unsure"})
         self.assertEqual(len(no_reader.matches), 5)
 
+    def test_number_lookup_reads_the_number_ocr_parsed_wrongly_and_never_decides_against_the_picture(self):
+        from services.card_match import lookup
+
+        self.build()
+        loaded = index.load_index(self.embedder.name, self.data_dir)
+        loader = pipeline.db_candidate_loader(self.Session)
+        lookup_index = lookup.get_lookup_index(self.Session, loaded)
+
+        class Reader:
+            def __init__(self, lines):
+                self.result = ocr.OcrResult(number_local="30C", number_total="004", tokens=["TST"], lines=lines)
+
+            def read(self, card, read_hp=False, flipped=None):
+                return self.result
+
+        jpeg, _corners, _s = synthetic.make_photo(self.pictures["c4"], 4)
+        photo = images.decode_rgb(jpeg)
+
+        def run(lines, **options):
+            with patch.object(pipeline, "SIM_MIN_PICTURE_STRONG", 2.0):
+                return pipeline.CardMatcher(loaded, self.embedder, loader, Reader(lines), lookup=lookup_index, **options).match(photo)
+
+        found = run(["30C | 004/005"], use_number=True)
+        self.assertEqual((found.status, found.decision["card_id"]), ("decided", "tst-4_en"))
+        self.assertEqual(found.ocr["number_from_lookup"]["level"], "number_total_set")
+        self.assertEqual(found.matches[0]["lookup"], "number_total_set")
+        # A number that belongs to a different card than the picture shows: the lookup finds it, the picture disagrees.
+        other = run(["30C | 002/005"], use_number=True)
+        self.assertFalse(other.status == "decided" and other.decision["card_id"] == "tst-2_en")
+
     def test_decide_requires_the_picture_to_agree_with_the_printed_number(self):
         candidates = [
             {"tcg_card_id": "a-1", "number": "1", "printed_total": 10, "_similarity": 0.9, "_rank": 1, "_db_id": "a-1_en"},

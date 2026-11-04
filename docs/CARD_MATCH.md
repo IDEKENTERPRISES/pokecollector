@@ -54,7 +54,7 @@ On real photos the picture search alone missed the right printing in its top 20 
 | `art` | a second index of the artwork window only (`ART_BOX` in `detect.py`: x 7–93%, y 11.5–54.5% of the flat card), averaged with the whole-card similarity. Reprints share artwork but not the frame, so it mostly helps when glare or a sleeve spoils the frame | one more index (≈ 30 MB) built from the cached pictures; 1 more embedding per photo |
 | `base` | DINOv2-base (ViT-B/14, Apache-2.0, 768 numbers; ONNX from `onnx-community/dinov2-base`, pinned commit and sha256 in `model_specs.py`) as a second whole-card index, averaged with the first | model file 347 MB in the image; index ≈ 60 MB; about 3× the small model's time per photo and per picture to build |
 
-An option set is a label, the options joined by `+`: `baseline` (picture only, as in v2), `names`, `names+tta`, `names+art`, `names+art+tta`, `names+base`, `names+art+base`. The one in use is, in order: `CARD_MATCH_OPTIONS`, else `chosen.json` in the card-match folder (written by a real-photo comparison when one set is clearly better), else `names`. Shadow mode and the benchmarks build their matcher from it; an option whose index is not built yet is left out.
+An option set is a label, the options joined by `+`: `baseline` (picture only, as in v2), `names`, `names+tta`, `names+art`, `names+art+tta`, `names+base`, `names+art+base`. The one in use is, in order: `CARD_MATCH_OPTIONS`, else `chosen.json` in the card-match folder (written by a real-photo comparison when one set is clearly better), else `names+number+text` (v5; was `names`). Shadow mode and the benchmarks build their matcher from it; an option whose index is not built yet is left out.
 
 **Comparing them.** Scanner lab → **Compare options (real scans)** (and **(synthetic)**) runs the labelled (or synthetic) benchmark once per option set on the same photos and shows one table: top 1, top 20, number read, decided, wrong, p95. The set that is kept: no more wrong decisions than the best other set, 95th percentile under 1.5 s, then the best top 20 / decided; a plainer set is replaced only if another adds at least 0.5 points of either without losing on the other. After a real-photo comparison the winner is written to `chosen.json` and used from then on (shown as **Matching options in use**). Sets that need an index that is not built yet are listed as skipped; build them with the **Build … index** buttons (artwork: about as long as the first index; DINOv2-base: several times longer).
 
@@ -101,6 +101,23 @@ The thresholds are **provisional**; the benchmark records every photo's features
 
 The pipeline is pure: it reads the index and, through a `candidate_loader`, the catalogue; it writes nothing.
 
+### Number, set-code and card-text lookups (matcher version 5)
+
+Version 4 left 13 of 139 real photos wrong-ranked or undecided. Some had a number and total read but the printing sat at picture rank 11 behind reprints; some read only body text. `lookup.py` turns whatever text OCR reads into candidates. It is two options in `variants.py`, so Scanner lab's comparison shows each as its own row: `names` → `names+number` → `names+number+text`, then `+art+reprint`. Neither lane decides alone; `pipeline.decide` still needs the picture to agree.
+
+**Number lane** (option `number`). OCR's own number parse can be fooled by text beside the number ("30C | 017/128" parses as 30C over 017), so the lane scans every recognised line for `number/total` pairs itself (a `|` read for the slash is accepted too) and also uses OCR's own pair. Each pair is looked up in the card table: cards with that number whose set's printed total matches, narrowed by a set code when a recognised word maps to a set. Codes come from `sets.abbreviation` and `sets.tcg_set_id` (both are in the sets table); `lookup.EXTRA_SET_CODES` adds only the promo prefixes (SVP, SWSH, SMP, XYP, BWP, MEP, PRSV…), because the table's contents on the server are not checked from the build PC. Levels: `number_total_set`, `number_total`, `number_set`, `number`. The first two (up to 30 cards per pair) join the candidates even when the picture search missed them, and rank above others by +0.20 / +0.14 / +0.10 on top of picture similarity; a bare number never adds cards (it would add hundreds) and only keeps the boost it already has.
+
+- **Deciding.** A printing found this way may be chosen when it is the *only* card at its level, the rules (number, total, set code) already isolate it, and the picture agrees: number + total + set code → similarity ≥ 0.60 and picture rank ≤ 60; number + total → similarity ≥ 0.65 and rank ≤ 30 (was: rank ≤ 10). If a name was read, is in the catalogue and is not this card's name, the scan stays unsure (`number_lookup_conflicts_with_name`). When OCR's own number names none of the candidates, the looked-up printing's number and total are used instead (`ocr.number_from_lookup` in the trace).
+- Variables: `CARD_MATCH_LOOKUP_SIM_SET` (0.60), `CARD_MATCH_LOOKUP_SIM_TOTAL` (0.65), `CARD_MATCH_LOOKUP_RANK_MAX` (60), `CARD_MATCH_LOOKUP_RANK_MAX_TOTAL` (30).
+
+**Card-text lane** (option `text`). The card table already stores each card's `attacks` and `abilities` (name and effect) and the trainer `card_effect` (TCGdex), so nothing was added to the sync. The index splits them into sentences and attack / ability names (about the size of the English card text, kept in memory, built once per index build with the name index). A recognised line is matched against the sentences that share its rarer words, and counts when ≥ 80% of the shorter of line and sentence is shared. A sentence printed on many cards ("You may play only 1 Supporter card during your turn") proves little: up to 12 cards it adds those cards, beyond that nobody, and its boost shrinks with the number of cards. Boost: +0.15 × match. A text-only decision (`text_and_picture`) needs a sentence at most 3 cards print, similarity ≥ 0.80 and a lead ≥ 0.03, and no contradicting name.
+- Rule-box wording ("Pokémon ex rule", "When your Pokémon ex is Knocked Out, your opponent takes … Prize cards") is not stored anywhere in the card data; it only gives +0.04 to the ex / GX / V cards (by the name's suffix) the picture already found.
+- The OCR lines it reads are `ocr.lines` plus `ocr.body_lines` when the OCR reader supplies that field.
+
+**Reprint tie-break** (option `reprint`, which needs and turns on `art`). When the closest pictures include several printings of one name and nothing printed separates them, the printing whose artwork-only similarity is ahead of the others by ≥ 0.04 (`CARD_MATCH_REPRINT_ART_LEAD`) is chosen, if it is within the top 5 pictures, similarity ≥ 0.80, and the group leads every other name by ≥ 0.06. Anything closer stays unsure. Not in the default option set until a real-photo comparison shows it adds without a wrong decision.
+
+The default option set is now `names+number+text`.
+
 ## Files
 
 | File | Purpose |
@@ -110,6 +127,7 @@ The pipeline is pure: it reads the index and, through a `candidate_loader`, the 
 | `…/model_specs.py` | pinned model URL + sha256 (standard library only, read by the Dockerfile) |
 | `…/index.py` | build / load / search the index; incremental, checkpointed |
 | `…/ocr.py` | RapidOCR strips + regex parsing (`parse_text` is pure) |
+| `…/lookup.py` | number / set-code lookup and card-text matching (pure; `build_lookup_index` reads the card table) |
 | `…/names.py` | name line parsing (pure), `NameIndex` fuzzy name search, text candidates |
 | `…/variants.py` | option sets (`names`, `tta`, `art`, `base`), the one in use, building a matcher for them |
 | `…/misses.py` | the Misses view: collecting, tagging (pure), thumbnails, paging |
@@ -146,7 +164,7 @@ On disk (`CARD_MATCH_DIR`, default `/app/data/card-match`; mounted in `docker-co
 | `CARD_MATCH_MODEL_DIR` | `/app/card-match-models` | where the image has the model file |
 | `CARD_MATCH_THREADS` | `3` (1–8) | ONNX Runtime and OpenCV thread cap |
 | `SCAN_MATCHER_AUTORUN` | off | **nonprod only**: once per matcher version, after startup, fill the picture cache if needed, build the index and the artwork index, run the synthetic benchmark, and with at least 100 confirmed scans the real-photo benchmark and the option comparison |
-| `CARD_MATCH_OPTIONS` | unset | force an option set, e.g. `names+art`; unset = `chosen.json`, else `names` |
+| `CARD_MATCH_OPTIONS` | unset | force an option set, e.g. `names+art`; unset = `chosen.json`, else `names+number+text` |
 | `SCAN_MATCHER_SHADOW` | off | **nonprod only**: shadow mode (below) |
 | `SCAN_PICTURE_FIRST` | off | default for the admin switch "Picture match first" (below); nonprod sets it to on |
 | `SCAN_PICTURE_FIRST_TIMEOUT_SECONDS` | `5` (0.5–30) | longest a scan waits for the matcher before the old path takes over |
