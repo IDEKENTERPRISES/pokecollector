@@ -22,14 +22,14 @@ import numpy as np
 
 from . import config
 
-# (x0, y0, x1, y1) as fractions of the flat card picture.
-STRIPS = {
-    "bottom_left": (0.0, 0.93, 0.55, 1.0),
-    "bottom_right": (0.45, 0.93, 1.0, 1.0),
-}
+# (x0, y0, x1, y1) as fractions of the flat card picture. The tight strips are quick (little text in them);
+# when no number is found there, the wide strips take a second look (older cards print flavour text lower).
+STRIPS = {"tight": [(0.0, 0.945, 0.55, 1.0), (0.45, 0.945, 1.0, 1.0)], "wide": [(0.0, 0.925, 0.55, 1.0), (0.45, 0.925, 1.0, 1.0)]}
 HP_STRIP = (0.45, 0.0, 1.0, 0.14)
 
 _NUMBER_TOTAL = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{0,4}\s?\d{1,3}[A-Za-z]?)\s*[/|\\]\s*([A-Za-z]{0,4}\s?\d{1,3})")  # no end guard: a stray mark after the total reads as one more digit
+# A number glued to the text before it ("GAMEFREAK1999Wizards.58/102"): digits only, no prefix.
+_NUMBER_TOTAL_LOOSE = re.compile(r"(\d{1,3})\s*[/|\\]\s*([0-9OoIl|]{2,3})")
 _PROMO = re.compile(r"(?<![A-Za-z0-9])(SWSH|SVP|SM|XY|BW|HGSS|DP|NP|SVE|MEP|MEE)\s?-?\s?(\d{1,3})(?![0-9/])", re.IGNORECASE)
 _HP_BEFORE = re.compile(r"(?:HP|PV|KP|PS|PF)\s*(\d{2,3})", re.IGNORECASE)
 _HP_AFTER = re.compile(r"(?<!\d)(\d{2,3})\s?HP", re.IGNORECASE)
@@ -85,6 +85,9 @@ def parse_text(lines: list[str]) -> OcrResult:
     if match:
         result.number_local = _clean_number_part(match.group(1))
         result.number_total = _clean_number_part(match.group(2))
+    elif loose := _NUMBER_TOTAL_LOOSE.search(joined):
+        result.number_local = _clean_number_part(loose.group(1))
+        result.number_total = _clean_number_part(loose.group(2))
     else:
         promo = _PROMO.search(joined)
         if promo:
@@ -134,9 +137,13 @@ class OcrReader:
 
         started = time.monotonic()
         lines: list[str] = []
-        for box in STRIPS.values():
+        for box in STRIPS["tight"]:
             lines += self._strip_lines(card, box)
         result = parse_text(lines)
+        if result.number_local is None:
+            for box in STRIPS["wide"]:
+                lines += self._strip_lines(card, box)
+            result = parse_text(lines)
         if read_hp:
             hp_lines = self._strip_lines(card, HP_STRIP)
             hp = find_hp("  ".join(hp_lines))

@@ -51,7 +51,7 @@ def make_photo(card: Image.Image, seed: int) -> tuple[bytes, list[tuple[float, f
     glare = rnd.random() < 0.45
     tilt = rnd.uniform(-10, 10)
     upside_down = rnd.random() < 0.1
-    blur = rnd.choice([0.6, 1.0, 1.6, 2.4])
+    blur = rnd.choice([0.5, 0.8, 1.2, 1.8])
     quality = rnd.choice([70, 80, 88])
     cw = PHOTO_W * width_frac
     ch = cw * 88 / 63
