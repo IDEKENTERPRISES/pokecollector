@@ -120,7 +120,8 @@ export default function GoalDetail() {
   const percent = goalPercent(goal)
   const complete = isGoalComplete(goal)
   const shown = progress?.cheapest_missing || []
-  const kindLabel = goal ? t(KIND_LABEL_KEYS[goal.kind]) : ''
+  // A kind this build does not know (newer server) shows no label instead of crashing the page.
+  const kindLabel = goal && KIND_LABEL_KEYS[goal.kind] ? t(KIND_LABEL_KEYS[goal.kind]) : ''
   const busy = wishlistMutation.isPending || binderMutation.isPending
   const stats = useMemo(() => progress && [
     { id: 'owned', label: t('goals.owned'), value: `${progress.owned} / ${progress.total}` },
@@ -128,7 +129,9 @@ export default function GoalDetail() {
   ], [progress, t])
 
   if (isLoading) return <div className="skeleton h-48 rounded-2xl" />
-  if (error || !goal) {
+  // A reply that is not a goal with progress (empty or malformed) reads as not found: rendering it
+  // would throw, and the error boundary would take the nav bar and its back button away.
+  if (error || !goal || !goal.progress) {
     return <div className="card text-sm text-red" role="alert" data-testid="goal-missing">{t('goals.notFound')}</div>
   }
 
