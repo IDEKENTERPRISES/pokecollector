@@ -378,6 +378,11 @@ class ScanTrace:
                 "selected": selected,
             }
 
+    def record_picture_match(self, info: dict) -> None:
+        """Which path the picture matcher took for this scan (docs/CARD_MATCH.md, "Picture match first")."""
+        if self.enabled:
+            self.data["picture_match"] = dict(info)
+
     def record_error(self, message: str) -> None:
         if self.enabled:
             self.data["error"] = self._sanitize(message)

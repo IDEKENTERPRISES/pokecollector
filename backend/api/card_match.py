@@ -1,4 +1,4 @@
-"""Scanner lab (admins): the picture matcher's index, benchmark and shadow comparison. Scanning does not use the matcher."""
+"""Scanner lab (admins): the picture matcher's index, benchmark, shadow comparison and picture-first counts."""
 
 import time
 
@@ -91,6 +91,20 @@ def card_match_shadow(current_user: User = Depends(get_current_user)):
     if cache["value"] is None or cache["dir"] != trace_dir or now - cache["at"] > _SHADOW_REPORT_TTL_SECONDS:
         cache.update(at=now, dir=trace_dir, value=shadow_module.shadow_report(trace_dir))
     return {"enabled": config.shadow_enabled(), "worker": shadow_module.runner.status(), "report": _shadow_report_cache["value"]}
+
+
+@router.get("/picture-first")
+def card_match_picture_first(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Picture match first: whether it is on, and what the last 7 days looked like (services/picture_first.py)."""
+    _require_admin(current_user)
+    from services import picture_first
+
+    return {
+        "enabled": picture_first.enabled(db),
+        "env_default": picture_first.env_default(),
+        "timeout_seconds": picture_first.timeout_seconds(),
+        "counts": picture_first.lab_counts(db),
+    }
 
 
 def _require_ready(need_index: bool) -> None:

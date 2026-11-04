@@ -15,6 +15,7 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from models import ScanJob, ScanJobItem, ScanQueueUserState, User
+from services import picture_first
 from services.gemini_rate_limit import gemini_priority_scope
 from services.scanner_reachability import (
     WAITING_EXPIRY_GRACE_DAYS,
@@ -573,6 +574,79 @@ def _clear_recognition_cache(claim: ClaimedScanItem) -> None:
         cache_db.close()
 
 
+def _earlier_picture_for_item(db: Session, item_id: int | None) -> dict | None:
+    """What an earlier run of this scan recorded about the picture match (for "Wait for the scanner")."""
+    if item_id is None:
+        return None
+    try:
+        recognized = db.query(ScanJobItem.recognized).filter(ScanJobItem.id == item_id).scalar()
+        db.rollback()
+        return picture_first.earlier_picture(recognized)
+    except Exception:
+        db.rollback()
+        return None
+
+
+def _picture_meta_for_trace(scanner_result: dict, run) -> dict:
+    recognized = scanner_result.get("recognized")
+    meta = recognized.get("_picture") if isinstance(recognized, dict) else None
+    return meta if isinstance(meta, dict) else {"path": picture_first.PATH_OLLAMA}
+
+
+async def _scanner_answers() -> bool:
+    from services.scan_providers import openai_base_url
+
+    return await endpoint_reachable(openai_base_url())
+
+
+async def _picture_first_early_result(
+    db: Session,
+    user_id: int,
+    provider,
+    image_bytes: bytes,
+    run,
+    earlier: dict | None,
+    *,
+    job_id: int | None,
+    item_id: int | None,
+) -> dict | None:
+    """A finished scan result when the picture alone settles it (decided, or unsure with the scanner down)."""
+    try:
+        if run.decided:
+            result = picture_first.decided_result(db, run, earlier=earlier)
+            selected = run.result.decision["tcg_card_id"]
+        elif (
+            not provider.is_gemini
+            and not (earlier or {}).get("wait")
+            and not await _scanner_answers()
+        ):
+            result = picture_first.inbox_result(db, run, earlier=earlier)
+            selected = None
+        else:
+            return None
+        if result is None:
+            return None
+        from services.scan_trace import create_scan_trace
+
+        trace = create_scan_trace(
+            db, user_id, mode="single", job_id=job_id, item_id=item_id,
+            filename="sanitized-scan.jpg", provider="picture", model=run.result.status,
+        )
+        try:
+            trace.set_image(image_bytes)
+            trace.record_candidates(result["matches"])
+            picture_first.record_in_trace(
+                trace, user_id, job_id, item_id, run, result["recognized"]["_picture"], selected=selected
+            )
+        finally:
+            trace.save()
+        return result
+    except Exception:
+        logger.exception("Picture match result could not be used; using the scanner path")
+        db.rollback()
+        return None
+
+
 async def _require_scanner_reachable(provider) -> None:
     """Park the scan (no retry penalty) while the local endpoint is switched off."""
     if provider.is_gemini:
@@ -612,6 +686,16 @@ async def default_scan_processor(
     if user is None or not user.is_active:
         raise PermanentScanError("The scan owner is no longer an active user.")
     provider = get_provider(db, user_id)
+    picture_run, picture_earlier = None, None
+    if picture_first.enabled(db):
+        picture_earlier = _earlier_picture_for_item(db, item_id)
+        picture_run = await picture_first.run_matcher(image_bytes)
+        if picture_run is not None:
+            early = await _picture_first_early_result(
+                db, user_id, provider, image_bytes, picture_run, picture_earlier, job_id=job_id, item_id=item_id
+            )
+            if early is not None:
+                return early
     require_scanner_capability_mode(db, user_id, provider.name, provider.model())
     api_key = provider.credential(db, user_id)
     if provider.requires_credential() and not api_key:
@@ -652,7 +736,7 @@ async def default_scan_processor(
         # Only Gemini has a shared per-key budget to protect; other providers get
         # a no-op scope rather than queueing behind Gemini's limiter.
         with provider.rate_limit_scope("background"):
-            return await recognize_sanitized_card(
+            scanner_result = await recognize_sanitized_card(
                 db,
                 user_id,
                 image_bytes,
@@ -668,6 +752,15 @@ async def default_scan_processor(
                     else None
                 ),
             )
+        if picture_run is not None:
+            picture_first.attach_to_scanner_result(
+                db, scanner_result, picture_run, earlier=picture_earlier
+            )
+            picture_first.record_in_trace(
+                trace, user_id, job_id, item_id, picture_run,
+                _picture_meta_for_trace(scanner_result, picture_run),
+            )
+        return scanner_result
     except Exception as exc:
         trace.record_error(str(getattr(exc, "detail", exc)))
         raise

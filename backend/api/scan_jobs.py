@@ -25,6 +25,7 @@ from services.idempotency import (
     has_idempotency_key,
     replay_response,
 )
+from services import picture_first
 from services.scan_candidate_images import fetch_and_cache_candidate_image
 from services.scanner_reachability import WAITING_REASON, endpoint_reachable
 from services.scan_providers import OPENAI, openai_base_url, openai_is_self_hosted
@@ -437,6 +438,7 @@ def resolve_and_add_scan_job_item(
     item.resolved = True
     item.image_path = None
     item.updated_at = datetime.datetime.utcnow()
+    picture_first.record_confirmation(item, confirmed_card_id)
     record_ground_truth(current_user.id, job_id, item_id, confirmed_card_id)
     db.commit()
     db.refresh(item)
@@ -466,6 +468,22 @@ async def retry_scan_job_item(
     except (ValueError, ScanUploadError) as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     background_tasks.add_task(drain_scan_queue, max_items=1)
+    return _item_payload(item)
+
+
+@router.post("/recognize/jobs/{job_id}/items/{item_id}/wait")
+def wait_for_scanner(
+    job_id: int,
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """"Wait for the scanner": a scan the picture sent to the inbox unsure goes back to the waiting state."""
+    item = _get_own_item(db, job_id, item_id, current_user, for_update=True)
+    if not picture_first.can_wait(item):
+        raise HTTPException(status_code=409, detail="This scan cannot wait for the scanner.")
+    picture_first.put_back_to_wait(db, item)
+    db.refresh(item)
     return _item_payload(item)
 
 

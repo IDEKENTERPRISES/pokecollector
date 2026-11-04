@@ -36,6 +36,9 @@ services:
       # Shadow mode (docs/CARD_MATCH.md): run the matcher on every stored scan photo once, in the background,
       # and record what it would have decided in the scan trace. Nothing changes for trainers. Prod does not set it.
       SCAN_MATCHER_SHADOW: "1"
+      # Picture match first (docs/CARD_MATCH.md): the matcher decides what it is sure of, Ollama handles the rest.
+      # This is only the default: Settings > Scanner (admins) overrides it. Prod does not set it, so it is off there.
+      SCAN_PICTURE_FIRST: "1"
     # Same container paths as the base and Portainer files, so these replace their mounts.
     volumes:
       - /home/rage/Documents/docker/pokelocal-nonprod/backups:/app/backups

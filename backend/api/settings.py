@@ -88,6 +88,8 @@ from services.scan_providers import (
 router = APIRouter()
 logger = logging.getLogger(__name__)
 PHOTO_PREFERENCE_SETTING_KEY = "prefer_own_card_photos"
+# Admin switch "Picture match first" (services/picture_first.py); the environment sets the default.
+PICTURE_FIRST_SETTING_KEY = "scan_picture_first"
 
 PER_USER_KEYS = {
     "language", "currency", "price_primary", "price_display",
@@ -172,6 +174,7 @@ ADMIN_ONLY_KEYS = {
     DIGITAL_SETS_SETTING_KEY,
     PUBLIC_PROFILES_SETTING_KEY,
     SOCIAL_SETTING_KEY,
+    PICTURE_FIRST_SETTING_KEY,
 }
 
 DEFAULT_SETTINGS = {
@@ -224,6 +227,7 @@ def _coerce_setting_value(key: str, value) -> str:
         "cross_language_image_fallback", DIGITAL_SETS_SETTING_KEY,
         PUBLIC_PROFILES_SETTING_KEY, SOCIAL_SETTING_KEY, SCAN_DIAGNOSTICS_SETTING_KEY,
         PHOTO_PREFERENCE_SETTING_KEY, SCANNER_GEMINI_FALLBACK_SETTING_KEY,
+        PICTURE_FIRST_SETTING_KEY,
     }:
         return "true" if str(value).lower() in {"true", "1", "yes", "on"} else "false"
     if key == "portfolio_display_mode":
@@ -278,6 +282,13 @@ def _get_user_settings(db: Session, user_id: int) -> dict:
             env_chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
             if env_chat_id:
                 result["telegram_chat_id"] = env_chat_id
+
+    if _is_admin(db, user_id):
+        from services import picture_first
+
+        result[PICTURE_FIRST_SETTING_KEY] = "true" if picture_first.enabled(db) else "false"
+    else:
+        result.pop(PICTURE_FIRST_SETTING_KEY, None)
 
     if diagnostics_default_on() and trace_available():
         # A test server collects from everyone who hasn't switched diagnostics off.
