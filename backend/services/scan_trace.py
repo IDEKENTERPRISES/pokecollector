@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import shutil
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -60,6 +61,13 @@ CANDIDATE_FIELDS = (
     "image",
     "lang",
 )
+
+
+SHADOW_DIR = "shadow"
+SHADOW_SUFFIX = ".shadow"
+# Guards every read-modify-write of a trace file and of a shadow record, so a shadow result that lands
+# while the real path is saving its trace is merged into it exactly once, whichever finishes first.
+_TRACE_LOCK = threading.Lock()
 
 
 def trace_root() -> Path | None:
@@ -367,6 +375,15 @@ class ScanTrace:
             self.data["error"] = self._sanitize(message)
 
     def save(self) -> Path | None:
+        with _TRACE_LOCK:
+            if self.enabled and self.data.get("job_id") and self.data.get("item_id"):
+                shadow = _read_shadow_file(self.user_id, self.data["job_id"], self.data["item_id"], self._root)
+                if shadow:
+                    self.data["shadow"] = shadow
+                    apply_shadow_agreement(self.data)
+            return self._save_unlocked()
+
+    def _save_unlocked(self) -> Path | None:
         user_dir = _user_dir(self.user_id, self._root)
         if (
             not self.enabled
@@ -449,6 +466,129 @@ def create_scan_trace(
     )
 
 
+# ── Matcher shadow mode (docs/CARD_MATCH.md) ─────────────────────────────────
+
+def apply_shadow_agreement(data: dict) -> None:
+    """Fill in how the matcher's shadow result compares with what the current path decided.
+
+    ``agreement`` is one of ``same``, ``different`` (both decided), ``matcher_only``, ``current_only``,
+    ``neither``; ``agrees`` is True/False only when both decided. Runs when the trace is saved and again
+    if the shadow result arrives afterwards.
+    """
+    shadow = data.get("shadow")
+    if not isinstance(shadow, dict) or shadow.get("status") != "ok":
+        return
+    matcher = (shadow.get("decision") or {}).get("tcg_card_id")
+    current = (data.get("decision") or {}).get("selected")
+    if matcher and current:
+        agreement = "same" if matcher == current else "different"
+    elif matcher:
+        agreement = "matcher_only"
+    elif current:
+        agreement = "current_only"
+    else:
+        agreement = "neither"
+    ranks = [match.get("tcg_card_id") for match in shadow.get("matches") or []]
+    shadow["agreement"] = agreement
+    shadow["agrees"] = (matcher == current) if matcher and current else None
+    shadow["current_selected"] = current
+    shadow["current_rank_in_matcher"] = ranks.index(current) + 1 if current in ranks else None
+    if data.get("ground_truth"):
+        label_shadow(data)
+
+
+def label_shadow(data: dict) -> None:
+    """Score the shadow result against the trainer's confirmed card (``data['ground_truth']``)."""
+    shadow = data.get("shadow")
+    truth = data.get("ground_truth")
+    if not isinstance(shadow, dict) or shadow.get("status") != "ok" or not truth:
+        return
+    matcher = (shadow.get("decision") or {}).get("tcg_card_id")
+    ranks = [match.get("tcg_card_id") for match in shadow.get("matches") or []]
+    shadow["ground_truth_rank"] = ranks.index(truth) + 1 if truth in ranks else None
+    # Like the current path's ``correct``: an abstention is not counted as a wrong decision.
+    shadow["correct"] = (matcher == truth) if matcher else None
+    # The index holds English printings only; the language of the confirmed card tells the lab whether
+    # this scan is a fair test of the matcher.
+    shadow["truth_lang"] = next(
+        (candidate.get("lang") for candidate in data.get("candidates") or [] if candidate.get("tcg_card_id") == truth),
+        None,
+    )
+
+
+def _shadow_file(user_id: int, job_id, item_id, root: Path | None = None) -> Path | None:
+    user_dir = _user_dir(user_id, root)
+    if user_dir is None:
+        return None
+    return user_dir / SHADOW_DIR / f"job{_safe(job_id)}-item{_safe(item_id)}{SHADOW_SUFFIX}"
+
+
+def _read_shadow_file(user_id: int, job_id, item_id, root: Path | None = None) -> dict | None:
+    path = _shadow_file(user_id, job_id, item_id, root)
+    if path is None:
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def has_shadow(user_id: int, job_id: int, item_id: int) -> bool:
+    for root in _cleanup_roots():
+        path = _shadow_file(user_id, job_id, item_id, root)
+        if path is not None and path.is_file():
+            return True
+    return False
+
+
+def record_shadow(user_id: int, job_id: int, item_id: int, shadow: dict) -> bool:
+    """Store the matcher's shadow result for one scan photo (the caller has checked the trainer's consent).
+
+    Written beside the traces as ``user-N/shadow/jobJ-itemI.shadow`` and merged into the scan's trace when
+    that is saved; traces already saved for the item are updated now. Returns whether anything was stored.
+    """
+    root = trace_root()
+    if root is None or _is_revoked(user_id, root):
+        return False
+    path = _shadow_file(user_id, job_id, item_id, root)
+    if path is None:
+        return False
+    with _TRACE_LOCK:
+        temp: Path | None = None
+        try:
+            _ensure_private_dir(root)
+            _ensure_private_dir(path.parent.parent)
+            _ensure_private_dir(path.parent)
+            temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+            _write_private(temp, json.dumps(_redact_value(shadow, ()), indent=2, ensure_ascii=False, default=str))
+            if _is_revoked(user_id, root):
+                temp.unlink(missing_ok=True)
+                return False
+            temp.replace(path)
+        except Exception:
+            if temp:
+                temp.unlink(missing_ok=True)
+            logger.exception("Failed to write shadow diagnostics")
+            return False
+        stored = _read_shadow_file(user_id, job_id, item_id, root) or shadow
+        user_dir = _user_dir(user_id, root)
+        for trace_path in sorted(user_dir.glob(f"*/job{_safe(job_id)}-item{_safe(item_id)}-*.json")):
+            patch_temp: Path | None = None
+            try:
+                data = json.loads(trace_path.read_text(encoding="utf-8"))
+                data["shadow"] = json.loads(json.dumps(stored))
+                apply_shadow_agreement(data)
+                patch_temp = trace_path.with_name(f".{trace_path.name}.{uuid.uuid4().hex}.tmp")
+                _write_private(patch_temp, json.dumps(data, indent=2, ensure_ascii=False, default=str))
+                patch_temp.replace(trace_path)
+            except Exception:
+                if patch_temp:
+                    patch_temp.unlink(missing_ok=True)
+                logger.exception("Failed to add shadow diagnostics to %s", trace_path)
+    return True
+
+
 def record_ground_truth(
     user_id: int,
     job_id: int,
@@ -468,27 +608,29 @@ def record_ground_truth(
     for path in sorted(paths):
         temp: Path | None = None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            data["ground_truth"] = card_id
-            selected = (data.get("decision") or {}).get("selected")
-            # A trace that deliberately abstained did not make a top-1 choice.
-            # Keep it labelled for retrieval analysis without counting it as an
-            # incorrect automatic decision.
-            data["correct"] = (selected == card_id) if selected else None
-            candidates = [
-                candidate.get("tcg_card_id")
-                for candidate in data.get("candidates") or []
-            ]
-            data["ground_truth_rank"] = (
-                candidates.index(card_id) + 1 if card_id in candidates else None
-            )
-            temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-            _write_private(
-                temp,
-                json.dumps(data, indent=2, ensure_ascii=False, default=str),
-            )
-            temp.replace(path)
-            updated += 1
+            with _TRACE_LOCK:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                data["ground_truth"] = card_id
+                selected = (data.get("decision") or {}).get("selected")
+                # A trace that deliberately abstained did not make a top-1 choice.
+                # Keep it labelled for retrieval analysis without counting it as an
+                # incorrect automatic decision.
+                data["correct"] = (selected == card_id) if selected else None
+                candidates = [
+                    candidate.get("tcg_card_id")
+                    for candidate in data.get("candidates") or []
+                ]
+                data["ground_truth_rank"] = (
+                    candidates.index(card_id) + 1 if card_id in candidates else None
+                )
+                label_shadow(data)
+                temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+                _write_private(
+                    temp,
+                    json.dumps(data, indent=2, ensure_ascii=False, default=str),
+                )
+                temp.replace(path)
+                updated += 1
         except Exception:
             if temp:
                 temp.unlink(missing_ok=True)

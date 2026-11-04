@@ -32,6 +32,14 @@ def summarise(report: dict) -> None:
     for item in report["pass_bar"]:
         mark = {True: "PASS", False: "FAIL", None: "n/a "}[item["ok"]]
         print(f"  [{mark}] {item['label']}: {item['value']} (target {item['target']})")
+    side = report.get("side_by_side")
+    if side:
+        for label, view in (("matcher re-run now", side["rerun"]), ("matcher as recorded at scan time", side.get("recorded"))):
+            if not view:
+                continue
+            print(f"  vs Ollama on {view['n']} confirmed photos ({label}):")
+            print(f"    matcher decided {view['matcher']['decided_pct']}% right {view['matcher']['right_pct']}%   Ollama decided {view['current']['decided_pct']}% right {view['current']['right_pct']}%")
+            print(f"    decided differently on {view['differ']} of {view['both_decided']}: matcher right {view['differ_matcher_right']}, Ollama right {view['differ_current_right']}, neither {view['differ_neither_right']}")
 
 
 def main() -> int:

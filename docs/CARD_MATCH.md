@@ -1,6 +1,6 @@
 # Picture matcher (Scanner Phase 1 prototype)
 
-Status: **prototype, not used by scanning yet.** Today's scan path (Ollama / Gemini through `scan_queue.py`, `scan_providers.py` and `api/recognize.py`) is unchanged. This is Phase 1 of `docs/SCAN_RESEARCH.md` §3.8: build the matcher, measure it on the T340, and read the numbers in **Settings → Data & sync → Scanner lab** (admins only).
+Status: **prototype; on nonprod it runs in shadow mode (below) and changes nothing for trainers.** Today's scan path (Ollama / Gemini through `scan_queue.py`, `scan_providers.py` and `api/recognize.py`) is unchanged. This is Phase 1 of `docs/SCAN_RESEARCH.md` §3.8: build the matcher, measure it on the T340, and read the numbers in **Settings → Data & sync → Scanner lab** (admins only).
 
 ## How it works
 
@@ -39,11 +39,12 @@ The pipeline is pure: it reads the index and, through a `candidate_loader`, the 
 | `…/pipeline.py` | `CardMatcher`, `decide`, `db_candidate_loader` |
 | `…/synthetic.py`, `…/benchmark.py` | phone-style synthetic photos; synthetic and labelled benchmarks; reports |
 | `…/jobs.py` | one-at-a-time background jobs, nonprod autorun, after-sync hook |
-| `backend/api/card_match.py` | admin API: `GET /api/card-match/status`, `POST /index`, `POST /benchmark`, `POST /stop` |
+| `…/shadow.py` | shadow mode: the background worker, and the report the Scanner lab reads back |
+| `backend/api/card_match.py` | admin API: `GET /api/card-match/status`, `GET /shadow`, `POST /index`, `POST /benchmark`, `POST /stop` |
 | `backend/scripts/scan_benchmark.py` | the same build/benchmark from a shell |
 | `backend/scripts/fetch_card_match_models.py` | build-time model download with checksum |
 | `frontend/src/components/settings/ScannerLabSection.jsx` | the Scanner lab page |
-| `backend/tests/test_card_match.py` | tests with the fake embedder and generated fixture cards (one optional real-model test) |
+| `backend/tests/test_card_match.py`, `test_card_match_shadow.py` | tests with the fake embedder and generated fixture cards (one optional real-model test) |
 
 On disk (`CARD_MATCH_DIR`, default `/app/data/card-match`; mounted in `docker-compose.nonprod.yml`):
 
@@ -67,12 +68,47 @@ On disk (`CARD_MATCH_DIR`, default `/app/data/card-match`; mounted in `docker-co
 | `CARD_MATCH_MODEL_DIR` | `/app/card-match-models` | where the image has the model file |
 | `CARD_MATCH_THREADS` | `3` (1–8) | ONNX Runtime and OpenCV thread cap |
 | `SCAN_MATCHER_AUTORUN` | off | **nonprod only**: once per matcher version, after startup, fill the picture cache if needed, build the index, run the synthetic benchmark |
+| `SCAN_MATCHER_SHADOW` | off | **nonprod only**: shadow mode (below) |
 | `SCAN_MATCHER_INDEX_AFTER_SYNC` | off | after `schedule_after_sync` (card sync → picture warm-up), add the new pictures to the index; nonprod sets it |
 | `CARD_MATCH_SIM_MIN_WITH_RULES`, `CARD_MATCH_SIM_MIN_PICTURE_ONLY`, `CARD_MATCH_LEAD_MIN_PICTURE_ONLY` | 0.55 / 0.80 / 0.06 | decision thresholds |
 
 Prod sets none of the automatic flags. An admin can still press the buttons on prod, but prod has no `card-match` volume, so results would not survive a container re-create.
 
 Limits: one index build or benchmark at a time (a second request gets `started: false`); jobs run in a thread at `nice 10` where the OS allows it; ONNX Runtime gets 3 intra-op threads and OpenCV 3.
+
+## Shadow mode (Phase 2, nonprod only)
+
+`SCAN_MATCHER_SHADOW=1` (set in `docker-compose.nonprod.yml` only) runs the matcher beside today's path and records what it would have decided. **Nothing changes for trainers**: no screen, no result, no extra wait.
+
+- **When**: right after a scan upload (`POST /api/recognize/jobs`) the stored photos are queued. This does not depend on Ollama, so scans that are waiting for the scanner are covered too.
+- **Who**: only trainers who switched on "Share scanner diagnostics" (the same consent and the same `SCAN_TRACE_DIR` as the trace). Without consent nothing is run or written.
+- **How**: one worker thread (`card-match-shadow`), one photo at a time, `nice 10`, the usual 3-thread cap. It waits while an index build or benchmark is running, and it runs in its own thread, so recognition never waits for it. Each photo is run once; a restart finds the record on disk and does not repeat it. A burst of more than 500 queued photos drops the extra ones.
+- **Not ready**: if the model file, the index or the OCR library is missing, the photo is skipped and the reason is recorded (`model_missing`, `index_not_built`, `ocr_missing`, `model_error`, `photo_unavailable`, `match_failed`). A skipped photo is not retried.
+- **Where it is recorded**: `user-N/shadow/jobJ-itemI.shadow` beside the traces (JSON; the `.shadow` suffix keeps it out of the trace listings and counts), and merged into the scan's trace as a `shadow` object when that trace is saved (or, if the trace was saved first, added to it as soon as the matcher finishes). No new tables.
+
+The `shadow` object in the trace:
+
+| Field | Meaning |
+| --- | --- |
+| `status`, `reason` | `ok`, or `skipped` with why |
+| `matcher_version`, `model` | which matcher and which embedding model |
+| `outcome`, `decision`, `unsure_reason` | `decided` / `unsure`; the decision (`tcg_card_id`, mechanism, similarity, lead) or the reason |
+| `matches` | the top 20 with similarity, rank, name, number, set |
+| `ocr` | number, printed total, HP and the first tokens read |
+| `detection`, `timings_ms` | card finder result; detect / embed / search / ocr / decide / total |
+| `agreement`, `agrees`, `current_selected`, `current_rank_in_matcher` | filled when the current path finishes: `same`, `different` (both decided), `matcher_only`, `current_only`, `neither`; `agrees` is true/false only when both decided |
+| `correct`, `ground_truth_rank`, `truth_lang` | filled when the trainer confirms a card in review: whether the matcher's decision was the confirmed card (null when it did not decide), where the confirmed card sat in the matcher's top 20, and its language |
+
+Scanner lab → **Shadow run** shows, from the traces (refreshed every 30 s):
+
+- **Scans compared** and **Agree when both decided** (`same` / both decided);
+- **Matcher would decide on its own**: the share of photos where the matcher decided;
+- **Median matcher time** (the `total` stage);
+- **On the N scans you confirmed (English cards)**: for each path, how often it decided and, of those, how often it was right; and for the scans where both decided differently, how often the matcher, Ollama or neither was right. Non-English confirmations are left out, because the index holds English only;
+- **Latest disagreements**: card names only (matcher, Ollama and, when confirmed, the confirmed card and who was right);
+- skipped photos with their reasons.
+
+"Run on diagnostics" (the labelled benchmark) reads the same trace fields. Its report adds **Matcher and Ollama side by side**: the matcher as recorded at scan time (the `shadow` object) and the matcher run again just now, each against Ollama's pick on the same confirmed photos, with the number of photos where they decided differently and who was right (`side_by_side` in the report JSON; `scripts/scan_benchmark.py` saves the same report). Traces without shadow data still count in the re-run column.
 
 ## Reading the Scanner lab
 
@@ -112,6 +148,6 @@ All permissive; the project itself is AGPL-3.0-only. TCGdex card pictures are fe
 
 1. **Read the T340 numbers** (this PR) and tune the thresholds; fix the stage the report names if the pass bar fails.
 2. **Labelled benchmark** once trainers have scanned 300–400 cards with diagnostics on: press "Run on diagnostics".
-3. **Shadow mode** on nonprod: a server setting runs the matcher beside Ollama, records agreement in the traces, changes nothing the trainers see.
+3. **Shadow mode** on nonprod (built, see above): read the Shadow run block after 300-400 confirmed scans and decide on the thresholds.
 4. **Primary mode** with the Ollama fallback only when the gaming PC answers a quick check, and "straight to the inbox" (with the picture top matches) when the scanner is unreachable, as the owner chose.
 5. **Phone version** reusing the same model file and index format.

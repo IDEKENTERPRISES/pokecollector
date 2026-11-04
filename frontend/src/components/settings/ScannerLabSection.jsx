@@ -3,6 +3,7 @@ import { FlaskConical, Hammer } from 'lucide-react'
 import api from '../../api/client'
 
 const QUERY_KEY = ['card-match-status']
+const SHADOW_KEY = ['card-match-shadow']
 const button = 'inline-flex min-h-[32px] flex-shrink-0 items-center gap-1.5 rounded-full bg-accent/20 px-3.5 text-subheadline font-semibold text-tint ios-press disabled:opacity-40'
 
 const number = value => (value === null || value === undefined ? '–' : Number(value).toLocaleString())
@@ -108,6 +109,71 @@ export function Report({ report, title }) {
           <Row label="Right card ranked first" value={percent(report.ollama_today.top1_pct)} />
         </div>
       )}
+      {report.side_by_side && <SideBySide data={report.side_by_side} />}
+    </div>
+  )
+}
+
+const RIGHT_LABEL = { matcher: 'the matcher', ollama: 'Ollama', current: 'Ollama', neither: 'neither' }
+
+function SideBySide({ data }) {
+  const view = data.recorded || data.rerun
+  return (
+    <div data-testid="scanner-lab-side-by-side">
+      <h4 className="text-footnote font-semibold">Matcher and Ollama side by side ({number(view.n)} confirmed photos{data.recorded ? ', matcher as recorded at scan time' : ', matcher run again now'})</h4>
+      <Row label="Matcher decided / right" value={`${percent(view.matcher.decided_pct)} / ${percent(view.matcher.right_pct)}`} />
+      <Row label="Ollama decided / right" value={`${percent(view.current.decided_pct)} / ${percent(view.current.right_pct)}`} />
+      <Row label="Both decided, but differently" value={`${number(view.differ)} of ${number(view.both_decided)}`} />
+      <Row label="Of those, right: matcher / Ollama / neither" value={`${number(view.differ_matcher_right)} / ${number(view.differ_current_right)} / ${number(view.differ_neither_right)}`} />
+      {(data.disagreements || []).length > 0 && (
+        <ul className="mt-1 space-y-0.5 text-footnote text-text-secondary">
+          {data.disagreements.map((item, position) => (
+            <li key={position}>Matcher: {item.matcher} · Ollama: {item.ollama} · confirmed: {item.confirmed} (right: {RIGHT_LABEL[item.right] || item.right})</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+export function ShadowView({ data }) {
+  const report = data.report
+  const confirmed = report.confirmed
+  const skipped = Object.entries({ ...(report.skipped || {}), ...(data.worker?.skipped || {}) })
+  return (
+    <div className="space-y-2 border-t border-separator px-4 py-3" data-testid="scanner-lab-shadow">
+      <div>
+        <h3 className="text-subheadline font-semibold">Shadow run</h3>
+        <p className="text-footnote text-text-secondary">
+          The matcher looks at each new scan from trainers who share diagnostics and records what it would have decided. Nothing changes for trainers.
+          {data.enabled ? '' : ' It is switched off on this server.'}
+        </p>
+      </div>
+      <Row testId="scanner-lab-shadow-compared" label="Scans compared" value={number(report.compared)} />
+      <Row label="Agree when both decided" value={`${percent(report.agreement.agree_pct)} (${number(report.agreement.same)} of ${number(report.agreement.both_decided)})`} />
+      <Row label="Matcher would decide on its own" value={percent(report.matcher_decided_pct)} />
+      <Row label="Median matcher time" value={report.median_ms != null ? `${number(report.median_ms)} ms` : '–'} />
+      <div data-testid="scanner-lab-shadow-confirmed">
+        <h4 className="text-footnote font-semibold">On the {number(confirmed.n)} scans you confirmed (English cards)</h4>
+        <Row label="Matcher decided / of those, right" value={`${percent(confirmed.matcher.decided_pct)} / ${percent(confirmed.matcher.right_pct)}`} />
+        <Row label="Ollama decided / of those, right" value={`${percent(confirmed.current.decided_pct)} / ${percent(confirmed.current.right_pct)}`} />
+        <Row label="Different answers: matcher / Ollama / neither right" value={`${number(confirmed.differ_matcher_right)} / ${number(confirmed.differ_current_right)} / ${number(confirmed.differ_neither_right)}`} />
+      </div>
+      {skipped.length > 0 && (
+        <p className="text-footnote text-text-secondary">Skipped: {skipped.map(([reason, count]) => `${reason.replace(/_/g, ' ')} (${count})`).join(', ')}</p>
+      )}
+      {report.disagreements.length > 0 && (
+        <div data-testid="scanner-lab-shadow-disagreements">
+          <h4 className="text-footnote font-semibold">Latest disagreements</h4>
+          <ul className="space-y-0.5 text-footnote text-text-secondary">
+            {report.disagreements.map((item, position) => (
+              <li key={position}>
+                Matcher: {item.matcher} · Ollama: {item.current}{item.confirmed ? ` · confirmed: ${item.confirmed} (right: ${RIGHT_LABEL[item.right] || item.right})` : ''}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }
@@ -115,7 +181,7 @@ export function Report({ report, title }) {
 /**
  * Settings › Data & sync, admins only: the picture matcher prototype (docs/CARD_MATCH.md). Index
  * coverage, build and benchmark buttons, and the latest benchmark report against the Phase 1 pass bar.
- * Nothing here changes how scans are recognised.
+ * Nothing here changes how scans are recognised or what trainers see.
  */
 export default function ScannerLabSection() {
   const queryClient = useQueryClient()
@@ -123,6 +189,12 @@ export default function ScannerLabSection() {
     queryKey: QUERY_KEY,
     queryFn: () => api.get('/card-match/status').then(response => response.data),
     refetchInterval: query => (query.state.data?.job?.running ? 3000 : false),
+    retry: false,
+  })
+  const shadow = useQuery({
+    queryKey: SHADOW_KEY,
+    queryFn: () => api.get('/card-match/shadow').then(response => response.data),
+    refetchInterval: 30000,
     retry: false,
   })
   const refresh = () => queryClient.invalidateQueries({ queryKey: QUERY_KEY })
@@ -154,7 +226,7 @@ export default function ScannerLabSection() {
       <div className="overflow-hidden rounded-xl bg-card">
         <div className="space-y-2 px-4 py-3">
           <p className="text-footnote text-text-secondary">
-            The picture matcher prototype. It does not change how scans are recognised yet.
+            The picture matcher prototype. It does not change how scans are recognised or what trainers see.
           </p>
           <Row testId="scanner-lab-coverage" label="English cards indexed" value={`${number(index.count)} of ${number(data.english_total)}`} />
           <Row label="Model" value={`${data.model?.name}${ready ? '' : ' (missing from this image)'}`} />
@@ -178,6 +250,7 @@ export default function ScannerLabSection() {
             )}
           </div>
         </div>
+        {shadow.data?.report && (shadow.data.enabled || shadow.data.report.compared > 0) && <ShadowView data={shadow.data} />}
         {data.reports?.synthetic && <Report report={data.reports.synthetic} title="Latest benchmark: synthetic photos" />}
         {data.reports?.labelled && <Report report={data.reports.labelled} title="Latest benchmark: real scans (diagnostics)" />}
         {!data.reports?.synthetic && !data.reports?.labelled && (

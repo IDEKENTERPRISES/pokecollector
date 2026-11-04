@@ -32,6 +32,11 @@ def index_after_sync_enabled() -> bool:
     return os.environ.get("SCAN_MATCHER_INDEX_AFTER_SYNC", "").strip().lower() in TRUE
 
 
+def shadow_enabled() -> bool:
+    """SCAN_MATCHER_SHADOW=1 (nonprod only): run the matcher beside the current scanner path."""
+    return os.environ.get("SCAN_MATCHER_SHADOW", "").strip().lower() in TRUE
+
+
 def apply_thread_caps() -> None:
     """Cap OpenCV's own thread pool (ONNX Runtime gets its cap per session)."""
     try:

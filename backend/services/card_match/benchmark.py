@@ -4,7 +4,8 @@ Two modes, one report shape:
   - synthetic: about 400 English cards (reprint traps, holo and full-art, the rest random), a
     phone-like photo made from each card's high-resolution TCGdex picture, run through the pipeline;
   - labelled: the diagnostics traces under SCAN_TRACE_DIR that have a confirmed answer, run through the
-    same pipeline, with what today's Ollama path got on those traces next to it.
+    same pipeline, with what today's Ollama path got on those traces next to it, and (shadow mode) what the
+    matcher itself recorded at scan time; where the two paths decided differently, who was right.
 Reports are JSON files under ``<data dir>/reports``. Synthetic photos are made from the same artwork
 the index holds, so they are an optimistic upper bound; the labelled run is the honest one.
 """
@@ -23,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from . import MATCHER_VERSION, config
+from . import MATCHER_VERSION, config, shadow as shadow_module
 from .index import CardIndex, get_index, index_status, tcg_card_id
 
 logger = logging.getLogger(__name__)
@@ -346,6 +347,9 @@ def run_labelled(
     rss_before = rss_mb()
     results: list[dict] = []
     ollama = {"n": 0, "decided": 0, "decided_right": 0, "in_candidates": 0, "top1": 0}
+    rerun_pairs: list[tuple] = []  # (confirmed card, matcher now, Ollama path then): the matcher re-run on the photo
+    recorded_pairs: list[tuple] = []  # same, with the matcher's answer recorded in shadow mode at scan time
+    examples: list[dict] = []
     for position, (data, path) in enumerate(eligible, start=1):
         if should_stop and should_stop():
             break
@@ -368,6 +372,22 @@ def run_labelled(
             "top_match": outcome.matches[0]["card_id"] if outcome.matches else None, "timings_ms": outcome.timings_ms,
         })
         selected = (data.get("decision") or {}).get("selected")
+        rerun_pairs.append((data["ground_truth"], decision["tcg_card_id"] if decision else None, selected))
+        shadow = data.get("shadow")
+        if isinstance(shadow, dict) and shadow.get("status") == "ok":
+            recorded = (shadow.get("decision") or {}).get("tcg_card_id")
+            recorded_pairs.append((data["ground_truth"], recorded, selected))
+        if decision and selected and decision["tcg_card_id"] != selected and len(examples) < 10:
+            candidates = data.get("candidates") or []
+
+            def name_of(tcg):
+                return next((c.get("name") for c in candidates if c.get("tcg_card_id") == tcg), None) or tcg
+
+            examples.append({
+                "matcher": next((m["name"] for m in outcome.matches if m["tcg_card_id"] == decision["tcg_card_id"]), None) or decision["tcg_card_id"],
+                "ollama": name_of(selected), "confirmed": name_of(data["ground_truth"]),
+                "right": "matcher" if decision["tcg_card_id"] == data["ground_truth"] else "ollama" if selected == data["ground_truth"] else "neither",
+            })
         ollama["n"] += 1
         ollama["in_candidates"] += 1 if data.get("ground_truth_rank") else 0
         if selected:
@@ -380,6 +400,13 @@ def run_labelled(
             **ollama, "decided_pct": pct(ollama["decided"], ollama["n"]),
             "decided_right_pct": pct(ollama["decided_right"], ollama["decided"]),
             "in_candidates_pct": pct(ollama["in_candidates"], ollama["n"]), "top1_pct": pct(ollama["top1"], ollama["n"]),
+        },
+        # The two paths on the same confirmed photos, side by side. "rerun" is the matcher run again just
+        # now; "recorded" is what it answered at scan time in shadow mode (only the traces that have it).
+        "side_by_side": {
+            "rerun": shadow_module.score_pairs(rerun_pairs),
+            "recorded": shadow_module.score_pairs(recorded_pairs) if recorded_pairs else None,
+            "disagreements": examples,
         },
     }
     return _finish_report("labelled", started, index, matcher, results, extra, rss_before)
