@@ -52,6 +52,20 @@
 - **Scanner:** per-user scanner keys come with the restore and share the provider's quota with prod.
 - **Syncs:** nonprod runs its own scheduled syncs against TCGdex. You can lengthen the intervals in nonprod's Settings.
 
+## Scanner diagnostics (collecting confirmed scans)
+
+`docker-compose.nonprod.yml` sets `SCAN_TRACE_DIR=/app/data/scan-traces`, so the switch is available on nonprod. Nothing is collected until a trainer turns it on for their own account:
+
+1. Open Settings › Scanner and switch on **Share scanner diagnostics**. It is off by default and per user, so each trainer who takes part does it on their own phone or login.
+2. Scan as usual and, in the scan review, **add or confirm the right card** for each photo. Confirming is what labels the stored attempt with the correct card; photos you never confirm are kept but unlabelled.
+3. Each attempt stores the sanitized photo, the model's answer, the candidates and the matching decision under `/home/rage/Documents/docker/pokelocal-nonprod/data/scan-traces/user-<id>/`.
+4. Aim for 300-400 confirmed scans between the owner and one more trainer. Summarise them with `python scripts/analyse_scan_traces.py <trace_dir> [--failures] [--field-nulls]` (run inside the backend container).
+5. Switching it off stops future collection and keeps what exists; **Delete data** next to the switch removes that trainer's traces.
+
+## Scanner waiting state
+
+When the scanner endpoint does not answer (for example the machine running the model is off) scans show **Waiting for the scanner** instead of a retry countdown. They do not use up retries, and the backend checks the endpoint about once a minute and releases every waiting scan as soon as it answers. **Try now** on a waiting scan checks at once. While scans wait, their 14-day expiry is held at least two days ahead, so nothing unrecognised is deleted.
+
 ## "Coming next" in the version history
 
 Settings › About › Version history shows the draft notes of the release being tested (`next` in `frontend/src/welcome/releases.json`) at the top, under a yellow "Coming next" chip, **on nonprod only**.

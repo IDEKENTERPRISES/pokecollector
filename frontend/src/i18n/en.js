@@ -2069,6 +2069,8 @@ const en = {
     dismissScanConfirm: 'Dismiss this scan and permanently delete its stored photo?',
     itemProcessing: 'Waiting for recognition…',
     itemRetrying: 'Waiting to retry…',
+    waitingForScanner: 'Waiting for the scanner',
+    tryNow: 'Try now',
     retryingInSeconds: 'Retrying in {seconds}s',
     retryingInMinutes: 'Retrying in {minutes}m',
     retryingInHours: 'Retrying in {hours}h {minutes}m',

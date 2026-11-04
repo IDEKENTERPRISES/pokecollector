@@ -15,6 +15,11 @@ from sqlalchemy.orm import Session
 
 from models import ScanJob, ScanJobItem, ScanQueueUserState, User
 from services.gemini_rate_limit import gemini_priority_scope
+from services.scanner_reachability import (
+    WAITING_EXPIRY_GRACE_DAYS,
+    WAITING_REASON,
+    endpoint_reachable,
+)
 from services.scan_storage import (
     ScanUploadError,
     delete_job_directory,
@@ -97,9 +102,18 @@ class PermanentScanError(RuntimeError):
     pass
 
 
+class ScannerWaitingError(RuntimeError):
+    """The scanner endpoint is switched off: park the scan without a retry penalty."""
+
+    retry_reason = WAITING_REASON
+
+
 def _eligible_items(now: datetime.datetime):
     return and_(
         ScanJobItem.status.in_(["pending", "retrying"]),
+        # Scans waiting for the scanner are released by release_waiting_scans(),
+        # not by a timer.
+        or_(ScanJobItem.retry_reason.is_(None), ScanJobItem.retry_reason != WAITING_REASON),
         or_(ScanJobItem.next_attempt_at.is_(None), ScanJobItem.next_attempt_at <= now),
         ScanJob.expires_at > now,
     )
@@ -346,6 +360,7 @@ def fail_claim(
     permanent: bool = False,
     retry_after_seconds: float | None = None,
     retry_reason: str | None = None,
+    waiting: bool = False,
 ) -> bool:
     now = datetime.datetime.utcnow()
     items = _leased_items(db, claim)
@@ -361,6 +376,13 @@ def fail_claim(
             item.status = "failed"
             item.next_attempt_at = None
             item.retry_reason = None
+        elif waiting:
+            # Neither attempts nor transient_failures move: being switched off
+            # is not the scan's fault and must not climb the retry ladder.
+            item.status = "retrying"
+            item.next_attempt_at = None
+            item.retry_reason = WAITING_REASON
+            item.error = None
         elif transient:
             item.transient_failures += 1
             item.status = "retrying"
@@ -479,6 +501,16 @@ def _clear_recognition_cache(claim: ClaimedScanItem) -> None:
         cache_db.close()
 
 
+async def _require_scanner_reachable(provider) -> None:
+    """Park the scan (no retry penalty) while the local endpoint is switched off."""
+    if provider.is_gemini:
+        return
+    from services.scan_providers import openai_base_url
+
+    if not await endpoint_reachable(openai_base_url()):
+        raise ScannerWaitingError("Waiting for the scanner")
+
+
 async def default_scan_processor(
     db: Session,
     user_id: int,
@@ -506,6 +538,7 @@ async def default_scan_processor(
             status_code=400,
             detail=provider.missing_credential_message(),
         )
+    await _require_scanner_reachable(provider)
     trace = create_scan_trace(
         db,
         user_id,
@@ -614,6 +647,7 @@ async def default_composite_processor(
         raise PermanentScanError(
             f"No {provider.name} API key is configured for the scan owner."
         )
+    await _require_scanner_reachable(provider)
 
     trace_item_ids = list(item_ids or [])
     traces = [
@@ -706,6 +740,10 @@ async def default_composite_processor(
 
 
 def _scan_error_from_http(error: HTTPException) -> RuntimeError:
+    from services.scan_providers import ScannerUnreachableError
+
+    if isinstance(error, ScannerUnreachableError):
+        return ScannerWaitingError(str(error.detail))
     if error.status_code in {429, 502, 503, 504}:
         return TransientScanError(
             str(error.detail),
@@ -783,7 +821,12 @@ async def process_claimed_scan_item(
             except (FileNotFoundError, OSError, ScanUploadError) as exc:
                 db.rollback()
                 error = PermanentScanError(f"Stored scan photo is unavailable: {exc}")
-            except (TransientScanError, RecognitionScanError, PermanentScanError) as exc:
+            except (
+                ScannerWaitingError,
+                TransientScanError,
+                RecognitionScanError,
+                PermanentScanError,
+            ) as exc:
                 db.rollback()
                 error = exc
             except Exception as exc:
@@ -812,6 +855,7 @@ async def process_claimed_scan_item(
                 db,
                 claim,
                 str(error),
+                waiting=isinstance(error, ScannerWaitingError),
                 transient=isinstance(error, TransientScanError),
                 permanent=isinstance(error, PermanentScanError),
                 retry_after_seconds=getattr(error, "retry_after_seconds", None),
@@ -866,7 +910,7 @@ def retry_scan_item(db: Session, item: ScanJobItem) -> ScanJobItem:
     """Start a fresh individual recognition cycle for a reviewable item."""
     if item.resolved:
         raise ValueError("This scan has already been handled.")
-    if item.status not in {"done", "failed"}:
+    if item.status not in {"done", "failed", "retrying", "pending"}:
         raise ValueError("This scan is still being processed.")
     if not item.image_path or not resolve_scan_path(item.image_path).is_file():
         raise ValueError("The stored scan photo is no longer available.")
@@ -891,6 +935,83 @@ def retry_scan_item(db: Session, item: ScanJobItem) -> ScanJobItem:
     db.commit()
     db.refresh(item)
     return item
+
+
+def waiting_scan_count(db: Session) -> int:
+    return (
+        db.query(ScanJobItem)
+        .filter(
+            ScanJobItem.status == "retrying",
+            ScanJobItem.retry_reason == WAITING_REASON,
+        )
+        .count()
+    )
+
+
+def hold_expiry_for_waiting_scans(
+    db: Session, *, now: datetime.datetime | None = None
+) -> int:
+    """Pause the 14-day clock for jobs whose scans are waiting for the scanner.
+
+    The expiry is kept at least WAITING_EXPIRY_GRACE_DAYS ahead, so a scan that
+    was never recognised is not deleted unseen, and still has time to run once
+    the scanner is back. Call this before purge_expired_scan_jobs().
+    """
+    now = now or datetime.datetime.utcnow()
+    floor = now + datetime.timedelta(days=WAITING_EXPIRY_GRACE_DAYS)
+    job_ids = [
+        row[0]
+        for row in db.query(ScanJobItem.job_id)
+        .filter(
+            ScanJobItem.status == "retrying",
+            ScanJobItem.retry_reason == WAITING_REASON,
+        )
+        .distinct()
+        .all()
+    ]
+    if not job_ids:
+        return 0
+    updated = (
+        db.query(ScanJob)
+        .filter(ScanJob.id.in_(job_ids), ScanJob.expires_at < floor)
+        .update({ScanJob.expires_at: floor}, synchronize_session=False)
+    )
+    db.commit()
+    return updated
+
+
+def release_waiting_scans(
+    db: Session, *, now: datetime.datetime | None = None
+) -> int:
+    """Put every scan that was waiting for the scanner back in the queue."""
+    now = now or datetime.datetime.utcnow()
+    items = (
+        db.query(ScanJobItem)
+        .filter(
+            ScanJobItem.status == "retrying",
+            ScanJobItem.retry_reason == WAITING_REASON,
+        )
+        .all()
+    )
+    for item in items:
+        item.status = "pending"
+        item.retry_reason = None
+        item.next_attempt_at = now
+        item.updated_at = now
+    if items:
+        db.commit()
+    return len(items)
+
+
+async def release_waiting_scans_if_reachable(db: Session) -> int:
+    """Once-a-minute check: free all waiting scans as soon as the endpoint answers."""
+    if waiting_scan_count(db) == 0:
+        return 0
+    from services.scan_providers import openai_base_url
+
+    if not await endpoint_reachable(openai_base_url(), force=True):
+        return 0
+    return release_waiting_scans(db)
 
 
 def purge_expired_scan_jobs(db: Session, *, now: datetime.datetime | None = None) -> int:
@@ -931,6 +1052,11 @@ def job_progress(db: Session, job: ScanJob) -> dict:
         key=lambda item: item.next_attempt_at,
         default=None,
     )
+    waiting_count = sum(
+        1
+        for item in items
+        if item.status == "retrying" and item.retry_reason == WAITING_REASON
+    )
     return {
         "id": job.id,
         "status": job.status,
@@ -943,7 +1069,12 @@ def job_progress(db: Session, job: ScanJob) -> dict:
         "next_retry_at": (
             next_retry_item.next_attempt_at.isoformat() if next_retry_item else None
         ),
-        "retry_reason": next_retry_item.retry_reason if next_retry_item else None,
+        "retry_reason": (
+            WAITING_REASON
+            if waiting_count and waiting_count == counts["retrying"]
+            else (next_retry_item.retry_reason if next_retry_item else None)
+        ),
+        "waiting_for_scanner": waiting_count,
         # Kept as a stable alias for badge clients built against Lamiskin's
         # original queue payload.
         "unresolved": attention,

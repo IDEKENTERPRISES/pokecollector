@@ -389,6 +389,41 @@ class ScanJobsApiTests(unittest.TestCase):
         self.assertEqual(response.json()["attempts"], 0)
         self.assertTrue(stored.exists())
 
+    def test_try_now_releases_a_scan_waiting_for_the_scanner(self):
+        created = self._enqueue()
+        item = self.db.query(ScanJobItem).filter(ScanJobItem.job_id == created["id"]).one()
+        item.status = "retrying"
+        item.retry_reason = "scanner_unreachable"
+        item.next_attempt_at = None
+        self.db.commit()
+        url = f"/api/cards/recognize/jobs/{created['id']}/items/{item.id}/retry"
+
+        # Still switched off: the scan keeps waiting.
+        with patch("api.scan_jobs.endpoint_reachable", new=AsyncMock(return_value=False)):
+            still = self.client.post(url)
+        self.assertEqual(still.status_code, 200)
+        self.assertEqual(still.json()["status"], "retrying")
+        self.assertEqual(still.json()["retry_reason"], "scanner_unreachable")
+
+        with patch("api.scan_jobs.endpoint_reachable", new=AsyncMock(return_value=True)),                 patch("api.scan_jobs.drain_scan_queue", new=AsyncMock(return_value=0)):
+            response = self.client.post(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "pending")
+        self.assertIsNone(response.json()["retry_reason"])
+
+    def test_try_now_accepts_an_ordinary_retrying_scan(self):
+        created = self._enqueue()
+        item = self.db.query(ScanJobItem).filter(ScanJobItem.job_id == created["id"]).one()
+        item.status = "retrying"
+        item.next_attempt_at = datetime.datetime.utcnow() + datetime.timedelta(hours=5)
+        self.db.commit()
+        with patch("api.scan_jobs.drain_scan_queue", new=AsyncMock(return_value=0)):
+            response = self.client.post(
+                f"/api/cards/recognize/jobs/{created['id']}/items/{item.id}/retry"
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "pending")
+
     def test_deleting_job_removes_database_rows_and_photo_directory(self):
         created = self._enqueue()
         item = self.db.query(ScanJobItem).filter(ScanJobItem.job_id == created["id"]).one()

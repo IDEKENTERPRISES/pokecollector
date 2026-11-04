@@ -1700,6 +1700,8 @@ const de = {
     dismissScanConfirm: 'Diesen Scan verwerfen und das gespeicherte Foto endgültig löschen?',
     itemProcessing: 'Wartet auf Erkennung…',
     itemRetrying: 'Wartet auf erneuten Versuch…',
+    waitingForScanner: 'Warte auf den Scanner',
+    tryNow: 'Jetzt versuchen',
     retryingInSeconds: 'Neuer Versuch in {seconds}s',
     retryingInMinutes: 'Neuer Versuch in {minutes} Min.',
     retryingInHours: 'Neuer Versuch in {hours} Std. {minutes} Min.',
