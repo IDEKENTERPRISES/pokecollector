@@ -20,7 +20,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# RapidOCR's wheel pulls the full opencv-python (needs libGL); its other dependencies are in requirements.txt.
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir --no-deps rapidocr-onnxruntime==1.3.24
+
+# Picture-matcher model (pinned URL and sha256 in model_specs.py). Fetched at build time so nothing
+# downloads at runtime; this layer is cached until the model list changes.
+COPY backend/scripts/fetch_card_match_models.py backend/services/card_match/model_specs.py /tmp/card-match/
+RUN python /tmp/card-match/fetch_card_match_models.py /app/card-match-models && rm -rf /tmp/card-match
 
 COPY VERSION /app/VERSION
 COPY backend/ .

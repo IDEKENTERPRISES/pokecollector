@@ -1,0 +1,93 @@
+"""Scanner lab (admins): the picture matcher's index and benchmark. Nothing here is used by scanning yet."""
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from api.auth import get_current_user
+from database import get_db
+from models import Card, User
+from services import scan_trace
+from services.card_match import MATCHER_VERSION, benchmark, config, embed, index as index_module, jobs as jobs_module
+from services.card_match.model_specs import DEFAULT_MODEL, MODEL_SPECS
+
+router = APIRouter()
+
+
+def _require_admin(user: User) -> None:
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+
+def _ocr_available() -> bool:
+    try:
+        import rapidocr_onnxruntime  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _english_picture_total(db: Session) -> int:
+    return int(index_module.picture_query(db, "en").with_entities(func.count(Card.id)).scalar() or 0)
+
+
+@router.get("/status")
+def card_match_status(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    _require_admin(current_user)
+    trace_dir = scan_trace.trace_root() or scan_trace.trace_storage_root()
+    spec = MODEL_SPECS[DEFAULT_MODEL]
+    return {
+        "matcher_version": MATCHER_VERSION,
+        "model": {"name": DEFAULT_MODEL, "available": embed.model_available(DEFAULT_MODEL), "license": spec["license"], "dim": spec["dim"]},
+        "ocr_available": _ocr_available(),
+        "threads": config.threads(),
+        "autorun": config.autorun_enabled(),
+        "index_after_sync": config.index_after_sync_enabled(),
+        "english_total": _english_picture_total(db),
+        "index": index_module.index_status(DEFAULT_MODEL),
+        "job": jobs_module.jobs.status(),
+        "reports": benchmark.latest_reports(),
+        "labelled_traces": benchmark.count_labelled_traces(trace_dir),
+        "thresholds": benchmark.thresholds(),
+    }
+
+
+def _require_ready(need_index: bool) -> None:
+    if not embed.model_available(DEFAULT_MODEL):
+        raise HTTPException(status_code=409, detail="The model file is not in this image")
+    if need_index:
+        existing = index_module.index_status(DEFAULT_MODEL)
+        if not existing["built"] or not existing["count"]:
+            raise HTTPException(status_code=409, detail="Build the index first")
+        if not _ocr_available():
+            raise HTTPException(status_code=409, detail="The OCR library is not installed")
+
+
+@router.post("/index")
+def start_index(current_user: User = Depends(get_current_user)):
+    _require_admin(current_user)
+    _require_ready(False)
+    started, status = jobs_module.start_index(DEFAULT_MODEL)
+    return {"started": started, "job": status}
+
+
+class BenchmarkRequest(BaseModel):
+    kind: str = "synthetic"
+
+
+@router.post("/benchmark")
+def start_benchmark(body: BenchmarkRequest, current_user: User = Depends(get_current_user)):
+    _require_admin(current_user)
+    if body.kind not in ("synthetic", "labelled"):
+        raise HTTPException(status_code=422, detail="kind must be synthetic or labelled")
+    _require_ready(True)
+    started, status = jobs_module.start_benchmark(body.kind, DEFAULT_MODEL)
+    return {"started": started, "job": status}
+
+
+@router.post("/stop")
+def stop_job(current_user: User = Depends(get_current_user)):
+    _require_admin(current_user)
+    jobs_module.jobs.stop()
+    return {"job": jobs_module.jobs.status()}

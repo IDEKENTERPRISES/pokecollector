@@ -43,6 +43,7 @@ import { settingsSection, visibleSettingsSections } from '../navigation/navConfi
 import { readSplashEnabled, writeSplashEnabled } from '../components/splash/launch'
 import { readShowDaily, writeShowDaily } from '../progress/daily'
 import SplashCacheSection from '../components/splash/SplashCacheSection'
+import ScannerLabSection from '../components/settings/ScannerLabSection'
 import { ServerPicturesSection } from '../components/settings/OfflineCardDbSection'
 import { requestTour } from '../welcome/tourControl'
 import { resetTourDone } from '../welcome/tourStorage'
@@ -1830,6 +1831,8 @@ export default function Settings() {
           <ServerPicturesSection />
 
           {user?.role === 'admin' && <SplashCacheSection t={t} />}
+
+          {user?.role === 'admin' && <ScannerLabSection />}
 
           {user?.role === 'admin' && (
             <section className="space-y-1">

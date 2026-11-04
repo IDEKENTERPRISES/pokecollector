@@ -18,3 +18,10 @@ bcrypt
 python-jose[cryptography]
 slowapi==0.1.9
 pywebpush==2.5.0
+# Picture matcher (docs/CARD_MATCH.md). rapidocr-onnxruntime is installed with --no-deps in the Dockerfile.
+onnxruntime==1.19.2
+opencv-python-headless==4.10.0.84
+pyclipper==1.3.0.post6
+shapely==2.0.6
+six
+tqdm
