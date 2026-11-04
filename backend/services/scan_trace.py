@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 SCAN_DIAGNOSTICS_SETTING_KEY = "scan_diagnostics_enabled"
 SCAN_TRACE_STORAGE_ENV = "SCAN_TRACE_STORAGE_DIR"
+SCAN_TRACE_DEFAULT_ON_ENV = "SCAN_TRACE_DEFAULT_ON"
 
 _SENSITIVE_ERROR_PATTERNS = (
     (re.compile(r"AIza[0-9A-Za-z_-]{20,}"), "[REDACTED_API_KEY]"),
@@ -105,6 +106,11 @@ def trace_deletion_available() -> bool:
     return _root_is_writable(trace_storage_root())
 
 
+def diagnostics_default_on() -> bool:
+    """A test server can collect diagnostics from everyone unless they switch it off (SCAN_TRACE_DEFAULT_ON)."""
+    return (os.environ.get(SCAN_TRACE_DEFAULT_ON_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def user_trace_enabled(db, user_id: int) -> bool:
     if not trace_available():
         return False
@@ -116,7 +122,9 @@ def user_trace_enabled(db, user_id: int) -> bool:
         )
         .first()
     )
-    return bool(row and str(row.value).lower() == "true")
+    if row is None:
+        return diagnostics_default_on()
+    return str(row.value).lower() == "true"
 
 
 def _safe(value: Any) -> str:

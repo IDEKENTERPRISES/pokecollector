@@ -36,6 +36,7 @@ from services.tcgdex_languages import (
 from services.scan_trace import (
     SCAN_DIAGNOSTICS_SETTING_KEY,
     delete_user_traces,
+    diagnostics_default_on,
     trace_available,
     trace_deletion_available,
 )
@@ -278,6 +279,9 @@ def _get_user_settings(db: Session, user_id: int) -> dict:
             if env_chat_id:
                 result["telegram_chat_id"] = env_chat_id
 
+    if diagnostics_default_on() and trace_available():
+        # A test server collects from everyone who hasn't switched diagnostics off.
+        result.setdefault(SCAN_DIAGNOSTICS_SETTING_KEY, "true")
     for key, value in DEFAULT_SETTINGS.items():
         result.setdefault(key, value)
     for key, value in notifications.default_settings().items():

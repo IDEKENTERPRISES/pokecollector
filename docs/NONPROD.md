@@ -54,9 +54,9 @@
 
 ## Scanner diagnostics (collecting confirmed scans)
 
-`docker-compose.nonprod.yml` sets `SCAN_TRACE_DIR=/app/data/scan-traces`, so the switch is available on nonprod. Nothing is collected until a trainer turns it on for their own account:
+`docker-compose.nonprod.yml` sets `SCAN_TRACE_DIR=/app/data/scan-traces` and `SCAN_TRACE_DEFAULT_ON=1`, so on nonprod diagnostics are **on for every trainer** who hasn't switched them off. Normal scanning there builds the test set and feeds the matcher's shadow run. Prod sets neither: there the switch stays off by default and per user.
 
-1. Open Settings › Scanner and switch on **Share scanner diagnostics**. It is off by default and per user, so each trainer who takes part does it on their own phone or login.
+1. Settings › Scanner › **Share scanner diagnostics** shows on. A trainer who doesn't want their photos kept switches it off, and that choice is kept.
 2. Scan as usual and, in the scan review, **add or confirm the right card** for each photo. Confirming is what labels the stored attempt with the correct card; photos you never confirm are kept but unlabelled.
 3. Each attempt stores the sanitized photo, the model's answer, the candidates and the matching decision under `/home/rage/Documents/docker/pokelocal-nonprod/data/scan-traces/user-<id>/`.
 4. Aim for 300-400 confirmed scans between the owner and one more trainer. Summarise them with `python scripts/analyse_scan_traces.py <trace_dir> [--failures] [--field-nulls]` (run inside the backend container).
