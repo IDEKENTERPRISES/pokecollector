@@ -27,7 +27,7 @@ from services.idempotency import (
 )
 from services.scan_candidate_images import fetch_and_cache_candidate_image
 from services.scanner_reachability import WAITING_REASON, endpoint_reachable
-from services.scan_providers import openai_base_url
+from services.scan_providers import OPENAI, openai_base_url, openai_is_self_hosted
 from services.scan_queue import (
     drain_scan_queue,
     job_progress,
@@ -217,6 +217,9 @@ async def enqueue_scan_job(
             files,
             batch_modes=batch_modes,
             before_commit=before_commit,
+            # Only a self-hosted model is sent the guide-frame crop; Gemini and
+            # OpenAI proper keep receiving the whole photo.
+            crop_for_recognition=(provider.name == OPENAI and openai_is_self_hosted()),
         )
     except ScanUploadError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

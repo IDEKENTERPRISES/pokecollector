@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import io
 import os
+import re
 import shutil
 import uuid
 import warnings
@@ -35,6 +36,15 @@ MAX_IMAGE_EDGE = 2048
 JPEG_QUALITY = 90
 SCAN_RETENTION_DAYS = 14
 ALLOWED_IMAGE_FORMATS = frozenset({"JPEG", "PNG", "WEBP", "HEIF", "HEIC"})
+
+
+# What a model is sent: about 1024 px on the long side, not the 2048 px review
+# photo (an image costs roughly pixels / 750 tokens, so 2048 px was ~2,300-3,100).
+RECOGNITION_LONG_SIDE = 1024
+# The camera screen writes where its guide frame sat into the file name, e.g.
+# "scan-1700000000000-g118_142_764_820.jpg": x, y, width, height of the frame
+# in thousandths of the photo (so it survives the offline queue and re-encoding).
+GUIDE_BOX_NAME = re.compile(r"-g(\d{1,4})_(\d{1,4})_(\d{1,4})_(\d{1,4})(?:\.[A-Za-z0-9]+)?$")
 
 
 class ScanUploadError(ValueError):
@@ -151,6 +161,89 @@ def store_sanitized_image(job_id: int, image: SanitizedScanImage) -> tuple[str, 
     return relative_path, len(image.data)
 
 
+def guide_box_from_filename(filename: str | None) -> tuple[float, float, float, float] | None:
+    """The guide-frame box (x, y, w, h as 0-1 fractions) encoded in an upload name."""
+    match = GUIDE_BOX_NAME.search(str(filename or ""))
+    if not match:
+        return None
+    x, y, w, h = (int(group) / 1000 for group in match.groups())
+    if w < 0.1 or h < 0.1 or x + w > 1.001 or y + h > 1.001:
+        return None
+    return x, y, w, h
+
+
+def make_recognition_image(
+    jpeg: bytes,
+    box: tuple[float, float, float, float] | None,
+    *,
+    long_side: int = RECOGNITION_LONG_SIDE,
+) -> bytes | None:
+    """The guide-frame crop (or the whole photo when there is none), resized for a model.
+
+    Returns None when there is no box, or the stored photo is already small
+    enough: the stored photo is then used as it is.
+    """
+    if box is None:
+        return None
+    try:
+        with Image.open(io.BytesIO(jpeg)) as image:
+            image = image.convert("RGB")
+            width, height = image.size
+            if box is not None:
+                x, y, w, h = box
+                image = image.crop(
+                    (
+                        int(round(x * width)),
+                        int(round(y * height)),
+                        int(round((x + w) * width)),
+                        int(round((y + h) * height)),
+                    )
+                )
+            if max(image.size) > long_side:
+                image.thumbnail((long_side, long_side), Image.Resampling.LANCZOS)
+            output = io.BytesIO()
+            image.save(output, format="JPEG", quality=JPEG_QUALITY)
+            return output.getvalue()
+    except Exception:
+        return None
+
+
+def downscale_for_recognition(
+    data: bytes, content_type: str = "image/jpeg", *, long_side: int = RECOGNITION_LONG_SIDE
+) -> tuple[bytes, str]:
+    """Shrink a photo to ``long_side`` px for a model; unchanged when already small."""
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            if max(image.size) <= long_side:
+                return data, content_type
+            image = image.convert("RGB")
+            image.thumbnail((long_side, long_side), Image.Resampling.LANCZOS)
+            output = io.BytesIO()
+            image.save(output, format="JPEG", quality=JPEG_QUALITY)
+            return output.getvalue(), "image/jpeg"
+    except Exception:
+        return data, content_type
+
+
+def _recognition_sibling(path: Path) -> Path:
+    return path.with_name(f"{path.stem}.rec.jpg")
+
+
+def store_recognition_image(relative_path: str, data: bytes) -> None:
+    sibling = _recognition_sibling(resolve_scan_path(relative_path))
+    sibling.write_bytes(data)
+    sibling.chmod(0o600)
+
+
+def read_recognition_image(relative_path: str) -> bytes:
+    """What recognition sends: the stored lighter crop when there is one, else the photo."""
+    path = resolve_scan_path(relative_path)
+    sibling = _recognition_sibling(path)
+    if sibling.is_file():
+        return sibling.read_bytes()
+    return path.read_bytes()
+
+
 def resolve_scan_path(relative_path: str) -> Path:
     root = scan_upload_root()
     candidate = (root / str(relative_path or "")).resolve()
@@ -167,6 +260,7 @@ def delete_scan_image(relative_path: str | None) -> None:
     except ScanUploadError:
         return
     path.unlink(missing_ok=True)
+    _recognition_sibling(path).unlink(missing_ok=True)
     try:
         path.parent.rmdir()
     except OSError:
@@ -208,6 +302,7 @@ async def create_scan_job(
     *,
     batch_modes: list[bool] | None = None,
     before_commit: Callable[[ScanJob], None] | None = None,
+    crop_for_recognition: bool = False,
 ) -> ScanJob:
     """Validate and persist a job without retaining any original upload bytes."""
     if not uploads:
@@ -250,6 +345,16 @@ async def create_scan_job(
             raw_total += len(raw)
             sanitized = sanitize_image_bytes(raw)
             relative_path, byte_size = store_sanitized_image(job.id, sanitized)
+            lighter = (
+                make_recognition_image(
+                    sanitized.data,
+                    guide_box_from_filename(getattr(upload, "filename", None)),
+                )
+                if crop_for_recognition
+                else None
+            )
+            if lighter is not None:
+                store_recognition_image(relative_path, lighter)
             db.add(
                 ScanJobItem(
                     job_id=job.id,

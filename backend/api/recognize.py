@@ -5,6 +5,7 @@ import httpx
 import io
 import math
 import os
+import time
 import json
 import re
 import warnings
@@ -31,12 +32,14 @@ from services.text_search import accent_insensitive_contains, strip_diacritics
 from services.scan_providers import (
     DEFAULT_SCANNER_REQUEST_TIMEOUT_SECONDS,
     GEMINI,
+    OPENAI,
     SCANNER_CAPABILITY_DEGRADED,
     ScanProvider,
     gemini_fallback_enabled,
     get_provider,
     image_part,
     image_part_from_bytes,
+    openai_is_self_hosted,
     require_scanner_capability_mode,
     resolve_model,
     resolve_scanner_request_timeout,
@@ -569,6 +572,26 @@ async def post_gemini_generate(
     raise HTTPException(status_code=500, detail=f"Gemini Anfrage fehlgeschlagen: {last_error}")
 
 
+# Output bounds for self-hosted models (ignored by Gemini and OpenAI proper). The
+# card JSON is about 150 tokens; the rest is headroom against a model that loops.
+_visual_paused_until = 0.0
+VISUAL_PAUSE_SECONDS = 600
+
+
+def _pause_visual_verification() -> None:
+    global _visual_paused_until
+    _visual_paused_until = time.monotonic() + VISUAL_PAUSE_SECONDS
+
+
+EXTRACTION_MAX_TOKENS = 400
+# Visual verification on a self-hosted model: at most this many candidate
+# pictures (0 switches it off). See docs/scanner-providers.md.
+SELF_HOSTED_VISUAL_MAX_CANDIDATES = int(
+    os.environ.get("SCAN_LOCAL_VISUAL_MAX_CANDIDATES", "4") or 0
+)
+COMPOSITE_MAX_TOKENS_PER_CARD = 300
+VISUAL_PICK_MAX_TOKENS = 16
+
 RECOGNIZE_PROMPT = """Look at this Pokemon Trading Card Game card image.
 
 IMPORTANT ACCURACY RULES:
@@ -897,6 +920,47 @@ async def _download_candidate_images(
     results = await asyncio.gather(*(fetch(candidate) for candidate in candidates))
     downloaded.update(result for result in results if result is not None)
     return downloaded
+
+
+def _cached_candidate_pictures(db, candidates: list[dict]) -> dict[str, bytes]:
+    """Candidate pictures this server already holds, so the CDN is only the fallback.
+
+    The picture warmer (services/card_picture_packs.py) and the review cache
+    (services/scan_candidate_images.py) both store them in image_cache.
+    """
+    try:
+        from models import ImageCache
+        from services.card_picture_packs import card_image_key
+        from services.scan_candidate_images import cache_key_for
+
+        keys_by_candidate: dict[str, list[str]] = {}
+        for candidate in candidates:
+            candidate_id = str(candidate.get("id") or "")
+            image_url = candidate.get("image")
+            if not candidate_id or not image_url:
+                continue
+            keys_by_candidate[candidate_id] = [
+                card_image_key(candidate_id, str(image_url)),
+                cache_key_for(str(image_url)),
+            ]
+        if not keys_by_candidate:
+            return {}
+        wanted = {key for keys in keys_by_candidate.values() for key in keys}
+        rows = (
+            db.query(ImageCache.image_key, ImageCache.data)
+            .filter(ImageCache.image_key.in_(wanted))
+            .all()
+        )
+        found = {key: data for key, data in rows if data}
+        result: dict[str, bytes] = {}
+        for candidate_id, keys in keys_by_candidate.items():
+            for key in keys:
+                if key in found and len(found[key]) <= MAX_REFERENCE_IMAGE_BYTES:
+                    result[candidate_id] = bytes(found[key])
+                    break
+        return result
+    except Exception:
+        return {}
 
 
 @lru_cache(maxsize=1)
@@ -1548,11 +1612,22 @@ async def match_card_info(
         except (ValueError, TypeError):
             photo_bytes = None
 
+    # A self-hosted model has a small context (Ollama defaults to 4,096 tokens):
+    # the photo plus thirteen candidate pictures overflowed it. Show it only the
+    # best few, or none at all when the cap is 0.
+    visual_candidates = top_candidates
+    if provider.name == OPENAI and openai_is_self_hosted():
+        visual_candidates = top_candidates[:SELF_HOSTED_VISUAL_MAX_CANDIDATES]
+    can_compare_visually = sum(1 for card in visual_candidates if card.get("image")) >= 2
+
+    if visual_candidates is not top_candidates and time.monotonic() < _visual_paused_until:
+        can_compare_visually = False
+
     should_try_phash = not confident and can_compare and bool(photo_bytes)
     should_try_visual = (
         allow_visual_verification
         and not confident
-        and can_compare
+        and can_compare_visually
         # A credential is required only where the provider requires one. A local
         # endpoint has no key by design, so testing the key here would silently
         # disable this for exactly the setups the toggle exists for.
@@ -1566,9 +1641,13 @@ async def match_card_info(
             # choosing a slower AI response budget must not make external image
             # downloads hang for the same duration.
             async with httpx.AsyncClient(timeout=20) as download_client:
+                cached_pictures = _cached_candidate_pictures(
+                    db, top_candidates[:PHASH_CANDIDATE_LIMIT]
+                )
                 candidate_images = await _download_candidate_images(
                     download_client,
                     top_candidates[:PHASH_CANDIDATE_LIMIT],
+                    *([cached_pictures] if cached_pictures else []),
                 )
                 if should_try_phash:
                     try:
@@ -1594,7 +1673,7 @@ async def match_card_info(
                 if not confident and should_try_visual:
                     candidate_images = await _download_candidate_images(
                         download_client,
-                        top_candidates,
+                        visual_candidates,
                         candidate_images,
                     )
                     shown_candidate_ids: set[str] = set()
@@ -1607,7 +1686,7 @@ async def match_card_info(
                             "none match.\n"
                         )},
                     ]
-                    for index, candidate in enumerate(top_candidates, start=1):
+                    for index, candidate in enumerate(visual_candidates, start=1):
                         parts.append({"text": (
                             f"\nCandidate {index}: {candidate.get('name', '?')} "
                             f"#{candidate.get('number', '?')}"
@@ -1630,6 +1709,7 @@ async def match_card_info(
                             api_key,
                             parts,
                             max_attempts=2,
+                            max_tokens=VISUAL_PICK_MAX_TOKENS,
                         )
                     pick_match = re.search(r"(\d+)", response_text)
                     selected_position = int(pick_match.group(1)) if pick_match else None
@@ -1642,10 +1722,10 @@ async def match_card_info(
                         pick = selected_position
                         # A candidate shown as "(image unavailable)" cannot win
                         # a visual comparison the model could not make.
-                        if 1 <= pick <= len(top_candidates) and (
-                            str(top_candidates[pick - 1].get("id") or "") in shown_candidate_ids
+                        if 1 <= pick <= len(visual_candidates) and (
+                            str(visual_candidates[pick - 1].get("id") or "") in shown_candidate_ids
                         ):
-                            winner = top_candidates[pick - 1]
+                            winner = visual_candidates[pick - 1]
                             candidates.remove(winner)
                             candidates.insert(0, winner)
                             confident = True
@@ -1656,6 +1736,11 @@ async def match_card_info(
                                 else f"{provider.name}_visual"
                             )
         except Exception as exc:
+            if getattr(exc, "rejection_reason", "") == "context_too_small":
+                # Every candidate picture costs the model ~1,000 tokens; pause
+                # the check until the endpoint's context is raised (see
+                # docs/scanner-providers.md) rather than failing each scan.
+                _pause_visual_verification()
             logger.warning("Visual matching failed (non-blocking): %s", exc)
 
     public_matches = [
@@ -1734,6 +1819,8 @@ async def _recognize_with_provider(
                 client,
                 api_key,
                 [text_part(RECOGNIZE_PROMPT), image_part(content_type, image_b64)],
+                json_output=True,
+                max_tokens=EXTRACTION_MAX_TOKENS,
             )
         response_text = response_text.strip()
         if trace:
@@ -2007,6 +2094,8 @@ async def recognize_composite_card_info(
                     text_part(COMPOSITE_PROMPT.format(count=count)),
                     image_part("image/jpeg", image_b64),
                 ],
+                # A JSON array, so no json_object format; the bound is per card.
+                max_tokens=COMPOSITE_MAX_TOKENS_PER_CARD * max(1, count),
             )
         response_text = response_text.strip()
         for trace in traces or []:
