@@ -184,7 +184,7 @@ class IndexAndPipelineTests(unittest.TestCase):
             def __init__(self, number_local, number_total):
                 self.result = ocr.OcrResult(number_local=number_local, number_total=number_total, tokens=["TST"])
 
-            def read(self, card, read_hp=False):
+            def read(self, card, read_hp=False, flipped=None):
                 return self.result
 
         jpeg, _corners, _s = synthetic.make_photo(self.pictures["c4"], 4)
@@ -194,7 +194,8 @@ class IndexAndPipelineTests(unittest.TestCase):
         self.assertEqual(with_number.decision["card_id"], "tst-4_en")
         self.assertIn(with_number.decision["mechanism"], {"number_unique", "number_metadata"})
         self.assertEqual(set(with_number.timings_ms) >= {"detect", "embed", "search", "ocr", "decide", "total"}, True)
-        wrong_number = pipeline.CardMatcher(loaded, self.embedder, loader, Reader("77", "5")).match(photo)
+        with patch.object(pipeline, "SIM_MIN_PICTURE_STRONG", 2.0):  # the picture-only lane has its own test
+            wrong_number = pipeline.CardMatcher(loaded, self.embedder, loader, Reader("77", "5")).match(photo)
         self.assertEqual(wrong_number.status, "unsure")
         self.assertEqual(wrong_number.unsure_reason, "number_not_among_picture_matches")
         self.assertTrue(wrong_number.matches)
@@ -218,6 +219,83 @@ class IndexAndPipelineTests(unittest.TestCase):
         self.assertEqual(pipeline.decide({}, sure)[0]["mechanism"], "picture_lead")
         close = [{"number": "1", "_similarity": 0.95, "_rank": 1, "_db_id": "a"}, {"number": "2", "_similarity": 0.94, "_rank": 2, "_db_id": "b"}]
         self.assertEqual(pipeline.decide({}, close)[1], "no_number_and_picture_not_clear")
+
+    def test_a_number_that_names_nothing_may_be_decided_by_a_very_clear_picture_only(self):
+        strong = [
+            {"number": "1", "_similarity": 0.95, "_rank": 1, "_db_id": "a", "tcg_card_id": "a"},
+            {"number": "2", "_similarity": 0.70, "_rank": 2, "_db_id": "b", "tcg_card_id": "b"},
+        ]
+        chosen, _ = pipeline.decide({"number_local": "77", "number_total": "5"}, strong)
+        self.assertEqual(chosen["mechanism"], "picture_lead_strong")
+        # A reprint with the same artwork scores nearly the same: no decision.
+        reprint = [dict(strong[0]), {**strong[1], "_similarity": 0.93}]
+        self.assertEqual(pipeline.decide({"number_local": "77", "number_total": "5"}, reprint)[1], "number_not_among_picture_matches")
+        # Clear but under the strong bar: still no decision.
+        middling = [{**strong[0], "_similarity": 0.84}, {**strong[1], "_similarity": 0.60}]
+        self.assertEqual(pipeline.decide({"number_local": "77", "number_total": "5"}, middling)[1], "number_not_among_picture_matches")
+
+    def test_a_damaged_number_is_corrected_from_the_closest_printings(self):
+        candidates = [
+            {"tcg_card_id": "x-112", "number": "112", "printed_total": 113, "_similarity": 0.9, "_rank": 1, "_db_id": "x-112_en"},
+            {"tcg_card_id": "x-12", "number": "12", "printed_total": 113, "_similarity": 0.8, "_rank": 2, "_db_id": "x-12_en"},
+            {"tcg_card_id": "y-69", "number": "69", "printed_total": 97, "_similarity": 0.7, "_rank": 3, "_db_id": "y-69_en"},
+        ]
+        # A read that names a real printing among the candidates is never overridden.
+        info = {"number_local": "12", "number_total": "13"}
+        self.assertIsNone(pipeline.correct_number(info, candidates, ["12/13"]))
+        self.assertEqual(info["number_local"], "12")
+        # A number that matches nothing is replaced by the one printing the text is a damaged copy of.
+        only = candidates[:1] + candidates[2:]
+        info = {"number_local": "12", "number_total": "13"}
+        fixed = pipeline.correct_number(info, only, ["K-10#", "12/13"])
+        self.assertEqual((info["number_local"], str(info["number_total"])), ("112", "113"))
+        self.assertEqual(fixed["read"], "12")
+        # Nothing was read at all, but the text holds "69/97" with the slash read as a 1.
+        info = {"number_local": None, "number_total": None}
+        pipeline.correct_number(info, only, ["ID K-10 #69197"])
+        self.assertEqual(info["number_local"], "69")
+
+    def test_constrained_reading_is_withheld_when_it_is_not_clear(self):
+        from services.card_match import constrained
+
+        cands = [{"number": "69", "printed_total": 97}, {"number": "12", "printed_total": 97}, {"number": "125", "printed_total": 197}]
+        self.assertEqual(constrained.constrain(["69/97"], cands).index, 0)
+        self.assertEqual(constrained.constrain(["W5N-012 69197 *"], cands).index, 0)  # slash read as 1
+        self.assertEqual(constrained.constrain(["25/197"], cands).index, 2)  # a dropped first digit
+        self.assertIsNone(constrained.constrain(["GAMEFREAK 1999"], cands))
+        self.assertIsNone(constrained.constrain([], cands))
+        # Two printings print the same number and total: the text cannot choose between them.
+        twins = [{"number": "5", "printed_total": 100}, {"number": "5", "printed_total": 100}]
+        self.assertIsNone(constrained.constrain(["5/100"], twins))
+        # Gallery numbers do not take part.
+        self.assertIsNone(constrained.constrain(["TG06/TG30"], [{"number": "TG06", "printed_total": 30}]))
+
+    def test_the_reader_turns_the_card_when_it_finds_no_number_and_reads_one_way_when_told_which(self):
+        calls = []
+
+        class Fake(ocr.OcrReader):
+            def __init__(self):
+                pass
+
+            def _read_card(self, card):
+                calls.append(int(card[0, 0, 0]))
+                # Readable only when the marker pixel is at the top-left of what we are given.
+                return ocr.parse_text(["58/102"] if card[0, 0, 0] == 1 else [])
+
+        card = np.zeros((880, 630, 3), dtype=np.uint8)
+        card[-1, -1, 0] = 1  # upside down: after turning it sits at [0, 0]
+        reader = Fake()
+        result = reader.read(card, read_hp=False)
+        self.assertEqual((result.number_local, result.flipped), ("58", True))
+        self.assertEqual(calls, [0, 1])
+        calls.clear()
+        told = reader.read(card, read_hp=False, flipped=True)
+        self.assertEqual((told.number_local, told.flipped), ("58", True))
+        self.assertEqual(calls, [1])  # one pass only
+        calls.clear()
+        upright_told = reader.read(card, read_hp=False, flipped=False)
+        self.assertIsNone(upright_told.number_local)
+        self.assertEqual(calls, [0])
 
     def test_benchmark_picks_traps_holo_and_random_cards(self):
         self.build()

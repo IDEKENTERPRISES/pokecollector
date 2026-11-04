@@ -24,7 +24,8 @@ from . import config
 
 # (x0, y0, x1, y1) as fractions of the flat card picture. The tight strips are quick (little text in them);
 # when no number is found there, the wide strips take a second look (older cards print flavour text lower).
-STRIPS = {"tight": [(0.0, 0.945, 0.55, 1.0), (0.45, 0.945, 1.0, 1.0)], "wide": [(0.0, 0.925, 0.55, 1.0), (0.45, 0.925, 1.0, 1.0)]}
+STRIPS = {"tight": [(0.0, 0.945, 0.55, 1.0), (0.45, 0.945, 1.0, 1.0)], "wide": [(0.0, 0.905, 0.55, 1.0), (0.45, 0.905, 1.0, 1.0)]}
+WIDE_ZOOM = 3.0
 HP_STRIP = (0.45, 0.0, 1.0, 0.14)
 
 _NUMBER_TOTAL = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{0,4}\s?\d{1,3}[A-Za-z]?)\s*[/|\\]\s*([A-Za-z]{0,4}\s?\d{1,3})")  # no end guard: a stray mark after the total reads as one more digit
@@ -48,6 +49,7 @@ class OcrResult:
     tokens: list[str] = field(default_factory=list)  # upper-case words, to match against set codes
     lines: list[str] = field(default_factory=list)  # raw recognised text, for diagnostics
     seconds: float = 0.0
+    flipped: bool = False  # the number was read on the card turned 180 degrees
 
     def as_card_info(self, set_codes: set[str] | None = None) -> dict:
         """The dict `api.recognize` rules read. ``set_code`` is a token that equals a known set code."""
@@ -70,6 +72,19 @@ def _clean_number_part(text: str, *, digits_only_tail: bool = True) -> str:
     if len(prefix) == 1 and prefix in "OoIlSBZDQ":  # real prefixes are two letters or more: this is a misread digit
         prefix, body = "", prefix.translate(_DIGITISE) + body
     return f"{prefix.upper()}{body.translate(_DIGITISE) if digits_only_tail else body}{suffix.upper()}"
+
+
+def completeness(result: OcrResult) -> int:
+    """0 nothing, 1 a number, 2 number and total (or a promo number, which has no total)."""
+    if not result.number_local:
+        return 0
+    if result.number_total or re.match(r"[A-Z]{2,4}\d", result.number_local):
+        return 2
+    return 1
+
+
+def is_complete(result: OcrResult) -> bool:
+    return completeness(result) == 2
 
 
 def find_hp(text: str) -> str | None:
@@ -105,7 +120,13 @@ def parse_text(lines: list[str]) -> OcrResult:
 
 
 class OcrReader:
-    """RapidOCR on the bottom strips (and optionally the HP strip) of a flat card."""
+    """RapidOCR on the bottom strips (and optionally the HP strip) of a flat card.
+
+    Reading ladder, each step only when the one before did not find a complete number and total:
+    the tight strips, then the wide strips at a higher zoom with sharpening. An upside-down photo is the main
+    reason a number is missed: ``flipped`` lets the caller say which way up the card is (the picture search
+    knows), otherwise the turned card is tried too when nothing complete came out.
+    """
 
     def __init__(self, threads: int | None = None) -> None:
         from rapidocr_onnxruntime import RapidOCR
@@ -117,14 +138,17 @@ class OcrReader:
         )
         self._lock = threading.Lock()
 
-    def _strip_lines(self, card: np.ndarray, box: tuple[float, float, float, float]) -> list[str]:
+    def _strip_lines(self, card: np.ndarray, box: tuple[float, float, float, float], *, zoom: float = 2.0, sharpen: bool = False) -> list[str]:
         import cv2
 
         h, w = card.shape[:2]
         x0, y0, x1, y1 = box
         strip = card[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)]
-        # Small caps text: a 2x upscale helps the detector without growing the cost much.
-        strip = cv2.resize(strip, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+        # Small caps text: an upscale helps the detector without growing the cost much.
+        strip = cv2.resize(strip, None, fx=zoom, fy=zoom, interpolation=cv2.INTER_CUBIC)
+        if sharpen:
+            blurred = cv2.GaussianBlur(strip, (0, 0), 2.0)
+            strip = cv2.addWeighted(strip, 1.8, blurred, -0.8, 0)
         with self._lock:
             found, _timing = self.engine(cv2.cvtColor(strip, cv2.COLOR_RGB2BGR))
         if not found:
@@ -132,18 +156,33 @@ class OcrReader:
         ordered = sorted(found, key=lambda item: min(point[0] for point in item[0]))
         return [str(item[1]) for item in ordered]
 
-    def read(self, card: np.ndarray, *, read_hp: bool = True) -> OcrResult:
-        import time
-
-        started = time.monotonic()
+    def _read_card(self, card: np.ndarray) -> OcrResult:
         lines: list[str] = []
         for box in STRIPS["tight"]:
             lines += self._strip_lines(card, box)
         result = parse_text(lines)
-        if result.number_local is None:
+        if not is_complete(result):
             for box in STRIPS["wide"]:
-                lines += self._strip_lines(card, box)
+                lines += self._strip_lines(card, box, zoom=WIDE_ZOOM, sharpen=True)
             result = parse_text(lines)
+        return result
+
+    def read(self, card: np.ndarray, *, read_hp: bool = True, flipped: bool | None = None) -> OcrResult:
+        """``flipped`` True/False: the picture search already says which way up the card is, so read only that
+        way. None: unknown, so try upright first and the turned card when no complete number came out."""
+        import time
+
+        started = time.monotonic()
+        turned = bool(flipped)
+        if turned:
+            card = np.ascontiguousarray(card[::-1, ::-1])
+        result = self._read_card(card)
+        if flipped is None and not is_complete(result):
+            other = np.ascontiguousarray(card[::-1, ::-1])
+            retry = self._read_card(other)
+            if completeness(retry) > completeness(result):
+                result, card, turned = retry, other, not turned
+        result.flipped = turned
         if read_hp:
             hp_lines = self._strip_lines(card, HP_STRIP)
             hp = find_hp("  ".join(hp_lines))

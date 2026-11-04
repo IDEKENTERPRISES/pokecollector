@@ -195,8 +195,10 @@ def _finish_report(kind: str, started: float, index: CardIndex, matcher, results
                 "number_exact": pct(sum(1 for r in members if r["number_exact"]), len(members)),
                 "decided": pct(len(dec), len(members)),
                 "decided_right": pct(sum(1 for r in dec if r["decided_right"]), len(dec)),
+                "decided_wrong": sum(1 for r in dec if not r["decided_right"]),
             }
     timings = timing_summary([r["timings_ms"] for r in results])
+    sweep = picture_only_sweep(results)
     peak = peak_rss_mb()
     p95_total = timings.get("total", {}).get("p95")
     extra_ram = round(peak - rss_before, 1) if peak is not None and rss_before is not None else None
@@ -228,7 +230,7 @@ def _finish_report(kind: str, started: float, index: CardIndex, matcher, results
         "host": {"cpu_count": os.cpu_count(), "threads": config.threads(), "platform": platform.platform(), "python": platform.python_version()},
         "memory": {"rss_before_mb": round(rss_before, 1) if rss_before is not None else None,
                    "peak_rss_mb": round(peak, 1) if peak is not None else None, "extra_mb": extra_ram},
-        "metrics": metrics, "groups": groups, "timings_ms": timings, "pass_bar": bar,
+        "metrics": metrics, "groups": groups, "picture_only_sweep": sweep, "timings_ms": timings, "pass_bar": bar,
         "thresholds": thresholds(),
         "failures": [r for r in results if (r["rank"] != 1 or (r["decided"] and not r["decided_right"]))][:25],
         **extra,
@@ -236,11 +238,31 @@ def _finish_report(kind: str, started: float, index: CardIndex, matcher, results
     return report
 
 
+def picture_only_sweep(results: list[dict]) -> list[dict]:
+    """What a picture-only rule would do on these photos at each similarity / lead pair: how many it would
+    decide and how many of those would be wrong (top picture is not the card). The thresholds in use are
+    picked from this table; a rule is only safe where ``wrong`` is 0, reprint traps included."""
+    rows = []
+    scored = [r for r in results if r.get("top_similarity") is not None and r.get("top_lead") is not None]
+    traps = [r for r in scored if "trap" in r.get("tags", [])]
+    for sim in (0.80, 0.85, 0.88, 0.92):
+        for lead in (0.04, 0.06, 0.10, 0.15):
+            passing = [r for r in scored if r["top_similarity"] >= sim and r["top_lead"] >= lead]
+            rows.append({
+                "sim_min": sim, "lead_min": lead, "decided": len(passing),
+                "wrong": sum(1 for r in passing if r["rank"] != 1),
+                "trap_wrong": sum(1 for r in passing if "trap" in r.get("tags", []) and r["rank"] != 1),
+                "trap_n": len(traps),
+            })
+    return rows
+
+
 def thresholds() -> dict:
     from . import pipeline
 
     return {"sim_min_with_rules": pipeline.SIM_MIN_WITH_RULES, "sim_min_picture_only": pipeline.SIM_MIN_PICTURE_ONLY,
-            "lead_min_picture_only": pipeline.LEAD_MIN_PICTURE_ONLY}
+            "lead_min_picture_only": pipeline.LEAD_MIN_PICTURE_ONLY,
+            "sim_min_picture_strong": pipeline.SIM_MIN_PICTURE_STRONG, "lead_min_picture_strong": pipeline.LEAD_MIN_PICTURE_STRONG}
 
 
 def run_synthetic(
@@ -305,6 +327,8 @@ def _score(outcome, entry: dict, settings: dict, corners, card_width: float) -> 
         "found_accurate": bool(detected["found"]) and synthetic.corner_error([tuple(c) for c in detected.get("corners", [])], corners, card_width) <= 0.04,
         "rank": rank, "top_match": outcome.matches[0]["card_id"] if outcome.matches else None,
         "top_similarity": outcome.matches[0]["similarity"] if outcome.matches else None,
+        "top_lead": round(outcome.matches[0]["similarity"] - outcome.matches[1]["similarity"], 4) if len(outcome.matches) > 1 else None,
+        "ocr_flipped": outcome.ocr.get("flipped"), "number_corrected": bool(outcome.ocr.get("corrected")),
         "number_exact": _numbers_equal(outcome.ocr.get("number_local"), entry["number"]) if outcome.ocr.get("number_local") else False,
         "total_exact": _totals_equal(outcome.ocr.get("number_total"), next((m["printed_total"] for m in outcome.matches if m["card_id"] == truth), None)),
         "decided": decision is not None, "decided_right": bool(decision and decision["card_id"] == truth),

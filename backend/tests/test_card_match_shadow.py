@@ -58,7 +58,7 @@ class Reader:
     def __init__(self, number_local, number_total):
         self.result = ocr.OcrResult(number_local=number_local, number_total=number_total, tokens=["TST", f"{number_local}/{number_total}"])
 
-    def read(self, card, read_hp=False):
+    def read(self, card, read_hp=False, flipped=None):
         return self.result
 
 
@@ -76,6 +76,10 @@ class ShadowTestBase(unittest.TestCase):
         })
         env.start()
         self.addCleanup(env.stop)
+        # These tests are about the plumbing, not the picture-only lane (a fake embedder matches perfectly).
+        strong = patch.object(pipeline, "SIM_MIN_PICTURE_STRONG", 2.0)
+        strong.start()
+        self.addCleanup(strong.stop)
         engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
         Base.metadata.create_all(engine)
         self.Session = sessionmaker(bind=engine, autoflush=False)
@@ -262,6 +266,58 @@ class ShadowRunnerTests(ShadowTestBase):
         scan_trace.revoke_user_traces(self.user.id)
         self.assertFalse(scan_trace.record_shadow(self.user.id, 1, 1, {"status": "ok"}))
         self.assertFalse(self.shadow_file().exists())
+
+
+class ShadowSameInputTests(ShadowTestBase):
+    """The shadow run must see the photo the scan trace stores, so it decides what the labelled benchmark does."""
+
+    def test_the_shadow_run_and_the_benchmark_read_the_same_photo_and_decide_the_same(self):
+        from services import scan_storage
+
+        self.enable_diagnostics()
+        upload_dir = Path(self.tmp.name) / "uploads"
+        with patch.dict(os.environ, {"SCAN_UPLOAD_DIR": str(upload_dir)}):
+            relative, _size = scan_storage.store_sanitized_image(1, scan_storage.SanitizedScanImage(self.photo_jpeg))
+            crop = scan_storage.make_recognition_image(self.photo_jpeg, (0.2, 0.2, 0.6, 0.6))
+            self.assertTrue(crop)
+            scan_storage.store_recognition_image(relative, crop)
+            seen = []
+            real = self.matcher()
+
+            class Spy:
+                ocr_reader = real.ocr_reader
+                index = real.index
+
+                def match(self, photo):
+                    seen.append(photo)
+                    return real.match(photo)
+
+            runner = shadow.ShadowRunner(
+                matcher_factory=lambda: (Spy(), None), consent_check=lambda user_id: True,
+                busy_check=lambda: False, low_priority=False,
+            )  # the default photo reader: the real one
+            runner.submit(self.user.id, 1, 1, relative)
+            self.assertTrue(runner.wait_idle())
+            # What the trace stores (and run_labelled decodes) is the recognition image, not the full photo.
+            trace_bytes = scan_storage.read_recognition_image(relative)
+            self.assertEqual(trace_bytes, crop)
+            benchmark_photo = images.decode_rgb(trace_bytes, max_side=2048)
+            self.assertEqual(len(seen), 1)
+            np.testing.assert_array_equal(seen[0], benchmark_photo)
+            record = self.read_shadow()
+            self.assertEqual(record["decision"], real.match(benchmark_photo).decision)
+            self.assertEqual(record["input"], {"bytes": len(crop), "width": benchmark_photo.shape[1], "height": benchmark_photo.shape[0]})
+            self.assertTrue(record["ocr_available"])
+            self.assertEqual(record["index_count"], 5)
+            self.assertEqual(record["matcher_version"], shadow.MATCHER_VERSION)
+
+    def test_without_a_recognition_crop_the_stored_photo_is_used(self):
+        from services import scan_storage
+
+        upload_dir = Path(self.tmp.name) / "uploads2"
+        with patch.dict(os.environ, {"SCAN_UPLOAD_DIR": str(upload_dir)}):
+            relative, _size = scan_storage.store_sanitized_image(2, scan_storage.SanitizedScanImage(self.photo_jpeg))
+            self.assertEqual(shadow._read_stored_photo(relative), self.photo_jpeg)
 
 
 class ShadowAgreementTests(ShadowTestBase):
