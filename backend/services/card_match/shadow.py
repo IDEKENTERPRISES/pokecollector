@@ -77,6 +77,25 @@ def _read_stored_photo(relative_path: str) -> bytes:
     return scan_storage.read_recognition_image(relative_path)
 
 
+def _read_full_photo(relative_path: str) -> bytes:
+    """The full-resolution stored photo (up to 2048 px): what the text is read from, flattened at the card corners."""
+    from services import scan_storage
+
+    return scan_storage.resolve_scan_path(relative_path).read_bytes()
+
+
+def store_text_card(user_id: int, job_id: int, item_id: int, result) -> None:
+    """Keep the flat card the text was read from beside the shadow record (never raises)."""
+    try:
+        from services import scan_trace
+        from .images import encode_jpeg
+
+        if getattr(result, "text_card", None) is not None:
+            scan_trace.record_shadow_card(user_id, job_id, item_id, encode_jpeg(result.text_card, 90))
+    except Exception:
+        logger.exception("Could not store the matcher's flat card")
+
+
 def _trainer_consents(user_id: int) -> bool:
     from database import SessionLocal
     from services import scan_trace
@@ -126,12 +145,14 @@ class ShadowRunner:
         *,
         matcher_factory: Callable[[], tuple] = default_matcher,
         photo_reader: Callable[[str], bytes] = _read_stored_photo,
+        full_photo_reader: Callable[[str], bytes] = _read_full_photo,
         consent_check: Callable[[int], bool] = _trainer_consents,
         busy_check: Callable[[], bool] | None = None,
         low_priority: bool = True,
     ) -> None:
         self._matcher_factory = matcher_factory
         self._photo_reader = photo_reader
+        self._full_photo_reader = full_photo_reader
         self._consent_check = consent_check
         self._busy_check = busy_check
         self._low_priority = low_priority
@@ -249,14 +270,19 @@ class ShadowRunner:
         except Exception:
             self._skip(user_id, job_id, item_id, "photo_unavailable")
             return
+        try:  # the sharper photo only sharpens the text; without it the run reads the recognition image
+            full_photo = decode_rgb(self._full_photo_reader(image_path), max_side=MAX_SIDE)
+        except Exception:
+            full_photo = None
         try:
-            result = matcher.match(photo)
+            result = matcher.match(photo, full_photo=full_photo) if full_photo is not None else matcher.match(photo)
         except Exception as exc:
             logger.warning("Shadow match failed: %s", exc)
             self._skip(user_id, job_id, item_id, "match_failed")
             return
         input_info = {"bytes": len(raw), "width": int(photo.shape[1]), "height": int(photo.shape[0])}
         if scan_trace.record_shadow(user_id, job_id, item_id, _shadow_payload(result, input_info=input_info, matcher=matcher)):
+            store_text_card(user_id, job_id, item_id, result)
             with self._lock:
                 self._counts["ran"] += 1
 

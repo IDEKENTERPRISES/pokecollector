@@ -23,7 +23,7 @@ from typing import Callable
 
 import numpy as np
 
-from . import config, constrained, detect as detect_module
+from . import config, constrained, detect as detect_module, ocr as ocr_module
 from .index import CardIndex, tcg_card_id
 
 TOP_K = 20
@@ -56,6 +56,12 @@ RANK_MAX_WITH_NAME = 40
 # How much text agreement moves a printing up the combined ranking (picture similarity is the base).
 NAME_WEIGHT, NUMBER_WEIGHT, TOTAL_WEIGHT = 0.25, 0.12, 0.04
 PICTURE_KEEP = 5  # the closest pictures always stay in the list
+# Which way up the card is. The camera guide is portrait and trainers hold cards upright, so upright is the
+# default. The picture search may say "turned" only when the turned view beats the upright one by this much
+# (a card in the index scores far higher in its own orientation; a card that is not there, or a holo with
+# glare, scores about the same both ways and must not flip). Anything closer is settled by reading the text.
+ORIENT_MARGIN = _env_float("CARD_MATCH_ORIENT_MARGIN", 0.10)
+ROTATED_MIN_SIMILARITY = 0.45  # measuring a real rotation against the confirmed card: the turned view must also be this close
 
 
 @dataclass
@@ -67,6 +73,7 @@ class MatchResult:
     detection: dict
     ocr: dict
     timings_ms: dict = field(default_factory=dict)
+    text_card: object = None  # the flat card the text was read from (numpy array); not part of ``as_dict``
 
     def as_dict(self) -> dict:
         return {
@@ -102,7 +109,7 @@ def db_candidate_loader(session_factory) -> CandidateLoader:
                     "set": local_set.name if local_set else None,
                     "set_abbreviation": local_set.abbreviation if local_set else None,
                     "printed_total": (local_set.printed_total or None) if local_set else None,
-                    "_lang": card.lang or "en", "images_small": card.images_small, "rarity": card.rarity,
+                    "_lang": card.lang or "en", "images_small": card.images_small, "images_large": card.images_large, "rarity": card.rarity,
                 }
             return out
         finally:
@@ -208,17 +215,20 @@ class CardMatcher:
             self._row_maps[id(signal.index)] = cached
         return cached
 
-    def _picture_scores(self, upright: np.ndarray) -> tuple[np.ndarray, bool]:
-        """(every indexed card's picture similarity, whether the card is upside down).
-
-        The main index is searched with the card at 0 and 180 degrees; the view that matches better says
-        which way up it is. Test-time augmentation adds views of the oriented card, and each extra index
-        (artwork only, a second model) adds its own similarity: the result is their average per card."""
+    def _main_scores(self, upright: np.ndarray) -> tuple[np.ndarray, float, float]:
+        """(every indexed card's best similarity over the card at 0 and 180 degrees, the best score of the
+        upright view, the best score of the turned view)."""
         views = [upright, np.ascontiguousarray(upright[::-1, ::-1])]
-        raw = self.embedder.embed(views) @ self.index.vectors.T if len(self.index) else np.zeros((2, 0), dtype=np.float32)
-        best = raw.max(axis=0) if raw.shape[1] else np.zeros(0, dtype=np.float32)
-        flipped = bool(raw.shape[1]) and float(raw[1].max()) > float(raw[0].max())
-        oriented = views[1] if flipped else views[0]
+        if not len(self.index):
+            return np.zeros(0, dtype=np.float32), 0.0, 0.0
+        raw = self.embedder.embed(views) @ self.index.vectors.T
+        return raw.max(axis=0), float(raw[0].max()), float(raw[1].max())
+
+    def _picture_scores(self, best: np.ndarray, upright: np.ndarray, flipped: bool) -> np.ndarray:
+        """The per-card picture score for a card known to be ``flipped`` or not. Test-time augmentation adds
+        views of the oriented card, and each extra index (artwork only, a second model) adds its own
+        similarity: the result is their average per card."""
+        oriented = np.ascontiguousarray(upright[::-1, ::-1]) if flipped else upright
         extra_views = detect_module.augmented_views(oriented) if self.tta else []
         if extra_views:
             best = np.maximum(best, self.index.best_scores(self.embedder.embed(extra_views)))
@@ -232,21 +242,21 @@ class CardMatcher:
                 rows = self._rows_in_primary(signal)
                 total += np.where(rows >= 0, other[np.maximum(rows, 0)], best) if len(other) else best
             best = total / (1 + len(self.extra_signals))
-        return best, flipped
+        return best
 
-    def match(self, photo_rgb: np.ndarray, *, top_k: int = TOP_K, use_ocr: bool = True) -> MatchResult:
-        config.apply_thread_caps()
-        timings: dict[str, float] = {}
-        t0 = _timer()
-        detection = detect_module.detect_card(photo_rgb)
-        timings["detect"] = (_timer() - t0) * 1000
+    def card_rotation(self, card_rgb: np.ndarray, card_id: str) -> dict | None:
+        """Measured, not inferred: how close the flat card is to the confirmed card's own catalogue picture
+        as it is, and turned 180 degrees. ``rotated`` is True only when the turned view is clearly closer."""
+        row = self.index.row_of.get(card_id)
+        if row is None:
+            return None
+        views = [card_rgb, np.ascontiguousarray(card_rgb[::-1, ::-1])]
+        upright_sim, turned_sim = (float(v) for v in self.embedder.embed(views) @ self.index.vectors[row])
+        margin = turned_sim - upright_sim
+        return {"upright": round(upright_sim, 4), "turned": round(turned_sim, 4), "margin": round(margin, 4),
+                "rotated": margin >= ORIENT_MARGIN and turned_sim >= ROTATED_MIN_SIMILARITY}
 
-        t0 = _timer()
-        upright = detection.card
-        scores, flipped = self._picture_scores(upright)
-        timings["embed"] = (_timer() - t0) * 1000
-
-        t0 = _timer()
+    def _top_hits(self, scores: np.ndarray, top_k: int):
         count = len(scores)
         k = min(top_k, count)
         if count:
@@ -255,34 +265,110 @@ class CardMatcher:
         else:
             top_rows = np.zeros(0, dtype=np.int64)
         card_ids = self.index.card_ids
-        hits = [(card_ids[row], float(scores[row])) for row in top_rows]
+        return [(card_ids[row], float(scores[row])) for row in top_rows]
+
+    def _text_usable(self, result, name_read) -> tuple[int, int]:
+        """How much a reading says: (0 nothing / 1 a number / 2 number and total, 1 when the name read matches a catalogue name)."""
+        name_found = 0
+        if name_read is not None and name_read.name and self.names is not None and self.names.score_names(name_read.name):
+            name_found = 1
+        return ocr_module.completeness(result), name_found
+
+    def _read_text(self, card: np.ndarray, picture_flipped: bool, *, use_names: bool):
+        """Read the number strips (and the name line) the right way up.
+
+        When the picture search is sure the card is turned (``picture_flipped``), read it turned. Otherwise
+        read upright first and turn the card only when that gave nothing usable and the turned card gives
+        something better: a number, or a name that is in the catalogue. Returns
+        ``(ocr result, name read or None, flipped, how)`` with ``how`` = picture | text | default."""
+
+        def attempt(flipped: bool):
+            result = self.ocr_reader.read(card, read_hp=self.read_hp, flipped=flipped)
+            name_read = self.ocr_reader.read_name(card, flipped=flipped) if use_names else None
+            return result, name_read
+
+        if picture_flipped:
+            result, name_read = attempt(True)
+            return result, name_read, True, "picture"
+        result, name_read = attempt(False)
+        if any(self._text_usable(result, name_read)):
+            return result, name_read, False, "default"
+        other_result, other_name = attempt(True)
+        if self._text_usable(other_result, other_name) > self._text_usable(result, name_read):
+            return other_result, other_name, True, "text"
+        return result, name_read, False, "default"
+
+    def _text_card(self, detection, upright: np.ndarray, full_photo, flat_card) -> tuple[np.ndarray, str]:
+        """The flat card the text is read from, and where it came from. Text is small, so it is read from the
+        sharpest picture there is: a stored high-resolution card (a trace), or the full-resolution photo
+        flattened at the detected corners, or this photo's own detail; the matcher's 630x880 card is the last resort."""
+        if flat_card is not None:
+            return flat_card, "stored_card"
+        if full_photo is not None and detection.found:
+            other = detect_module.detect_card(full_photo)
+            if other.found and _same_card(other.card, upright):
+                return (other.hires if other.hires is not None else other.card), "full_photo"
+        if detection.hires is not None:
+            return detection.hires, "photo"
+        return upright, "crop"
+
+    def match(self, photo_rgb: np.ndarray, *, top_k: int = TOP_K, use_ocr: bool = True, full_photo=None, flat_card=None) -> MatchResult:
+        """``photo_rgb`` is what the card is found and embedded from (the recognition image). ``full_photo`` (the
+        stored full-resolution photo) or ``flat_card`` (a stored high-resolution flat card) only sharpen the text
+        reading; without either the text is read from ``photo_rgb`` itself."""
+        config.apply_thread_caps()
+        timings: dict[str, float] = {}
+        t0 = _timer()
+        detection = detect_module.detect_card(photo_rgb)
+        timings["detect"] = (_timer() - t0) * 1000
+
+        t0 = _timer()
+        upright = detection.card
+        best, top_upright, top_turned = self._main_scores(upright)
+        margin = top_turned - top_upright
+        picture_flipped = bool(len(best)) and margin >= ORIENT_MARGIN
+        scores = self._picture_scores(best, upright, picture_flipped)
+        timings["embed"] = (_timer() - t0) * 1000
+
+        t0 = _timer()
+        count = len(scores)
+        hits = self._top_hits(scores, top_k)
         timings["search"] = (_timer() - t0) * 1000
 
+        flipped = picture_flipped
         ocr_info: dict = {}
         ocr_result = None
+        name_read = None
+        text_card = None
         if use_ocr and self.ocr_reader is not None:
             t0 = _timer()
-            ocr_result = self.ocr_reader.read(upright, read_hp=self.read_hp, flipped=flipped)
+            text_card, text_source = self._text_card(detection, upright, full_photo, flat_card)
+            can_read_names = self.names is not None and hasattr(self.ocr_reader, "read_name")
+            ocr_result, name_read, flipped, how = self._read_text(text_card, picture_flipped, use_names=can_read_names)
             timings["ocr"] = (_timer() - t0) * 1000
+            if flipped != picture_flipped:  # the text turned the card: the extra views follow the card's real orientation
+                t0 = _timer()
+                scores = self._picture_scores(best, upright, flipped)
+                hits = self._top_hits(scores, top_k)
+                timings["search"] += (_timer() - t0) * 1000
             ocr_info = {
                 "number_local": ocr_result.number_local, "number_total": ocr_result.number_total, "hp": ocr_result.hp,
-                "tokens": ocr_result.tokens[:12], "flipped": ocr_result.flipped, "lines": ocr_result.lines[:8],
+                "tokens": ocr_result.tokens[:12], "flipped": flipped, "lines": ocr_result.lines[:8],
+                "orientation": {"by": how, "picture_margin": round(margin, 4)},
+                "text_input": {"source": text_source, "width": int(text_card.shape[1]), "height": int(text_card.shape[0])},
             }
-
-        name_read = None
-        if use_ocr and self.names is not None and hasattr(self.ocr_reader, "read_name"):
-            t0 = _timer()
-            name_read = self.ocr_reader.read_name(upright, flipped=flipped)
-            if name_read.hp and not ocr_info.get("hp"):
-                ocr_info["hp"] = name_read.hp
-            ocr_info["name"] = name_read.name
-            ocr_info["name_lines"] = name_read.raw[:6]
-            hits, added = merge_candidates(
-                hits, scores, self.index.row_of, self.names, name_read.name,
-                ocr_result.number_local if ocr_result else None, ocr_result.number_total if ocr_result else None, top_k,
-            )
-            ocr_info["text_candidates_added"] = added
-            timings["name"] = (_timer() - t0) * 1000
+            if name_read is not None:
+                t0 = _timer()
+                if name_read.hp and not ocr_info.get("hp"):
+                    ocr_info["hp"] = name_read.hp
+                ocr_info["name"] = name_read.name
+                ocr_info["name_lines"] = name_read.raw[:6]
+                hits, added = merge_candidates(
+                    hits, scores, self.index.row_of, self.names, name_read.name,
+                    ocr_result.number_local, ocr_result.number_total, top_k,
+                )
+                ocr_info["text_candidates_added"] = added
+                timings["name"] = (_timer() - t0) * 1000
 
         t0 = _timer()
         loaded = self.candidate_loader([card_id for card_id, _score in hits])
@@ -331,8 +417,21 @@ class CardMatcher:
             matches=matches,
             detection={"found": detection.found, "confidence": detection.confidence, "method": detection.method,
                        "corners": [[round(x, 1), round(y, 1)] for x, y in detection.corners]},
-            ocr=ocr_info, timings_ms={key: round(value, 1) for key, value in timings.items()},
+            ocr=ocr_info, timings_ms={key: round(value, 1) for key, value in timings.items()}, text_card=text_card,
         )
+
+
+def _same_card(first: np.ndarray, second: np.ndarray, floor: float = 0.6) -> bool:
+    """Two flattenings of the same photo region look alike (grey correlation at a small size)."""
+    import cv2
+
+    def tiny(picture):
+        grey = cv2.cvtColor(cv2.resize(picture, (48, 66), interpolation=cv2.INTER_AREA), cv2.COLOR_RGB2GRAY).astype(np.float32).ravel()
+        return grey - grey.mean()
+
+    a, b = tiny(first), tiny(second)
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+    return denom > 0 and float(a @ b) / denom >= floor
 
 
 def merge_candidates(hits, scores, row_of, names, name: str | None, number: str | None, total: str | None, top_k: int = TOP_K):

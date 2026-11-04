@@ -97,7 +97,7 @@ class PictureRun:
         return self.result.status == "decided" and bool(self.result.decision)
 
 
-def _run_blocking(image_bytes: bytes, deadline: float):
+def _run_blocking(image_bytes: bytes, deadline: float, full_bytes: bytes | None = None):
     from services.card_match.images import decode_rgb
 
     if time.monotonic() >= deadline:
@@ -107,20 +107,27 @@ def _run_blocking(image_bytes: bytes, deadline: float):
         logger.info("Picture match not ready: %s", reason)
         return None
     photo = decode_rgb(image_bytes, max_side=MATCH_IMAGE_MAX_SIDE)
+    full_photo = None
+    if full_bytes:
+        try:  # only sharpens the text reading; the shadow run and the benchmark read the same way
+            full_photo = decode_rgb(full_bytes, max_side=MATCH_IMAGE_MAX_SIDE)
+        except Exception:
+            full_photo = None
     started = time.perf_counter()
-    result = matcher.match(photo)
+    result = matcher.match(photo, full_photo=full_photo) if full_photo is not None else matcher.match(photo)
     elapsed = (time.perf_counter() - started) * 1000
     info = {"bytes": len(image_bytes), "width": int(photo.shape[1]), "height": int(photo.shape[0])}
     return PictureRun(result=result, elapsed_ms=round(elapsed, 1), matcher=matcher, input_info=info)
 
 
-async def run_matcher(image_bytes: bytes) -> PictureRun | None:
-    """Run the matcher on one recognition image. ``None`` when it is not ready, failed or took too long."""
+async def run_matcher(image_bytes: bytes, full_bytes: bytes | None = None) -> PictureRun | None:
+    """Run the matcher on one recognition image (``full_bytes``: the full-resolution photo, for reading the
+    text). ``None`` when it is not ready, failed or took too long."""
     limit = timeout_seconds()
     deadline = time.monotonic() + limit
     loop = asyncio.get_running_loop()
     try:
-        return await asyncio.wait_for(loop.run_in_executor(_executor, _run_blocking, image_bytes, deadline), timeout=limit)
+        return await asyncio.wait_for(loop.run_in_executor(_executor, _run_blocking, image_bytes, deadline, full_bytes), timeout=limit)
     except asyncio.TimeoutError:
         logger.warning("Picture match took longer than %.1f s; using the scanner path", limit)
     except Exception as exc:
@@ -265,6 +272,7 @@ def record_in_trace(trace, user_id: int, job_id, item_id, run: PictureRun, meta:
                     user_id, job_id, item_id,
                     shadow._shadow_payload(run.result, input_info=run.input_info, matcher=run.matcher),
                 )
+                shadow.store_text_card(user_id, job_id, item_id, run.result)
     except Exception:
         logger.exception("Could not record the picture match in the trace")
 
