@@ -131,6 +131,7 @@ test('Review all: add moves straight to the next card, with a progress count and
   await page.getByTestId('scan-flow-add').click()
   await expect(progress(page)).toHaveText('2 of 6')
   await expect(page.getByRole('heading', { name: 'Machop' })).toBeVisible()
+  await capture(page, testInfo, '08-flow-next-card-progress')
   expect(added[0]).toMatchObject({ item: 11, confirmed_card_id: 'base1-025', card_id: 'base1-025_en', manual_search: false, quantity: 1 })
 
   await page.getByTestId('scan-flow-add').click()
@@ -171,6 +172,8 @@ test('None of these opens the search; the card found is added as a manual pick',
   await page.getByTestId('scan-review-all').click()
   await page.getByTestId('scan-flow-none').click()
   await page.getByPlaceholder('Card name').fill('squirt')
+  await expect(page.getByTestId('scan-flow-search-result').first()).toBeVisible()
+  await capture(page, testInfo, '09-flow-none-of-these-search-results')
   await page.getByTestId('scan-flow-search-result').first().click()
   await expect(page.getByRole('heading', { name: 'Squirtle' })).toBeVisible()
   await expect(page.getByText('Found by search')).toBeVisible()
@@ -232,4 +235,29 @@ test('a scan the picture was unsure about shows its matches, None of these and W
   await capture(page, testInfo, '07-flow-picture-unsure')
   await page.getByTestId('scan-flow-wait').click()
   await expect(page.getByTestId('scan-flow-done')).toBeVisible()
+})
+
+test('the scan screen has no photo limit and no scan-individually toggle', async ({ page }, testInfo) => {
+  await install(page, makeItems())
+  await page.goto('/')
+  await page.getByTestId('scan-button').click()
+  await expect(page.getByText('0 Photos')).toBeVisible()
+  await expect(page.getByRole('button', { name: /individually/i })).toHaveCount(0)
+  await expect(page.getByText(/[0-9]+\/50 /)).toHaveCount(0)
+  await capture(page, testInfo, '10-scan-screen-no-limit')
+})
+
+test('Scanner lab shows how each confirmed card was chosen', async ({ page }, testInfo) => {
+  await install(page, makeItems())
+  await page.route('**/api/card-match/**', route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/status')) {
+      return route.fulfill({ json: { matcher_version: 3, model: { name: 'm', available: true }, ocr_available: true, threads: 3, autorun: false, english_total: 100, index: { built: true, count: 100 }, job: {}, reports: {}, labelled_traces: 10, thresholds: {} } })
+    }
+    return route.fulfill({ json: { enabled: false, worker: {}, report: { scans: 0, compared: 0, skipped: {}, agreement: {}, confirmed: {}, disagreements: [], how_confirmed: { total: 10, manual: 3, manual_pct: 30, counts: { scanner_decision: 4, matcher_candidate: 1, ollama_candidate: 2, manual_search: 2, manual_no_result: 1 } } } } })
+  })
+  await page.goto('/settings/data')
+  await expect(page.getByTestId('scanner-lab-how-confirmed')).toBeVisible()
+  await page.getByTestId('scanner-lab-how-confirmed').scrollIntoViewIfNeeded()
+  await capture(page, testInfo, '11-scanner-lab-how-confirmed')
 })

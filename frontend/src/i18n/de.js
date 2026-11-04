@@ -1638,6 +1638,11 @@ const de = {
   scanner: {
     title: 'Karte scannen',
     reviewAll: 'Alle prüfen',
+    zoomViewerLabel: 'Vergrößertes Bild',
+    zoomSelectedMatch: 'Gewählter Treffer',
+    zoomSelectedMatchLabel: 'Gewählter Treffer: {name}, {card}. Zum Vergrößern tippen',
+    zoomCompare: 'Vergleichen',
+    zoomHintGestures: 'Zum Zoomen zwicken oder doppelt tippen, ziehen zum Verschieben, nach unten wischen zum Schließen',
     flowTitle: 'Scans prüfen',
     flowProgress: '{n} von {total}',
     flowDone: 'Fertig',

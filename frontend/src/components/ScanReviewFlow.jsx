@@ -19,6 +19,7 @@ import { resolveCardImageUrl } from '../utils/imageUrl'
 import { invalidateCardState, invalidateTcgdexFilterLanguages } from '../utils/queryInvalidation'
 import { SCAN_QUEUE_QUERY_KEY, SCAN_JOBS_QUERY_KEY, orderForReview } from '../utils/scanJobs'
 import { useScanItemPhoto } from './ScanReview'
+import ScanZoomViewer from './ScanZoomViewer'
 import TcgdexLanguageSelect from './TcgdexLanguageSelect'
 import Alert from './ios/Alert'
 import Button from './ios/Button'
@@ -130,6 +131,7 @@ function ItemCard({ item, onAdded, onDismiss, onSkip, onWaited, t, overlayEl }) 
   const [lang, setLang] = useState(null)
   const [adding, setAdding] = useState(false)
   const [confirmDismiss, setConfirmDismiss] = useState(false)
+  const [zoom, setZoom] = useState(null) // 'photo' | 'match'
   const queryClient = useQueryClient()
   const isAdmin = useContext(AuthContext)?.user?.role === 'admin'
   // "Picture match first" (docs/CARD_MATCH.md): the picture decided the card, or was unsure while the scanner
@@ -187,11 +189,18 @@ function ItemCard({ item, onAdded, onDismiss, onSkip, onWaited, t, overlayEl }) 
     <div className="space-y-4" data-testid="scan-flow-card" data-item-id={item.id}>
       <div className="flex items-start gap-3">
         <div className="w-24 flex-shrink-0">
-          <div className="grid aspect-[2.5/3.5] w-full place-items-center overflow-hidden rounded-xl bg-black ring-1 ring-white/10">
+          <button
+            type="button"
+            disabled={!photoUrl}
+            onClick={() => setZoom('photo')}
+            aria-label={t('scanner.yourPhoto')}
+            data-testid="scan-flow-photo"
+            className="ios-press grid aspect-[2.5/3.5] w-full place-items-center overflow-hidden rounded-xl bg-black ring-1 ring-white/10 disabled:cursor-default"
+          >
             {photoUrl
-              ? <img src={photoUrl} alt={t('scanner.yourPhoto')} className="h-full w-full object-contain" />
+              ? <img src={photoUrl} alt="" className="h-full w-full object-contain" />
               : <Camera size={28} aria-hidden="true" className="text-text-tertiary" />}
-          </div>
+          </button>
         </div>
         <div className="min-w-0 flex-1">
           <h2 ref={heading} tabIndex={-1} className="text-headline text-text-primary outline-none">
@@ -231,7 +240,15 @@ function ItemCard({ item, onAdded, onDismiss, onSkip, onWaited, t, overlayEl }) 
         <>
           <div className="flex items-center gap-4 rounded-[20px] bg-card p-4">
             {chosen.image && (
-              <img src={chosen.image} alt={chosen.name} data-testid="scan-flow-best-image" className="w-[38%] max-w-[190px] flex-shrink-0 rounded-xl" />
+              <button
+                type="button"
+                onClick={() => setZoom('match')}
+                aria-label={t('scanner.zoomSelectedMatchLabel').replace('{name}', chosen.name || '').replace('{card}', [(chosen.raw?.set_abbreviation || '').toUpperCase(), chosen.number].filter(Boolean).join(' '))}
+                data-testid="scan-flow-best-image"
+                className="ios-press w-[38%] max-w-[190px] flex-shrink-0 rounded-xl"
+              >
+                <img src={chosen.image} alt="" className="w-full rounded-xl" />
+              </button>
             )}
             <div className="grid min-w-0 flex-1 gap-3">
               <label className="block">
@@ -334,6 +351,19 @@ function ItemCard({ item, onAdded, onDismiss, onSkip, onWaited, t, overlayEl }) 
           </Button>
         </div>
       </div>
+
+      {zoom && (
+        <ScanZoomViewer
+          photoUrl={photoUrl}
+          match={chosen?.raw || null}
+          jobId={item.job_id}
+          itemId={item.id}
+          matchIndex={picked ? null : index}
+          initial={zoom}
+          onClose={() => setZoom(null)}
+          t={t}
+        />
+      )}
 
       {overlayEl && (
         <Alert
