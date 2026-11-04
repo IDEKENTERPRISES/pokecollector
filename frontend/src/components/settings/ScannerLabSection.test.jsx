@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { CompareTable, PictureFirstView, Report, ShadowView } from './ScannerLabSection'
+import { CompareTable, HowConfirmedView, PictureFirstView, Report, ShadowView } from './ScannerLabSection'
 import { MissesView } from './ScannerLabMisses'
 
 const report = {
@@ -172,5 +172,22 @@ describe('Picture match first counts', () => {
     const html = renderToStaticMarkup(<PictureFirstView data={{ enabled: false, counts: { ...counts, decided_confirmed: 0, picked_different: 0, error_pct: null } }} />)
     expect(html).toContain('Off.')
     expect(html).toContain('0 of 0 confirmed')
+  })
+})
+
+describe('How confirmed cards were chosen', () => {
+  it('lists every way a card was confirmed and how many needed the search box', () => {
+    const data = {
+      total: 10,
+      manual: 3,
+      manual_pct: 30,
+      counts: { scanner_decision: 4, matcher_candidate: 1, ollama_candidate: 2, manual_search: 2, manual_no_result: 1 },
+    }
+    const html = renderToStaticMarkup(<HowConfirmedView data={data} />)
+    expect(html).toContain('How the 10 confirmed cards were chosen')
+    expect(html).toContain('Found by search (no scanner offered it)')
+    expect(html).toContain('Found by search (scan had no result)')
+    expect(html).toContain('3 (30%) needed the search box')
+    expect(renderToStaticMarkup(<HowConfirmedView data={{ total: 0, counts: {} }} />)).toBe('')
   })
 })

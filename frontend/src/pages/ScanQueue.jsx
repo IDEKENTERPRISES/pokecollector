@@ -1,13 +1,13 @@
 import { useContext, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronRight, Clock3, Loader2, Trash2 } from 'lucide-react'
+import { ChevronRight, Clock3, Loader2, Play, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import {
   deleteScanJob,
   fetchScanJobItemImageBlob,
   getScanJob,
-  getScanJobs,
+  getScanQueue,
   resolveAndAddScanJobItem,
   resolveScanJobItem,
   retryScanJobItem,
@@ -15,6 +15,7 @@ import {
 } from '../api/client'
 import { ScanAddModal } from '../components/CardScanner'
 import { CardZoomModal, ScanItemPanel, useScanItemPhoto } from '../components/ScanReview'
+import ScanReviewFlow, { itemKind } from '../components/ScanReviewFlow'
 import Button from '../components/ios/Button'
 import HpBar from '../components/ios/HpBar'
 import ListRow from '../components/ios/ListRow'
@@ -27,8 +28,9 @@ import { useSettings } from '../contexts/SettingsContext'
 import { useNavBar } from '../navigation/useNavBar'
 import {
   SCAN_JOBS_QUERY_KEY,
-  hasActiveScanJobs,
+  SCAN_QUEUE_QUERY_KEY,
   isScanJobActive,
+  queueIsActive,
   scanJobPollInterval,
 } from '../utils/scanJobs'
 import { formatRetryCountdown } from '../utils/retryCountdown'
@@ -51,54 +53,91 @@ function expiryLabel(job, t) {
   return `${t('scanner.expiresOn')} ${new Date(job.expires_at).toLocaleDateString()}`
 }
 
-// "1 needs review", "2 need review": the verb follows the count.
-function needReviewLabel(count, t) {
-  return `${count} ${t(count === 1 ? 'scanner.needsReview' : 'scanner.needReview')}`
-}
-
-function JobRow({ job, onOpen, retryNow, t }) {
-  const waitingOnly = Number(job.retrying || 0) > 0 && Number(job.active || 0) === Number(job.retrying || 0)
-  const summary = [
-    job.attention > 0 && needReviewLabel(job.attention, t),
-    job.failed_attention > 0 && `${job.failed_attention} ${t('scanner.failed')}`,
-  ].filter(Boolean).join(' · ')
-  let status
-  if (waitingOnly) {
-    status = (
-      <span role="status" className="flex flex-shrink-0 items-center gap-1.5 text-footnote text-text-secondary">
-        <Clock3 size={13} aria-hidden="true" /> {formatRetryCountdown(job.next_retry_at, t, retryNow, job.retry_reason)}
-      </span>
-    )
-  } else if (isScanJobActive(job)) {
-    status = (
-      <span role="status" className="flex flex-shrink-0 items-center gap-1.5 text-footnote text-text-secondary">
-        <Loader2 size={13} className="animate-spin" aria-hidden="true" /> {t('scanner.processing')}
-      </span>
-    )
-  } else {
-    status = (
-      <span className="flex-shrink-0 rounded-full bg-accent/20 px-2.5 py-0.5 text-caption-1 font-semibold text-tint">
-        {job.attention} {t('scanner.ready')}
-      </span>
-    )
-  }
+function QueueRow({ item, number, onOpen, t }) {
+  const kind = itemKind(item)
+  const name = item.matches?.[0]?.name || item.recognized?.name
+  const status = {
+    matches: t('scanner.queueScanReady'),
+    none: t('scanner.queueScanNone'),
+    waiting: t('scanner.queueScanWaiting'),
+    processing: t('scanner.queueScanProcessing'),
+  }[kind]
   return (
     <ListRow
-      onClick={() => onOpen(job.id)}
-      title={`${job.processed}/${job.total} ${t('scanner.processed')}`}
-      subtitle={(
-        <>
-          {summary && <span className="block">{summary}</span>}
-          <span className="flex items-center gap-1"><Clock3 size={11} aria-hidden="true" /> {expiryLabel(job, t)}</span>
-        </>
-      )}
+      onClick={() => onOpen(item)}
+      title={name || t('scanner.queueScanLabel').replace('{n}', String(number))}
+      subtitle={<span data-testid="scan-queue-row-status">{status}</span>}
       trailing={(
         <>
-          {status}
+          {kind === 'processing' && <Loader2 size={13} className="animate-spin text-text-secondary" aria-hidden="true" />}
           <ChevronRight size={18} strokeWidth={2.25} className="flex-shrink-0 text-text-tertiary" aria-hidden="true" />
         </>
       )}
     />
+  )
+}
+
+// Everything waiting on the trainer as ONE list, oldest first. Uploads are cut into jobs for sending;
+// that is not something to show.
+function QueueList({ t }) {
+  const { openScanner } = useScanner()
+  const [flow, setFlow] = useState(null) // { startItemId }
+  const { data, isLoading } = useQuery({
+    queryKey: SCAN_QUEUE_QUERY_KEY,
+    queryFn: getScanQueue,
+    refetchInterval: query => queueIsActive(query.state.data) ? 3000 : false,
+  })
+  const items = data?.items || []
+  const counts = data?.counts || {}
+  const toReview = Number(counts.ready || 0) + Number(counts.failed || 0) + Number(counts.waiting || 0)
+
+  const summary = [
+    t('scanner.queueSummary').replace('{ready}', String(counts.ready || 0)).replace('{processing}', String(counts.processing || 0)),
+    counts.failed > 0 && t('scanner.queueFailed').replace('{n}', String(counts.failed)),
+    counts.waiting > 0 && t('scanner.queueWaiting').replace('{n}', String(counts.waiting)),
+  ].filter(Boolean).join(' · ')
+
+  let content
+  if (isLoading) {
+    content = (
+      <div role="status" aria-label={t('common.loading')} className="flex justify-center py-16">
+        <Loader2 size={28} className="animate-spin text-tint" />
+      </div>
+    )
+  } else if (items.length === 0) {
+    content = (
+      <div className="space-y-4 rounded-[20px] bg-card px-4 py-10 text-center" data-tour="queue-list">
+        <PokeBall size={56} top="var(--color-fill)" className="mx-auto" />
+        <p className="text-subheadline text-text-secondary">{t('scanner.noScans')}</p>
+        <Button onClick={openScanner}>{t('scanner.goScan')}</Button>
+      </div>
+    )
+  } else {
+    content = (
+      <div className="space-y-4">
+        <div className="space-y-3 rounded-[20px] bg-card p-4">
+          <p className="text-headline text-text-primary" data-testid="scan-queue-total">{items.length} {t('scanner.photos')}</p>
+          <p className="text-footnote text-text-secondary" data-testid="scan-queue-summary">{summary}</p>
+          <Button full size="lg" icon={Play} disabled={toReview === 0} onClick={() => setFlow({ startItemId: null })} data-testid="scan-review-all">
+            {t('scanner.reviewAll')}
+          </Button>
+        </div>
+        <ListSection className="!mx-0" data-tour="queue-list">
+          {items.map((item, position) => (
+            <QueueRow key={item.id} item={item} number={position + 1} t={t} onOpen={scan => setFlow({ startItemId: scan.id })} />
+          ))}
+        </ListSection>
+      </div>
+    )
+  }
+
+  // The flow sits in the same place whatever the list shows, and stays mounted when the last scan is
+  // finished (the list is empty then), so its end screen and counts survive.
+  return (
+    <>
+      {content}
+      {flow && <ScanReviewFlow items={items} startItemId={flow.startItemId} onClose={() => setFlow(null)} />}
+    </>
   )
 }
 
@@ -356,22 +395,12 @@ function JobDetail({ jobId, onObscuredChange }) {
 
 export default function ScanQueue() {
   const { t } = useSettings()
-  const navigate = useNavigate()
   const { jobId } = useParams()
   const [, setIsNestedOpen] = useState(false)
 
-  const { data, isLoading } = useQuery({
-    queryKey: SCAN_JOBS_QUERY_KEY,
-    queryFn: getScanJobs,
-    refetchInterval: query => hasActiveScanJobs(query.state.data?.jobs || []) ? 3000 : false,
-  })
-
-  const { openScanner } = useScanner()
   const navBarOptions = useMemo(() => ({ title: t('scanner.queueTitle'), largeTitle: !jobId }), [t, jobId])
   useNavBar(navBarOptions)
 
-  const jobs = data?.jobs || []
-  const retryNow = useRetryClock(jobs.some(job => Number(job.retrying || 0) > 0))
   return (
     <div>
       <div className="space-y-4 px-4 pb-6 pt-2">
@@ -381,21 +410,7 @@ export default function ScanQueue() {
           <>
             <p className="text-subheadline text-text-secondary">{t('scanner.queueSubtitle')}</p>
 
-            {isLoading ? (
-              <div role="status" aria-label={t('common.loading')} className="flex justify-center py-16">
-                <Loader2 size={28} className="animate-spin text-tint" />
-              </div>
-            ) : jobs.length === 0 ? (
-              <div className="space-y-4 rounded-[20px] bg-card px-4 py-10 text-center" data-tour="queue-list">
-                <PokeBall size={56} top="var(--color-fill)" className="mx-auto" />
-                <p className="text-subheadline text-text-secondary">{t('scanner.noScans')}</p>
-                <Button onClick={openScanner}>{t('scanner.goScan')}</Button>
-              </div>
-            ) : (
-              <ListSection className="!mx-0" data-tour="queue-list">
-                {jobs.map(job => <JobRow key={job.id} job={job} onOpen={id => navigate(`/scans/${id}`)} retryNow={retryNow} t={t} />)}
-              </ListSection>
-            )}
+            <QueueList t={t} />
           </>
         )}
       </div>

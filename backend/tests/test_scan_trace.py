@@ -253,6 +253,70 @@ class ScanTraceTests(unittest.TestCase):
             all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in payload_paths)
         )
 
+    def _traced(self, job, item, selected, candidates, mechanism="test"):
+        trace = create_scan_trace(self.db, self.user.id, mode="single", job_id=job, item_id=item)
+        trace.record_candidates([{"tcg_card_id": c} for c in candidates])
+        trace.record_decision(mechanism if selected else "abstained", selected)
+        trace.save()
+
+    def _confirmation(self, job, item):
+        path = next(Path(self.temp_dir.name).glob(f"user-{self.user.id}/*/job{job}-item{item}-*.json"))
+        return json.loads(path.read_text(encoding="utf-8"))["confirmation"]["source"]
+
+    def test_confirmation_source_tells_how_the_card_was_chosen(self):
+        self._enable(self.user)
+        self._traced(1, 1, "a", ["a", "b"])
+        self._traced(2, 2, "a", ["a", "b"])
+        self._traced(3, 3, "a", ["a", "b"], mechanism="matcher")
+        self._traced(4, 4, None, [])
+        self._traced(5, 5, None, [])
+        record_ground_truth(self.user.id, 1, 1, "a")
+        record_ground_truth(self.user.id, 2, 2, "b")
+        record_ground_truth(self.user.id, 3, 3, "b")
+        record_ground_truth(self.user.id, 4, 4, "z", manual=True, had_matches=True, lang="en")
+        record_ground_truth(self.user.id, 5, 5, "z", manual=True, had_matches=False, lang="en")
+        self.assertEqual(
+            [self._confirmation(n, n) for n in range(1, 6)],
+            ["scanner_decision", "ollama_candidate", "matcher_candidate", "manual_search", "manual_no_result"],
+        )
+
+    def test_manual_trace_keeps_the_photo_and_the_answer_when_nothing_was_recorded(self):
+        self._enable(self.user)
+        from services.scan_trace import record_manual_trace
+
+        self.assertTrue(record_manual_trace(self.db, self.user.id, 8, 8, "z", image_bytes=b"\xff\xd8jpeg", lang="en"))
+        path = next(Path(self.temp_dir.name).glob(f"user-{self.user.id}/*/job8-item8-*.json"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(data["ground_truth"], "z")
+        self.assertEqual(data["confirmation"], {"source": "manual_no_result", "lang": "en"})
+        self.assertTrue((path.parent / data["image_file"]).is_file())
+
+    def test_lab_counts_how_confirmed_cards_were_chosen(self):
+        self._enable(self.user)
+        from services.card_match import shadow as shadow_module
+        from services.scan_trace import record_manual_trace
+
+        self._traced(1, 1, 'a', ['a', 'b'])
+        self._traced(2, 2, 'a', ['a', 'b'])
+        self._traced(3, 3, None, ['b'])
+        record_ground_truth(self.user.id, 1, 1, 'a')
+        record_ground_truth(self.user.id, 2, 2, 'b')
+        record_ground_truth(self.user.id, 3, 3, 'z', manual=True, had_matches=True, lang='en')
+        record_manual_trace(self.db, self.user.id, 4, 4, 'y', image_bytes=b'x', lang='en')
+        self._traced(5, 5, 'a', ['a'])  # never confirmed: not counted
+        report = shadow_module.how_confirmed(Path(self.temp_dir.name))
+        self.assertEqual(report['counts'], {
+            'scanner_decision': 1, 'matcher_candidate': 0, 'ollama_candidate': 1,
+            'manual_search': 1, 'manual_no_result': 1,
+        })
+        self.assertEqual((report['total'], report['manual'], report['manual_pct']), (4, 2, 50.0))
+
+    def test_manual_trace_is_not_written_without_consent(self):
+        from services.scan_trace import record_manual_trace
+
+        with patch("services.scan_trace.user_trace_enabled", return_value=False):
+            self.assertFalse(record_manual_trace(self.db, self.user.id, 9, 9, "z", image_bytes=b"x"))
+
     def test_delete_removes_only_the_requesting_users_trace_tree(self):
         self._enable(self.user)
         self._enable(self.other_user)

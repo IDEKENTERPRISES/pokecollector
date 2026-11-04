@@ -4,7 +4,6 @@
 import { MAX_PHOTO_BYTES, MAX_PHOTOS_PER_ITEM, TARGET_ITEM_BYTES } from '../constants.js'
 import { isSupportedScannerImage } from '../../utils/scannerImages.js'
 
-export const MAX_SCAN_FILES = 50
 export const SEND_CAP_MS = 5000
 
 export class ScanSubmitError extends Error {
@@ -48,7 +47,7 @@ function withCap(promise, capMs) {
 /**
  * Saves every chunk to the outbox, then sends them only when `reachability` is exactly
  * `reachable`, waiting at most `sendCapMs`. → `{mode: 'sent'|'queued'|'partial', jobIds, queuedCount}`.
- * Throws `ScanSubmitError` (`too_large`, `unsupported`, `too_many`) before saving anything, and the
+ * Throws `ScanSubmitError` (`too_large`, `unsupported`) before saving anything, and the
  * outbox's own error (`quota`, `server_old`, ...) when saving fails. Chunks saved before a failure
  * stay queued; the thrown error then carries `queuedCount`.
  */
@@ -60,7 +59,6 @@ export async function submitScanBatch({
   sendCapMs = SEND_CAP_MS,
 }) {
   if (!files.length) throw new ScanSubmitError('empty')
-  if (files.length > MAX_SCAN_FILES) throw new ScanSubmitError('too_many')
   if (files.some(file => !isSupportedScannerImage(file))) throw new ScanSubmitError('unsupported')
   if (files.some(file => file.size > MAX_PHOTO_BYTES)) throw new ScanSubmitError('too_large')
 

@@ -425,6 +425,9 @@ def run_labelled(
         ollama["top1"] += 1 if data.get("ground_truth_rank") == 1 else 0
     extra = {
         "labelled": {"traces_with_answer": len(traces), "english_in_index": len(eligible), "not_english_or_not_indexed": not_english},
+        # How each confirmed card was chosen; a card found by manual search was offered by no scanner, so it is
+        # a miss for the matcher and for Ollama in the numbers above (it is a trace with an answer, rank None).
+        "how_confirmed": shadow_module.how_confirmed(trace_dir),
         "ollama_today": {
             **ollama, "decided_pct": pct(ollama["decided"], ollama["n"]),
             "decided_right_pct": pct(ollama["decided_right"], ollama["decided"]),

@@ -298,10 +298,7 @@ export default function CardScanner({ isOpen, onClose, onCardSelected }) {
     })
     if (!incoming.length) return
 
-    const remaining = Math.max(0, 50 - stagedFilesRef.current.length)
-    const accepted = incoming.slice(0, remaining)
-    if (accepted.length < incoming.length) toast.error(t('scanner.batchLimitReached'))
-    const additions = accepted.map(file => ({
+    const additions = incoming.map(file => ({
       id: `${Date.now()}-${globalThis.crypto?.randomUUID?.() || Math.random()}`,
       file,
       previewUrl: URL.createObjectURL(file),
@@ -431,7 +428,7 @@ export default function CardScanner({ isOpen, onClose, onCardSelected }) {
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted">
                   {t('scanner.batchStaging')}
                 </p>
-                <p className="text-sm text-text-secondary">{stagedFiles.length}/50 {t('scanner.photos')}</p>
+                <p className="text-sm text-text-secondary">{stagedFiles.length} {t('scanner.photos')}</p>
               </div>
               {stagedFiles.length > 0 && (
                 <button type="button" onClick={clearStagedFiles}

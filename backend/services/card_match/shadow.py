@@ -342,6 +342,54 @@ def latest_traces(trace_dir: Path | None) -> list[dict]:
     return sorted(newest.values(), key=lambda data: str(data.get("created_at")), reverse=True)
 
 
+def confirmed_traces(trace_dir: Path | None) -> list[dict]:
+    """The newest trace of each scan the trainer confirmed a card for (with or without a shadow result)."""
+    if trace_dir is None or not trace_dir.is_dir():
+        return []
+    newest: dict[tuple, dict] = {}
+    for path in trace_dir.glob("user-*/*/*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not data.get("ground_truth"):
+            continue
+        key = (path.parent.parent.name, data.get("job_id"), data.get("item_id")) if data.get("job_id") and data.get("item_id") else (path.name,)
+        if key not in newest or str(data.get("created_at")) > str(newest[key].get("created_at")):
+            newest[key] = data
+    return list(newest.values())
+
+
+def how_confirmed(trace_dir: Path | None) -> dict:
+    """How the confirmed cards were chosen, and what that means for each path.
+
+    ``counts`` has one number per way of choosing (see ``scan_trace.CONFIRMATION_SOURCES``). A card the
+    trainer had to find by search (``manual_search`` / ``manual_no_result``) was offered by no scanner, so it
+    counts as a miss for the matcher and for Ollama alike: ``manual`` says how many there were and how often
+    each path at least had the card among its candidates (always 0 for the picture matcher and Ollama by
+    definition of a manual pick; kept so the lab can show it next to the other numbers).
+    """
+    from services.scan_trace import CONFIRMATION_SOURCES
+
+    counts = {source: 0 for source in CONFIRMATION_SOURCES}
+    unlabelled = 0
+    for data in confirmed_traces(trace_dir):
+        source = (data.get("confirmation") or {}).get("source")
+        if source in counts:
+            counts[source] += 1
+        else:
+            unlabelled += 1  # confirmed before the source was recorded
+    manual = counts["manual_search"] + counts["manual_no_result"]
+    total = sum(counts.values())
+    return {
+        "counts": counts,
+        "total": total,
+        "unlabelled": unlabelled,
+        "manual": manual,
+        "manual_pct": _pct(manual, total),
+    }
+
+
 def shadow_report(trace_dir: Path | None, *, examples: int = 8) -> dict:
     """What the Scanner lab shows: the two paths side by side on the scans recorded in shadow mode."""
     traces = latest_traces(trace_dir)
@@ -389,5 +437,6 @@ def shadow_report(trace_dir: Path | None, *, examples: int = 8) -> dict:
         "confirmed": {**confirmed_scores, "matcher_decided_confirmed": len(decided_confirmed)},
         "median_ms": round(statistics.median(totals), 1) if totals else None,
         "disagreements": disagreements,
+        "how_confirmed": how_confirmed(trace_dir),
         "matcher_version": MATCHER_VERSION,
     }

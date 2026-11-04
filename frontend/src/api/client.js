@@ -169,6 +169,8 @@ export const enqueueScanJob = async (files = [], individualPositions = []) => {
   }).then(r => r.data)
 }
 export const getScanJobs = () => api.get('/cards/recognize/jobs').then(r => r.data)
+// Every scan still waiting on the trainer as one list, oldest first, whichever upload it came from.
+export const getScanQueue = () => api.get('/cards/recognize/queue').then(r => r.data)
 export const getScanJob = jobId => api.get(`/cards/recognize/jobs/${jobId}`).then(r => r.data)
 export const resolveScanJobItem = (jobId, itemId, cardId = null) =>
   api.post(`/cards/recognize/jobs/${jobId}/items/${itemId}/resolve`, {
