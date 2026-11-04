@@ -386,7 +386,8 @@ def run_labelled(
         outcome = matcher.match(photo)
         if collector is not None:
             try:
-                collector.add(trace=path.name, photo=photo, outcome=outcome, truth_id=truth_id)
+                collector.add(trace=path.name, photo=photo, outcome=outcome, truth_id=truth_id,
+                              confirmation=(data.get("confirmation") or {}).get("source"))
             except Exception:  # the misses view must never stop the benchmark
                 logger.exception("Card-match: could not record a miss for %s", path.name)
         rank = next((m["rank"] for m in outcome.matches if m["card_id"] == truth_id), None)

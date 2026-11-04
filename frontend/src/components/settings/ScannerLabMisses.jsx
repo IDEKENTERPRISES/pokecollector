@@ -26,6 +26,7 @@ function MissItem({ item, labels }) {
         <span className="font-semibold">{truth.name || truth.tcg_card_id}</span>
         <span className="text-text-secondary">{truth.set ? `${truth.set} · ` : ''}#{truth.number}</span>
         <span className="text-text-secondary">· {item.kind === 'not_in_top20' ? 'not in the top 20' : `ranked ${item.rank}`}</span>
+        {item.confirmation?.startsWith('manual_') && <span className="text-text-secondary" data-testid="miss-manual">· found by search</span>}
         {item.decided_wrong && <span className="font-semibold text-red-500">· decided wrong</span>}
       </div>
       <div className="flex flex-wrap gap-1.5">
