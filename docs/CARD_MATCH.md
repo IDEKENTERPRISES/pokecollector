@@ -11,7 +11,8 @@ photo
   ├─ embed.py     DINOv2 ViT-S/14 (ONNX Runtime, CPU, 3 threads), 224×224 → 384 numbers, L2-normalised;
   │               the card at 0° and at 180°
   ├─ index.py     numpy cosine search in an in-memory matrix of every English card picture → top 20
-  ├─ ocr.py       RapidOCR on the bottom strips (number/total, set code), optionally the HP strip
+  ├─ ocr.py       RapidOCR on the bottom strips (number/total, set code); names.py reads the name line
+  │               at the top → close catalogue names → text candidates merged with the picture top 20 (v3)
   └─ pipeline.py  decide with the existing rules in `api/recognize.py` + picture similarity and lead
                   → "decided" (with the mechanism) or "unsure" (with the reason and the top matches)
 ```
@@ -34,6 +35,48 @@ Free OCR on the bottom line loses digits ("12/13" for "112/113"), reads the slas
 
 Measured on the gaming PC (not the T340) on 300 real TCGdex card scans from 50 sets, made into synthetic phone photos like the benchmark's (so the card finder, flattening and OCR all ran; no picture index locally): number read exactly **80.3% → 91.0%**, plus 2 points from constrained reading against 19 adversarial decoys (8 from the same set) with **0 wrong** → **93.0%**; reader time median 207 → 231 ms, p95 850 → 1082 ms on that machine. The T340 run after the redeploy gives the real "decided" and the reprint-trap group; the Scanner lab report also lists, for each similarity/lead pair, how many photos a picture-only rule would decide and how many of those would be wrong (`picture_only_sweep`), which is where the picture-only thresholds should be tuned from.
 
+### Finding the right card more often (matcher version 3)
+
+On real photos the picture search alone missed the right printing in its top 20 for 28% of scans (matcher v2: 46 / 65 / 72% in the top 1 / 5 / 20 on 132 confirmed photos), while a text search on name and number finds it about 98% of the time. Version 3 adds the text search, two picture options, and a view of the misses.
+
+**1. Name search without a vision model** (`names.py`, on by default: option `names`).
+
+- `ocr.OcrReader.read_name` reads one strip at the top of the flattened card (x 3–100%, y 2–15%, 2× zoom) the same way up as the number. `names.parse_name_lines` picks the name: the tallest plausible line (the name is the biggest type), after taking away the stage label ("BASIC", "Stage 1"), the HP, "Evolves from …", a trailing energy symbol read as a digit, and labels that sit alone on a line ("SUPPORTER", "Pokémon Tool"). "Energy Retrieval" and "Pikachu V" stay whole. The same lines give the HP when it is there, so `ocr.hp` is filled without the slower separate HP strip.
+- `names.NameIndex` holds name, number and printed total of every indexed card (one query at startup, rebuilt with the picture index). A read name is compared with every distinct catalogue name. The normalising is the Ollama path's own (`api.recognize._name_search_key`, `_simplify_name`, `_scanner_names_compatible` are imported, not copied: case, accents, hyphens, apostrophes and the "(Giovanni)" qualifier do not matter), then a fuzzy ratio (≥ 0.72, within 0.12 of the best name, at most 8 names), so "Charizrd ex" still finds "Charizard ex". The printings of those names are the **text candidates**; with a number read, the printings that carry it come first.
+- `pipeline.merge_candidates` ranks the picture top 20 and the text candidates together: `score = picture similarity + 0.25 × name agreement + 0.12 if the number matches + 0.04 if the printed total matches`. A text candidate's picture similarity comes from the same index (a vector product), so both kinds are on one scale. The 5 closest pictures always stay in the list, so a wrong name read can push other printings down but never the picture's own best guesses. `matches` is that merged list (`rank` is the position in it), so "top 20" now means the merged list.
+- **Deciding still needs the picture.** The rules are the same, with two changes. A printing the rules chose may sit as far down as picture rank 40 (was 10) if its name was also read and agrees (≥ 0.9). With no usable number, a card whose name agrees exactly (≥ 0.95) may be decided by the picture at similarity ≥ 0.80 and lead ≥ 0.03 (`name_and_picture`; `CARD_MATCH_SIM_MIN_NAME_PICTURE`, `CARD_MATCH_LEAD_MIN_NAME_PICTURE`). A reprint with the same artwork has a lead near 0, so it still does not qualify.
+
+**2. Better picture matches** (`variants.py`; each is an option, all measured side by side).
+
+| Option | What it does | Cost |
+| --- | --- | --- |
+| `tta` | two extra views of the card (a 3.5%-tighter crop for corner errors, a brightness / contrast normalised copy for glare and dim light); each card keeps its best view | 2 more embeddings per photo |
+| `art` | a second index of the artwork window only (`ART_BOX` in `detect.py`: x 7–93%, y 11.5–54.5% of the flat card), averaged with the whole-card similarity. Reprints share artwork but not the frame, so it mostly helps when glare or a sleeve spoils the frame | one more index (≈ 30 MB) built from the cached pictures; 1 more embedding per photo |
+| `base` | DINOv2-base (ViT-B/14, Apache-2.0, 768 numbers; ONNX from `onnx-community/dinov2-base`, pinned commit and sha256 in `model_specs.py`) as a second whole-card index, averaged with the first | model file 347 MB in the image; index ≈ 60 MB; about 3× the small model's time per photo and per picture to build |
+
+An option set is a label, the options joined by `+`: `baseline` (picture only, as in v2), `names`, `names+tta`, `names+art`, `names+art+tta`, `names+base`, `names+art+base`. The one in use is, in order: `CARD_MATCH_OPTIONS`, else `chosen.json` in the card-match folder (written by a real-photo comparison when one set is clearly better), else `names`. Shadow mode and the benchmarks build their matcher from it; an option whose index is not built yet is left out.
+
+**Comparing them.** Scanner lab → **Compare options (real scans)** (and **(synthetic)**) runs the labelled (or synthetic) benchmark once per option set on the same photos and shows one table: top 1, top 20, number read, decided, wrong, p95. The set that is kept: no more wrong decisions than the best other set, 95th percentile under 1.5 s, then the best top 20 / decided; a plainer set is replaced only if another adds at least 0.5 points of either without losing on the other. After a real-photo comparison the winner is written to `chosen.json` and used from then on (shown as **Matching options in use**). Sets that need an index that is not built yet are listed as skipped; build them with the **Build … index** buttons (artwork: about as long as the first index; DINOv2-base: several times longer).
+
+**3. The Misses view** (`misses.py`, Scanner lab → *Misses*). Every real-photo (labelled) run keeps, for each confirmed scan where the right card was not the first pick (or not in the top 20): the photo with the detected corners drawn, the flat card the matcher embedded, the confirmed card's picture, the matcher's top 3, and what OCR read (name, number and total, HP, the text lines). Each is tagged with its likely causes, from measurements of the flat card and what the run saw:
+
+| Tag | Rule |
+| --- | --- |
+| Card not found or corners off | the finder fell back to the plain guide crop |
+| Upside down | the card was read turned 180° |
+| Generic card | the confirmed card is an Energy (basic or common) or a common / uncommon Trainer |
+| Same artwork in another set | another printing of the same name is among the matcher's picks |
+| Sleeve or top-loader glare | ≥ 4% of the flat card is blown out to near white |
+| Low light or blur | mean grey < 85, or Laplacian variance < 30, on the flat card |
+| Holo or full art | the confirmed card's rarity is a holo / full-art kind |
+| No clear cause | none of the above |
+
+A scan can carry several tags; the counts per tag are filter chips. The thresholds are first guesses, and the photos are right there to adjust them. Pictures live under `<card-match dir>/misses/run-<time>/` (small JPEGs; a newer run replaces the older one), `latest.json` has the list, and `GET /api/card-match/misses?tag=&offset=&limit=` pages through it with the pictures inline (admins only).
+
+**After a deploy** (`MATCHER_VERSION` 3): the nonprod autorun builds the missing indexes (the whole-card one if new, then the artwork one), runs the synthetic benchmark and, when at least 100 scans are confirmed, the **real-photo benchmark** (which also writes the Misses view) and the **option comparison**. Nothing needs pressing. The DINOv2-base index is not built by the autorun; press **Build … DINOv2-base index** to include it in the comparison.
+
+**Result shape.** `MatchResult` is unchanged: `status`, `decision`, `unsure_reason`, `matches`, `detection`, `ocr`, `timings_ms`. Fields only added: each `matches` item gets `picture_rank` (where the printing stands among all pictures) and, when names are read, `name_score`; `ocr` gets `name`, `name_lines`, `text_candidates_added` (and `hp` from the name strip); `timings_ms` gets `name`; `decision.mechanism` can also be `name_and_picture`. `rank` keeps its meaning (position in `matches`, 1 = first). A test pins the old key sets.
+
 The thresholds are **provisional**; the benchmark records every photo's features so they can be tuned once the labelled set exists.
 
 The pipeline is pure: it reads the index and, through a `candidate_loader`, the catalogue; it writes nothing.
@@ -47,19 +90,23 @@ The pipeline is pure: it reads the index and, through a `candidate_loader`, the 
 | `…/model_specs.py` | pinned model URL + sha256 (standard library only, read by the Dockerfile) |
 | `…/index.py` | build / load / search the index; incremental, checkpointed |
 | `…/ocr.py` | RapidOCR strips + regex parsing (`parse_text` is pure) |
+| `…/names.py` | name line parsing (pure), `NameIndex` fuzzy name search, text candidates |
+| `…/variants.py` | option sets (`names`, `tta`, `art`, `base`), the one in use, building a matcher for them |
+| `…/misses.py` | the Misses view: collecting, tagging (pure), thumbnails, paging |
 | `…/pipeline.py` | `CardMatcher`, `decide`, `db_candidate_loader` |
 | `…/synthetic.py`, `…/benchmark.py` | phone-style synthetic photos; synthetic and labelled benchmarks; reports |
 | `…/jobs.py` | one-at-a-time background jobs, nonprod autorun, after-sync hook |
 | `…/shadow.py` | shadow mode: the background worker, and the report the Scanner lab reads back |
-| `backend/api/card_match.py` | admin API: `GET /api/card-match/status`, `GET /shadow`, `POST /index`, `POST /benchmark`, `POST /stop` |
+| `backend/api/card_match.py` | admin API: `GET /api/card-match/status`, `GET /shadow`, `GET /misses`, `POST /index` (`{name}`: whole card, artwork or DINOv2-base), `POST /benchmark` (`synthetic`, `labelled`, `compare-synthetic`, `compare-labelled`), `POST /stop` |
 | `backend/scripts/scan_benchmark.py` | the same build/benchmark from a shell |
 | `backend/scripts/fetch_card_match_models.py` | build-time model download with checksum |
-| `frontend/src/components/settings/ScannerLabSection.jsx` | the Scanner lab page |
-| `backend/tests/test_card_match.py`, `test_card_match_shadow.py` | tests with the fake embedder and generated fixture cards (one optional real-model test) |
+| `frontend/src/components/settings/ScannerLabSection.jsx`, `ScannerLabMisses.jsx` | the Scanner lab page and its Misses view |
+| `backend/tests/test_card_match.py`, `test_card_match_shadow.py`, `test_card_match_recall.py` | tests with the fake embedder and generated fixture cards (one optional real-model test) |
 
 On disk (`CARD_MATCH_DIR`, default `/app/data/card-match`; mounted in `docker-compose.nonprod.yml`):
 
-- `index/<model>/vectors.npy` + `entries.json` (card id and picture key per row, build time, count);
+- `index/<name>/vectors.npy` + `entries.json` (card id and picture key per row, build time, count); `<name>` is `dinov2-small`, `dinov2-small-art` or `dinov2-base`;
+- `misses/latest.json` + `misses/run-<time>/` (the Misses view) and `chosen.json` (the option set a comparison picked);
 - `reports/benchmark-<kind>-<timestamp>.json`;
 - `hires/` (cached high-resolution TCGdex pictures for the synthetic photos);
 - `autorun.json` (marker so the nonprod autorun happens once per matcher version).
@@ -78,10 +125,12 @@ On disk (`CARD_MATCH_DIR`, default `/app/data/card-match`; mounted in `docker-co
 | `CARD_MATCH_DIR` | `/app/data/card-match` | index, reports, cached pictures |
 | `CARD_MATCH_MODEL_DIR` | `/app/card-match-models` | where the image has the model file |
 | `CARD_MATCH_THREADS` | `3` (1–8) | ONNX Runtime and OpenCV thread cap |
-| `SCAN_MATCHER_AUTORUN` | off | **nonprod only**: once per matcher version, after startup, fill the picture cache if needed, build the index, run the synthetic benchmark |
+| `SCAN_MATCHER_AUTORUN` | off | **nonprod only**: once per matcher version, after startup, fill the picture cache if needed, build the index and the artwork index, run the synthetic benchmark, and with at least 100 confirmed scans the real-photo benchmark and the option comparison |
+| `CARD_MATCH_OPTIONS` | unset | force an option set, e.g. `names+art`; unset = `chosen.json`, else `names` |
 | `SCAN_MATCHER_SHADOW` | off | **nonprod only**: shadow mode (below) |
 | `SCAN_MATCHER_INDEX_AFTER_SYNC` | off | after `schedule_after_sync` (card sync → picture warm-up), add the new pictures to the index; nonprod sets it |
 | `CARD_MATCH_SIM_MIN_WITH_RULES`, `CARD_MATCH_SIM_MIN_PICTURE_ONLY`, `CARD_MATCH_LEAD_MIN_PICTURE_ONLY` | 0.55 / 0.80 / 0.06 | decision thresholds |
+| `CARD_MATCH_SIM_MIN_NAME_PICTURE`, `CARD_MATCH_LEAD_MIN_NAME_PICTURE` | 0.80 / 0.03 | picture-only decision when the printed name agrees too |
 
 Prod sets none of the automatic flags. An admin can still press the buttons on prod, but prod has no `card-match` volume, so results would not survive a container re-create.
 
@@ -146,6 +195,7 @@ RapidOCR (PP-OCRv4 detection and recognition models, ONNX Runtime) installs clea
 | --- | --- |
 | DINOv2 ViT-S/14 weights (Meta AI, `facebook/dinov2-small`) | Apache-2.0 |
 | ONNX export `onnx-community/dinov2-small` (commit `8b1f705a`, sha256 `f22797ea…`) | follows the base model, Apache-2.0 |
+| DINOv2 ViT-B/14 weights (`facebook/dinov2-base`) and its ONNX export `onnx-community/dinov2-base` (commit `31ef06ca`, sha256 `320d1012…`, 347 MB) | Apache-2.0 |
 | RapidOCR (`rapidocr-onnxruntime` 1.3.24) and PaddleOCR PP-OCRv4 models | Apache-2.0 |
 | OpenCV 4.10 (`opencv-python-headless`) | Apache-2.0 (the wheel bundles FFmpeg libraries under LGPL) |
 | ONNX Runtime 1.19.2 | MIT |

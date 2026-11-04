@@ -483,7 +483,7 @@ def pick_winner(rows: list[dict]) -> dict | None:
 
 def run_compare(
     kind: str, session_factory, labels, *, data_dir: Path | None = None, trace_dir: Path | None = None, ocr_reader=None,
-    progress: Callable[[dict], None] | None = None, should_stop: Callable[[], bool] | None = None,
+    progress: Callable[[dict], None] | None = None, should_stop: Callable[[], bool] | None = None, count: int = 400,
 ) -> dict:
     """Run ``labelled`` or ``synthetic`` once per option set and put the results in one table."""
     from . import variants
@@ -506,7 +506,7 @@ def run_compare(
         if kind == "labelled":
             report = run_labelled(session_factory, matcher, trace_dir=trace_dir, progress=step_progress, should_stop=should_stop)
         else:
-            report = run_synthetic(session_factory, matcher, data_dir=data_dir, progress=step_progress, should_stop=should_stop)
+            report = run_synthetic(session_factory, matcher, count=count, data_dir=data_dir, progress=step_progress, should_stop=should_stop)
         if report is None:
             raise RuntimeError("No diagnostics traces with a confirmed answer for English cards yet")
         reports[label] = report
