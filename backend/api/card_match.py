@@ -74,7 +74,7 @@ def card_match_misses(tag: str | None = None, offset: int = 0, limit: int = miss
     _require_admin(current_user)
     if tag and tag not in misses_module.TAGS:
         raise HTTPException(status_code=422, detail="Unknown tag")
-    return misses_module.page(tag, max(0, offset), max(1, min(limit, 60)))
+    return misses_module.page(tag, max(0, offset), max(1, min(limit, 200)))
 
 
 _SHADOW_REPORT_TTL_SECONDS = 20

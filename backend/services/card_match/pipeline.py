@@ -359,7 +359,7 @@ def merge_candidates(hits, scores, row_of, names, name: str | None, number: str 
         bonus += TOTAL_WEIGHT if agreement.total_ok else 0.0
         return pool[card_id] + bonus
 
-    keep = picture_ids[:PICTURE_KEEP]
+    keep = picture_ids[:min(PICTURE_KEEP, top_k)]
     rest = sorted((card_id for card_id in pool if card_id not in keep), key=lambda card_id: -combined(card_id))
     chosen = keep + rest[:max(0, top_k - len(keep))]
     chosen.sort(key=lambda card_id: -combined(card_id))

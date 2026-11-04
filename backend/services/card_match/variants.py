@@ -29,7 +29,7 @@ BASE_MODEL = "dinov2-base"
 ART_INDEX = f"{DEFAULT_MODEL}-art"  # the artwork-window index of the default model
 DEFAULT_LABEL = "names"
 # The labels the comparison runs, cheapest first.
-COMPARE_LABELS = ("baseline", "names", "names+tta", "names+art", "names+art+tta", "names+base", "names+base+art")
+COMPARE_LABELS = ("baseline", "names", "names+tta", "names+art", "names+art+tta", "names+base", "names+art+base")
 ORDER = ("names", "art", "base", "tta")
 
 

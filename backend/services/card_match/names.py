@@ -29,12 +29,13 @@ MAX_NAMES = 8
 MAX_TEXT_CANDIDATES = 200
 
 # Words printed near the name that are not part of it.
-_STAGE_WORDS = re.compile(
-    r"^(?:basic|stage\s*[12]|stage|restored|mega|vmax\s*climax|baby|level\s*up|item|supporter|stadium|"
-    r"trainer|pok[eé]mon\s*tool|tool|ace\s*spec|technical\s*machine|energy|special\s*energy)\b[\s:.\-]*",
-    re.IGNORECASE,
-)
-_EVOLVES = re.compile(r"\b(?:evolves?\s+from|put\s+on|stage\s*[12]\b).*$", re.IGNORECASE)
+_STAGE_WORDS = re.compile(r"^(?:basic|stage\s*[12]|restored|vmax\s*climax|level\s*up)\b[\s:.\-]*", re.IGNORECASE)
+# Labels that print on a line of their own near the name. "Energy Retrieval" is a card, so only a whole line counts.
+_LABEL_ONLY = {
+    "item", "supporter", "stadium", "trainer", "tool", "pokemon tool", "pokémon tool", "ace spec", "technical machine",
+    "energy", "special energy", "basic energy", "basic", "baby", "mega", "stage 1", "stage 2", "stage1", "stage2", "restored",
+}
+_EVOLVES = re.compile(r"\b(?:evolves?\s+from|put\s+on)\b.*$", re.IGNORECASE)
 _HP_TAIL = re.compile(r"\s*(?:\b(?:hp|pv|kp|ps|pf)\s*\d{2,3}|\d{2,3}\s*hp)\b.*$", re.IGNORECASE)
 _NOT_NAME_CHARS = re.compile(r"[^A-Za-zÀ-ɏ0-9 '’&.\-:♀♂]")
 _LETTERS = re.compile(r"[A-Za-zÀ-ɏ]")
@@ -58,8 +59,10 @@ def clean_name_line(text: str) -> str:
         text = stripped
     text = _NOT_NAME_CHARS.sub(" ", text)
     text = re.sub(r"\s+", " ", text).strip(" .:-'")
-    # Energy symbols read as stray digits or single letters at the end ("Pikachu 0", "Pikachu G").
-    text = re.sub(r"\s+(?:\d{1,2}|[A-Z])$", "", text) if len(text) > 4 and re.search(r"[a-z]{3}", text) else text
+    # An energy symbol read as a stray digit at the end ("Pikachu 0").
+    text = re.sub(r"\s+\d{1,2}$", "", text) if len(text) > 4 and re.search(r"[a-z]{3}", text) else text
+    if text.casefold() in _LABEL_ONLY:
+        return ""
     return text if len(_LETTERS.findall(text)) >= 2 else ""
 
 

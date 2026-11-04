@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { FlaskConical, Hammer } from 'lucide-react'
+import { FlaskConical, GitCompare, Hammer } from 'lucide-react'
 import api from '../../api/client'
+import Misses from './ScannerLabMisses'
 
 const QUERY_KEY = ['card-match-status']
 const SHADOW_KEY = ['card-match-shadow']
@@ -114,6 +115,49 @@ export function Report({ report, title }) {
   )
 }
 
+const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', tta: 'extra views', art: 'artwork', base: 'DINOv2-base' }
+const describeOptions = label => (label === 'baseline' ? OPTION_NAMES.baseline : label.split('+').map(word => OPTION_NAMES[word] || word).join(' + '))
+
+/** The option sets side by side on the same photos: pick the row with the best top 20 and decided rate with 0 wrong. */
+export function CompareTable({ report, title }) {
+  return (
+    <div className="space-y-2 border-t border-separator px-4 py-3" data-testid={`scanner-lab-${report.kind}`}>
+      <div>
+        <h3 className="text-subheadline font-semibold">{title}</h3>
+        <p className="text-footnote text-text-secondary">
+          {number(report.n)} photos · {report.created_at?.slice(0, 16).replace('T', ' ')} UTC · took {duration(report.duration_seconds)}
+          {report.winner ? ` · kept: ${describeOptions(report.winner)}` : ''}
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-footnote">
+          <thead>
+            <tr className="text-left text-text-secondary">
+              <th className="pr-2 font-normal">Options</th><th className="pr-2 font-normal">Top 1</th><th className="pr-2 font-normal">Top 20</th>
+              <th className="pr-2 font-normal">Number</th><th className="pr-2 font-normal">Decided</th><th className="pr-2 font-normal">Wrong</th><th className="font-normal">p95</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.rows.map(row => (
+              <tr key={row.label} className={`tabular-nums ${row.label === report.winner ? 'font-semibold' : ''}`}>
+                <td className="pr-2">{describeOptions(row.label)}</td>
+                {row.status === 'ok' ? (
+                  <>
+                    <td className="pr-2">{percent(row.top1)}</td><td className="pr-2">{percent(row.top20)}</td><td className="pr-2">{percent(row.number_exact)}</td>
+                    <td className="pr-2">{percent(row.decided)}</td><td className="pr-2">{number(row.decided_wrong)}</td><td>{row.p95_ms != null ? `${number(row.p95_ms)} ms` : '–'}</td>
+                  </>
+                ) : (
+                  <td colSpan={6} className="text-text-secondary">needs the {(row.missing_indexes || []).join(', ')} index</td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 const RIGHT_LABEL = { matcher: 'the matcher', ollama: 'Ollama', current: 'Ollama', neither: 'neither' }
 
 function SideBySide({ data }) {
@@ -200,6 +244,7 @@ export default function ScannerLabSection() {
   const refresh = () => queryClient.invalidateQueries({ queryKey: QUERY_KEY })
   const buildIndex = useMutation({ mutationFn: () => api.post('/card-match/index').then(r => r.data), onSuccess: refresh })
   const benchmark = useMutation({ mutationFn: kind => api.post('/card-match/benchmark', { kind }).then(r => r.data), onSuccess: refresh })
+  const buildExtra = useMutation({ mutationFn: name => api.post('/card-match/index', { name }).then(r => r.data), onSuccess: refresh })
   const stop = useMutation({ mutationFn: () => api.post('/card-match/stop').then(r => r.data), onSuccess: refresh })
 
   if (isError || !data) return null
@@ -208,8 +253,9 @@ export default function ScannerLabSection() {
   const running = Boolean(job.running)
   const ready = data.model?.available
   const progress = job.progress || {}
-  const errorText = buildIndex.error?.response?.data?.detail || benchmark.error?.response?.data?.detail
-  const busy = running || buildIndex.isPending || benchmark.isPending
+  const errorText = buildIndex.error?.response?.data?.detail || benchmark.error?.response?.data?.detail || buildExtra.error?.response?.data?.detail
+  const busy = running || buildIndex.isPending || benchmark.isPending || buildExtra.isPending
+  const extras = Object.entries(data.extra_indexes || {})
 
   let jobLine = null
   if (running) {
@@ -232,6 +278,10 @@ export default function ScannerLabSection() {
           <Row label="Model" value={`${data.model?.name}${ready ? '' : ' (missing from this image)'}`} />
           <Row label="Index built" value={index.built ? `${index.built_at?.slice(0, 16).replace('T', ' ')} UTC · ${duration(index.build_seconds) || 'in steps'}` : 'not yet'} />
           <Row label="Threads" value={`${data.threads}${data.autorun ? ' · runs by itself after a deploy' : ''}`} />
+          <Row testId="scanner-lab-options" label="Matching options in use" value={describeOptions(data.options?.active || 'baseline')} />
+          {extras.map(([name, extra]) => (
+            <Row key={name} label={`Index: ${extra.label}`} value={extra.built ? `${number(extra.count)} pictures` : 'not built'} />
+          ))}
           {!data.ocr_available && <p className="text-footnote text-red-500">The OCR library is not installed in this image.</p>}
           {jobLine && <p className="text-footnote" aria-live="polite" data-testid="scanner-lab-job">{jobLine}</p>}
           {errorText && <p className="text-footnote text-red-500">{errorText}</p>}
@@ -245,6 +295,17 @@ export default function ScannerLabSection() {
             <button type="button" className={button} disabled={busy || !ready || !index.built || !data.labelled_traces} onClick={() => benchmark.mutate('labelled')} data-testid="scanner-lab-labelled">
               <FlaskConical size={13} aria-hidden="true" /> Run on diagnostics ({number(data.labelled_traces)} confirmed)
             </button>
+            <button type="button" className={button} disabled={busy || !ready || !index.built || !data.labelled_traces} onClick={() => benchmark.mutate('compare-labelled')} data-testid="scanner-lab-compare">
+              <GitCompare size={13} aria-hidden="true" /> Compare options (real scans)
+            </button>
+            <button type="button" className={button} disabled={busy || !ready || !index.built} onClick={() => benchmark.mutate('compare-synthetic')} data-testid="scanner-lab-compare-synthetic">
+              <GitCompare size={13} aria-hidden="true" /> Compare options (synthetic)
+            </button>
+            {extras.map(([name, extra]) => (
+              <button key={name} type="button" className={button} disabled={busy || !extra.available || !index.built} onClick={() => buildExtra.mutate(name)} data-testid={`scanner-lab-build-${name}`}>
+                <Hammer size={13} aria-hidden="true" /> {extra.built ? 'Update' : 'Build'} {extra.label} index
+              </button>
+            ))}
             {running && (
               <button type="button" className={button} onClick={() => stop.mutate()}>Stop</button>
             )}
@@ -253,6 +314,9 @@ export default function ScannerLabSection() {
         {shadow.data?.report && (shadow.data.enabled || shadow.data.report.compared > 0) && <ShadowView data={shadow.data} />}
         {data.reports?.synthetic && <Report report={data.reports.synthetic} title="Latest benchmark: synthetic photos" />}
         {data.reports?.labelled && <Report report={data.reports.labelled} title="Latest benchmark: real scans (diagnostics)" />}
+        {data.reports?.['compare-labelled'] && <CompareTable report={data.reports['compare-labelled']} title="Option comparison: real scans" />}
+        {data.reports?.['compare-synthetic'] && <CompareTable report={data.reports['compare-synthetic']} title="Option comparison: synthetic photos" />}
+        {data.misses && <Misses />}
         {!data.reports?.synthetic && !data.reports?.labelled && (
           <p className="border-t border-separator px-4 py-3 text-footnote text-text-secondary">No benchmark has run yet.</p>
         )}
