@@ -55,11 +55,14 @@ def default_matcher():
     except ImportError:
         return None, "ocr_missing"
     try:
-        embedder = embed.get_embedder(model)
+        from . import variants
         from .ocr import get_reader
         from database import SessionLocal
 
-        return pipeline.CardMatcher(index, embedder, pipeline.db_candidate_loader(SessionLocal), get_reader()), None
+        options = variants.parse(variants.active_label())
+        if variants.missing_indexes(options):  # an option whose index is not built yet runs without that part
+            options = variants.Options(names=options.names, tta=options.tta)
+        return variants.build_matcher(options, SessionLocal, ocr_reader=get_reader()), None
     except Exception as exc:  # a corrupt model file, ONNX Runtime missing, ...
         logger.warning("Shadow matcher not ready: %s", exc)
         return None, "model_error"

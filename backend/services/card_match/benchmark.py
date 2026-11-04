@@ -37,7 +37,7 @@ BAR_P95_MS = 1500
 BAR_EXTRA_RAM_MB = 1536
 
 HOLO_WORDS = ("holo", "illustration", "ultra", "secret", "full art", "rainbow", "hyper", "special", "amazing", "radiant", "shiny")
-STAGES = ("detect", "embed", "search", "ocr", "decide", "total")
+STAGES = ("detect", "embed", "search", "ocr", "name", "decide", "total")
 HIRES_DELAY_SECONDS = 0.2
 
 
@@ -224,7 +224,7 @@ def _finish_report(kind: str, started: float, index: CardIndex, matcher, results
          "ok": None if extra_ram is None else extra_ram <= BAR_EXTRA_RAM_MB},
     ]
     report = {
-        "kind": kind, "matcher_version": MATCHER_VERSION, "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "kind": kind, "matcher_version": MATCHER_VERSION, "options": getattr(matcher, "label", "baseline"), "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "duration_seconds": round(time.monotonic() - started, 1), "model": index.model,
         "index": {k: v for k, v in index_status(index.model).items() if k in ("count", "build_seconds", "size_bytes", "built_at", "dim")},
         "host": {"cpu_count": os.cpu_count(), "threads": config.threads(), "platform": platform.platform(), "python": platform.python_version()},
@@ -339,10 +339,10 @@ def _score(outcome, entry: dict, settings: dict, corners, card_width: float) -> 
 
 def run_labelled(
     session_factory, matcher, *, trace_dir: Path, progress: Callable[[dict], None] | None = None,
-    should_stop: Callable[[], bool] | None = None,
+    should_stop: Callable[[], bool] | None = None, collector=None,
 ) -> dict | None:
     """The diagnostics traces with a confirmed answer, through the pipeline, next to today's Ollama path.
-    Returns None when there are no usable traces."""
+    Returns None when there are no usable traces. A ``misses.MissCollector`` gets every scan to keep the misses."""
     from .images import decode_rgb
 
     started = time.monotonic()
@@ -384,6 +384,11 @@ def run_labelled(
         except Exception:
             continue
         outcome = matcher.match(photo)
+        if collector is not None:
+            try:
+                collector.add(trace=path.name, photo=photo, outcome=outcome, truth_id=truth_id)
+            except Exception:  # the misses view must never stop the benchmark
+                logger.exception("Card-match: could not record a miss for %s", path.name)
         rank = next((m["rank"] for m in outcome.matches if m["card_id"] == truth_id), None)
         decision = outcome.decision
         number_local = outcome.ocr.get("number_local")
@@ -433,7 +438,88 @@ def run_labelled(
             "disagreements": examples,
         },
     }
+    if collector is not None and not (should_stop and should_stop()):
+        collector.finish(getattr(matcher, "label", ""))
     return _finish_report("labelled", started, index, matcher, results, extra, rss_before)
+
+
+# ── Comparing the options side by side ───────────────────────────────────────
+
+COMPARE_MIN_GAIN = 0.5  # points of top-20 or decided a challenger must add to replace the plainer option set
+
+
+def compare_row(label: str, report: dict | None, *, missing: list[str] | None = None) -> dict:
+    if report is None:
+        return {"label": label, "status": "skipped", "missing_indexes": missing or []}
+    m = report["metrics"]
+    timings = report.get("timings_ms", {}).get("total", {})
+    return {
+        "label": label, "status": "ok", "n": m["n"], "top1": m["top1_pct"], "top5": m["top5_pct"], "top20": m["top20_pct"],
+        "number_exact": m["number_exact_pct"], "decided": m["decided_pct"], "decided_right": m["decided_right_pct"],
+        "decided_wrong": m["decided_wrong"], "median_ms": timings.get("median"), "p95_ms": timings.get("p95"),
+        "extra_mb": report.get("memory", {}).get("extra_mb"),
+    }
+
+
+def pick_winner(rows: list[dict]) -> dict | None:
+    """The option set to keep: no more wrong decisions than the plain run, inside the time bar, and the best
+    top-20 then decided rate. A plainer option set (earlier in the list) wins unless a later one adds at
+    least ``COMPARE_MIN_GAIN`` points of top 20 or of decided."""
+    ok = [row for row in rows if row["status"] == "ok"]
+    if not ok:
+        return None
+    wrong_limit = min(row["decided_wrong"] for row in ok)
+    eligible = [row for row in ok if row["decided_wrong"] <= wrong_limit and (row["p95_ms"] is None or row["p95_ms"] <= BAR_P95_MS)]
+    if not eligible:
+        return None
+    best = eligible[0]
+    for row in eligible[1:]:
+        gain_top20 = (row["top20"] or 0) - (best["top20"] or 0)
+        gain_decided = (row["decided"] or 0) - (best["decided"] or 0)
+        if max(gain_top20, gain_decided) >= COMPARE_MIN_GAIN and gain_top20 >= -0.5 and gain_decided >= -0.5:
+            best = row
+    return best
+
+
+def run_compare(
+    kind: str, session_factory, labels, *, data_dir: Path | None = None, trace_dir: Path | None = None, ocr_reader=None,
+    progress: Callable[[dict], None] | None = None, should_stop: Callable[[], bool] | None = None,
+) -> dict:
+    """Run ``labelled`` or ``synthetic`` once per option set and put the results in one table."""
+    from . import variants
+
+    started = time.monotonic()
+    rows, reports = [], {}
+    for position, label in enumerate(labels, start=1):
+        if should_stop and should_stop():
+            break
+        options = variants.parse(label)
+        missing = variants.missing_indexes(options, data_dir)
+        if missing:
+            rows.append(compare_row(label, None, missing=missing))
+            continue
+        matcher = variants.build_matcher(options, session_factory, data_dir=data_dir, ocr_reader=ocr_reader)
+
+        def step_progress(state: dict, _label=label, _position=position) -> None:
+            (progress or (lambda _s: None))({**state, "compare": _label, "compare_step": _position, "compare_total": len(labels)})
+
+        if kind == "labelled":
+            report = run_labelled(session_factory, matcher, trace_dir=trace_dir, progress=step_progress, should_stop=should_stop)
+        else:
+            report = run_synthetic(session_factory, matcher, data_dir=data_dir, progress=step_progress, should_stop=should_stop)
+        if report is None:
+            raise RuntimeError("No diagnostics traces with a confirmed answer for English cards yet")
+        reports[label] = report
+        rows.append(compare_row(label, report))
+    winner = pick_winner(rows)
+    first = next(iter(reports.values()), None)
+    return {
+        "kind": f"compare-{kind}", "matcher_version": MATCHER_VERSION, "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "duration_seconds": round(time.monotonic() - started, 1), "rows": rows, "winner": winner["label"] if winner else None,
+        "n": rows[0].get("n") if rows and rows[0]["status"] == "ok" else None,
+        "metrics": {"n": rows[0].get("n") if rows and rows[0]["status"] == "ok" else 0},
+        "host": first.get("host") if first else None,
+    }
 
 
 # ── Reports on disk ──────────────────────────────────────────────────────────
@@ -453,7 +539,7 @@ def latest_reports(data_dir: Path | None = None) -> dict[str, dict]:
     """The newest report of each kind: ``{"synthetic": {...}, "labelled": {...}}``."""
     out: dict[str, dict] = {}
     directory = reports_dir(data_dir)
-    for kind in ("synthetic", "labelled"):
+    for kind in ("synthetic", "labelled", "compare-labelled", "compare-synthetic"):
         files = sorted(directory.glob(f"benchmark-{kind}-*.json"))
         if files:
             try:

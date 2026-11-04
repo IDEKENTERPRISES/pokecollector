@@ -11,7 +11,7 @@ from api.auth import get_current_user
 from database import get_db
 from models import Card, User
 from services import scan_trace
-from services.card_match import MATCHER_VERSION, benchmark, config, embed, index as index_module, jobs as jobs_module, shadow as shadow_module
+from services.card_match import MATCHER_VERSION, benchmark, config, embed, index as index_module, jobs as jobs_module, misses as misses_module, shadow as shadow_module, variants
 from services.card_match.model_specs import DEFAULT_MODEL, MODEL_SPECS
 
 router = APIRouter()
@@ -48,11 +48,33 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
         "index_after_sync": config.index_after_sync_enabled(),
         "english_total": _english_picture_total(db),
         "index": index_module.index_status(DEFAULT_MODEL),
+        "extra_indexes": {
+            name: {**index_module.index_status(name), "label": spec["label"], "available": embed.model_available(spec["model"])}
+            for name, spec in variants.index_specs().items() if name != DEFAULT_MODEL
+        },
+        "options": {"active": variants.active_label(), "compare": list(variants.COMPARE_LABELS)},
+        "misses": _misses_summary(),
         "job": jobs_module.jobs.status(),
         "reports": benchmark.latest_reports(),
         "labelled_traces": benchmark.count_labelled_traces(trace_dir),
         "thresholds": benchmark.thresholds(),
     }
+
+
+def _misses_summary() -> dict | None:
+    report = misses_module.load_latest()
+    if report is None:
+        return None
+    return {"created_at": report["created_at"], "scans": report["scans"], "misses": report["misses"], "counts": report["counts"]}
+
+
+@router.get("/misses")
+def card_match_misses(tag: str | None = None, offset: int = 0, limit: int = misses_module.PAGE_SIZE, current_user: User = Depends(get_current_user)):
+    """Confirmed real scans where the right card was not the first pick, with thumbnails and likely causes."""
+    _require_admin(current_user)
+    if tag and tag not in misses_module.TAGS:
+        raise HTTPException(status_code=422, detail="Unknown tag")
+    return misses_module.page(tag, max(0, offset), max(1, min(limit, 60)))
 
 
 _SHADOW_REPORT_TTL_SECONDS = 20
@@ -82,11 +104,20 @@ def _require_ready(need_index: bool) -> None:
             raise HTTPException(status_code=409, detail="The OCR library is not installed")
 
 
+class IndexRequest(BaseModel):
+    name: str = DEFAULT_MODEL
+
+
 @router.post("/index")
-def start_index(current_user: User = Depends(get_current_user)):
+def start_index(body: IndexRequest | None = None, current_user: User = Depends(get_current_user)):
     _require_admin(current_user)
-    _require_ready(False)
-    started, status = jobs_module.start_index(DEFAULT_MODEL)
+    name = body.name if body else DEFAULT_MODEL
+    spec = variants.index_specs().get(name)
+    if spec is None:
+        raise HTTPException(status_code=422, detail="Unknown index")
+    if not embed.model_available(spec["model"]):
+        raise HTTPException(status_code=409, detail="The model file is not in this image")
+    started, status = jobs_module.start_index(name)
     return {"started": started, "job": status}
 
 
@@ -97,8 +128,8 @@ class BenchmarkRequest(BaseModel):
 @router.post("/benchmark")
 def start_benchmark(body: BenchmarkRequest, current_user: User = Depends(get_current_user)):
     _require_admin(current_user)
-    if body.kind not in ("synthetic", "labelled"):
-        raise HTTPException(status_code=422, detail="kind must be synthetic or labelled")
+    if body.kind not in ("synthetic", "labelled", "compare-synthetic", "compare-labelled"):
+        raise HTTPException(status_code=422, detail="kind must be synthetic, labelled, compare-synthetic or compare-labelled")
     _require_ready(True)
     started, status = jobs_module.start_benchmark(body.kind, DEFAULT_MODEL)
     return {"started": started, "job": status}

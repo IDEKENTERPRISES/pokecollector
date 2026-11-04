@@ -93,18 +93,23 @@ def _session_factory():
 
 
 def build_index_work(model: str = DEFAULT_MODEL, *, session_factory=None, embedder=None, data_dir: Path | None = None) -> dict:
-    from . import index as index_module
+    """``model`` is an index name from ``variants.index_specs()``: the whole-card index of a model, or the
+    artwork-only index of the default model."""
+    from . import index as index_module, variants
     from .embed import get_embedder
 
+    spec = variants.index_specs().get(model, {"model": model, "crop": "full"})
     return index_module.build_index(
-        session_factory or _session_factory(), embedder or get_embedder(model), data_dir=data_dir,
-        progress=jobs._progress, should_stop=jobs._stop.is_set,
+        session_factory or _session_factory(), embedder or get_embedder(spec["model"]), data_dir=data_dir,
+        progress=jobs._progress, should_stop=jobs._stop.is_set, crop=spec["crop"], index_name=model,
     )
 
 
 def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=None, embedder=None, data_dir: Path | None = None,
-                   count: int = 400) -> dict:
-    from . import benchmark, pipeline
+                   count: int = 400, options: str | None = None) -> dict:
+    """``kind``: synthetic, labelled (the option set in use, or ``options``), or compare-synthetic /
+    compare-labelled (every option set side by side; a clear winner on real photos becomes the one in use)."""
+    from . import benchmark, misses, pipeline, variants
     from .embed import get_embedder
     from .index import get_index
     from .ocr import get_reader
@@ -114,10 +119,36 @@ def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=Non
     index = get_index(model, data_dir)
     if index is None or len(index) == 0:
         raise RuntimeError("The picture index is empty: build it first")
-    matcher = pipeline.CardMatcher(index, embedder or get_embedder(model), pipeline.db_candidate_loader(factory), get_reader())
+    trace_dir = scan_trace.trace_root() or scan_trace.trace_storage_root()
+    if kind.startswith("compare-"):
+        base_kind = kind.split("-", 1)[1]
+        if base_kind == "labelled" and not trace_dir:
+            raise RuntimeError("No diagnostics traces with a confirmed answer for English cards yet")
+        report = benchmark.run_compare(
+            base_kind, factory, variants.COMPARE_LABELS, data_dir=data_dir, trace_dir=trace_dir, ocr_reader=get_reader(),
+            progress=jobs._progress, should_stop=jobs._stop.is_set,
+        )
+        if base_kind == "labelled" and report["winner"] and not jobs._stop.is_set():
+            winner = next(row for row in report["rows"] if row["label"] == report["winner"])
+            variants.save_chosen(
+                winner["label"],
+                f"best of {len(report['rows'])} option sets on {winner['n']} real photos: top 20 {winner['top20']}%, decided {winner['decided']}%, {winner['decided_wrong']} wrong",
+                data_dir,
+            )
+        path = benchmark.save_report(report, data_dir)
+        return {"report": path.name, "kind": kind, "n": report["metrics"]["n"], "duration_seconds": report["duration_seconds"], "winner": report["winner"]}
+    if options is not None:
+        matcher = variants.build_matcher(variants.parse(options), factory, data_dir=data_dir, ocr_reader=get_reader())
+    elif embedder is not None:  # tests hand in their own embedder
+        matcher = pipeline.CardMatcher(index, embedder, pipeline.db_candidate_loader(factory), get_reader())
+    else:
+        matcher = variants.build_matcher(variants.parse(variants.active_label(data_dir)), factory, data_dir=data_dir, ocr_reader=get_reader())
     if kind == "labelled":
-        trace_dir = scan_trace.trace_root() or scan_trace.trace_storage_root()
-        report = benchmark.run_labelled(factory, matcher, trace_dir=trace_dir, progress=jobs._progress, should_stop=jobs._stop.is_set) if trace_dir else None
+        collector = misses.MissCollector(matcher.candidate_loader, data_dir)
+        report = (
+            benchmark.run_labelled(factory, matcher, trace_dir=trace_dir, progress=jobs._progress, should_stop=jobs._stop.is_set, collector=collector)
+            if trace_dir else None
+        )
         if report is None:
             raise RuntimeError("No diagnostics traces with a confirmed answer for English cards yet")
     else:
@@ -132,6 +163,9 @@ def start_index(model: str = DEFAULT_MODEL) -> tuple[bool, dict]:
 
 def start_benchmark(kind: str = "synthetic", model: str = DEFAULT_MODEL) -> tuple[bool, dict]:
     return jobs.start(f"benchmark-{kind}", lambda: benchmark_work(kind, model))
+
+
+AUTORUN_MIN_LABELLED = 100  # confirmed traces needed before the real-photo benchmark runs by itself
 
 
 # ── After a card sync, and once after a nonprod deploy ───────────────────────
@@ -164,7 +198,9 @@ def autorun_due(model: str = DEFAULT_MODEL) -> bool:
 
 def autorun_once(warmer=None, model: str = DEFAULT_MODEL, *, delay_seconds: float = 90) -> bool:
     """SCAN_MATCHER_AUTORUN=1 (nonprod only): once per matcher version, fill the picture cache if it is
-    incomplete, build the index, then run the synthetic benchmark. Returns whether a run was started."""
+    incomplete, build the index (and the artwork-only one), run the synthetic benchmark, and, when at least
+    ``AUTORUN_MIN_LABELLED`` scans are confirmed, the real-photo benchmark and the option comparison.
+    Returns whether a run was started."""
     if not config.autorun_enabled() or not autorun_due(model):
         return False
 
@@ -175,7 +211,13 @@ def autorun_once(warmer=None, model: str = DEFAULT_MODEL, *, delay_seconds: floa
             deadline = time.monotonic() + AUTORUN_WARMUP_WAIT_SECONDS
             while warmer.is_running() and time.monotonic() < deadline:
                 time.sleep(10)
-        for step in (lambda: start_index(model), lambda: start_benchmark("synthetic", model)):
+        from . import benchmark, variants
+        from services import scan_trace
+
+        steps = [lambda: start_index(model), lambda: start_index(variants.ART_INDEX), lambda: start_benchmark("synthetic", model)]
+        if benchmark.count_labelled_traces(scan_trace.trace_root() or scan_trace.trace_storage_root()) >= AUTORUN_MIN_LABELLED:
+            steps += [lambda: start_benchmark("labelled", model), lambda: start_benchmark("compare-labelled", model)]
+        for step in steps:
             started, _status = step()
             while not started:  # another job (a manual one) is running: wait our turn
                 time.sleep(15)

@@ -138,7 +138,8 @@ class OcrReader:
         )
         self._lock = threading.Lock()
 
-    def _strip_lines(self, card: np.ndarray, box: tuple[float, float, float, float], *, zoom: float = 2.0, sharpen: bool = False) -> list[str]:
+    def _strip_items(self, card: np.ndarray, box: tuple[float, float, float, float], *, zoom: float = 2.0, sharpen: bool = False) -> list[tuple[str, float]]:
+        """(text, height in strip pixels) per recognised line of a strip, left to right."""
         import cv2
 
         h, w = card.shape[:2]
@@ -154,7 +155,18 @@ class OcrReader:
         if not found:
             return []
         ordered = sorted(found, key=lambda item: min(point[0] for point in item[0]))
-        return [str(item[1]) for item in ordered]
+        return [(str(item[1]), float(max(point[1] for point in item[0]) - min(point[1] for point in item[0]))) for item in ordered]
+
+    def _strip_lines(self, card: np.ndarray, box: tuple[float, float, float, float], *, zoom: float = 2.0, sharpen: bool = False) -> list[str]:
+        return [text for text, _height in self._strip_items(card, box, zoom=zoom, sharpen=sharpen)]
+
+    def read_name(self, card: np.ndarray, *, flipped: bool = False):
+        """The name line (and the HP) at the top of the flat card; ``flipped`` turns the card first."""
+        from . import names
+
+        if flipped:
+            card = np.ascontiguousarray(card[::-1, ::-1])
+        return names.parse_name_lines(self._strip_items(card, names.NAME_STRIP, zoom=names.NAME_ZOOM))
 
     def _read_card(self, card: np.ndarray) -> OcrResult:
         lines: list[str] = []
