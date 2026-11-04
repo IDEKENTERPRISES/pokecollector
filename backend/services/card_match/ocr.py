@@ -31,7 +31,8 @@ HP_STRIP = (0.45, 0.0, 1.0, 0.14)
 
 _NUMBER_TOTAL = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{0,4}\s?\d{1,3}[A-Za-z]?)\s*[/|\\]\s*([A-Za-z]{0,4}\s?\d{1,3})")  # no end guard: a stray mark after the total reads as one more digit
 _PROMO = re.compile(r"(?<![A-Za-z0-9])(SWSH|SVP|SM|XY|BW|HGSS|DP|NP|SVE|MEP|MEE)\s?-?\s?(\d{1,3})(?![0-9/])", re.IGNORECASE)
-_HP = re.compile(r"(?:HP|PV|KP|PS|PF)\s*(\d{2,3})|(\d{2,3})\s*HP", re.IGNORECASE)
+_HP_BEFORE = re.compile(r"(?:HP|PV|KP|PS|PF)\s*(\d{2,3})", re.IGNORECASE)
+_HP_AFTER = re.compile(r"(?<!\d)(\d{2,3})\s?HP", re.IGNORECASE)
 _TOKEN = re.compile(r"[A-Z0-9]{2,6}")
 _LANG_CODES = {"EN", "DE", "FR", "IT", "ES", "PT", "JP", "KO", "NL", "PL", "RU", "ID", "TH", "ZH"}
 
@@ -66,7 +67,14 @@ def _clean_number_part(text: str, *, digits_only_tail: bool = True) -> str:
     if not match:
         return text
     prefix, body, suffix = match.groups()
+    if len(prefix) == 1 and prefix in "OoIlSBZDQ":  # real prefixes are two letters or more: this is a misread digit
+        prefix, body = "", prefix.translate(_DIGITISE) + body
     return f"{prefix.upper()}{body.translate(_DIGITISE) if digits_only_tail else body}{suffix.upper()}"
+
+
+def find_hp(text: str) -> str | None:
+    match = _HP_BEFORE.search(text) or _HP_AFTER.search(text)
+    return match.group(1) if match else None
 
 
 def parse_text(lines: list[str]) -> OcrResult:
@@ -81,9 +89,7 @@ def parse_text(lines: list[str]) -> OcrResult:
         promo = _PROMO.search(joined)
         if promo:
             result.number_local = f"{promo.group(1).upper()}{promo.group(2).translate(_DIGITISE)}"
-    hp = _HP.search(joined)
-    if hp:
-        result.hp = hp.group(1) or hp.group(2)
+    result.hp = find_hp(joined)
     for token in _TOKEN.findall(joined.upper()):
         if token not in _LANG_CODES and token not in result.tokens:
             result.tokens.append(token)
@@ -133,9 +139,9 @@ class OcrReader:
         result = parse_text(lines)
         if read_hp:
             hp_lines = self._strip_lines(card, HP_STRIP)
-            hp = _HP.search("  ".join(hp_lines))
+            hp = find_hp("  ".join(hp_lines))
             if hp:
-                result.hp = hp.group(1) or hp.group(2)
+                result.hp = hp
             else:  # "HP" and the figure on separate lines, or the HP word misread
                 figures = [int(m) for m in re.findall(r"(?<!\d)(\d{2,3})(?!\d)", " ".join(hp_lines))]
                 result.hp = next((str(v) for v in figures if 30 <= v <= 340 and v % 10 == 0), None)

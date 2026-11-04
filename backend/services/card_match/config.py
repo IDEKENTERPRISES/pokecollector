@@ -13,7 +13,7 @@ def data_dir() -> Path:
 
 
 def model_dir() -> Path:
-    return Path(os.environ.get("CARD_MATCH_MODEL_DIR", "/app/models"))
+    return Path(os.environ.get("CARD_MATCH_MODEL_DIR", "/app/card-match-models"))
 
 
 def threads() -> int:

@@ -162,11 +162,24 @@ def index_status(model: str, data_dir: Path | None = None) -> dict:
     }
 
 
+def picture_query(db, lang: str = "en"):
+    """Physical (not digital-only, e.g. TCG Pocket) synced cards of a language that have a catalogue picture."""
+    from models import Card
+    from services import offline_carddb
+
+    return (
+        offline_carddb._card_query(db, lang)
+        .filter(Card.is_digital == False, Card.images_small.isnot(None), Card.images_small != "")  # noqa: E712
+    )
+
+
 def wanted_pictures(db, lang: str = "en") -> list[tuple[str, str]]:
-    """(card id, picture key) for every synced card of a language that has a catalogue picture."""
+    """(card id, picture key) for every card the index should hold, in id order."""
+    from models import Card
     from services import card_picture_packs
 
-    return [(card_id, card_picture_packs.card_image_key(card_id, url)) for card_id, url in card_picture_packs._language_cards(db, lang)]
+    rows = picture_query(db, lang).with_entities(Card.id, Card.images_small).order_by(Card.id.asc()).all()
+    return [(card_id, card_picture_packs.card_image_key(card_id, url)) for card_id, url in rows]
 
 
 def cached_picture_bytes(db, keys: list[str]) -> dict[str, bytes]:

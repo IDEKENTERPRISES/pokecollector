@@ -185,7 +185,7 @@ class CardMatcher:
         matches = [
             {
                 "card_id": c["_db_id"], "tcg_card_id": c["tcg_card_id"], "similarity": c["_similarity"], "rank": c["_rank"],
-                "name": c.get("name"), "number": c.get("number"), "set": c.get("set"),
+                "name": c.get("name"), "number": c.get("number"), "set": c.get("set"), "printed_total": c.get("printed_total"),
             }
             for c in candidates
         ]
@@ -199,6 +199,7 @@ class CardMatcher:
         return MatchResult(
             status="decided" if decision else "unsure", decision=decision, unsure_reason=None if decision else reason,
             matches=matches,
-            detection={"found": detection.found, "confidence": detection.confidence, "method": detection.method},
+            detection={"found": detection.found, "confidence": detection.confidence, "method": detection.method,
+                       "corners": [[round(x, 1), round(y, 1)] for x, y in detection.corners]},
             ocr=ocr_info, timings_ms={key: round(value, 1) for key, value in timings.items()},
         )

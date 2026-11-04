@@ -26,6 +26,11 @@ services:
       # Scanner diagnostics: makes the per-user "Share scanner diagnostics" switch available
       # (docs/NONPROD.md). Traces go to the already-mounted scan-traces folder below.
       SCAN_TRACE_DIR: /app/data/scan-traces
+      # Scanner picture matcher prototype (docs/CARD_MATCH.md): build the index and run the benchmark
+      # once after a deploy (overnight), and keep the index current after each card sync. Prod sets neither.
+      SCAN_MATCHER_AUTORUN: "1"
+      SCAN_MATCHER_INDEX_AFTER_SYNC: "1"
+      CARD_MATCH_DIR: /app/data/card-match
     # Same container paths as the base and Portainer files, so these replace their mounts.
     volumes:
       - /home/rage/Documents/docker/pokelocal-nonprod/backups:/app/backups
@@ -33,6 +38,7 @@ services:
       - /home/rage/Documents/docker/pokelocal-nonprod/data/pokedex-images:/app/data/pokedex-images
       - /home/rage/Documents/docker/pokelocal-nonprod/data/scan-uploads:/app/data/scan-uploads
       - /home/rage/Documents/docker/pokelocal-nonprod/data/scan-traces:/app/data/scan-traces
+      - /home/rage/Documents/docker/pokelocal-nonprod/data/card-match:/app/data/card-match
 
   frontend:
     image: pokelocal-frontend:nonprod

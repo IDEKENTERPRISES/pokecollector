@@ -318,3 +318,10 @@ def schedule_after_sync() -> None:
         card_picture_warmer.start()
     except Exception:
         logger.exception("Could not start the card picture warm-up")
+        return
+    try:  # picture matcher (SCAN_MATCHER_INDEX_AFTER_SYNC=1): index the new pictures once they are cached
+        from services.card_match import jobs as card_match_jobs
+
+        card_match_jobs.index_after_warmup(card_picture_warmer)
+    except Exception:
+        logger.exception("Could not schedule the card matcher index update")
