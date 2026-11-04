@@ -6,6 +6,12 @@ The decision reuses the ranking rules in ``api.recognize`` (``_candidate_rank_ke
 picture evidence on top: a rule decision is only accepted when its printing is also among the
 closest pictures; with no usable number, a picture-only decision needs a high similarity and a
 clear lead. The thresholds are provisional until the benchmark fixes them.
+
+Text candidates (``names.py``): the name line at the top of the card is read too, the local card list is
+searched for close names (filtered by the number and total read), and those printings join the picture
+top 20 before the ranking. A candidate's picture similarity comes from the picture index whether it was
+found by picture or by name, so the two kinds are ranked on the same scale; the name and number only
+move a printing up within the list. Deciding still needs the picture to agree.
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ from typing import Callable
 import numpy as np
 
 from . import config, constrained, detect as detect_module
-from .index import CardIndex, merge_hits, tcg_card_id
+from .index import CardIndex, tcg_card_id
 
 TOP_K = 20
 
@@ -41,6 +47,15 @@ LEAD_MIN_PICTURE_ONLY = _env_float("CARD_MATCH_LEAD_MIN_PICTURE_ONLY", 0.06)
 # all, because a reprint with the same artwork scores almost the same as the card itself.
 SIM_MIN_PICTURE_STRONG = _env_float("CARD_MATCH_SIM_MIN_PICTURE_STRONG", 0.88)
 LEAD_MIN_PICTURE_STRONG = _env_float("CARD_MATCH_LEAD_MIN_PICTURE_STRONG", 0.10)
+# A card whose printed name was also read and agrees (exact) may be decided by the picture with a smaller lead.
+SIM_MIN_NAME_PICTURE = _env_float("CARD_MATCH_SIM_MIN_NAME_PICTURE", 0.80)
+LEAD_MIN_NAME_PICTURE = _env_float("CARD_MATCH_LEAD_MIN_NAME_PICTURE", 0.03)
+NAME_AGREES = 0.95  # name score that counts as "the same name"
+# A rule-chosen printing found by its name may sit further down the picture ranking (reprints crowd it).
+RANK_MAX_WITH_NAME = 40
+# How much text agreement moves a printing up the combined ranking (picture similarity is the base).
+NAME_WEIGHT, NUMBER_WEIGHT, TOTAL_WEIGHT = 0.25, 0.12, 0.04
+PICTURE_KEEP = 5  # the closest pictures always stay in the list
 
 
 @dataclass
@@ -87,7 +102,7 @@ def db_candidate_loader(session_factory) -> CandidateLoader:
                     "set": local_set.name if local_set else None,
                     "set_abbreviation": local_set.abbreviation if local_set else None,
                     "printed_total": (local_set.printed_total or None) if local_set else None,
-                    "_lang": card.lang or "en", "images_small": card.images_small,
+                    "_lang": card.lang or "en", "images_small": card.images_small, "rarity": card.rarity,
                 }
             return out
         finally:
@@ -117,7 +132,8 @@ def decide(card_info: dict, candidates: list[dict]) -> tuple[dict | None, str | 
         decided, mechanism = rules._metadata_decision(card_info, candidates)
         if decided:
             chosen = sorted(candidates, key=lambda card: rules._candidate_rank_key(card_info, card))[0]
-            if chosen["_similarity"] >= SIM_MIN_WITH_RULES and chosen["_rank"] <= RANK_MAX_WITH_RULES:
+            near = chosen["_rank"] <= RANK_MAX_WITH_RULES or (chosen.get("_name_score", 0.0) >= 0.9 and chosen["_rank"] <= RANK_MAX_WITH_NAME)
+            if chosen["_similarity"] >= SIM_MIN_WITH_RULES and near:
                 return {"candidate": chosen, "mechanism": mechanism, "lead": round(lead, 4)}, None
             return None, "rules_choice_not_close_in_picture"
         if not number_hits:
@@ -133,6 +149,9 @@ def decide(card_info: dict, candidates: list[dict]) -> tuple[dict | None, str | 
         return None, "number_matches_several_printings"
     if top_picture["_similarity"] >= SIM_MIN_PICTURE_ONLY and lead >= LEAD_MIN_PICTURE_ONLY:
         return {"candidate": top_picture, "mechanism": "picture_lead", "lead": round(lead, 4)}, None
+    if (top_picture.get("_name_score", 0.0) >= NAME_AGREES and top_picture["_similarity"] >= SIM_MIN_NAME_PICTURE
+            and lead >= LEAD_MIN_NAME_PICTURE):
+        return {"candidate": top_picture, "mechanism": "name_and_picture", "lead": round(lead, 4)}, None
     return None, "no_number_and_picture_not_clear"
 
 
@@ -155,13 +174,65 @@ def correct_number(card_info: dict, candidates: list[dict], lines: list[str]) ->
     return {"read": read, "number": found.number, "total": found.total, "distance": found.distance}
 
 
+@dataclass
+class Signal:
+    """One picture index and how to build its query: the whole card, or the artwork window only."""
+    name: str
+    index: CardIndex
+    embedder: object
+    crop: str = "full"  # "full" | "art"
+
+
 class CardMatcher:
-    def __init__(self, index: CardIndex, embedder, candidate_loader: CandidateLoader, ocr_reader=None, *, read_hp: bool = False) -> None:
+    def __init__(
+        self, index: CardIndex, embedder, candidate_loader: CandidateLoader, ocr_reader=None, *, read_hp: bool = False,
+        extra_signals=(), tta: bool = False, names=None, label: str = "baseline",
+    ) -> None:
         self.index = index
         self.embedder = embedder
         self.candidate_loader = candidate_loader
         self.ocr_reader = ocr_reader
         self.read_hp = read_hp
+        self.extra_signals: list[Signal] = list(extra_signals)
+        self.tta = tta
+        self.names = names  # a names.NameIndex turns the text search on
+        self.label = label
+        self._row_maps: dict[int, np.ndarray] = {}
+
+    def _rows_in_primary(self, signal: Signal) -> np.ndarray:
+        """For each row of the main index, the row of the same card in another index (-1: not there)."""
+        cached = self._row_maps.get(id(signal.index))
+        if cached is None or len(cached) != len(self.index):
+            other = signal.index.row_of
+            cached = np.array([other.get(card_id, -1) for card_id in self.index.card_ids], dtype=np.int64)
+            self._row_maps[id(signal.index)] = cached
+        return cached
+
+    def _picture_scores(self, upright: np.ndarray) -> tuple[np.ndarray, bool]:
+        """(every indexed card's picture similarity, whether the card is upside down).
+
+        The main index is searched with the card at 0 and 180 degrees; the view that matches better says
+        which way up it is. Test-time augmentation adds views of the oriented card, and each extra index
+        (artwork only, a second model) adds its own similarity: the result is their average per card."""
+        views = [upright, np.ascontiguousarray(upright[::-1, ::-1])]
+        raw = self.embedder.embed(views) @ self.index.vectors.T if len(self.index) else np.zeros((2, 0), dtype=np.float32)
+        best = raw.max(axis=0) if raw.shape[1] else np.zeros(0, dtype=np.float32)
+        flipped = bool(raw.shape[1]) and float(raw[1].max()) > float(raw[0].max())
+        oriented = views[1] if flipped else views[0]
+        extra_views = detect_module.augmented_views(oriented) if self.tta else []
+        if extra_views:
+            best = np.maximum(best, self.index.best_scores(self.embedder.embed(extra_views)))
+        if self.extra_signals:
+            total = best.copy()
+            for signal in self.extra_signals:
+                pictures = [oriented] + extra_views
+                if signal.crop == "art":
+                    pictures = [detect_module.art_crop(picture) for picture in pictures]
+                other = signal.index.best_scores(signal.embedder.embed(pictures))
+                rows = self._rows_in_primary(signal)
+                total += np.where(rows >= 0, other[np.maximum(rows, 0)], best) if len(other) else best
+            best = total / (1 + len(self.extra_signals))
+        return best, flipped
 
     def match(self, photo_rgb: np.ndarray, *, top_k: int = TOP_K, use_ocr: bool = True) -> MatchResult:
         config.apply_thread_caps()
@@ -172,15 +243,19 @@ class CardMatcher:
 
         t0 = _timer()
         upright = detection.card
-        views = [upright, np.ascontiguousarray(upright[::-1, ::-1])]  # 0 and 180 degrees
-        vectors = self.embedder.embed(views)
+        scores, flipped = self._picture_scores(upright)
         timings["embed"] = (_timer() - t0) * 1000
 
         t0 = _timer()
-        per_view = self.index.search(vectors, top_k)
-        hits = merge_hits(per_view, top_k)
-        # Which way up the card is, from the picture: the view that matches a catalogue picture better.
-        flipped = len(per_view) > 1 and bool(per_view[1]) and (not per_view[0] or per_view[1][0][1] > per_view[0][0][1])
+        count = len(scores)
+        k = min(top_k, count)
+        if count:
+            part = np.argpartition(-scores, k - 1)[:k]
+            top_rows = part[np.argsort(-scores[part])]
+        else:
+            top_rows = np.zeros(0, dtype=np.int64)
+        card_ids = self.index.card_ids
+        hits = [(card_ids[row], float(scores[row])) for row in top_rows]
         timings["search"] = (_timer() - t0) * 1000
 
         ocr_info: dict = {}
@@ -194,14 +269,34 @@ class CardMatcher:
                 "tokens": ocr_result.tokens[:12], "flipped": ocr_result.flipped, "lines": ocr_result.lines[:8],
             }
 
+        name_read = None
+        if use_ocr and self.names is not None and hasattr(self.ocr_reader, "read_name"):
+            t0 = _timer()
+            name_read = self.ocr_reader.read_name(upright, flipped=flipped)
+            if name_read.hp and not ocr_info.get("hp"):
+                ocr_info["hp"] = name_read.hp
+            ocr_info["name"] = name_read.name
+            ocr_info["name_lines"] = name_read.raw[:6]
+            hits, added = merge_candidates(
+                hits, scores, self.index.row_of, self.names, name_read.name,
+                ocr_result.number_local if ocr_result else None, ocr_result.number_total if ocr_result else None, top_k,
+            )
+            ocr_info["text_candidates_added"] = added
+            timings["name"] = (_timer() - t0) * 1000
+
         t0 = _timer()
         loaded = self.candidate_loader([card_id for card_id, _score in hits])
         candidates = []
-        for rank, (card_id, score) in enumerate(hits, start=1):
+        for position, (card_id, score) in enumerate(hits, start=1):
             row = loaded.get(card_id)
             if row is None:
                 continue
-            candidates.append({**row, "_db_id": card_id, "_similarity": round(float(score), 4), "_rank": rank})
+            # _rank: where this printing stands among all pictures (1 = closest); _position: in the final list.
+            candidate = {**row, "_db_id": card_id, "_similarity": round(float(score), 4),
+                         "_rank": 1 + int((scores > score).sum()) if count else position, "_position": position}
+            if name_read is not None:
+                candidate["_name_score"] = round(self.names.name_score_of(card_id, name_read.name), 3)
+            candidates.append(candidate)
         card_info = (
             ocr_result.as_card_info({c.get("set_abbreviation") for c in candidates if c.get("set_abbreviation")})
             if ocr_result else {}
@@ -214,13 +309,16 @@ class CardMatcher:
         timings["decide"] = (_timer() - t0) * 1000
         timings["total"] = sum(timings.values())
 
-        matches = [
-            {
-                "card_id": c["_db_id"], "tcg_card_id": c["tcg_card_id"], "similarity": c["_similarity"], "rank": c["_rank"],
+        matches = []
+        for c in candidates:
+            match = {
+                "card_id": c["_db_id"], "tcg_card_id": c["tcg_card_id"], "similarity": c["_similarity"], "rank": c["_position"],
                 "name": c.get("name"), "number": c.get("number"), "set": c.get("set"), "printed_total": c.get("printed_total"),
+                "picture_rank": c["_rank"],
             }
-            for c in candidates
-        ]
+            if "_name_score" in c:
+                match["name_score"] = c["_name_score"]
+            matches.append(match)
         decision = None
         if chosen:
             candidate = chosen["candidate"]
@@ -235,3 +333,35 @@ class CardMatcher:
                        "corners": [[round(x, 1), round(y, 1)] for x, y in detection.corners]},
             ocr=ocr_info, timings_ms={key: round(value, 1) for key, value in timings.items()},
         )
+
+
+def merge_candidates(hits, scores, row_of, names, name: str | None, number: str | None, total: str | None, top_k: int = TOP_K):
+    """The picture top list and the text candidates as one ranking of at most ``top_k`` printings.
+
+    Returns ``([(card id, picture similarity)], how many came from the text search only)``. Every printing is
+    scored ``picture similarity + name, number and total agreement``; the closest ``PICTURE_KEEP`` pictures
+    always stay, so a wrong name read can push other printings down but never the picture's own best guesses.
+    """
+    if names is None or not name:
+        return hits, 0
+    picture_ids = [card_id for card_id, _score in hits]
+    pool: dict[str, float] = {card_id: score for card_id, score in hits}
+    for hit in names.search(name, number, total):
+        row = row_of.get(hit.card_id)
+        if row is not None and hit.card_id not in pool:
+            pool[hit.card_id] = float(scores[row])
+
+    def combined(card_id: str) -> float:
+        name_score = names.name_score_of(card_id, name)
+        agreement = names.agreement(card_id, name_score, number, total)
+        bonus = NAME_WEIGHT * max(0.0, (name_score - 0.72) / 0.28)
+        bonus += NUMBER_WEIGHT if agreement.number_ok else 0.0
+        bonus += TOTAL_WEIGHT if agreement.total_ok else 0.0
+        return pool[card_id] + bonus
+
+    keep = picture_ids[:min(PICTURE_KEEP, top_k)]
+    rest = sorted((card_id for card_id in pool if card_id not in keep), key=lambda card_id: -combined(card_id))
+    chosen = keep + rest[:max(0, top_k - len(keep))]
+    chosen.sort(key=lambda card_id: -combined(card_id))
+    original = set(picture_ids)
+    return [(card_id, pool[card_id]) for card_id in chosen], sum(1 for card_id in chosen if card_id not in original)

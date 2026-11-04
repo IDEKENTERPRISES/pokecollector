@@ -27,6 +27,29 @@ MIN_CONFIDENCE = 0.45
 FALLBACK_CONFIDENCE = 0.2
 
 
+# The artwork window of a flattened card (fractions of the picture): the same place on every normal card,
+# and the one part that stays identical across reprints of a name, so it is embedded on its own as well.
+ART_BOX = (0.07, 0.115, 0.93, 0.545)
+
+
+def art_crop(card: np.ndarray) -> np.ndarray:
+    """The artwork window of an upright flat card."""
+    h, w = card.shape[:2]
+    x0, y0, x1, y1 = ART_BOX
+    return np.ascontiguousarray(card[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)])
+
+
+def augmented_views(card: np.ndarray) -> list[np.ndarray]:
+    """Two extra views of an upright flat card for test-time augmentation: a slightly tighter centre crop
+    (corner and border errors from the finder), and a brightness / contrast normalised copy (glare, dim light)."""
+    h, w = card.shape[:2]
+    mx, my = int(0.035 * w), int(0.035 * h)
+    tight = cv2.resize(np.ascontiguousarray(card[my:h - my, mx:w - mx]), (w, h), interpolation=cv2.INTER_CUBIC)
+    lab = cv2.cvtColor(card, cv2.COLOR_RGB2LAB)
+    lab[:, :, 0] = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4)).apply(lab[:, :, 0])
+    return [tight, cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)]
+
+
 @dataclass
 class Detection:
     card: np.ndarray  # RGB uint8, CARD_H x CARD_W, upright

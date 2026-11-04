@@ -71,6 +71,21 @@ class CardIndex:
             out.append([(self.entries[i][0], float(row[i])) for i in top])
         return out
 
+    def best_scores(self, queries: np.ndarray) -> np.ndarray:
+        """Every indexed card's best cosine over the query rows (one number per card, in index order)."""
+        queries = np.atleast_2d(np.asarray(queries, dtype=np.float32))
+        if len(self.entries) == 0:
+            return np.zeros(0, dtype=np.float32)
+        return (queries @ self.vectors.T).max(axis=0)
+
+    @property
+    def row_of(self) -> dict[str, int]:
+        cached = self.__dict__.get("_row_of")
+        if cached is None or len(cached) != len(self.entries):
+            cached = {card_id: row for row, (card_id, _key) in enumerate(self.entries)}
+            self.__dict__["_row_of"] = cached
+        return cached
+
     def search_merged(self, queries: np.ndarray, k: int = 20) -> list[tuple[str, float]]:
         """Search several views of one card (for example 0 and 180 degrees); a card keeps its best score."""
         return merge_hits(self.search(queries, k), k)
@@ -194,6 +209,12 @@ def cached_picture_bytes(db, keys: list[str]) -> dict[str, bytes]:
     return {key: data for key, data in rows}
 
 
+def _art_crop(picture: np.ndarray) -> np.ndarray:
+    from .detect import art_crop
+
+    return art_crop(picture)
+
+
 def build_index(
     session_factory,
     embedder,
@@ -203,15 +224,19 @@ def build_index(
     batch_size: int = 16,
     progress: Callable[[dict], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    crop: str = "full",
+    index_name: str | None = None,
 ) -> dict:
     """Embed every cached picture that has no vector yet, drop vectors for cards that are gone, save.
-    Returns the build statistics. Saves a checkpoint every ``CHECKPOINT_EVERY`` new vectors."""
+    Returns the build statistics. Saves a checkpoint every ``CHECKPOINT_EVERY`` new vectors.
+    ``crop="art"`` embeds only the artwork window of each picture (an index of its own, ``index_name``)."""
+    name = index_name or embedder.name
     started = time.monotonic()
     report = progress or (lambda _state: None)
     db = session_factory()
     try:
         wanted = wanted_pictures(db, lang)
-        existing = load_index(embedder.name, data_dir)
+        existing = load_index(name, data_dir)
         reusable: dict[tuple[str, str], np.ndarray] = {}
         if existing is not None and existing.vectors.shape[1] == embedder.dim:
             reusable = {entry: existing.vectors[row] for row, entry in enumerate(existing.entries)}
@@ -219,14 +244,14 @@ def build_index(
         todo = [entry for entry in wanted if entry not in done]
         stats = {
             "total": len(wanted), "reused": len(done), "embedded": 0, "not_cached": 0, "failed": 0,
-            "stopped": False, "model": embedder.name,
+            "stopped": False, "model": name,
         }
         report({**stats, "phase": "embedding", "todo": len(todo)})
 
         def snapshot(final: bool = False) -> None:
             entries = [entry for entry in wanted if entry in done]
             vectors = np.stack([done[entry] for entry in entries]) if entries else np.zeros((0, embedder.dim), dtype=np.float32)
-            save_index(CardIndex(embedder.name, vectors, entries), data_dir, lang=lang,
+            save_index(CardIndex(name, vectors, entries), data_dir, lang=lang,
                        build_seconds=round(time.monotonic() - started, 1) if final else None)
 
         embed_seconds = 0.0
@@ -244,7 +269,8 @@ def build_index(
                     stats["not_cached"] += 1
                     continue
                 try:
-                    images.append(decode_rgb(data))
+                    picture = decode_rgb(data)
+                    images.append(_art_crop(picture) if crop == "art" else picture)
                     ready.append(entry)
                 except Exception:  # an unreadable cached picture must not stop the build
                     logger.info("Card-match: cannot read picture %s", entry[1])

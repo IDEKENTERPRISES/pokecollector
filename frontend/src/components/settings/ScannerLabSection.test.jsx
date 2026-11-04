@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { PictureFirstView, Report, ShadowView } from './ScannerLabSection'
+import { CompareTable, PictureFirstView, Report, ShadowView } from './ScannerLabSection'
+import { MissesView } from './ScannerLabMisses'
 
 const report = {
   kind: 'synthetic',
@@ -103,6 +104,55 @@ describe('Scanner lab shadow section', () => {
   it('says so when the server has shadow mode switched off', () => {
     const html = renderToStaticMarkup(<ShadowView data={{ ...data, enabled: false }} />)
     expect(html).toContain('switched off on this server')
+  })
+})
+
+describe('Scanner lab option comparison', () => {
+  it('lists every option set with its numbers, marks the kept one and says which index a skipped one needs', () => {
+    const html = renderToStaticMarkup(
+      <CompareTable
+        title="Option comparison: real scans"
+        report={{
+          kind: 'compare-labelled', n: 132, created_at: '2026-11-05T02:00:00+00:00', duration_seconds: 1500, winner: 'names+art',
+          rows: [
+            { label: 'baseline', status: 'ok', top1: 46.2, top20: 72, number_exact: 37.9, decided: 40.9, decided_wrong: 0, p95_ms: 540 },
+            { label: 'names+art', status: 'ok', top1: 70, top20: 97.7, number_exact: 38, decided: 55, decided_wrong: 0, p95_ms: 900 },
+            { label: 'names+base', status: 'skipped', missing_indexes: ['dinov2-base'] },
+          ],
+        }}
+      />,
+    )
+    expect(html).toContain('Picture only')
+    expect(html).toContain('97.7%')
+    expect(html).toContain('kept: Name search + artwork')
+    expect(html).toContain('needs the dinov2-base index')
+  })
+})
+
+describe('Scanner lab misses view', () => {
+  const data = {
+    available: true, created_at: '2026-11-05T02:10:00+00:00', scans: 132, misses: 2, options: 'names', total: 2, offset: 0,
+    tags: { generic: 'Generic card (Basic Energy, common Trainer)', glare: 'Sleeve or top-loader glare', other: 'No clear cause' },
+    counts: { generic: 1, glare: 1 },
+    items: [
+      {
+        key: 'a', kind: 'not_in_top20', rank: null, tags: ['generic', 'glare'], decided_wrong: false,
+        truth: { name: 'Grass Energy', number: '1', set: 'Base', image: 'https://img/x.png', tcg_card_id: 'base1-1' },
+        top3: [{ tcg_card_id: 'sv1-257', name: 'Grass Energy', number: '257', similarity: 0.71, image: 'https://img/y.png' }],
+        ocr: { name: 'Grass Energy', number: null, total: null, lines: ['HP 70'] }, photo: 'data:image/jpeg;base64,AA==', card: 'data:image/jpeg;base64,AA==',
+      },
+    ],
+  }
+
+  it('shows the count per cause, the pictures, the top picks and what OCR read', () => {
+    const html = renderToStaticMarkup(<MissesView data={data} tag={null} onTag={() => {}} onMore={() => {}} />)
+    expect(html).toContain('2 of 132 confirmed real scans')
+    expect(html).toContain('Generic card (Basic Energy, common Trainer) (1)')
+    expect(html).toContain('Sleeve or top-loader glare (1)')
+    expect(html).not.toContain('No clear cause (')
+    expect(html).toContain('not in the top 20')
+    expect(html).toContain('Matcher pick 1: Grass Energy')
+    expect(html).toContain('Read: name “Grass Energy”')
   })
 })
 
