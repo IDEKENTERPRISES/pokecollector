@@ -90,7 +90,7 @@ def card_match_miss_full(key: str, current_user: User = Depends(get_current_user
     def inline(data):
         return ("data:image/jpeg;base64," + base64.b64encode(data).decode("ascii")) if data else None
 
-    return {"photo": inline(photo), "card": inline(card)}
+    return {"photo": inline(photo), "card": inline(card), "strips": misses_module.strip_views(key) or []}
 
 
 _SHADOW_REPORT_TTL_SECONDS = 20
@@ -158,8 +158,8 @@ class BenchmarkRequest(BaseModel):
 @router.post("/benchmark")
 def start_benchmark(body: BenchmarkRequest, current_user: User = Depends(get_current_user)):
     _require_admin(current_user)
-    if body.kind not in ("synthetic", "labelled", "compare-synthetic", "compare-labelled"):
-        raise HTTPException(status_code=422, detail="kind must be synthetic, labelled, compare-synthetic or compare-labelled")
+    if body.kind not in ("synthetic", "labelled", "compare-synthetic", "compare-labelled", "ocr-check"):
+        raise HTTPException(status_code=422, detail="kind must be synthetic, labelled, compare-synthetic, compare-labelled or ocr-check")
     _require_ready(True)
     started, status = jobs_module.start_benchmark(body.kind, DEFAULT_MODEL)
     return {"started": started, "job": status}

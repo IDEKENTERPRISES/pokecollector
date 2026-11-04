@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { CompareTable, HowConfirmedView, PictureFirstView, Report, ShadowView } from './ScannerLabSection'
-import { MissesView } from './ScannerLabMisses'
+import { CompareTable, HowConfirmedView, OcrCheckView, PictureFirstView, Report, ShadowView } from './ScannerLabSection'
+import { MissesView, StripRow } from './ScannerLabMisses'
 
 const report = {
   kind: 'synthetic',
@@ -198,5 +198,43 @@ describe('How confirmed cards were chosen', () => {
     expect(html).toContain('Found by search (scan had no result)')
     expect(html).toContain('3 (30%) needed the search box')
     expect(renderToStaticMarkup(<HowConfirmedView data={{ total: 0, counts: {} }} />)).toBe('')
+  })
+})
+
+describe('Scanner lab OCR views', () => {
+  it('shows what each region read, with text and confidence, and says when nothing was read', () => {
+    const read = { label: 'number-left-tight', variant: 'plain', zoom: 2, flipped: false, image: 'data:image/jpeg;base64,AA', lines: [{ text: 'SVI EN 018/091', score: 0.93 }] }
+    const empty = { label: 'bottom-band', variant: 'clahe', zoom: 2.5, flipped: true, image: null, lines: [] }
+    const html = renderToStaticMarkup(<ul><StripRow strip={read} /><StripRow strip={empty} /></ul>)
+    expect(html).toContain('number left tight')
+    expect(html).toContain('93%')
+    expect(html).toContain('SVI EN 018/091')
+    expect(html).toContain('Nothing read.')
+    expect(html).toContain('card turned')
+    expect(html).toContain('local contrast')
+  })
+
+  it('splits the OCR check by stored resolution, old way against new, and lists the failures', () => {
+    const row = (name, number) => ({ n: 40, name_pct: name, number_pct: number, total_pct: 70, set_code_pct: 50, seconds_p95: 0.9 })
+    const html = renderToStaticMarkup(
+      <OcrCheckView
+        report={{
+          traces: 139, skipped: 2, created_at: '2026-11-05T01:00:00+00:00', duration_seconds: 300,
+          by_resolution: {
+            1024: { fixed: row(40, 30), detect: row(80, 70), 'variant:clahe': row(60, 50) },
+            full: { fixed: row(45, 35), detect: row(85, 75) },
+          },
+          failures: [{ trace: 't.json', resolution: '1024', height: 880, truth: { name: 'Lapras', number: '017', total: '128' }, read: { name: null, number: '017', total: '128' }, lines: ['30C | 017/128'] }],
+        }}
+      />,
+    )
+    expect(html).toContain('Older scans: 1024 px crop')
+    expect(html).toContain('Newer scans: full resolution')
+    expect(html).toContain('Fixed strips (old way)')
+    expect(html).toContain('Find and read (new way)')
+    expect(html).toContain('Band: local contrast')
+    expect(html).toContain('900 ms')
+    expect(html).toContain('Lapras #017/128')
+    expect(html).toContain('30C | 017/128')
   })
 })

@@ -238,6 +238,7 @@ class MissCollector:
             "ocr": {
                 "number": outcome.ocr.get("number_local"), "total": outcome.ocr.get("number_total"), "name": outcome.ocr.get("name"),
                 "hp": outcome.ocr.get("hp"), "lines": (outcome.ocr.get("lines") or [])[:6], "name_lines": (outcome.ocr.get("name_lines") or [])[:4],
+                "strips": outcome.ocr.get("strips") or [],  # every region read: box, preprocessing, text and confidence per line
             },
             "detection": {k: outcome.detection.get(k) for k in ("found", "confidence", "method")},
             "rotation": rotation, "orientation": outcome.ocr.get("orientation"), "text_input": outcome.ocr.get("text_input"),
@@ -288,6 +289,42 @@ def full_image(key: str, kind: str, data_dir: Path | None = None) -> bytes | Non
         return None
 
 
+STRIP_IMAGE_WIDTH = 900  # the strips are wide and short; this keeps one inline
+
+
+def strip_views(key: str, data_dir: Path | None = None) -> list[dict] | None:
+    """What OCR saw for one miss: each region read (name line, number areas, bands, whole card) as the exact picture the
+    recogniser got, with the raw text and confidence of every line it found. Rendered from the stored flat card and the
+    recorded regions, so nothing extra is stored. None when the run or the miss is not there."""
+    import cv2
+
+    from . import ocr as ocr_module
+    from .images import decode_rgb
+
+    report = load_latest(data_dir)
+    item = next((it for it in (report or {}).get("items", []) if it["key"] == key), None)
+    if item is None:
+        return None
+    try:
+        card = decode_rgb((misses_dir(data_dir) / report["run"] / f"{key}-card-full.jpg").read_bytes())
+    except Exception:
+        return None
+    views = []
+    for strip in (item.get("ocr") or {}).get("strips") or []:
+        picture = None
+        try:
+            picture = ocr_module.render_strip(card, strip)
+        except Exception:
+            logger.exception("Card-match: could not draw a strip for %s", key)
+        image = None
+        if picture is not None and picture.size:
+            scale = min(1.0, STRIP_IMAGE_WIDTH / picture.shape[1])
+            small = cv2.resize(picture, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1 else picture
+            image = "data:image/jpeg;base64," + base64.b64encode(_jpeg(small, 85)).decode("ascii")
+        views.append({**strip, "image": image})
+    return views
+
+
 def page(tag: str | None = None, offset: int = 0, limit: int = PAGE_SIZE, data_dir: Path | None = None) -> dict:
     """A page of misses (optionally one tag) with their thumbnails inline, plus the counts per tag."""
     report = load_latest(data_dir)
@@ -297,7 +334,8 @@ def page(tag: str | None = None, offset: int = 0, limit: int = PAGE_SIZE, data_d
     run_dir = misses_dir(data_dir) / report["run"]
     window = []
     for item in items[offset:offset + limit]:
-        window.append({**item, "photo": _inline(run_dir / f"{item['key']}-photo.jpg"), "card": _inline(run_dir / f"{item['key']}-card.jpg")})
+        slim = {**item, "ocr": {key: value for key, value in (item.get("ocr") or {}).items() if key != "strips"}}  # the strips load with the full view
+        window.append({**slim, "photo": _inline(run_dir / f"{item['key']}-photo.jpg"), "card": _inline(run_dir / f"{item['key']}-card.jpg")})
     return {
         "available": True, "created_at": report["created_at"], "matcher_version": report["matcher_version"], "options": report.get("options"),
         "scans": report["scans"], "misses": report["misses"], "tags": report["tags"], "counts": report["counts"],

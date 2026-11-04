@@ -558,7 +558,7 @@ def latest_reports(data_dir: Path | None = None) -> dict[str, dict]:
     """The newest report of each kind: ``{"synthetic": {...}, "labelled": {...}}``."""
     out: dict[str, dict] = {}
     directory = reports_dir(data_dir)
-    for kind in ("synthetic", "labelled", "compare-labelled", "compare-synthetic"):
+    for kind in ("synthetic", "labelled", "compare-labelled", "compare-synthetic", "ocr-check"):
         files = sorted(directory.glob(f"benchmark-{kind}-*.json"))
         if files:
             try:
