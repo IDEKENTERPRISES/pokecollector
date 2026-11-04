@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Camera, Check, ImagePlus, Inbox, Loader2, Upload, X } from 'lucide-react'
+import { Camera, Inbox, Loader2, Upload, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 import { enqueueScanJob, getScanJobs, getScannerConfiguration } from '../api/client'
@@ -26,7 +26,11 @@ import {
   rememberCameraDenied,
 } from './scanCamera'
 
-const MAX_PHOTOS = 50
+// No hard cap on a batch. Past either of these the trainer gets a gentle warning (nothing is blocked):
+// every photo is a full-resolution JPEG held in memory while staged and again in the offline outbox,
+// whose own storage budget (OUTBOX_MAX_BYTES) is what a very large batch actually runs into first.
+const SOFT_WARN_PHOTOS = 120
+const SOFT_WARN_BYTES = 200 * 1024 * 1024
 
 // The scan overlay (design doc §5.3): a full-screen camera with a review sheet over it, portaled to
 // <body> at --z-scanner. ScannerContext mounts it outside the routed <Outlet>, so scanning works from
@@ -94,16 +98,12 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
       toast.error(t('sync.photoTooLarge'))
       return
     }
-    const remaining = Math.max(0, MAX_PHOTOS - stagedFilesRef.current.length)
-    const accepted = incoming.slice(0, remaining)
-    if (accepted.length < incoming.length) toast.error(t('scanner.batchLimitReached'))
-    const additions = accepted.map(file => ({
+    const additions = incoming.map(file => ({
       id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
       file,
       previewUrl: URL.createObjectURL(file),
-      individual: false,
     }))
-    // Update the ref now so rapid consecutive captures respect the 50-photo limit.
+    // Update the ref now so rapid consecutive captures all land.
     stagedFilesRef.current = [...stagedFilesRef.current, ...additions]
     setStagedFiles(current => [...current, ...additions])
   }
@@ -150,31 +150,14 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
     finishClose(after)
   }
 
-  const toggleIndividual = id => {
-    setStagedFiles(current => current.map(item => (
-      item.id === id ? { ...item, individual: !item.individual } : item
-    )))
-  }
-
-  const allIndividual = stagedFiles.length > 0 && stagedFiles.every(item => item.individual)
-  const toggleAllIndividual = () => {
-    setStagedFiles(current => current.map(item => ({ ...item, individual: !allIndividual })))
-  }
-  // A composite asks the model to read several cards out of one image, which
-  // needs the same multi-image capability visual verification does — a
-  // provider that already failed that probe cannot do this reliably either.
-  // The server enforces this regardless of what these toggles say, so
-  // showing them here would just be an override with nothing to override.
-  const canComposite = scannerConfiguration?.visual_verification === 'automatic'
-
   const startScanning = async () => {
     if (!stagedFiles.length || submitting) return
     submittingRef.current = true
     setSubmitting(true)
     try {
-      const individualPositions = stagedFiles
-        .map((item, position) => item.individual ? position : null)
-        .filter(position => position !== null)
+      // Every photo is read on its own: combining several cards into one model call shrinks each
+      // card until its number is unreadable.
+      const individualPositions = stagedFiles.map((_item, position) => position)
       if (queueEnabled) {
         const result = await submitScanBatch({
           files: stagedFiles.map(item => item.file),
@@ -183,17 +166,17 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
           reachability: reachabilityRef.current,
         })
         finishClose()
-        if (result.mode === 'sent' && result.jobIds.length === 1) navigate(`/scans/${result.jobIds[0]}`)
-        else if (result.mode === 'sent') navigate('/scans')
+        // One list for the whole batch, however many uploads it was cut into.
+        if (result.mode === 'sent') navigate('/scans')
         else toast.success(t('sync.savedOffline'))
         return
       }
-      const job = await enqueueScanJob(
+      await enqueueScanJob(
         stagedFiles.map(item => item.file),
         individualPositions,
       )
       finishClose()
-      navigate(`/scans/${job.id}`)
+      navigate('/scans')
     } catch (error) {
       if (error?.code === 'quota' || error?.code === 'too_many_items') toast.error(t('sync.storageFull'))
       else if (error?.code === 'server_old') toast.error(t('sync.serverTooOld'))
@@ -209,7 +192,8 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
 
   const cameraMode = captureMode === 'camera'
   const count = stagedFiles.length
-  const atLimit = count >= MAX_PHOTOS
+  const stagedBytes = stagedFiles.reduce((total, item) => total + (item.file?.size || 0), 0)
+  const bigBatch = count >= SOFT_WARN_PHOTOS || stagedBytes >= SOFT_WARN_BYTES
   const reviewTitle = t('scanner.reviewTitle').replace('{n}', String(count))
   const discardTitle = t(count === 1 ? 'scanner.discardPhotoTitle' : 'scanner.discardPhotosTitle').replace('{n}', String(count))
 
@@ -239,16 +223,6 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
       container={overlayEl}
       footer={(
         <div className="space-y-2">
-          {count > 1 && canComposite && (
-            <button
-              type="button"
-              onClick={toggleAllIndividual}
-              className="btn-ghost flex w-full items-center justify-center gap-2"
-            >
-              {allIndividual ? <ImagePlus size={16} /> : <Check size={16} />}
-              <span>{allIndividual ? t('scanner.useAutomaticGrouping') : t('scanner.scanAllIndividually')}</span>
-            </button>
-          )}
           <button
             type="button"
             onClick={startScanning}
@@ -269,8 +243,15 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
           </div>
         )}
 
+        {bigBatch && (
+          <div role="status" data-testid="big-batch-warning" className="rounded-xl border border-yellow/35 bg-yellow/10 px-3 py-2.5">
+            <p className="text-xs font-semibold text-yellow">{t('scanner.bigBatchTitle')}</p>
+            <p className="mt-1 text-[11px] text-text-secondary">{t('scanner.bigBatchBody')}</p>
+          </div>
+        )}
+
         <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-text-secondary">{count}/{MAX_PHOTOS} {t('scanner.photos')}</p>
+          <p className="text-sm text-text-secondary">{count} {t('scanner.photos')}</p>
           {!cameraMode && count > 0 && (
             <button type="button" onClick={() => setConfirmation({ type: 'clear' })} className="ios-press text-body text-red">
               {t('scanner.clear')}
@@ -296,20 +277,6 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
                     <X size={13} />
                   </button>
                 </div>
-                {count > 1 && canComposite && (
-                  <button
-                    type="button"
-                    onClick={() => toggleIndividual(item.id)}
-                    className={`flex w-full items-center justify-center gap-1 rounded-lg border px-1 py-1 text-[9px] font-semibold transition-colors ${
-                      item.individual
-                        ? 'border-red/50 bg-red/20 text-red'
-                        : 'border-white/10 bg-white/5 text-text-muted'
-                    }`}
-                  >
-                    {item.individual && <Check size={10} />}
-                    <span>{t('scanner.scanIndividually')}</span>
-                  </button>
-                )}
               </div>
             ))}
           </div>
@@ -325,7 +292,6 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
             <button
               type="button"
               onClick={() => (cameraMode ? setReviewOpen(false) : cameraRef.current?.click())}
-              disabled={atLimit}
               data-tour={cameraMode ? undefined : 'shutter'}
               className="btn-secondary flex items-center justify-center gap-2"
             >
@@ -335,7 +301,6 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
             <button
               type="button"
               onClick={() => galleryRef.current?.click()}
-              disabled={atLimit}
               className="btn-secondary flex items-center justify-center gap-2"
             >
               <Upload size={16} />
@@ -401,7 +366,6 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
       {cameraMode && (
         <BatchCameraCapture
           count={count}
-          max={MAX_PHOTOS}
           lastPreview={stagedFiles[count - 1]?.previewUrl}
           attention={scanAttentionCount(scanJobs)}
           processing={hasActiveScanJobs(scanJobs)}

@@ -210,6 +210,10 @@ To turn it off if anything looks wrong: Settings › Scanner › **Picture match
 
 The **Picture match first** block in the lab counts the last 7 days from the scans themselves (they live 14 days): decided by picture, sent to Ollama, sent to the inbox while the scanner was unreachable, and how many of the decided scans the trainer then added as a *different* card than the picture decided. That last figure, as a share of decided scans the trainer confirmed, is the real-world error rate.
 
+### How each confirmed card was chosen (manual step)
+
+Every confirmed card records `confirmation.source` in its trace: `scanner_decision` (the scanner's own pick accepted), `matcher_candidate` or `ollama_candidate` (picked from that path's candidates), `manual_search` (found by search, no scanner offered it) or `manual_no_result` (found by search on a scan that had nothing). The lab shows the counts under the shadow run (`how_confirmed` in `/api/card-match/shadow` and in the labelled report). A manual pick is a miss for the matcher and for Ollama by definition (the card was in nobody's candidates, rank none), is kept as ground truth with its photo, and is included in the confirmed-scans scores and the labelled benchmark (English cards only, like every other pick). Traces written before this change have no source and are counted as `unlabelled`.
+
 ## OCR choice
 
 RapidOCR (PP-OCRv4 detection and recognition models, ONNX Runtime) installs cleanly into the slim image when installed with `--no-deps` (its wheel otherwise drags in the full `opencv-python`, which needs system GL libraries and clashes with `opencv-python-headless`). The models ship inside the wheel (about 16 MB), so nothing downloads at runtime. Tesseract would have needed an apt package and a separate binary; it stays the fallback idea if RapidOCR proves too slow on the T340. A tight bottom strip is read first; the wider strip (3× zoom, sharpened) only if no complete number came out, and the turned card only when the picture search gave no orientation. HP is read only when `CardMatcher(read_hp=True)`; it is off by default because the strip is the slowest to read and HP is weak evidence.

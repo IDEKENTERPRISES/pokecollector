@@ -160,7 +160,7 @@ class MissCollector:
         self.items: list[dict] = []
         self.scans = 0
 
-    def add(self, *, trace: str, photo, outcome, truth_id: str, label: str = "") -> None:
+    def add(self, *, trace: str, photo, outcome, truth_id: str, label: str = "", confirmation: str | None = None) -> None:
         """Record one scan if it is a miss (the right card is not the first pick)."""
         from . import detect
 
@@ -184,6 +184,7 @@ class MissCollector:
         self.items.append({
             "key": key, "trace": trace, "kind": "not_in_top20" if rank is None else "not_top1", "rank": rank,
             "tags": tags, "primary": primary_tag(tags),
+            "confirmation": confirmation,  # manual_search / manual_no_result: no scanner offered the card
             "decided": decision is not None, "decided_wrong": bool(decision and decision["card_id"] != truth_id),
             "unsure_reason": outcome.unsure_reason,
             "truth": {

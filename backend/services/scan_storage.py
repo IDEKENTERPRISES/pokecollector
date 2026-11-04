@@ -28,7 +28,6 @@ except ImportError:  # pragma: no cover - production installs the dependency
     HEIC_AVAILABLE = False
 
 
-MAX_FILES_PER_JOB = 50
 MAX_FILE_BYTES = 15 * 1024 * 1024
 MAX_JOB_BYTES = 200 * 1024 * 1024
 MAX_IMAGE_PIXELS = 50_000_000
@@ -307,8 +306,6 @@ async def create_scan_job(
     """Validate and persist a job without retaining any original upload bytes."""
     if not uploads:
         raise ScanUploadError("At least one scan photo is required.")
-    if len(uploads) > MAX_FILES_PER_JOB:
-        raise ScanUploadError("A scan job can contain at most 50 photos.")
     if batch_modes is None:
         batch_modes = [len(uploads) > 1] * len(uploads)
     if len(batch_modes) != len(uploads):

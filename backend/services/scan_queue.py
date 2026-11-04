@@ -1168,6 +1168,7 @@ def release_waiting_scans(
         .filter(
             ScanJobItem.status == "retrying",
             ScanJobItem.retry_reason == WAITING_REASON,
+            ScanJobItem.resolved.is_(False),
         )
         .all()
     )

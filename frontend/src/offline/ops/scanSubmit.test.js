@@ -104,7 +104,14 @@ describe('submitScanBatch', () => {
     const outbox = fakeOutbox()
     await expect(submitScanBatch({ files: [photo(16 * MIB)], outbox })).rejects.toMatchObject({ code: 'too_large' })
     await expect(submitScanBatch({ files: [photo(10, 'text/plain')], outbox })).rejects.toBeInstanceOf(ScanSubmitError)
-    await expect(submitScanBatch({ files: Array.from({ length: 51 }, () => photo(1)), outbox })).rejects.toMatchObject({ code: 'too_many' })
     expect(outbox.enqueue).not.toHaveBeenCalled()
+  })
+
+  it('has no cap on the number of photos: 230 photos become several items, all saved', async () => {
+    const outbox = fakeOutbox()
+    const result = await submitScanBatch({ files: Array.from({ length: 230 }, () => photo(1)), outbox })
+    expect(result.mode).toBe('queued')
+    expect(result.queuedCount).toBe(Math.ceil(230 / 12))
+    expect(outbox.enqueue).toHaveBeenCalledTimes(Math.ceil(230 / 12))
   })
 })

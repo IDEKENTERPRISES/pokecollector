@@ -526,7 +526,7 @@ def label_shadow(data: dict) -> None:
     shadow["truth_lang"] = next(
         (candidate.get("lang") for candidate in data.get("candidates") or [] if candidate.get("tcg_card_id") == truth),
         None,
-    )
+    ) or (data.get("confirmation") or {}).get("lang")
 
 
 def _shadow_file(user_id: int, job_id, item_id, root: Path | None = None) -> Path | None:
@@ -602,11 +602,65 @@ def record_shadow(user_id: int, job_id: int, item_id: int, shadow: dict) -> bool
     return True
 
 
+# How the trainer's confirmed card was chosen (shown as counts in the Scanner lab).
+CONFIRMATION_SOURCES = (
+    "scanner_decision",  # the scanner's own pick, accepted
+    "matcher_candidate",  # picked from the picture matcher's candidates
+    "ollama_candidate",  # picked from Ollama's candidates
+    "manual_search",  # found by search because no scanner offered it
+    "manual_no_result",  # found by search on a scan that had no result at all
+)
+
+
+def classify_confirmation(data: dict, card_id: str, *, manual: bool = False, had_matches: bool = True) -> str:
+    """Which of ``CONFIRMATION_SOURCES`` the confirmed ``card_id`` is, for one trace."""
+    if manual:
+        return "manual_search" if had_matches else "manual_no_result"
+    decision = data.get("decision") or {}
+    if decision.get("selected") and decision.get("selected") == card_id:
+        return "scanner_decision"
+    candidates = [candidate.get("tcg_card_id") for candidate in data.get("candidates") or []]
+    matcher_ids = [match.get("tcg_card_id") for match in (data.get("shadow") or {}).get("matches") or []]
+    mechanism = str(decision.get("mechanism") or "").lower()
+    if card_id in candidates:
+        return "matcher_candidate" if ("matcher" in mechanism or "picture" in mechanism) else "ollama_candidate"
+    if card_id in matcher_ids:
+        return "matcher_candidate"
+    return "ollama_candidate"
+
+
+def record_manual_trace(
+    db,
+    user_id: int,
+    job_id: int,
+    item_id: int,
+    card_id: str,
+    *,
+    image_bytes: bytes | None,
+    lang: str | None = None,
+) -> bool:
+    """A scan no scanner produced anything for still teaches the lab: store its photo with the card the
+    trainer found by search (only with the trainer's diagnostics consent)."""
+    trace = create_scan_trace(db, user_id, mode="manual", job_id=job_id, item_id=item_id)
+    if not trace.enabled:
+        return False
+    trace.set_image(image_bytes)
+    trace.data["ground_truth"] = card_id
+    trace.data["correct"] = None
+    trace.data["confirmation"] = {"source": "manual_no_result", "lang": lang}
+    trace.save()
+    return True
+
+
 def record_ground_truth(
     user_id: int,
     job_id: int,
     item_id: int,
     card_id: str,
+    *,
+    manual: bool = False,
+    had_matches: bool = True,
+    lang: str | None = None,
 ) -> int:
     """Label all attempts for one reviewed item with the user's confirmed card."""
     if not card_id:
@@ -624,6 +678,10 @@ def record_ground_truth(
             with _TRACE_LOCK:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 data["ground_truth"] = card_id
+                data["confirmation"] = {
+                    "source": classify_confirmation(data, card_id, manual=manual, had_matches=had_matches),
+                    "lang": lang,
+                }
                 selected = (data.get("decision") or {}).get("selected")
                 # A trace that deliberately abstained did not make a top-1 choice.
                 # Keep it labelled for retrieval analysis without counting it as an

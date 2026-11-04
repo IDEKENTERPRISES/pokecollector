@@ -86,13 +86,9 @@ export default function BatchCameraCapture({
     }
   }, [stopStream])
 
-  const atLimit = count >= max
+  const atLimit = Number.isFinite(max) && count >= max
 
   const capture = () => {
-    if (atLimit) {
-      toast.error(t('scanner.batchLimitReached'))
-      return
-    }
     const video = videoRef.current
     if (!ready || !video?.videoWidth) return
     const canvas = document.createElement('canvas')
@@ -193,7 +189,7 @@ export default function BatchCameraCapture({
             {lastPreview && <img src={lastPreview} alt="" className="h-full w-full object-cover" />}
           </span>
           <span className="tabular-nums">{count > 0 ? t('scanner.caught').replace('{n}', String(count)) : ''}</span>
-          <span className="tabular-nums text-text-secondary">{count}/{max}</span>
+          {Number.isFinite(max) && <span className="tabular-nums text-text-secondary">{count}/{max}</span>}
         </button>
       </div>
     </div>

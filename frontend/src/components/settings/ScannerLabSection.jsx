@@ -202,6 +202,30 @@ export function PictureFirstView({ data }) {
   )
 }
 
+const CONFIRMED_LABELS = [
+  ['scanner_decision', 'The scanner’s own pick, accepted'],
+  ['matcher_candidate', 'Picked from the matcher’s candidates'],
+  ['ollama_candidate', 'Picked from Ollama’s candidates'],
+  ['manual_search', 'Found by search (no scanner offered it)'],
+  ['manual_no_result', 'Found by search (scan had no result)'],
+]
+
+/** How the trainers’ confirmed cards were chosen; the two search rows are misses for every path. */
+export function HowConfirmedView({ data }) {
+  if (!data || !data.total) return null
+  return (
+    <div className="space-y-1 border-t border-separator px-4 py-3" data-testid="scanner-lab-how-confirmed">
+      <h4 className="text-footnote font-semibold">How the {number(data.total)} confirmed cards were chosen</h4>
+      {CONFIRMED_LABELS.map(([key, label]) => (
+        <Row key={key} testId={`scanner-lab-how-${key}`} label={label} value={number(data.counts?.[key])} />
+      ))}
+      <p className="text-footnote text-text-secondary">
+        {number(data.manual)} ({percent(data.manual_pct)}) needed the search box. Those count as misses for the matcher and for Ollama, and the cards are kept as answers for the benchmarks.
+      </p>
+    </div>
+  )
+}
+
 export function ShadowView({ data }) {
   const report = data.report
   const confirmed = report.confirmed
@@ -341,6 +365,7 @@ export default function ScannerLabSection() {
         </div>
         {pictureFirst.data?.counts && <PictureFirstView data={pictureFirst.data} />}
         {shadow.data?.report && (shadow.data.enabled || shadow.data.report.compared > 0) && <ShadowView data={shadow.data} />}
+        <HowConfirmedView data={shadow.data?.report?.how_confirmed} />
         {data.reports?.synthetic && <Report report={data.reports.synthetic} title="Latest benchmark: synthetic photos" />}
         {data.reports?.labelled && <Report report={data.reports.labelled} title="Latest benchmark: real scans (diagnostics)" />}
         {data.reports?.['compare-labelled'] && <CompareTable report={data.reports['compare-labelled']} title="Option comparison: real scans" />}

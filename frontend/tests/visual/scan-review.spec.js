@@ -113,6 +113,10 @@ async function installScanReviewApi(page, { failAtomic = false } = {}) {
       return route.fulfill({ json: { languages: [{ code: 'en', name: 'English' }] } })
     }
     if (path === '/api/cards/recognize/jobs') return route.fulfill({ json: { jobs: [job()] } })
+    if (path === '/api/cards/recognize/queue') {
+      const open = items.filter(candidate => !candidate.resolved).map(candidate => ({ ...candidate, job_id: 7 }))
+      return route.fulfill({ json: { total: open.length, offset: 0, counts: { ready: open.filter(c => c.status === 'done').length, failed: open.filter(c => c.status === 'failed').length, processing: 0, waiting: 0 }, items: open } })
+    }
     if (path === '/api/cards/recognize/jobs/7') return route.fulfill({ json: job() })
     if (/\/api\/cards\/recognize\/jobs\/7\/items\/\d+\/(image|candidates\/\d+\/image)$/.test(path)) {
       return route.fulfill({ body: pixel, contentType: 'image/png' })
@@ -312,15 +316,14 @@ test('a failed atomic add keeps the current review open and does not advance', a
   expect(api.items.find(item => item.id === 11).resolved).toBe(false)
 })
 
-test('the inbox lists a batch as a row and words the review count for one and for many', async ({ page }) => {
+test('the inbox is one flat list of the scans still waiting, and counts them', async ({ page }) => {
   const api = await installScanReviewApi(page)
   await page.goto('/scans')
-  const row = page.getByRole('button', { name: /4\/4 processed/ })
-  await expect(row).toBeVisible()
-  await expect(row).toContainText('2 need review')
+  await expect(page.getByTestId('scan-queue-total')).toHaveText('2 photos')
+  await expect(page.getByTestId('scan-queue-row-status')).toHaveCount(2)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 
   api.items.find(item => item.id === 12).resolved = true
   await page.goto('/scans')
-  await expect(page.getByRole('button', { name: /4\/4 processed/ })).toContainText('1 needs review')
+  await expect(page.getByTestId('scan-queue-total')).toHaveText('1 photos')
 })
