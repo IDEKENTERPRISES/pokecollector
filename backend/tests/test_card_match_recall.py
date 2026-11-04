@@ -380,7 +380,7 @@ class AutorunTests(unittest.TestCase):
         from services.card_match import jobs
 
         for traces, expected in ((99, ["index", "index", "benchmark-synthetic"]),
-                                 (100, ["index", "index", "benchmark-synthetic", "benchmark-labelled", "benchmark-compare-labelled"])):
+                                 (100, ["index", "index", "benchmark-synthetic", "benchmark-ocr-check", "benchmark-labelled", "benchmark-compare-labelled"])):
             started = []
 
             def fake_start(kind, work):

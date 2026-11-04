@@ -120,6 +120,16 @@ def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=Non
     if index is None or len(index) == 0:
         raise RuntimeError("The picture index is empty: build it first")
     trace_dir = scan_trace.trace_root() or scan_trace.trace_storage_root()
+    if kind == "ocr-check":
+        from . import ocr_check
+
+        if not trace_dir:
+            raise RuntimeError("No diagnostics traces with a confirmed answer yet")
+        report = ocr_check.run_ocr_check(factory, get_reader(), trace_dir=trace_dir, progress=jobs._progress, should_stop=jobs._stop.is_set)
+        if report is None:
+            raise RuntimeError("No diagnostics traces with a confirmed answer yet")
+        path = benchmark.save_report(report, data_dir)
+        return {"report": path.name, "kind": kind, "n": report["traces"], "duration_seconds": report["duration_seconds"]}
     if kind.startswith("compare-"):
         base_kind = kind.split("-", 1)[1]
         if base_kind == "labelled" and not trace_dir:
@@ -216,7 +226,7 @@ def autorun_once(warmer=None, model: str = DEFAULT_MODEL, *, delay_seconds: floa
 
         steps = [lambda: start_index(model), lambda: start_index(variants.ART_INDEX), lambda: start_benchmark("synthetic", model)]
         if benchmark.count_labelled_traces(scan_trace.trace_root() or scan_trace.trace_storage_root()) >= AUTORUN_MIN_LABELLED:
-            steps += [lambda: start_benchmark("labelled", model), lambda: start_benchmark("compare-labelled", model)]
+            steps += [lambda: start_benchmark("ocr-check", model), lambda: start_benchmark("labelled", model), lambda: start_benchmark("compare-labelled", model)]
         for step in steps:
             started, _status = step()
             while not started:  # another job (a manual one) is running: wait our turn

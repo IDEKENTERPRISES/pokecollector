@@ -46,6 +46,30 @@ function RealSize({ title, src, hint, fit = false }) {
   )
 }
 
+const VARIANT_LABELS = { plain: 'as photographed', sharp: 'sharpened', clahe: 'local contrast', binary: 'black and white', deglare: 'glare removed' }
+
+/** One region OCR read: the exact picture the recogniser got, then each line it found with its confidence. */
+export function StripRow({ strip }) {
+  return (
+    <li className="space-y-1 rounded-md bg-white/5 p-2" data-testid="miss-strip">
+      <p className="text-footnote font-semibold">
+        {strip.label.replace(/-/g, ' ')}
+        <span className="font-normal text-white/60"> · {VARIANT_LABELS[strip.variant] || strip.variant} · zoom {strip.zoom}{strip.flipped ? ' · card turned' : ''}</span>
+      </p>
+      {strip.image && <img src={strip.image} alt={`What OCR saw: ${strip.label}`} className="h-auto max-w-full rounded bg-white/10" loading="lazy" />}
+      {strip.lines.length === 0 ? (
+        <p className="text-footnote text-white/60">Nothing read.</p>
+      ) : (
+        <ul className="text-footnote">
+          {strip.lines.map((line, position) => (
+            <li key={position} className="break-words"><span className="tabular-nums text-white/60">{Math.round(line.score * 100)}%</span> “{line.text}”</li>
+          ))}
+        </ul>
+      )}
+    </li>
+  )
+}
+
 /** Full-size pictures of one miss: the photo with the corners, the flat card as it was read (real size), the confirmed card. */
 export function MissViewer({ item, onClose }) {
   const truth = item.truth || {}
@@ -86,6 +110,15 @@ export function MissViewer({ item, onClose }) {
               src={data?.card}
               hint={read ? `Text read from: ${read.source.replace('_', ' ')}, ${read.width}×${read.height} px. Scroll to see all of it.` : 'Scroll to see all of it.'}
             />
+            <section className="space-y-1" data-testid="miss-strips">
+              <h4 className="text-subheadline font-semibold">What OCR read</h4>
+              <p className="text-footnote text-white/60">Each region, exactly as the recogniser saw it, with the raw text and confidence it got. Empty or wrong text on a clear strip means the reading failed; a strip that misses the number means the region is wrong.</p>
+              {(data?.strips || []).length === 0 ? (
+                <p className="text-footnote text-white/60">No regions were recorded for this run (it ran before they were kept).</p>
+              ) : (
+                <ul className="space-y-2">{data.strips.map((strip, position) => <StripRow key={position} strip={strip} />)}</ul>
+              )}
+            </section>
             <RealSize title="Confirmed card" src={truth.image_large || truth.image} fit />
           </>
         )}

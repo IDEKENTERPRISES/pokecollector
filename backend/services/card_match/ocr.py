@@ -30,9 +30,12 @@ WIDE_ZOOM = 3.0
 REFERENCE_HEIGHT = 880  # the zooms above are for a card this tall; a sharper card needs less upscaling for the same strip size
 HP_STRIP = (0.45, 0.0, 1.0, 0.14)
 
-_NUMBER_TOTAL = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{0,4}\s?\d{1,3}[A-Za-z]?)\s*[/|\\]\s*([A-Za-z]{0,4}\s?\d{1,3})")  # no end guard: a stray mark after the total reads as one more digit
+_NUMBER_TOTAL = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{0,4}\s?\d{1,3}[A-Za-z]?)\s*[/\\]\s*([A-Za-z]{0,4}\s?\d{1,3})")  # no end guard: a stray mark after the total reads as one more digit
+# A slash read as a bar ("018|091"): only when nothing separates it from the digits, because a bar with spaces
+# around it is a printed divider ("30C | 017/128", the 30th Celebration mark).
+_NUMBER_TOTAL_BAR = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{0,4}\d{1,3}[A-Za-z]?)\|([A-Za-z]{0,4}\d{1,3})")
 # A number glued to the text before it ("GAMEFREAK1999Wizards.58/102"): digits only, no prefix.
-_NUMBER_TOTAL_LOOSE = re.compile(r"(\d{1,3})\s*[/|\\]\s*([0-9OoIl|]{2,3})")
+_NUMBER_TOTAL_LOOSE = re.compile(r"(\d{1,3})(?:\s*[/\\]\s*|\|)([0-9OoIl|]{2,3})")
 # The slash is thin and often read as nothing: "SVI EN 018/091" comes out "SVIEN018091". A line that ENDS in five or
 # six digit-like characters is a number glued to its total (three digits and three, or two and three: "58102").
 _NUMBER_GLUED = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]{0,7}?\s?([0-9OoIlSZBDQ]{5,6})\s*$")
@@ -122,7 +125,7 @@ def parse_text(lines: list[str]) -> OcrResult:
     """Pull number/total, HP and set-code tokens out of recognised text lines."""
     result = OcrResult(lines=list(lines))
     joined = "  ".join(lines)
-    match = _NUMBER_TOTAL.search(joined)
+    match = _NUMBER_TOTAL.search(joined) or _NUMBER_TOTAL_BAR.search(joined)
     if match:
         result.number_local = _clean_number_part(match.group(1))
         result.number_total = _clean_number_part(match.group(2))
@@ -310,7 +313,8 @@ NAME_LADDER = (
     ("name-band", NAME_BAND, "binary", 3.0, True),
     ("name-band", NAME_BAND, "deglare", 2.5, True),
 )
-WHOLE_SIDE = 960  # the whole-card fallback is read at this many pixels on its long side
+EXPANDED = {"top": (0.0, 0.0, 1.0, 0.24), "bottom": (0.0, 0.72, 1.0, 1.0)}  # the last-resort bands
+WHOLE_SIDE = 960  # the longest side the detector looks at in one read
 BUDGET_SECONDS = 1.2  # no further region is read once one card's reading has taken this long
 ACCEPT_CONFIDENCE = 0.85  # a complete number this sure needs no second view
 
@@ -333,9 +337,10 @@ class OcrReader:
     """RapidOCR on regions of a flat card, found and read by pattern.
 
     Number ladder (each step only when the one before did not give a complete, confident number and total):
-    the tight strips, the wide strips, then the whole bottom band under three preprocessing variants
-    (local contrast, binarised, glare removed), then the whole card as a last resort. Name ladder: the name strip,
-    then the top band under the same variants, then the whole card. Whatever is read is picked by pattern
+    the tight strips, then the whole bottom band under preprocessing variants
+    (local contrast, binarised, glare removed), then a much taller band as a last resort. Name ladder: the name strip,
+    then the top band under the same variants. If all of that found nothing, a much taller band at the top and the
+    bottom (a card flattened with a margin). Whatever is read is picked by pattern
     (``pick_number_lines``, ``is_name_like``), not by where it was found, so a card flattened with a margin, or
     printed with the number somewhere unusual, still reads. ``flipped`` says which way up the card is (the
     picture search knows); otherwise the turned card is tried too when nothing complete came out.
@@ -392,27 +397,36 @@ class OcrReader:
                        "lines": [{"text": line.text, "score": round(line.score, 3)} for line in lines[:14]]})
         return lines
 
-    def _whole_card(self, card: np.ndarray, record: list[dict], flipped: bool) -> tuple[list[Line], float]:
-        """Every text line on the card and the height of the picture they sit in (cached per card: the number
-        and the name read share one pass)."""
+    def _expanded(self, card: np.ndarray, record: list[dict], flipped: bool, which: str) -> list[Line]:
+        """The last resort when the usual regions found nothing: a much taller band at the top or the bottom, so a card
+        flattened with a margin (corners found a little wide) or printed with the text somewhere unusual still reads.
+        Cached per card and side: the number read and the name read of one scan share each pass. A whole-card pass
+        was tried first and costs about a second on the same CPU (every line of rules text is recognised too)."""
+        key = (hash(card[::53, ::47].tobytes()), card.shape, flipped, which)
+        if key not in self._whole:
+            if len(self._whole) > 12:
+                self._whole.clear()
+            scratch: list[dict] = []
+            lines = self._scan(card, f"{which}-wide", EXPANDED[which], "clahe", 2.0, True, scratch, flipped) or []
+            self._whole[key] = (lines, scratch[0])
+        lines, entry = self._whole[key]
+        record.append(entry)
+        return lines
+
+    def _strip_items(self, card: np.ndarray, box: tuple[float, float, float, float], *, zoom: float = 2.0, sharpen: bool = False) -> list[tuple[str, float]]:
+        """(text, height in strip pixels) per recognised line of one strip, left to right (the plain single-strip read
+        the tests and ad-hoc tools use; the ladder goes through ``_scan``)."""
         import cv2
 
-        key = (hash(card[::53, ::47].tobytes()), card.shape, flipped)
-        if key not in self._whole:
-            scale = WHOLE_SIDE / max(card.shape[:2])
-            small = cv2.resize(card, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC)
-            if len(self._whole) > 8:
-                self._whole.clear()
-            lines = self._run(_clahe(small), low=True)
-            self._whole[key] = (lines, float(small.shape[0]), round(scale, 3))
-        lines, height, scale = self._whole[key]
-        record.append({"label": "whole-card", "box": [0.0, 0.0, 1.0, 1.0], "variant": "clahe", "zoom": scale, "low": True, "flipped": flipped,
-                       "lines": [{"text": line.text, "score": round(line.score, 3)} for line in lines[:14]]})
-        return lines, height
-
-    @staticmethod
-    def _fraction_lines(lines: list[Line], picture_h: float, low: float, high: float) -> list[Line]:
-        return [line for line in lines if low <= (line.y0 + line.y1) / 2 / picture_h <= high]
+        h, w = card.shape[:2]
+        x0, y0, x1, y1 = box
+        strip = cv2.resize(card[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)], None, fx=self._zoom(card, zoom), fy=self._zoom(card, zoom), interpolation=cv2.INTER_CUBIC)
+        if sharpen:
+            strip = prepare(strip, "sharp")
+        with self._lock:
+            found, _timing = self.engine(cv2.cvtColor(strip, cv2.COLOR_RGB2BGR))
+        ordered = sorted(found or [], key=lambda item: min(point[0] for point in item[0]))
+        return [(str(item[1]), float(max(point[1] for point in item[0]) - min(point[1] for point in item[0]))) for item in ordered]
 
     # -- the name -------------------------------------------------------------
 
@@ -436,10 +450,9 @@ class OcrReader:
             all_lines += lines
             found = [line for line in lines if is_name_like(line.text)]
         if not found and self.mode != "fixed" and time.monotonic() - started <= BUDGET_SECONDS * 1.5:
-            whole, whole_h = self._whole_card(card, record, flipped)
-            top = self._fraction_lines(whole, whole_h, 0.0, 0.42)
+            top = self._expanded(card, record, flipped, "top")
             all_lines += top
-            found = [line for line in top if is_name_like(line.text)]
+            found = [line for line in top if is_name_like(line.text) and line.y1 / record[-1]["zoom"] / card.shape[0] <= 0.2]
         read = names.parse_name_lines([(line.text, line.height) for line in found])
         read.raw = [line.text for line in all_lines][:12]
         read.strips = record
@@ -448,8 +461,9 @@ class OcrReader:
 
     # -- the number -----------------------------------------------------------
 
-    def _read_card(self, card: np.ndarray, flipped: bool = False, record: list[dict] | None = None) -> OcrResult:
-        record = record if record is not None else []
+    def _read_card(self, card: np.ndarray) -> OcrResult:
+        flipped = bool(getattr(self, "_turned", False))  # set by ``read``: which way up this card is being read
+        record: list[dict] = []
         started = time.monotonic()
         ladder = LEGACY_LADDER if self.mode == "fixed" else NUMBER_LADDER
         lines: list[Line] = []
@@ -473,8 +487,7 @@ class OcrReader:
                 best, confidence = pick_number_lines(lines)
                 best.number_confidence = confidence
         if (best is None or completeness(best) < 2) and self.mode != "fixed" and time.monotonic() - started <= BUDGET_SECONDS * 1.5:
-            whole, whole_h = self._whole_card(card, record, flipped)
-            bottom = self._fraction_lines(whole, whole_h, 0.55, 1.0)
+            bottom = self._expanded(card, record, flipped, "bottom")
             lines += bottom
             reading, confidence = pick_number_lines(bottom)
             reading.number_confidence = confidence
@@ -492,10 +505,12 @@ class OcrReader:
         turned = bool(flipped)
         if turned:
             card = np.ascontiguousarray(card[::-1, ::-1])
-        result = self._read_card(card, turned)
+        self._turned = turned
+        result = self._read_card(card)
         if flipped is None and not is_complete(result):
             other = np.ascontiguousarray(card[::-1, ::-1])
-            retry = self._read_card(other, not turned)
+            self._turned = not turned
+            retry = self._read_card(other)
             if completeness(retry) > completeness(result):
                 result, card, turned = retry, other, not turned
             else:

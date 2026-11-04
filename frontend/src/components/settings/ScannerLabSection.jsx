@@ -158,6 +158,73 @@ export function CompareTable({ report, title }) {
   )
 }
 
+const OCR_MODE_NAMES = { fixed: 'Fixed strips (old way)', detect: 'Find and read (new way)' }
+const OCR_VARIANT_NAMES = { plain: 'as photographed', sharp: 'sharpened', clahe: 'local contrast', binary: 'black and white', deglare: 'glare removed' }
+const RESOLUTION_NAMES = { 1024: 'Older scans: 1024 px crop', full: 'Newer scans: full resolution', all: 'All scans' }
+
+function OcrRows({ rows }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-footnote">
+        <thead>
+          <tr className="text-left text-text-secondary">
+            <th className="pr-2 font-normal">Read</th><th className="pr-2 font-normal">Name</th><th className="pr-2 font-normal">Number</th>
+            <th className="pr-2 font-normal">Total</th><th className="pr-2 font-normal">Set code</th><th className="font-normal">p95</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([key, row]) => (
+            <tr key={key} className="tabular-nums">
+              <td className="pr-2">{key.startsWith('variant:') ? `Band: ${OCR_VARIANT_NAMES[key.slice(8)] || key.slice(8)}` : OCR_MODE_NAMES[key] || key}</td>
+              <td className="pr-2">{percent(row.name_pct)}</td><td className="pr-2">{percent(row.number_pct)}</td>
+              <td className="pr-2">{percent(row.total_pct)}</td><td className="pr-2">{percent(row.set_code_pct)}</td>
+              <td>{row.seconds_p95 != null ? `${number(Math.round(row.seconds_p95 * 1000))} ms` : '–'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/** The OCR check: the text reader alone on the confirmed real photos, split by the resolution it read from. */
+export function OcrCheckView({ report }) {
+  const groups = Object.entries(report.by_resolution || {})
+  return (
+    <div className="space-y-2 border-t border-separator px-4 py-3" data-testid="scanner-lab-ocr-check">
+      <div>
+        <h3 className="text-subheadline font-semibold">OCR check: real scans</h3>
+        <p className="text-footnote text-text-secondary">
+          {number(report.traces)} confirmed scans ({number(report.skipped)} skipped) · {report.created_at?.slice(0, 16).replace('T', ' ')} UTC · took {duration(report.duration_seconds)}.
+          What the reader got right against the confirmed card, before any lookup.
+        </p>
+      </div>
+      {groups.map(([resolution, rows]) => {
+        const entries = Object.entries(rows)
+        return (
+          <div key={resolution} data-testid={`scanner-lab-ocr-check-${resolution}`}>
+            <h4 className="text-footnote font-semibold">{RESOLUTION_NAMES[resolution] || resolution} ({number(entries[0]?.[1]?.n)})</h4>
+            <OcrRows rows={entries} />
+          </div>
+        )
+      })}
+      {(report.failures || []).length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-footnote text-text-secondary">First {report.failures.length} scans where the name or the number was not read</summary>
+          <ul className="space-y-1 pt-1 text-[11px] text-text-secondary">
+            {report.failures.map(item => (
+              <li key={item.trace} className="break-words">
+                {item.truth.name} #{item.truth.number}{item.truth.total ? `/${item.truth.total}` : ''} ({item.resolution}, {item.height} px) · read name “{item.read.name || '–'}”, number {item.read.number ? `${item.read.number}${item.read.total ? `/${item.read.total}` : ''}` : '–'}
+                {item.lines?.length ? ` · text: ${item.lines.join(' | ')}` : ''}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  )
+}
+
 const RIGHT_LABEL = { matcher: 'the matcher', ollama: 'Ollama', current: 'Ollama', neither: 'neither' }
 
 function SideBySide({ data }) {
@@ -347,6 +414,9 @@ export default function ScannerLabSection() {
             <button type="button" className={button} disabled={busy || !ready || !index.built || !data.labelled_traces} onClick={() => benchmark.mutate('labelled')} data-testid="scanner-lab-labelled">
               <FlaskConical size={13} aria-hidden="true" /> Run on diagnostics ({number(data.labelled_traces)} confirmed)
             </button>
+            <button type="button" className={button} disabled={busy || !ready || !data.labelled_traces || !data.ocr_available} onClick={() => benchmark.mutate('ocr-check')} data-testid="scanner-lab-ocr-check-run">
+              <FlaskConical size={13} aria-hidden="true" /> OCR check ({number(data.labelled_traces)} confirmed)
+            </button>
             <button type="button" className={button} disabled={busy || !ready || !index.built || !data.labelled_traces} onClick={() => benchmark.mutate('compare-labelled')} data-testid="scanner-lab-compare">
               <GitCompare size={13} aria-hidden="true" /> Compare options (real scans)
             </button>
@@ -368,6 +438,7 @@ export default function ScannerLabSection() {
         <HowConfirmedView data={shadow.data?.report?.how_confirmed} />
         {data.reports?.synthetic && <Report report={data.reports.synthetic} title="Latest benchmark: synthetic photos" />}
         {data.reports?.labelled && <Report report={data.reports.labelled} title="Latest benchmark: real scans (diagnostics)" />}
+        {data.reports?.['ocr-check'] && <OcrCheckView report={data.reports['ocr-check']} />}
         {data.reports?.['compare-labelled'] && <CompareTable report={data.reports['compare-labelled']} title="Option comparison: real scans" />}
         {data.reports?.['compare-synthetic'] && <CompareTable report={data.reports['compare-synthetic']} title="Option comparison: synthetic photos" />}
         {data.misses && <Misses />}
