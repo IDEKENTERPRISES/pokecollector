@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { Report } from './ScannerLabSection'
+import { Report, ShadowView } from './ScannerLabSection'
 
 const report = {
   kind: 'synthetic',
@@ -46,5 +46,62 @@ describe('Scanner lab report', () => {
     )
     expect(html).toContain('same 120 photos')
     expect(html).toContain('88.2%')
+  })
+
+  it('shows matcher and Ollama side by side with who was right where they disagreed', () => {
+    const view = {
+      n: 40, matcher: { decided_pct: 70, right_pct: 96.4 }, current: { decided_pct: 90, right_pct: 88.9 },
+      both_decided: 24, differ: 5, differ_matcher_right: 3, differ_current_right: 1, differ_neither_right: 1,
+    }
+    const html = renderToStaticMarkup(
+      <Report
+        report={{
+          ...report, kind: 'labelled',
+          side_by_side: { rerun: view, recorded: view, disagreements: [{ matcher: 'Pikachu', ollama: 'Raichu', confirmed: 'Pikachu', right: 'matcher' }] },
+        }}
+        title="Real scans"
+      />,
+    )
+    expect(html).toContain('scanner-lab-side-by-side')
+    expect(html).toContain('as recorded at scan time')
+    expect(html).toContain('3 / 1 / 1')
+    expect(html).toContain('Matcher: Pikachu')
+    expect(html).toContain('right: the matcher')
+  })
+})
+
+describe('Scanner lab shadow section', () => {
+  const data = {
+    enabled: true,
+    worker: { skipped: { index_not_built: 2 } },
+    report: {
+      compared: 58, skipped: {}, matcher_decided_pct: 64.3, median_ms: 812.4,
+      agreement: { same: 30, different: 4, both_decided: 34, agree_pct: 88.2 },
+      confirmed: {
+        n: 41, matcher: { decided_pct: 61, right_pct: 96 }, current: { decided_pct: 93.2, right_pct: 87.5 },
+        differ_matcher_right: 3, differ_current_right: 1, differ_neither_right: 0,
+      },
+      disagreements: [{ matcher: 'Mew', current: 'Mewtwo', confirmed: 'Mew', right: 'matcher' }],
+    },
+  }
+
+  it('shows the comparison counts, the matcher time and the latest disagreements by card name', () => {
+    const html = renderToStaticMarkup(<ShadowView data={data} />)
+    expect(html).toContain('Scans compared')
+    expect(html).toContain('88.2% (30 of 34)')
+    expect(html).toContain('64.3%')
+    expect(html).toContain('812.4 ms')
+    expect(html).toContain('On the 41 scans you confirmed')
+    expect(html).toContain('61% / 96%')
+    expect(html).toContain('93.2% / 87.5%')
+    expect(html).toContain('3 / 1 / 0')
+    expect(html).toContain('Matcher: Mew')
+    expect(html).toContain('Ollama: Mewtwo')
+    expect(html).toContain('index not built (2)')
+  })
+
+  it('says so when the server has shadow mode switched off', () => {
+    const html = renderToStaticMarkup(<ShadowView data={{ ...data, enabled: false }} />)
+    expect(html).toContain('switched off on this server')
   })
 })

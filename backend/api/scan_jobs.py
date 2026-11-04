@@ -224,6 +224,11 @@ async def enqueue_scan_job(
     except ScanUploadError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    # Shadow mode (nonprod, diagnostics consent only): the picture matcher also looks at each stored photo,
+    # in its own low-priority thread. It never waits for or changes the real recognition below.
+    from services.card_match import shadow as matcher_shadow
+
+    matcher_shadow.schedule_job(db, current_user.id, job)
     background_tasks.add_task(drain_scan_queue, max_items=len(files))
     return job_progress(db, job)
 

@@ -1,4 +1,6 @@
-"""Scanner lab (admins): the picture matcher's index and benchmark. Nothing here is used by scanning yet."""
+"""Scanner lab (admins): the picture matcher's index, benchmark and shadow comparison. Scanning does not use the matcher."""
+
+import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -9,7 +11,7 @@ from api.auth import get_current_user
 from database import get_db
 from models import Card, User
 from services import scan_trace
-from services.card_match import MATCHER_VERSION, benchmark, config, embed, index as index_module, jobs as jobs_module
+from services.card_match import MATCHER_VERSION, benchmark, config, embed, index as index_module, jobs as jobs_module, shadow as shadow_module
 from services.card_match.model_specs import DEFAULT_MODEL, MODEL_SPECS
 
 router = APIRouter()
@@ -51,6 +53,22 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
         "labelled_traces": benchmark.count_labelled_traces(trace_dir),
         "thresholds": benchmark.thresholds(),
     }
+
+
+_SHADOW_REPORT_TTL_SECONDS = 20
+_shadow_report_cache: dict = {"at": 0.0, "value": None, "dir": None}
+
+
+@router.get("/shadow")
+def card_match_shadow(current_user: User = Depends(get_current_user)):
+    """Shadow mode: the matcher beside today's scanner path on real scans (docs/CARD_MATCH.md)."""
+    _require_admin(current_user)
+    now = time.monotonic()
+    trace_dir = scan_trace.trace_root() or scan_trace.trace_storage_root()
+    cache = _shadow_report_cache
+    if cache["value"] is None or cache["dir"] != trace_dir or now - cache["at"] > _SHADOW_REPORT_TTL_SECONDS:
+        cache.update(at=now, dir=trace_dir, value=shadow_module.shadow_report(trace_dir))
+    return {"enabled": config.shadow_enabled(), "worker": shadow_module.runner.status(), "report": _shadow_report_cache["value"]}
 
 
 def _require_ready(need_index: bool) -> None:
