@@ -110,6 +110,31 @@ class ScanTraceTests(unittest.TestCase):
             "false",
         )
 
+    def test_test_server_default_on_keeps_an_explicit_off(self):
+        with patch.dict(os.environ, {"SCAN_TRACE_DEFAULT_ON": "1"}):
+            self.assertTrue(user_trace_enabled(self.db, self.user.id))
+            self.assertEqual(
+                _get_user_settings(self.db, self.user.id)[SCAN_DIAGNOSTICS_SETTING_KEY],
+                "true",
+            )
+
+            update_settings(
+                {SCAN_DIAGNOSTICS_SETTING_KEY: False},
+                db=self.db,
+                current_user=self.user,
+            )
+
+            self.assertFalse(user_trace_enabled(self.db, self.user.id))
+            self.assertEqual(
+                _get_user_settings(self.db, self.user.id)[SCAN_DIAGNOSTICS_SETTING_KEY],
+                "false",
+            )
+            self.assertTrue(user_trace_enabled(self.db, self.other_user.id))
+
+    def test_default_on_needs_a_trace_folder(self):
+        with patch.dict(os.environ, {"SCAN_TRACE_DEFAULT_ON": "1", "SCAN_TRACE_DIR": ""}):
+            self.assertFalse(user_trace_enabled(self.db, self.user.id))
+
     def test_enabled_trace_is_scoped_to_the_user_and_contains_analysis_data(self):
         self._enable(self.user)
         Path(self.temp_dir.name).chmod(0o755)
