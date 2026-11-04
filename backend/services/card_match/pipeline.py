@@ -357,6 +357,8 @@ class CardMatcher:
                 "orientation": {"by": how, "picture_margin": round(margin, 4)},
                 "text_input": {"source": text_source, "width": int(text_card.shape[1]), "height": int(text_card.shape[0])},
             }
+            # Every region OCR read (box, preprocessing, each line's text and confidence): Scanner lab draws them.
+            ocr_info["strips"] = list(getattr(ocr_result, "strips", None) or []) + list(getattr(name_read, "strips", None) or [])
             if name_read is not None:
                 t0 = _timer()
                 if name_read.hp and not ocr_info.get("hp"):
