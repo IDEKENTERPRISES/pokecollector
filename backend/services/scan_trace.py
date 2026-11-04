@@ -547,6 +547,55 @@ def _read_shadow_file(user_id: int, job_id, item_id, root: Path | None = None) -
     return data if isinstance(data, dict) else None
 
 
+CARD_SUFFIX = ".card.jpg"
+
+
+def _shadow_card_file(user_id: int, job_id, item_id, root: Path | None = None) -> Path | None:
+    user_dir = _user_dir(user_id, root)
+    if user_dir is None:
+        return None
+    return user_dir / SHADOW_DIR / f"job{_safe(job_id)}-item{_safe(item_id)}{CARD_SUFFIX}"
+
+
+def record_shadow_card(user_id: int, job_id: int, item_id: int, jpeg: bytes) -> bool:
+    """Keep the flat card the picture matcher read its text from (up to about 1000 px wide) beside the shadow
+    record, so the labelled benchmark and the Misses view can show and re-read exactly what the live run saw.
+    The caller has checked the trainer's consent. Returns whether it was stored."""
+    root = trace_root()
+    if root is None or not jpeg or _is_revoked(user_id, root):
+        return False
+    path = _shadow_card_file(user_id, job_id, item_id, root)
+    if path is None:
+        return False
+    with _TRACE_LOCK:
+        temp: Path | None = None
+        try:
+            _ensure_private_dir(root)
+            _ensure_private_dir(path.parent.parent)
+            _ensure_private_dir(path.parent)
+            temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+            _write_private(temp, jpeg)
+            if _is_revoked(user_id, root):
+                temp.unlink(missing_ok=True)
+                return False
+            temp.replace(path)
+            return True
+        except Exception:
+            if temp:
+                temp.unlink(missing_ok=True)
+            logger.exception("Failed to write the matcher's flat card")
+            return False
+
+
+def stored_card_path(trace_path: Path, data: dict) -> Path | None:
+    """The flat card stored for a trace (``user-N/<day>/<trace>.json``), or None for older traces."""
+    job_id, item_id = data.get("job_id"), data.get("item_id")
+    if not job_id or not item_id:
+        return None
+    path = trace_path.parent.parent / SHADOW_DIR / f"job{_safe(job_id)}-item{_safe(item_id)}{CARD_SUFFIX}"
+    return path if path.is_file() else None
+
+
 def has_shadow(user_id: int, job_id: int, item_id: int) -> bool:
     for root in _cleanup_roots():
         path = _shadow_file(user_id, job_id, item_id, root)

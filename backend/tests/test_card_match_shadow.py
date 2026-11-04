@@ -288,9 +288,9 @@ class ShadowSameInputTests(ShadowTestBase):
                 ocr_reader = real.ocr_reader
                 index = real.index
 
-                def match(self, photo):
-                    seen.append(photo)
-                    return real.match(photo)
+                def match(self, photo, **kwargs):
+                    seen.append((photo, kwargs.get("full_photo")))
+                    return real.match(photo, **kwargs)
 
             runner = shadow.ShadowRunner(
                 matcher_factory=lambda: (Spy(), None), consent_check=lambda user_id: True,
@@ -303,7 +303,9 @@ class ShadowSameInputTests(ShadowTestBase):
             self.assertEqual(trace_bytes, crop)
             benchmark_photo = images.decode_rgb(trace_bytes, max_side=2048)
             self.assertEqual(len(seen), 1)
-            np.testing.assert_array_equal(seen[0], benchmark_photo)
+            np.testing.assert_array_equal(seen[0][0], benchmark_photo)
+            # The text is read from the full-resolution stored photo; only that, never the embedded card.
+            np.testing.assert_array_equal(seen[0][1], images.decode_rgb(self.photo_jpeg, max_side=2048))
             record = self.read_shadow()
             self.assertEqual(record["decision"], real.match(benchmark_photo).decision)
             self.assertEqual(record["input"], {"bytes": len(crop), "width": benchmark_photo.shape[1], "height": benchmark_photo.shape[0]})

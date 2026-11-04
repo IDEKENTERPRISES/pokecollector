@@ -337,6 +337,21 @@ def _score(outcome, entry: dict, settings: dict, corners, card_width: float) -> 
     }
 
 
+def load_stored_card(trace_path: Path, data: dict):
+    """The high-resolution flat card a scan stored beside its trace (the card the live run read its text from),
+    or None for older traces, which are read from the recognition image alone."""
+    from services import scan_trace
+    from .images import decode_rgb
+
+    stored = scan_trace.stored_card_path(trace_path, data)
+    if stored is None:
+        return None
+    try:
+        return decode_rgb(stored.read_bytes())
+    except Exception:
+        return None
+
+
 def run_labelled(
     session_factory, matcher, *, trace_dir: Path, progress: Callable[[dict], None] | None = None,
     should_stop: Callable[[], bool] | None = None, collector=None,
@@ -383,11 +398,11 @@ def run_labelled(
             photo = decode_rgb((path.parent / data["image_file"]).read_bytes(), max_side=2048)
         except Exception:
             continue
-        outcome = matcher.match(photo)
+        outcome = matcher.match(photo, flat_card=load_stored_card(path, data))
         if collector is not None:
             try:
                 collector.add(trace=path.name, photo=photo, outcome=outcome, truth_id=truth_id,
-                              confirmation=(data.get("confirmation") or {}).get("source"))
+                              confirmation=(data.get("confirmation") or {}).get("source"), matcher=matcher)
             except Exception:  # the misses view must never stop the benchmark
                 logger.exception("Card-match: could not record a miss for %s", path.name)
         rank = next((m["rank"] for m in outcome.matches if m["card_id"] == truth_id), None)

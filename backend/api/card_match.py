@@ -1,5 +1,6 @@
 """Scanner lab (admins): the picture matcher's index, benchmark, shadow comparison and picture-first counts."""
 
+import base64
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -75,6 +76,21 @@ def card_match_misses(tag: str | None = None, offset: int = 0, limit: int = miss
     if tag and tag not in misses_module.TAGS:
         raise HTTPException(status_code=422, detail="Unknown tag")
     return misses_module.page(tag, max(0, offset), max(1, min(limit, 200)))
+
+
+@router.get("/misses/{key}/full")
+def card_match_miss_full(key: str, current_user: User = Depends(get_current_user)):
+    """One miss at full size: the photo with the corners drawn and the flat card as it was read, inline (the
+    lab page cannot load images that need a bearer token)."""
+    _require_admin(current_user)
+    photo, card = misses_module.full_image(key, "photo"), misses_module.full_image(key, "card")
+    if photo is None and card is None:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    def inline(data):
+        return ("data:image/jpeg;base64," + base64.b64encode(data).decode("ascii")) if data else None
+
+    return {"photo": inline(photo), "card": inline(card)}
 
 
 _SHADOW_REPORT_TTL_SECONDS = 20

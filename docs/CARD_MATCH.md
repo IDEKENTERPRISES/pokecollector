@@ -29,7 +29,7 @@ The decision (`pipeline.decide`) reuses `_candidate_rank_key` and `_metadata_dec
 
 Free OCR on the bottom line loses digits ("12/13" for "112/113"), reads the slash as a 1 or 7 ("69197") or reads nothing on an upside-down card. Three fixes, cheapest first:
 
-1. **Which way up.** The picture search already knows: the 0° or the 180° view that matches a catalogue picture better says whether the flattened card is upside down, and OCR reads it that way up (`flipped`). Without the hint the reader tries upright first and the turned card when no complete number came out.
+1. **Which way up** (rewritten in version 4, see below). Version 2 let the picture search decide: the 0° or the 180° view that matched a catalogue picture better said whether the card was upside down. When the right card is not in the index's top results, that comparison is a coin toss, and it flipped upright cards.
 2. **A second look at the bottom.** When the tight strips give no number and total, the wider strips (from 90.5% of the card height, to catch e-Card/EX-era numbers printed higher) are read at 3× with sharpening.
 3. **Constrained reading** (`constrained.py`, pure): the 20 closest printings have real numbers and printed totals, so the recognised text is compared with each printing's "number/total" (zero-padding either way, slash read as `/`, `1`, `7` or lost, up to two edits for longer patterns, none for the shortest). A printing is accepted only when exactly one printing matches clearly better than the rest, and never when two printings print the same number and total. It only runs when the read number names no candidate, so a real read is never overridden, and the decision rules still need the picture to agree (rank ≤ 10, similarity ≥ 0.55). The change is recorded in the trace as `ocr.corrected`.
 
@@ -63,7 +63,7 @@ An option set is a label, the options joined by `+`: `baseline` (picture only, a
 | Tag | Rule |
 | --- | --- |
 | Card not found or corners off | the finder fell back to the plain guide crop |
-| Upside down | the card was read turned 180° |
+| Upside down | the card really is turned 180°: **measured** against the confirmed card (its own catalogue picture is clearly closer to the flat card turned 180° than as it is: margin ≥ `CARD_MATCH_ORIENT_MARGIN` and similarity ≥ 0.45). Never taken from the matcher's own choice of orientation |
 | Generic card | the confirmed card is an Energy (basic or common) or a common / uncommon Trainer |
 | Same artwork in another set | another printing of the same name is among the matcher's picks |
 | Sleeve or top-loader glare | ≥ 4% of the flat card is blown out to near white |
@@ -71,9 +71,29 @@ An option set is a label, the options joined by `+`: `baseline` (picture only, a
 | Holo or full art | the confirmed card's rarity is a holo / full-art kind |
 | No clear cause | none of the above |
 
-A scan can carry several tags; the counts per tag are filter chips. The thresholds are first guesses, and the photos are right there to adjust them. Pictures live under `<card-match dir>/misses/run-<time>/` (small JPEGs; a newer run replaces the older one), `latest.json` has the list, and `GET /api/card-match/misses?tag=&offset=&limit=` pages through it with the pictures inline (admins only).
+A scan can carry several tags; the counts per tag are filter chips. The thresholds are first guesses, and the photos are right there to adjust them. Pictures live under `<card-match dir>/misses/run-<time>/` (a newer run replaces the older one), `latest.json` has the list, and `GET /api/card-match/misses?tag=&offset=&limit=` pages through it with the list thumbnails inline (admins only). Tap any picture to open the full-size view (`GET /api/card-match/misses/{key}/full`): the photo with the corners drawn, the flat card as it was read at its real size (scrolls instead of shrinking; the pixel size is shown), and the confirmed card's large picture. Thumbnails are 420 px / 210×293 at JPEG quality 82 (they were 300 px / 126×176 at 60); the full-size pictures are quality 92.
 
-**After a deploy** (`MATCHER_VERSION` 3): the nonprod autorun builds the missing indexes (the whole-card one if new, then the artwork one), runs the synthetic benchmark and, when at least 100 scans are confirmed, the **real-photo benchmark** (which also writes the Misses view) and the **option comparison**. Nothing needs pressing. The DINOv2-base index is not built by the autorun; press **Build … DINOv2-base index** to include it in the comparison.
+### Which way up, and text at full resolution (matcher version 4)
+
+**The finding.** In the 49 misses of the last real-photo run, 33 were tagged "Upside down", yet the owner's example (Illumise, 30th Celebration #004) is upright in the photo and in the matcher's crop. The tag was set from `ocr.flipped`, which was only the picture search's guess: `raw[1].max() > raw[0].max()`, i.e. "the turned view has the closest catalogue picture". For a card whose picture is not close to anything in the index (a miss by definition: holo glare, promo art, another printing), the two views score about the same, so the guess is close to a coin toss. The pipeline then read the *turned* strips, found no name or number, and the tag called the card upside down. So "Upside down" mostly meant "weak picture match", and the misses it covered lost their text reading too.
+
+**The rule now** (`pipeline.CardMatcher._read_text`):
+
+1. Upright is the default (the camera guide is portrait and trainers hold cards upright).
+2. The picture search may say "turned" only when the turned view beats the upright one by at least `CARD_MATCH_ORIENT_MARGIN` (0.10; a card that is in the index scores far higher in its own orientation). Then the card is read turned, as before.
+3. Otherwise OCR decides: read upright (the number strips and the name line); only if that gives nothing usable (no number, and no name that is in the catalogue) is the turned card read too, and it is kept only if it gives something better. Both nothing: upright.
+
+`ocr.orientation` records `by` (`picture`, `text` or `default`) and the picture margin; `ocr.flipped` is the final answer. The picture search itself is unchanged (each card still keeps the better of its two views); only the extra views (tta, artwork) follow the final orientation.
+
+**The tag is measured.** `CardMatcher.card_rotation` embeds the flat card as it is and turned, and compares both with the *confirmed* card's own vector in the index. The Misses view shows the two similarities. A confirmed card that is not in the index cannot be measured and is not tagged.
+
+**Text is read from the sharpest picture.** The strips are about 20 px tall on a 630×880 card, and the recognition image (the guide-frame crop, 1024 px long side) is already about that size. The full stored photo (up to 2048 px) has about 1.5× more detail on the card. `match(photo, full_photo=…)`: the card is found and embedded from the recognition image exactly as before; the card is *also* found on the full photo and flattened at its own detail (`Detection.hires`, up to 1008×1408, never upscaled), and OCR (number strips, name line, HP) reads that. The full-photo flattening is used only if the card is found in it and looks like the same card as the one found in the recognition image (grey correlation ≥ 0.6); otherwise the text is read from the recognition image's own card, as in version 3. Strip zoom is scaled by 880 / card height so a sharper card is not upscaled again and reading costs about the same. `ocr.text_input` records the source (`full_photo`, `stored_card`, `photo`, `crop`) and size.
+
+**Everything reads the same input.** Shadow mode (`ShadowRunner._run_one`) and picture-first (`picture_first.run_matcher`, `scan_queue._full_photo_for_item`) pass the recognition image and the full photo. Both store the flat card the text was read from as `user-N/shadow/job<J>-item<I>.card.jpg` (JPEG 90, about 1000 px wide, same consent as the shadow record). The labelled benchmark passes that stored card as `flat_card=` for traces that have one, so a re-run reads the very pixels the live run read. Older traces have no stored card and keep being read from their 1024 px recognition image. A test requires that the live read and the stored-card replay give the same text input and the same decision.
+
+**What reruns after the deploy** (`MATCHER_VERSION` 4): the nonprod autorun runs the synthetic benchmark and the real-photo benchmark and option comparison again, and the Misses view is rebuilt: the "Upside down" count should fall from 33 to the cards that are really turned, and "Same artwork in another set" / "No clear cause" should grow by the rest. The real-photo number reading only gains from full resolution on scans made after this deploy (older traces only hold the 1024 px crop); the orientation fix applies to all of them.
+
+**After a deploy** (`MATCHER_VERSION` 4 now): the nonprod autorun builds the missing indexes (the whole-card one if new, then the artwork one), runs the synthetic benchmark and, when at least 100 scans are confirmed, the **real-photo benchmark** (which also writes the Misses view) and the **option comparison**. Nothing needs pressing. The DINOv2-base index is not built by the autorun; press **Build … DINOv2-base index** to include it in the comparison.
 
 **Result shape.** `MatchResult` is unchanged: `status`, `decision`, `unsure_reason`, `matches`, `detection`, `ocr`, `timings_ms`. Fields only added: each `matches` item gets `picture_rank` (where the printing stands among all pictures) and, when names are read, `name_score`; `ocr` gets `name`, `name_lines`, `text_candidates_added` (and `hp` from the name strip); `timings_ms` gets `name`; `decision.mechanism` can also be `name_and_picture`. `rank` keeps its meaning (position in `matches`, 1 = first). A test pins the old key sets.
 
@@ -156,7 +176,7 @@ The `shadow` object in the trace:
 | `matcher_version`, `model` | which matcher and which embedding model |
 | `outcome`, `decision`, `unsure_reason` | `decided` / `unsure`; the decision (`tcg_card_id`, mechanism, similarity, lead) or the reason |
 | `matches` | the top 20 with similarity, rank, name, number, set |
-| `ocr` | number, printed total, HP, the first tokens and lines read, `flipped` (read upside down), `corrected` (a damaged number replaced from the closest printings) |
+| `ocr` | number, printed total, HP, the first tokens and lines read, `flipped` (read upside down), `orientation` (`by`: picture / text / default, and the picture margin), `text_input` (what the text was read from and its size), `corrected` (a damaged number replaced from the closest printings) |
 | `input`, `ocr_available`, `index_count` | what the matcher was given (stored bytes, width, height of the photo) and what it had loaded, so a difference from the benchmark is visible |
 | `detection`, `timings_ms` | card finder result; detect / embed / search / ocr / decide / total |
 | `agreement`, `agrees`, `current_selected`, `current_rank_in_matcher` | filled when the current path finishes: `same`, `different` (both decided), `matcher_only`, `current_only`, `neither`; `agrees` is true/false only when both decided |
@@ -173,7 +193,7 @@ Scanner lab → **Shadow run** shows, from the traces (refreshed every 30 s):
 
 "Run on diagnostics" (the labelled benchmark) reads the same trace fields. Its report adds **Matcher and Ollama side by side**: the matcher as recorded at scan time (the `shadow` object) and the matcher run again just now, each against Ollama's pick on the same confirmed photos, with the number of photos where they decided differently and who was right (`side_by_side` in the report JSON; `scripts/scan_benchmark.py` saves the same report). Traces without shadow data still count in the re-run column.
 
-**Same photo as the benchmark.** The scan trace stores the *recognition image* (the guide-frame crop made for the local model, else the stored photo), and the labelled benchmark re-runs that. Shadow mode first read the full stored photo instead, where the card is much smaller and the corner text unreadable, so it recorded "not decided" for scans the benchmark decided. It now reads the same bytes (`scan_storage.read_recognition_image`); a test requires the same pixels and the same decision on both paths.
+**Same photo as the benchmark** (version 4 adds the full photo for reading text, and the stored flat card the benchmark re-reads; see above). The scan trace stores the *recognition image* (the guide-frame crop made for the local model, else the stored photo), and the labelled benchmark re-runs that. Shadow mode first read the full stored photo instead, where the card is much smaller and the corner text unreadable, so it recorded "not decided" for scans the benchmark decided. It now reads the same bytes (`scan_storage.read_recognition_image`); a test requires the same pixels and the same decision on both paths.
 
 ## Picture match first (nonprod switch)
 

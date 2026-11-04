@@ -20,3 +20,10 @@ def decode_rgb(data: bytes, *, max_side: int | None = None) -> np.ndarray:
         scale = max_side / max(image.size)
         image = image.resize((max(1, round(image.width * scale)), max(1, round(image.height * scale))), Image.Resampling.LANCZOS)
     return np.asarray(image)
+
+
+def encode_jpeg(image_rgb: np.ndarray, quality: int = 90) -> bytes:
+    """RGB uint8 array -> JPEG bytes."""
+    buffer = io.BytesIO()
+    Image.fromarray(image_rgb).save(buffer, format="JPEG", quality=quality)
+    return buffer.getvalue()

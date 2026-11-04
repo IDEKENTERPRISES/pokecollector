@@ -26,6 +26,7 @@ from . import config
 # when no number is found there, the wide strips take a second look (older cards print flavour text lower).
 STRIPS = {"tight": [(0.0, 0.945, 0.55, 1.0), (0.45, 0.945, 1.0, 1.0)], "wide": [(0.0, 0.905, 0.55, 1.0), (0.45, 0.905, 1.0, 1.0)]}
 WIDE_ZOOM = 3.0
+REFERENCE_HEIGHT = 880  # the zooms above are for a card this tall; a sharper card needs less upscaling for the same strip size
 HP_STRIP = (0.45, 0.0, 1.0, 0.14)
 
 _NUMBER_TOTAL = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{0,4}\s?\d{1,3}[A-Za-z]?)\s*[/|\\]\s*([A-Za-z]{0,4}\s?\d{1,3})")  # no end guard: a stray mark after the total reads as one more digit
@@ -145,6 +146,8 @@ class OcrReader:
         h, w = card.shape[:2]
         x0, y0, x1, y1 = box
         strip = card[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)]
+        if h > REFERENCE_HEIGHT:  # real detail instead of upscaled pixels, at the same strip size (and cost)
+            zoom = max(1.0, zoom * REFERENCE_HEIGHT / h)
         # Small caps text: an upscale helps the detector without growing the cost much.
         strip = cv2.resize(strip, None, fx=zoom, fy=zoom, interpolation=cv2.INTER_CUBIC)
         if sharpen:

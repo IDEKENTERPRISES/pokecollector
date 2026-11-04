@@ -154,6 +154,15 @@ describe('Scanner lab misses view', () => {
     expect(html).toContain('Matcher pick 1: Grass Energy')
     expect(html).toContain('Read: name “Grass Energy”')
   })
+
+  it('makes each picture tappable (full size opens in a viewer) and says what the rotation measurement found', () => {
+    const withRotation = { ...data, items: [{ ...data.items[0], rotation: { upright: 0.62, turned: 0.31, margin: -0.31, rotated: false }, orientation: { by: 'default' }, text_input: { source: 'full_photo', width: 1008, height: 1408 } }] }
+    const html = renderToStaticMarkup(<MissesView data={withRotation} tag={null} onTag={() => {}} onMore={() => {}} />)
+    expect(html).toContain('data-testid="miss-open"')
+    expect(html).toContain('Open Flat card the matcher used at full size')
+    expect(html).toContain('Measured against the confirmed card: upright')
+    expect(html).toContain('upright by default')
+  })
 })
 
 describe('Picture match first counts', () => {

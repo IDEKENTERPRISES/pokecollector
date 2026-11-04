@@ -62,7 +62,7 @@ class FakeMatcher:
         self.result, self.error, self.delay, self.calls = result, error, delay, 0
         self.index, self.ocr_reader = [1, 2, 3], None
 
-    def match(self, photo):
+    def match(self, photo, **kwargs):
         self.calls += 1
         if self.delay:
             time.sleep(self.delay)

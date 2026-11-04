@@ -159,13 +159,13 @@ class MergeCandidatesTests(unittest.TestCase):
 @unittest.skipUnless(DEPS_AVAILABLE, "backend dependencies are not installed")
 class MissTaggingTests(unittest.TestCase):
     def tags(self, **overrides):
-        args = dict(found=True, flipped=False, truth={"card_id": "t", "name": "Pikachu", "card_type": "pokemon", "rarity": "Common"}, others=[], stats={"glare": 0.0, "mean": 120, "sharpness": 200})
+        args = dict(found=True, rotated=False, truth={"card_id": "t", "name": "Pikachu", "card_type": "pokemon", "rarity": "Common"}, others=[], stats={"glare": 0.0, "mean": 120, "sharpness": 200})
         args.update(overrides)
         return misses.tag_miss(**args)
 
     def test_each_cause_is_tagged(self):
         self.assertEqual(self.tags(found=False, stats=None), ["not_found"])
-        self.assertIn("upside_down", self.tags(flipped=True))
+        self.assertIn("upside_down", self.tags(rotated=True))
         self.assertIn("generic", self.tags(truth={"card_id": "t", "name": "Grass Energy", "card_type": "energy", "rarity": "Common"}))
         self.assertIn("generic", self.tags(truth={"card_id": "t", "name": "Switch", "card_type": "trainer", "rarity": "Uncommon"}))
         self.assertNotIn("generic", self.tags(truth={"card_id": "t", "name": "Boss", "card_type": "trainer", "rarity": "Rare Holo"}))

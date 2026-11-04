@@ -18,6 +18,7 @@ import numpy as np
 from . import config
 
 CARD_W, CARD_H = 630, 880  # output size (the TCGdex high picture is 600x825; same 63:88 shape)
+HIRES_W, HIRES_H = 1008, 1408  # the most detail kept for reading text (same 63:88 shape); never above the photo's own pixels
 CARD_RATIO = 63 / 88
 DETECT_MAX_SIDE = 900
 # The camera screen's yellow guide: centred, 70% of the photo width, card-shaped (matches the proof script).
@@ -57,6 +58,7 @@ class Detection:
     confidence: float
     method: str  # "contour" | "guide_crop"
     corners: list[tuple[float, float]] = field(default_factory=list)  # in the original photo, tl,tr,br,bl
+    hires: np.ndarray | None = None  # the same card flattened at the photo's own detail (up to HIRES_W x HIRES_H); None when no sharper than ``card``
 
 
 def guide_rect(width: int, height: int) -> tuple[float, float, float, float]:
@@ -164,14 +166,26 @@ def _find_quad(small_bgr: np.ndarray, guide: tuple) -> tuple[np.ndarray, float] 
     return best
 
 
-def warp_card(photo_rgb: np.ndarray, corners: np.ndarray) -> np.ndarray:
-    """Flatten the quad (tl, tr, br, bl) to an upright CARD_W x CARD_H picture."""
+def warp_card(photo_rgb: np.ndarray, corners: np.ndarray, size: tuple[int, int] = (CARD_W, CARD_H)) -> np.ndarray:
+    """Flatten the quad (tl, tr, br, bl) to an upright picture of ``size`` (width, height)."""
+    width, height = size
     top, right, bottom, left = _side_lengths(corners)
     if (top + bottom) > (left + right):  # lying on its side: turn the corner order a quarter
         corners = np.array([corners[3], corners[0], corners[1], corners[2]], dtype=np.float32)
-    target = np.array([[0, 0], [CARD_W - 1, 0], [CARD_W - 1, CARD_H - 1], [0, CARD_H - 1]], dtype=np.float32)
+    target = np.array([[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]], dtype=np.float32)
     matrix = cv2.getPerspectiveTransform(corners.astype(np.float32), target)
-    return cv2.warpPerspective(photo_rgb, matrix, (CARD_W, CARD_H), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    return cv2.warpPerspective(photo_rgb, matrix, (width, height), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+
+def hires_size(corners: np.ndarray) -> tuple[int, int] | None:
+    """The flat size that keeps the photo's own detail (capped), or None when that is no bigger than the
+    matcher's usual CARD_W x CARD_H."""
+    top, right, bottom, left = _side_lengths(corners)
+    long_side = max((left + right) / 2, (top + bottom) / 2)
+    if long_side < 1.1 * CARD_H:
+        return None
+    height = int(min(HIRES_H, round(long_side)))
+    return int(round(height * CARD_RATIO)), height
 
 
 def guide_crop(photo_rgb: np.ndarray) -> np.ndarray:
@@ -192,8 +206,9 @@ def detect_card(photo_rgb: np.ndarray) -> Detection:
     found = _find_quad(small_bgr, guide)
     if found is not None and found[1] >= MIN_CONFIDENCE:
         quad = found[0] / scale  # back to full-resolution coordinates
+        size = hires_size(quad)
         return Detection(
             card=warp_card(photo_rgb, quad), found=True, confidence=round(found[1], 3), method="contour",
-            corners=[(float(x), float(y)) for x, y in quad],
+            corners=[(float(x), float(y)) for x, y in quad], hires=warp_card(photo_rgb, quad, size) if size else None,
         )
     return Detection(card=guide_crop(photo_rgb), found=False, confidence=FALLBACK_CONFIDENCE, method="guide_crop")

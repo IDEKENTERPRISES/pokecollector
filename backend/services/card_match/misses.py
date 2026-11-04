@@ -42,8 +42,11 @@ DARK_MEAN = 85  # mean grey level (0..255) of the flat card
 BLUR_VARIANCE = 30.0  # variance of the Laplacian of the flat card at 315x440
 MAX_ITEMS = 400
 PAGE_SIZE = 24
-THUMB_PHOTO_SIDE = 300
-THUMB_CARD = (126, 176)
+THUMB_PHOTO_SIDE = 420  # the list thumbnails; tapping one opens the full pictures
+THUMB_CARD = (210, 293)
+THUMB_QUALITY = 82
+FULL_QUALITY = 92
+FULL_PHOTO_SIDE = 1600  # the photo with the corners drawn, as big as the stored photo is useful
 
 
 def _norm(value) -> str:
@@ -64,13 +67,16 @@ def is_holo(truth: dict) -> bool:
     return any(word in rarity for word in HOLO_WORDS)
 
 
-def tag_miss(*, found: bool, flipped: bool | None, truth: dict, others: list[dict], stats: dict | None) -> list[str]:
+def tag_miss(*, found: bool, rotated: bool | None, truth: dict, others: list[dict], stats: dict | None) -> list[str]:
     """Likely causes of a miss. ``others`` are the matcher's other picks (dicts with a ``name``); ``stats`` are
-    the flat card's measurements (``card_stats``) or None when the card was not found."""
+    the flat card's measurements (``card_stats``) or None when the card was not found. ``rotated`` is a
+    measurement (``CardMatcher.card_rotation``: the confirmed card's own picture is clearly closer to the
+    photo turned 180 degrees), never the matcher's own choice of orientation: a card the matcher merely
+    guessed was turned is not "upside down"."""
     tags: list[str] = []
     if not found:
         tags.append("not_found")
-    if flipped:
+    if rotated:
         tags.append("upside_down")
     if is_generic(truth):
         tags.append("generic")
@@ -120,33 +126,39 @@ def misses_dir(data_dir: Path | None = None) -> Path:
     return (data_dir or config.data_dir()) / "misses"
 
 
-def _jpeg(image_rgb, quality: int = 60) -> bytes:
+def _jpeg(image_rgb, quality: int = THUMB_QUALITY) -> bytes:
     import cv2
 
     ok, buffer = cv2.imencode(".jpg", cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, quality])
     return buffer.tobytes() if ok else b""
 
 
-def photo_thumb(photo_rgb, corners) -> bytes:
-    """The photo, shrunk, with the detected card outline drawn on it."""
+def photo_thumb(photo_rgb, corners, *, side: int = THUMB_PHOTO_SIDE, quality: int = THUMB_QUALITY) -> bytes:
+    """The photo, shrunk to ``side`` px, with the detected card outline drawn on it."""
     import cv2
     import numpy as np
 
     h, w = photo_rgb.shape[:2]
-    scale = min(1.0, THUMB_PHOTO_SIDE / max(h, w))
+    scale = min(1.0, side / max(h, w))
     small = cv2.resize(photo_rgb, (max(1, round(w * scale)), max(1, round(h * scale))), interpolation=cv2.INTER_AREA).copy()
     if corners:
         points = (np.array(corners, dtype=np.float32) * scale).astype(np.int32).reshape(-1, 1, 2)
-        cv2.polylines(small, [points], True, (255, 40, 40), 2, cv2.LINE_AA)
+        thickness = max(2, round(max(small.shape[:2]) / 400))
+        cv2.polylines(small, [points], True, (255, 40, 40), thickness, cv2.LINE_AA)
         for x, y in points.reshape(-1, 2):
-            cv2.circle(small, (int(x), int(y)), 4, (40, 255, 40), -1, cv2.LINE_AA)
-    return _jpeg(small)
+            cv2.circle(small, (int(x), int(y)), thickness + 2, (40, 255, 40), -1, cv2.LINE_AA)
+    return _jpeg(small, quality)
 
 
 def card_thumb(card_rgb) -> bytes:
     import cv2
 
     return _jpeg(cv2.resize(card_rgb, THUMB_CARD, interpolation=cv2.INTER_AREA))
+
+
+def card_full(card_rgb) -> bytes:
+    """The flat card at the size it was read from, lightly compressed."""
+    return _jpeg(card_rgb, FULL_QUALITY)
 
 
 class MissCollector:
@@ -160,8 +172,9 @@ class MissCollector:
         self.items: list[dict] = []
         self.scans = 0
 
-    def add(self, *, trace: str, photo, outcome, truth_id: str, label: str = "", confirmation: str | None = None) -> None:
-        """Record one scan if it is a miss (the right card is not the first pick)."""
+    def add(self, *, trace: str, photo, outcome, truth_id: str, label: str = "", confirmation: str | None = None, matcher=None) -> None:
+        """Record one scan if it is a miss (the right card is not the first pick). ``matcher`` measures whether
+        the card is really turned (against the confirmed card's own picture)."""
         from . import detect
 
         self.scans += 1
@@ -172,14 +185,24 @@ class MissCollector:
         loaded = self.loader([truth_id] + [m["card_id"] for m in outcome.matches[:3]])
         truth = {"card_id": truth_id, **(loaded.get(truth_id) or {})}
         top3 = outcome.matches[:3]
+        rotation = None
+        if matcher is not None and card.found:
+            try:
+                rotation = matcher.card_rotation(card.card, truth_id)
+            except Exception:
+                logger.exception("Card-match: could not measure the rotation for %s", trace)
         tags = tag_miss(
-            found=bool(outcome.detection.get("found")), flipped=outcome.ocr.get("flipped"), truth=truth,
+            found=bool(outcome.detection.get("found")), rotated=bool(rotation and rotation["rotated"]), truth=truth,
             others=outcome.matches, stats=card_stats(card.card) if card.found else None,
         )
         key = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in Path(trace).stem)[:80] or f"scan{self.scans}"
         self.run_dir.mkdir(parents=True, exist_ok=True)
-        (self.run_dir / f"{key}-photo.jpg").write_bytes(photo_thumb(photo, outcome.detection.get("corners") or []))
+        corners = outcome.detection.get("corners") or []
+        (self.run_dir / f"{key}-photo.jpg").write_bytes(photo_thumb(photo, corners))
         (self.run_dir / f"{key}-card.jpg").write_bytes(card_thumb(card.card))
+        (self.run_dir / f"{key}-photo-full.jpg").write_bytes(photo_thumb(photo, corners, side=FULL_PHOTO_SIDE, quality=FULL_QUALITY))
+        read_card = outcome.text_card if getattr(outcome, "text_card", None) is not None else card.card
+        (self.run_dir / f"{key}-card-full.jpg").write_bytes(card_full(read_card))
         decision = outcome.decision
         self.items.append({
             "key": key, "trace": trace, "kind": "not_in_top20" if rank is None else "not_top1", "rank": rank,
@@ -189,7 +212,7 @@ class MissCollector:
             "unsure_reason": outcome.unsure_reason,
             "truth": {
                 "tcg_card_id": truth.get("tcg_card_id"), "name": truth.get("name"), "number": truth.get("number"),
-                "set": truth.get("set"), "rarity": truth.get("rarity"), "image": truth.get("images_small"),
+                "set": truth.get("set"), "rarity": truth.get("rarity"), "image": truth.get("images_small"), "image_large": truth.get("images_large"),
             },
             "top3": [
                 {"tcg_card_id": m["tcg_card_id"], "name": m.get("name"), "number": m.get("number"), "set": m.get("set"),
@@ -201,6 +224,7 @@ class MissCollector:
                 "hp": outcome.ocr.get("hp"), "lines": (outcome.ocr.get("lines") or [])[:6], "name_lines": (outcome.ocr.get("name_lines") or [])[:4],
             },
             "detection": {k: outcome.detection.get(k) for k in ("found", "confidence", "method")},
+            "rotation": rotation, "orientation": outcome.ocr.get("orientation"), "text_input": outcome.ocr.get("text_input"),
             "stats": card_stats(card.card) if card.found else None,
         })
 
@@ -233,6 +257,17 @@ def load_latest(data_dir: Path | None = None) -> dict | None:
 def _inline(path: Path) -> str | None:
     try:
         return "data:image/jpeg;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+    except OSError:
+        return None
+
+
+def full_image(key: str, kind: str, data_dir: Path | None = None) -> bytes | None:
+    """The full-size ``photo`` (corners drawn) or ``card`` (flat card as read) of one miss in the latest run."""
+    report = load_latest(data_dir)
+    if report is None or kind not in ("photo", "card") or not any(item["key"] == key for item in report["items"]):
+        return None
+    try:
+        return (misses_dir(data_dir) / report["run"] / f"{key}-{kind}-full.jpg").read_bytes()
     except OSError:
         return None
 

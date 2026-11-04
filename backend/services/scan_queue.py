@@ -574,6 +574,18 @@ def _clear_recognition_cache(claim: ClaimedScanItem) -> None:
         cache_db.close()
 
 
+def _full_photo_for_item(db: Session, item_id: int | None) -> bytes | None:
+    """The stored full-resolution photo of a scan item, which the picture matcher reads its text from (None when
+    it is not there: the matcher then reads the recognition image alone)."""
+    if item_id is None:
+        return None
+    try:
+        row = db.get(ScanJobItem, item_id)
+        return resolve_scan_path(row.image_path).read_bytes() if row is not None and row.image_path else None
+    except Exception:
+        return None
+
+
 def _earlier_picture_for_item(db: Session, item_id: int | None) -> dict | None:
     """What an earlier run of this scan recorded about the picture match (for "Wait for the scanner")."""
     if item_id is None:
@@ -689,7 +701,7 @@ async def default_scan_processor(
     picture_run, picture_earlier = None, None
     if picture_first.enabled(db):
         picture_earlier = _earlier_picture_for_item(db, item_id)
-        picture_run = await picture_first.run_matcher(image_bytes)
+        picture_run = await picture_first.run_matcher(image_bytes, _full_photo_for_item(db, item_id))
         if picture_run is not None:
             early = await _picture_first_early_result(
                 db, user_id, provider, image_bytes, picture_run, picture_earlier, job_id=job_id, item_id=item_id
