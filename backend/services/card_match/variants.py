@@ -90,7 +90,29 @@ def save_chosen(label: str, reason: str, data_dir: Path | None = None) -> None:
     path.write_text(json.dumps({"label": parse(label).label, "reason": reason, "matcher_version": MATCHER_VERSION}), encoding="utf-8")
 
 
+_matchers: dict = {}
+
+
 def build_matcher(options: Options, session_factory, *, data_dir: Path | None = None, ocr_reader=None, read_hp: bool = False):
+    """Cached per option set and index build, so the scan queue does not rebuild it for every photo."""
+    index = None
+    try:
+        from . import index as index_module
+
+        index = index_module.get_index(DEFAULT_MODEL, data_dir)
+    except Exception:
+        pass
+    key = (options, id(index), len(index) if index is not None else 0, id(session_factory), id(ocr_reader), read_hp, str(data_dir),
+           tuple(len(ix) for ix in (index_module.get_index(n, data_dir) for n in needed_indexes(options)) if ix is not None) if index is not None else ())
+    cached = _matchers.get("last")
+    if cached and cached[0] == key:
+        return cached[1]
+    matcher = _build_matcher(options, session_factory, data_dir=data_dir, ocr_reader=ocr_reader, read_hp=read_hp)
+    _matchers["last"] = (key, matcher)
+    return matcher
+
+
+def _build_matcher(options: Options, session_factory, *, data_dir: Path | None = None, ocr_reader=None, read_hp: bool = False):
     """A CardMatcher with these options. Raises RuntimeError when the default index is missing; an extra
     index that is not built leaves that option out (logged), so a half-built setup still answers."""
     from . import embed, index as index_module, names as names_module, pipeline
