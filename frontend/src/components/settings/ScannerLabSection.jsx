@@ -136,6 +136,28 @@ function SideBySide({ data }) {
   )
 }
 
+export function PictureFirstView({ data }) {
+  const counts = data.counts
+  return (
+    <div className="space-y-1 border-t border-separator px-4 py-3" data-testid="scanner-lab-picture-first">
+      <div>
+        <h3 className="text-subheadline font-semibold">Picture match first</h3>
+        <p className="text-footnote text-text-secondary">
+          {data.enabled ? 'On.' : 'Off.'} Last {counts.days} days, from the scans themselves.
+        </p>
+      </div>
+      <Row testId="scanner-lab-pf-decided" label="Decided by picture" value={number(counts.decided)} />
+      <Row testId="scanner-lab-pf-ollama" label="Sent to Ollama" value={number(counts.ollama)} />
+      <Row testId="scanner-lab-pf-inbox" label="Sent to the inbox while the scanner was unreachable" value={number(counts.inbox)} />
+      <Row
+        testId="scanner-lab-pf-different"
+        label="Trainer picked a different card than the picture decided"
+        value={`${number(counts.picked_different)} of ${number(counts.decided_confirmed)} confirmed${counts.error_pct != null ? ` (${counts.error_pct}%)` : ''}`}
+      />
+    </div>
+  )
+}
+
 export function ShadowView({ data }) {
   const report = data.report
   const confirmed = report.confirmed
@@ -197,6 +219,12 @@ export default function ScannerLabSection() {
     refetchInterval: 30000,
     retry: false,
   })
+  const pictureFirst = useQuery({
+    queryKey: ['card-match-picture-first'],
+    queryFn: () => api.get('/card-match/picture-first').then(response => response.data),
+    refetchInterval: 60000,
+    retry: false,
+  })
   const refresh = () => queryClient.invalidateQueries({ queryKey: QUERY_KEY })
   const buildIndex = useMutation({ mutationFn: () => api.post('/card-match/index').then(r => r.data), onSuccess: refresh })
   const benchmark = useMutation({ mutationFn: kind => api.post('/card-match/benchmark', { kind }).then(r => r.data), onSuccess: refresh })
@@ -226,7 +254,7 @@ export default function ScannerLabSection() {
       <div className="overflow-hidden rounded-xl bg-card">
         <div className="space-y-2 px-4 py-3">
           <p className="text-footnote text-text-secondary">
-            The picture matcher prototype. It does not change how scans are recognised or what trainers see.
+            The picture matcher prototype. It only changes how scans are recognised while "Picture match first" is on in Settings › Scanner.
           </p>
           <Row testId="scanner-lab-coverage" label="English cards indexed" value={`${number(index.count)} of ${number(data.english_total)}`} />
           <Row label="Model" value={`${data.model?.name}${ready ? '' : ' (missing from this image)'}`} />
@@ -250,6 +278,7 @@ export default function ScannerLabSection() {
             )}
           </div>
         </div>
+        {pictureFirst.data?.counts && <PictureFirstView data={pictureFirst.data} />}
         {shadow.data?.report && (shadow.data.enabled || shadow.data.report.compared > 0) && <ShadowView data={shadow.data} />}
         {data.reports?.synthetic && <Report report={data.reports.synthetic} title="Latest benchmark: synthetic photos" />}
         {data.reports?.labelled && <Report report={data.reports.labelled} title="Latest benchmark: real scans (diagnostics)" />}

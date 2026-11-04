@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useContext, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronRight, Clock3, Loader2, Trash2 } from 'lucide-react'
@@ -11,6 +11,7 @@ import {
   resolveAndAddScanJobItem,
   resolveScanJobItem,
   retryScanJobItem,
+  waitForScannerJobItem,
 } from '../api/client'
 import { ScanAddModal } from '../components/CardScanner'
 import { CardZoomModal, ScanItemPanel, useScanItemPhoto } from '../components/ScanReview'
@@ -20,6 +21,7 @@ import ListRow from '../components/ios/ListRow'
 import ListSection from '../components/ios/ListSection'
 import PokeBall from '../components/ios/PokeBall'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
+import AuthContext from '../contexts/AuthContext'
 import { useScanner } from '../contexts/ScannerContext'
 import { useSettings } from '../contexts/SettingsContext'
 import { useNavBar } from '../navigation/useNavBar'
@@ -168,6 +170,13 @@ function JobDetail({ jobId, onObscuredChange }) {
     onError: error => toast.error(error?.response?.data?.detail || t('scanner.actionFailed')),
   })
 
+  const waitMutation = useMutation({
+    mutationFn: item => waitForScannerJobItem(jobId, item.id),
+    onSuccess: invalidate,
+    onError: error => toast.error(error?.response?.data?.detail || t('scanner.actionFailed')),
+  })
+  const isAdmin = useContext(AuthContext)?.user?.role === 'admin'
+
   const deleteMutation = useMutation({
     mutationFn: () => deleteScanJob(jobId),
     onSuccess: () => {
@@ -251,6 +260,8 @@ function JobDetail({ jobId, onObscuredChange }) {
             item={item}
             onAdd={(scanItem, match) => setAddSelection({ item: scanItem, match })}
             onRetry={itemToRetry => retryMutation.mutate(itemToRetry)}
+            onWait={itemToWait => waitMutation.mutate(itemToWait)}
+            isAdmin={isAdmin}
             onDismiss={dismiss}
             onReview={(scanItem, matchIndex) => setReview({ itemId: scanItem.id, matchIndex })}
             onModalChange={setItemModalOpen}

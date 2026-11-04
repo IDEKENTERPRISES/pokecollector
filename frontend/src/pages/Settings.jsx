@@ -1504,6 +1504,15 @@ export default function Settings() {
                 </SettingsRow>
               )}
               {scanDiagnosticsRow}
+              {user?.role === 'admin' && (
+                <SettingsRow label={t('settings.pictureFirst')} description={t('settings.pictureFirstDesc')}>
+                  <Toggle
+                    value={settings.scan_picture_first === 'true'}
+                    label={t('settings.pictureFirst')}
+                    onChange={val => handleAdminBooleanSettingToggle('scan_picture_first', val)}
+                  />
+                </SettingsRow>
+              )}
             </SettingsCard>
           </section>}
 

@@ -179,6 +179,8 @@ export const resolveAndAddScanJobItem = (jobId, itemId, data) =>
     .then(r => r.data)
 export const retryScanJobItem = (jobId, itemId) =>
   api.post(`/cards/recognize/jobs/${jobId}/items/${itemId}/retry`).then(r => r.data)
+export const waitForScannerJobItem = (jobId, itemId) =>
+  api.post(`/cards/recognize/jobs/${jobId}/items/${itemId}/wait`).then(r => r.data)
 export const deleteScanJob = jobId =>
   api.delete(`/cards/recognize/jobs/${jobId}`).then(r => r.data)
 export const fetchScanJobItemImage = (jobId, itemId) =>
