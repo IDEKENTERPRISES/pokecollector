@@ -2742,6 +2742,7 @@ const en = {
     offerAnother: 'Offer another swap with {name}',
     youGot: 'You got',
     endedDeclined: '{name} declined this offer on {date}.',
+    endedDeclinedYou: 'You declined this offer on {date}.',
     endedCancelledYou: 'You cancelled this offer on {date}.',
     endedCancelledThem: '{name} cancelled this offer on {date}.',
     endedExpired: 'This offer ended on {date} after 14 days without an answer.',

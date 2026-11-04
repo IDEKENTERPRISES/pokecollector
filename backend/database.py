@@ -121,6 +121,7 @@ def _run_migrations(conn):
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS ebay_app_id VARCHAR",
         # v41: Add Pokemon avatar selection to users
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_id INTEGER",
+        "ALTER TABLE swap_offers ADD COLUMN IF NOT EXISTS cancelled_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL",
         # Engagement P15: the tour is done once finished, skipped or dismissed
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS tutorial_completed_at TIMESTAMP",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS tutorial_outcome VARCHAR(12)",

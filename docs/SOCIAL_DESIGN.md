@@ -226,10 +226,10 @@ Avatars in the artboards are drawn placeholders (the trainer's initial). At runt
 | proposed / countered | `accept` (with `revision`) | the trainer whose turn it is | `accepted`; re-checks the cards first (409 `unavailable`) | to the other: accepted |
 | proposed / countered | `counter` (new cards, cash, note, `revision`) | the trainer whose turn it is | revision + 1, the other's turn; expiry restarts | to the other: counter |
 | proposed / countered | `decline` | the trainer whose turn it is | `declined` | none (D8) |
-| proposed / countered | `cancel` | the trainer who **started** the offer, at any turn | `cancelled` | none (D8) |
+| proposed / countered | `cancel` | the trainer who **started** the offer, at any turn | `cancelled`, `cancelled_by_user_id` set | none (D8) |
 | accepted | `confirm` ("Swapped") | each trainer once | the first tap waits for the other | to the other: swapped |
 | accepted, second tap | completion | server | `completed`; or 409 `unavailable` with nothing saved, still `accepted` | to both: completed |
-| accepted | `cancel` | either trainer | `cancelled` | none |
+| accepted | `cancel` | either trainer | `cancelled`, `cancelled_by_user_id` set | to the other: cancelled ("Misty called off your swap", no icon number) |
 | proposed / countered / accepted | 14 days after the last change (send, counter, accept, a Swapped tap) | scheduler | `expired` | none |
 
 **Rules as built:**
@@ -420,8 +420,8 @@ As built, the problem is known only from the 409. On a reload the offer looks ac
 
 | State | Chip (gray) | Sentence | Action |
 |---|---|---|---|
-| declined | "Declined" | "Dawn declined this offer on 31 Oct." | **Send a new offer** (opens the composer with the same cards) |
-| cancelled | "Cancelled" | "You cancelled this offer on 31 Oct." or "Dawn cancelled this offer on 31 Oct." | **Send a new offer** |
+| declined | "Declined" | "Dawn declined this offer on 31 Oct." (always the receiver; "You declined this offer…" for them) | **Send a new offer** (opens the composer with the same cards) |
+| cancelled | "Cancelled" | "You cancelled this offer on 31 Oct." for the trainer who cancelled, "Dawn cancelled this offer on 31 Oct." for the other (from `cancelled_by_user_id`; rows cancelled before it was kept count as the proposer) | **Send a new offer** |
 | expired | "Expired" | "This offer ended on 11 Nov after 14 days without an answer." | **Send again** |
 
 The sentence and the button sit in one `rounded-xl bg-card p-4` card (Body, then a full-width `Button variant="gray" size="md"`). The sides stay visible, read only, without the meter. If a card has gone meanwhile, its row says so, and Send again leaves it out. The dates come from `updated_at`. The arrow between the avatars turns secondary instead of the tint.
@@ -476,6 +476,7 @@ Category `swap_offers` (instant, default on; quiet hours apply). Each push carri
   - swapped: "Brock tapped Swapped. Tap yours once you have Charizard ex (OBF 125).";
   - completed: "Charizard ex (OBF 125) is in your collection.".
 - **D8:** a declined push: title "Swap declined", body "Dawn declined your swap offer" (details off: "A swap offer was declined"), with no icon number change.
+- **Cancel push (as built):** when an *accepted* swap is cancelled, the other trainer gets title "Swap called off", body "Misty called off your swap" (details off: "A swap was called off"), opening the offer, with no icon number change. Cancelling a pending offer still sends nothing.
 - **Navigation:** swap pushes should open `/trades/offers/<id>`. As built, the category navigates to `/`.
 
 There are no pushes for expiry, reactions, the feed or the challenge. A finisher badge pushes through the existing "badges" category.
@@ -511,6 +512,7 @@ The offer, from the viewer's side:
 ```jsonc
 {
   "id": 41, "state": "countered", "revision": 2, "role": "proposer",       // proposer | recipient
+  "cancelled_by_user_id": null,                                             // set once cancelled (old rows: the proposer)
   "from_user": { "id": 1, "username": "Ash", "avatar_id": 25 }, "to_user": { }, "partner": { },
   "turn_user_id": 1, "your_turn": true,
   "actions": ["accept", "decline", "counter", "cancel"],                    // what the viewer may do now

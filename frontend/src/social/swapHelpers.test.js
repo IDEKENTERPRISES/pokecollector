@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { daysLeft, groupOffers, parseServerTime, shortAgeLabel, swapStatus, tradeVerdict } from './swapHelpers'
+import { daysLeft, endedSentenceKey, groupOffers, parseServerTime, shortAgeLabel, swapStatus, tradeVerdict } from './swapHelpers'
 
 const offer = (extra = {}) => ({
   id: 1, state: 'proposed', revision: 1, your_turn: true, partner: { username: 'Brock' }, unavailable: [], items: [],
@@ -58,5 +58,25 @@ describe('groupOffers', () => {
     expect(groups.accepted.map(o => o.id)).toEqual([2])
     expect(groups.waiting.map(o => o.id)).toEqual([3])
     expect(groups.finished.map(o => o.id)).toEqual([4])
+  })
+})
+
+describe('endedSentenceKey', () => {
+  const base = { from_user: { id: 1 }, to_user: { id: 2 } }
+  const key = (extra, viewerId) => endedSentenceKey({ ...base, ...extra }, viewerId)
+  it('names the trainer who cancelled, from either side', () => {
+    expect(key({ state: 'cancelled', role: 'recipient', cancelled_by_user_id: 2 }, 2)).toBe('swaps.endedCancelledYou')
+    expect(key({ state: 'cancelled', role: 'proposer', cancelled_by_user_id: 2 }, 1)).toBe('swaps.endedCancelledThem')
+    expect(key({ state: 'cancelled', role: 'proposer', cancelled_by_user_id: 1 }, 1)).toBe('swaps.endedCancelledYou')
+    expect(key({ state: 'cancelled', role: 'recipient', cancelled_by_user_id: 1 }, 2)).toBe('swaps.endedCancelledThem')
+  })
+  it('falls back to the proposer for old rows', () => {
+    expect(key({ state: 'cancelled', role: 'proposer', cancelled_by_user_id: null }, 1)).toBe('swaps.endedCancelledYou')
+    expect(key({ state: 'cancelled', role: 'recipient', cancelled_by_user_id: null }, 2)).toBe('swaps.endedCancelledThem')
+  })
+  it('declined is always the receiver', () => {
+    expect(key({ state: 'declined', role: 'recipient' }, 2)).toBe('swaps.endedDeclinedYou')
+    expect(key({ state: 'declined', role: 'proposer' }, 1)).toBe('swaps.endedDeclined')
+    expect(key({ state: 'expired' }, 1)).toBe('swaps.endedExpired')
   })
 })
