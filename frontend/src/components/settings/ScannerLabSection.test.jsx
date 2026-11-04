@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { Report, ShadowView } from './ScannerLabSection'
+import { PictureFirstView, Report, ShadowView } from './ScannerLabSection'
 
 const report = {
   kind: 'synthetic',
@@ -103,5 +103,24 @@ describe('Scanner lab shadow section', () => {
   it('says so when the server has shadow mode switched off', () => {
     const html = renderToStaticMarkup(<ShadowView data={{ ...data, enabled: false }} />)
     expect(html).toContain('switched off on this server')
+  })
+})
+
+describe('Picture match first counts', () => {
+  const counts = { days: 7, decided: 31, ollama: 12, inbox: 4, decided_confirmed: 20, picked_different: 1, error_pct: 5 }
+
+  it('shows the four counts for the last 7 days and the real-world error rate', () => {
+    const html = renderToStaticMarkup(<PictureFirstView data={{ enabled: true, counts }} />)
+    expect(html).toContain('Last 7 days')
+    expect(html).toMatch(/Decided by picture<\/span><span[^>]*>31/)
+    expect(html).toMatch(/Sent to Ollama<\/span><span[^>]*>12/)
+    expect(html).toMatch(/while the scanner was unreachable<\/span><span[^>]*>4/)
+    expect(html).toContain('1 of 20 confirmed (5%)')
+  })
+
+  it('says when it is off and copes with nothing confirmed yet', () => {
+    const html = renderToStaticMarkup(<PictureFirstView data={{ enabled: false, counts: { ...counts, decided_confirmed: 0, picked_different: 0, error_pct: null } }} />)
+    expect(html).toContain('Off.')
+    expect(html).toContain('0 of 0 confirmed')
   })
 })

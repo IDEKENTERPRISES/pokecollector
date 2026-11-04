@@ -715,7 +715,7 @@ function PhotoThumb({ url, onZoom, t }) {
   )
 }
 
-export function ScanItemPanel({ jobId, item, onAdd, onRetry, onDismiss, onReview, onModalChange, retryNow, t }) {
+export function ScanItemPanel({ jobId, item, onAdd, onRetry, onWait, isAdmin = false, onDismiss, onReview, onModalChange, retryNow, t }) {
   const photoUrl = useScanItemPhoto(jobId, item)
   // Photo-only zoom stays local. Expanding a *candidate* starts a review,
   // which the page owns because accepting can walk on into the next photo
@@ -727,6 +727,11 @@ export function ScanItemPanel({ jobId, item, onAdd, onRetry, onDismiss, onReview
 
   const active = ['pending', 'processing', 'retrying'].includes(item.status)
   const noMatches = item.status === 'done' && !item.matches?.length
+  // Set by "picture match first" (docs/CARD_MATCH.md): the picture decided the card, or was unsure and the scan came
+  // to the inbox while the scanner was unreachable.
+  const picture = item.recognized?._picture
+  const pictureUnsure = item.status === 'done' && !item.resolved && picture?.path === 'unsure_inbox'
+  const matchedByPicture = isAdmin && picture?.path === 'decided'
 
   // A resolved item is finished business. Left expanded it takes as much
   // room as one still needing a decision, and worse: resolving drops the
@@ -798,6 +803,11 @@ export function ScanItemPanel({ jobId, item, onAdd, onRetry, onDismiss, onReview
               {item.recognized?.number && (
                 <p className="text-footnote text-text-secondary">Nr. {item.recognized.number}</p>
               )}
+              {matchedByPicture && (
+                <p className="mt-0.5 text-caption-1 text-text-tertiary" data-testid="scan-matched-by-picture">
+                  {t('scanner.matchedByPicture')}
+                </p>
+              )}
               {item.recognized?._gemini_fallback_used && (
                 <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-blue/20 px-2 py-0.5 text-caption-1 font-semibold text-blue">
                   <Sparkles size={10} aria-hidden="true" /> {t('scanner.geminiFallbackUsed')}
@@ -863,6 +873,21 @@ export function ScanItemPanel({ jobId, item, onAdd, onRetry, onDismiss, onReview
           )}
         </div>
       </div>
+
+      {pictureUnsure && (
+        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl bg-fill-tertiary px-3 py-2" data-testid="scan-picture-unsure">
+          <p className="min-w-0 flex-1 text-subheadline text-text-secondary">{t('scanner.pictureUnsure')}</p>
+          {item.has_image && onWait && (
+            <button
+              type="button"
+              onClick={() => onWait(item)}
+              className="rounded-full bg-fill-tertiary px-3 py-1 text-footnote font-semibold text-accent"
+            >
+              {t('scanner.waitForScanner')}
+            </button>
+          )}
+        </div>
+      )}
 
       {item.status === 'done' && item.matches?.length > 0 && (
         <div className="mt-4">

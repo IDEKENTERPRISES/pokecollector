@@ -1,6 +1,6 @@
 # Picture matcher (Scanner Phase 1 prototype)
 
-Status: **prototype; on nonprod it runs in shadow mode (below) and changes nothing for trainers.** Today's scan path (Ollama / Gemini through `scan_queue.py`, `scan_providers.py` and `api/recognize.py`) is unchanged. This is Phase 1 of `docs/SCAN_RESEARCH.md` §3.8: build the matcher, measure it on the T340, and read the numbers in **Settings → Data & sync → Scanner lab** (admins only).
+Status: **prototype; on nonprod it runs in shadow mode and, with the "Picture match first" switch on, decides scans before Ollama (both below).** Today's scan path (Ollama / Gemini through `scan_queue.py`, `scan_providers.py` and `api/recognize.py`) is unchanged. This is Phase 1 of `docs/SCAN_RESEARCH.md` §3.8: build the matcher, measure it on the T340, and read the numbers in **Settings → Data & sync → Scanner lab** (admins only).
 
 ## How it works
 
@@ -80,6 +80,8 @@ On disk (`CARD_MATCH_DIR`, default `/app/data/card-match`; mounted in `docker-co
 | `CARD_MATCH_THREADS` | `3` (1–8) | ONNX Runtime and OpenCV thread cap |
 | `SCAN_MATCHER_AUTORUN` | off | **nonprod only**: once per matcher version, after startup, fill the picture cache if needed, build the index, run the synthetic benchmark |
 | `SCAN_MATCHER_SHADOW` | off | **nonprod only**: shadow mode (below) |
+| `SCAN_PICTURE_FIRST` | off | default for the admin switch "Picture match first" (below); nonprod sets it to on |
+| `SCAN_PICTURE_FIRST_TIMEOUT_SECONDS` | `5` (0.5–30) | longest a scan waits for the matcher before the old path takes over |
 | `SCAN_MATCHER_INDEX_AFTER_SYNC` | off | after `schedule_after_sync` (card sync → picture warm-up), add the new pictures to the index; nonprod sets it |
 | `CARD_MATCH_SIM_MIN_WITH_RULES`, `CARD_MATCH_SIM_MIN_PICTURE_ONLY`, `CARD_MATCH_LEAD_MIN_PICTURE_ONLY` | 0.55 / 0.80 / 0.06 | decision thresholds |
 
@@ -124,6 +126,27 @@ Scanner lab → **Shadow run** shows, from the traces (refreshed every 30 s):
 
 **Same photo as the benchmark.** The scan trace stores the *recognition image* (the guide-frame crop made for the local model, else the stored photo), and the labelled benchmark re-runs that. Shadow mode first read the full stored photo instead, where the card is much smaller and the corner text unreadable, so it recorded "not decided" for scans the benchmark decided. It now reads the same bytes (`scan_storage.read_recognition_image`); a test requires the same pixels and the same decision on both paths.
 
+## Picture match first (nonprod switch)
+
+An admin switch, **Settings › Scanner › Picture match first**. Its default comes from `SCAN_PICTURE_FIRST` (on in `docker-compose.nonprod.yml`, unset, so off, everywhere else); once an admin has touched the toggle, the stored choice (`scan_picture_first` in the `settings` table) wins. **With it off, scans behave exactly as before.** Code: `services/picture_first.py`, called from `default_scan_processor` in `services/scan_queue.py`. The matcher is used only through `pipeline.CardMatcher.match()` and its `MatchResult`; nothing in this package changed.
+
+With it on, each single (non-batch) scan runs the matcher on the recognition image first (the same crop shadow mode and the benchmark use):
+
+| Matcher says | Scanner | What happens | `_picture.path` |
+| --- | --- | --- | --- |
+| decided | not called | done in about a second; inbox gets the decided card first, then the other close matches, in the usual `recognized` / `matches` shape | `decided` |
+| unsure | reachable | Ollama runs as before; the matcher's top matches it did not list are appended (up to 6, only when Ollama is not itself confident) | `unsure_ollama` |
+| unsure | unreachable | the scan goes to the inbox now with the matcher's top 12 and the line "Not sure which card this is. Pick it below, or wait for the scanner."; **Wait for the scanner** puts it back in the waiting state (`scanner_unreachable`), released when the scanner answers, and it is not sent to the inbox again | `unsure_inbox` |
+| model/index/OCR not ready, error, timeout | any | exactly today's behaviour (a scan whose scanner is down waits as before) | none |
+
+Gemini users have no "unreachable" state, so an unsure scan always goes on to Gemini. Batch grids (several photos in one request) are unchanged and still go straight to the scanner.
+
+Safety: one matcher run at a time per process (a single worker thread; the matcher keeps its own 3-thread cap), at most `SCAN_PICTURE_FIRST_TIMEOUT_SECONDS` of waiting, and any exception, missing model or missing catalogue card falls through to the old path. A run that timed out is not cancelled, but a queued one that is late is skipped. Shadow mode keeps recording: when picture-first has already run the matcher it writes the shadow record itself (same payload) so the same photo is not run twice.
+
+Where it is recorded: `recognized._picture` on the scan (path, mechanism, similarity, reason, milliseconds, the decided card, later the card the trainer confirmed) and `picture_match` in the diagnostics trace. The scan review shows "Matched by picture" under the card name to **admins only**; trainers see nothing new except the unsure line and the Wait button.
+
+To turn it off if anything looks wrong: Settings › Scanner › **Picture match first** off (takes effect on the next scan, no restart), or remove `SCAN_PICTURE_FIRST` from the compose file and redeploy. Scans already in the inbox keep their results.
+
 ## Reading the Scanner lab
 
 - **English cards indexed — N of M**: pictures in the index vs. English physical cards with a catalogue picture. A gap means pictures are not cached yet (run "Prepare card pictures" first) or the build is not finished.
@@ -135,6 +158,8 @@ Scanner lab → **Shadow run** shows, from the traces (refreshed every 30 s):
   4. 95th percentile per photo ≤ 1.5 s and extra memory ≤ 1.5 GB.
 - **Synthetic numbers are an upper bound**: the photos are made from the same artwork the index holds. The labelled run is the honest one.
 - Memory is read from `/proc` (Linux only), so it is "not measured" on a Windows or macOS host. "Extra" is the peak of the whole backend process minus its size when the job started.
+
+The **Picture match first** block in the lab counts the last 7 days from the scans themselves (they live 14 days): decided by picture, sent to Ollama, sent to the inbox while the scanner was unreachable, and how many of the decided scans the trainer then added as a *different* card than the picture decided. That last figure, as a share of decided scans the trainer confirmed, is the real-world error rate.
 
 ## OCR choice
 
