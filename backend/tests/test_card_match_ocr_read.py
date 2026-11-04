@@ -190,7 +190,7 @@ class LadderTests(unittest.TestCase):
         self.assertEqual([s["label"] for s in result.strips], ["number-left-tight", "number-right-tight", "bottom-band"])
 
     def test_nothing_in_the_strips_goes_to_the_band_variants_then_the_tall_band(self):
-        reader = reader_with([[]] * 5 + [[("30C | 017/128", 0.8, 100, 130)]])
+        reader = reader_with([[]] * 7 + [[("30C | 017/128", 0.8, 100, 130)]])
         result = reader.read(self.card, read_hp=False, flipped=False)
         labels = [s["label"] for s in result.strips]
         self.assertEqual(labels[:2], ["number-left-tight", "number-right-tight"])
@@ -199,15 +199,15 @@ class LadderTests(unittest.TestCase):
         self.assertEqual((result.number_local, result.number_total), ("017", "128"))
 
     def test_the_tall_bands_are_read_once_and_shared_between_the_number_and_the_name(self):
-        # number ladder: 2 strips + 3 bands (deglare skipped: no glare) = 5 reads, then the tall bottom band; name: 3 strips, then the tall top band
-        reader = reader_with([[]] * 5 + [[("30C | 017/128", 0.8, 100, 130)]] + [[]] * 3 + [[("Lapras", 0.99, 30, 80)]])
+        # number ladder: 2 strips, band, 2 wide strips, 2 more bands (deglare skipped: no glare) = 7 reads, then the tall bottom band; name: 3 strips, then the tall top band
+        reader = reader_with([[]] * 7 + [[("30C | 017/128", 0.8, 100, 130)]] + [[]] * 3 + [[("Lapras", 0.99, 30, 80)]])
         result = reader.read(self.card, read_hp=False, flipped=False)
         read = reader.read_name(self.card)
         self.assertEqual(result.number_local, "017")
         self.assertEqual(read.name, "Lapras")
         again = reader.read(self.card, read_hp=False, flipped=False)  # the same card again: both tall bands come from the cache
         self.assertEqual(again.number_local, "017")
-        self.assertEqual(reader.engine.calls, 5 + 1 + 3 + 1 + 5)
+        self.assertEqual(reader.engine.calls, 7 + 1 + 3 + 1 + 7)
         self.assertEqual(read.strips[-1]["label"], "top-wide")
 
     def test_body_text_at_the_top_is_not_taken_for_the_name(self):
@@ -230,7 +230,7 @@ class LadderTests(unittest.TestCase):
         self.assertEqual(reader.engine.script.__len__(), 6)
 
     def test_unknown_orientation_tries_the_turned_card(self):
-        reader = reader_with([[]] * 6 + [[("SVI EN 018/091", 0.95, 0, 20)]])
+        reader = reader_with([[]] * 8 + [[("SVI EN 018/091", 0.95, 0, 20)]])
         result = reader.read(self.card, read_hp=False, flipped=None)
         self.assertTrue(result.flipped)
         self.assertEqual(result.number_local, "018")

@@ -97,6 +97,44 @@ A scan can carry several tags; the counts per tag are filter chips. The threshol
 
 **Result shape.** `MatchResult` is unchanged: `status`, `decision`, `unsure_reason`, `matches`, `detection`, `ocr`, `timings_ms`. Fields only added: each `matches` item gets `picture_rank` (where the printing stands among all pictures) and, when names are read, `name_score`; `ocr` gets `name`, `name_lines`, `text_candidates_added` (and `hp` from the name strip); `timings_ms` gets `name`; `decision.mechanism` can also be `name_and_picture`. `rank` keeps its meaning (position in `matches`, 1 = first). A test pins the old key sets.
 
+### Finding and reading the name and number on real photos (matcher version 5)
+
+**The problem.** On the owner's 139 confirmed real scans the number was read exactly only 57.6% of the time, and on most of the 13 misses OCR read no name and no number at all (`Read: name "–", number –`) on upright, found cards. Three causes are visible in the code and reproduce on generated cards; which one dominates on the real photos is what the new OCR check (below) will say on the T340.
+
+1. **The slash is lost.** The thin "/" of "018/091" is often read as nothing, so a clean line comes out as `MEWEN072189` or `183275`. The number regex needed a separator and found no number at all. On the synthetic set this alone explains most of the gap (number read 67% → 92%).
+2. **A printed bar is not a slash.** The regex also took "|" as a slash, so the 30th Celebration line `30C | 017/128` (Lapras: name not read, number *was* read) parsed as number `30C`, total `017`. And a language code was glued into the number (`EN038`).
+3. **Fixed strips assume where the text is.** A card flattened with a margin (corners found a little wide), a sleeve, or text printed in an unusual place falls outside the fixed fractions. The name strip then holds whatever is nearby: rules text ("Pokemonex | nocked Out…", "You may play only 1 Supporter card…") or the copyright line ("NintendoICreatures/GAMEFREAK"), and the old picker took the tallest plausible line as the name. Also, every strip was read with the detector held to 480 px, which shrinks a wide band before it looks for text.
+
+**What changed (`ocr.py`).**
+
+- *Parsing.* `parse_text` reads a line that ends in five or six digit-like characters as a number glued to its total (3+3, or 2+3 for old sets: `58102`), fixes O/I/S/Z look-alikes, drops a language code, and takes "|" as a slash only with no spaces around it. `pick_number_lines` prefers one line that holds a whole number over digits stitched from neighbouring lines, and records that line's recogniser confidence (`number_confidence`).
+- *Finding the name by pattern.* `is_name_like` rejects rules text, copyright and number lines (length, word count, sentence words, lower-case words) before `names.parse_name_lines` picks the tallest remaining line. Body text is no longer taken for a name; "no name" is now an honest answer.
+- *Regions and ladder.* Each step runs only when the one before did not give a complete, confident (≥ 0.85) number and total; the time spent on one card is capped (`BUDGET_SECONDS`, 1.2 s).
+  - Number: the two tight strips (the fast first try, as before) → the whole bottom band (0.885–1.0, full width, so a number on the left, the right, or lower than expected is in it) → the two wide strips → the band under local contrast → glare removed → black and white → a much taller band at the top and bottom (`EXPANDED`, 0–0.24 and 0.72–1.0) for a card flattened with a margin. The number is chosen across readings by agreement: two views that read the same digits raise the confidence.
+  - Name: the name strip → the name band (0.015–0.115, HP excluded) under local contrast, black and white, glare removed → the tall top band. The tall bands are cached per card, so the number read and the name read of one scan share them.
+  - The detector's size limit follows the strip width (480–960 px) and the thresholds are lowered (`box_thresh` 0.35, `text_score` 0.4) after the first try, so fainter text on glossy cards counts.
+- *Preprocessing* (`ocr.prepare`, pure): `plain`, `sharp` (unsharp mask), `clahe` (local contrast on the lightness channel), `binary` (adaptive threshold, polarity chosen from the strip so the text is the dark mark), `deglare` (blown-out pixels filled in from their surroundings, then local contrast; skipped when the strip has no glare or is nearly all glare). Strips are upscaled 2–3×; a sharper card needs less (zoom follows the card's height).
+- *Diagnostics.* Every region read is recorded in the result (`OcrResult.strips`, `NameRead.strips`) with its box (fractions of the card), variant, zoom, and each line's raw text and confidence. `pipeline` adds them to the `ocr` dict as `ocr.strips` (a field added, nothing renamed).
+
+**Not done: a second recogniser.** PaddleOCR's server recognition model (ONNX) and Tesseract were considered. Neither was added: the synthetic set cannot show whether either helps on real photos (the failures there are a lost slash and digit confusions, and those are parsing and consistency problems), the T340 has no spare CPU budget (p95 must stay under 1.5 s), and a new model needs a pinned download in the Dockerfile that CI does not build. The OCR check now measures each preprocessing variant on the real photos, so the next step can be chosen from data.
+
+**What the lab shows (admin).**
+
+- *Misses → open a scan → "What OCR read"*: every region as the exact picture the recogniser got (drawn from the stored flat card and the recorded box, variant and zoom; nothing extra is stored), with each line's raw text and confidence. Empty or wrong text on a clear strip means the reading failed; a strip that does not contain the number means the region is wrong.
+- *OCR check* (button, and automatic in the nonprod autorun before the real-photo benchmark): reads every confirmed trace with the reader alone and compares with the confirmed card: **name read**, **number read exactly**, **total read** and **set code read**, split by the resolution the text came from: *1024* (older traces: the 1024 px recognition crop, a card 880 px tall) and *full* (traces that stored the full-resolution flat card), plus *all*. Each trace is read the old way (fixed strips), the new way (the ladder above) and with one preprocessing variant at a time on the bottom and name bands, so the table shows which preprocessing helps on real photos. The first 40 traces where the name or number was not read are listed with the raw text. The report is `benchmark-ocr-check-<time>.json`; `POST /api/card-match/benchmark` takes `kind: "ocr-check"`.
+
+**Measured on the build PC (gaming PC, synthetic cards, not the real photos).** `py -3 backend/scripts/ocr_synthetic_bench.py 24 [margin]` draws cards with a name, HP, rules text, number and set code (modern layout 75%, old layout 25%), then glare (60%), blur, noise and JPEG, at the two stored resolutions (card 880 px and 1408 px tall). Same 24 cards before and after:
+
+| | 1024 crop: name / number / total / set code / p95 | full: name / number / total / set code / p95 |
+| --- | --- | --- |
+| version 4 (fixed strips) | 95.8 / 66.7 / 79.2 / 20.8 / 0.25 s | 95.8 / 50.0 / 79.2 / 29.2 / 0.24 s |
+| version 5 | 95.8 / 91.7 / 95.8 / 66.7 / 0.39 s | 95.8 / 87.5 / 95.8 / 62.5 / 0.65 s |
+| version 5, card flattened with a 5% margin | 95.8 / 95.8 / 95.8 / 70.8 / 0.65 s | 95.8 / 91.7 / 95.8 / 70.8 / 0.57 s |
+
+On the margin set the fixed strips alone read the number 87.5% (1024) and 79.2% (full) with the version 5 parser, so the lost-slash parser accounts for most of the gain and the ladder for the rest. The synthetic names are easy (the text is clean and the layout fixed); the real name failures (rules text taken for a name) are covered by the pattern tests instead. These are *synthetic* numbers on a fast CPU: they say the change fits the time budget and that the parser works, not what the real-photo rates will be. The OCR check on the T340 gives those.
+
+**What reruns after the deploy** (`MATCHER_VERSION` 5): the nonprod autorun builds anything missing, runs the synthetic benchmark, the **OCR check**, the real-photo benchmark (which rewrites Misses with the new strip view) and the option comparison. Compare the *decided on its own* and *number read exactly* figures with the 63.3% and 57.6% of version 4; the OCR check's 1024/full split says whether the older traces (crop only) gain less than the newer ones.
+
 The thresholds are **provisional**; the benchmark records every photo's features so they can be tuned once the labelled set exists.
 
 The pipeline is pure: it reads the index and, through a `candidate_loader`, the catalogue; it writes nothing.
@@ -109,7 +147,8 @@ The pipeline is pure: it reads the index and, through a `candidate_loader`, the 
 | `…/embed.py` | `Embedder` interface, `OnnxEmbedder`, `FakeEmbedder` (tests) |
 | `…/model_specs.py` | pinned model URL + sha256 (standard library only, read by the Dockerfile) |
 | `…/index.py` | build / load / search the index; incremental, checkpointed |
-| `…/ocr.py` | RapidOCR strips + regex parsing (`parse_text` is pure) |
+| `…/ocr.py` | RapidOCR: find and read the number and name by pattern, preprocessing, regex parsing (`parse_text`, `pick_number_lines`, `is_name_like`, `prepare` are pure) |
+| `…/ocr_check.py`, `…/ocr_synthetic.py` | the OCR check on real traces (by stored resolution); synthetic cards for measuring OCR |
 | `…/names.py` | name line parsing (pure), `NameIndex` fuzzy name search, text candidates |
 | `…/variants.py` | option sets (`names`, `tta`, `art`, `base`), the one in use, building a matcher for them |
 | `…/misses.py` | the Misses view: collecting, tagging (pure), thumbnails, paging |
@@ -117,11 +156,11 @@ The pipeline is pure: it reads the index and, through a `candidate_loader`, the 
 | `…/synthetic.py`, `…/benchmark.py` | phone-style synthetic photos; synthetic and labelled benchmarks; reports |
 | `…/jobs.py` | one-at-a-time background jobs, nonprod autorun, after-sync hook |
 | `…/shadow.py` | shadow mode: the background worker, and the report the Scanner lab reads back |
-| `backend/api/card_match.py` | admin API: `GET /api/card-match/status`, `GET /shadow`, `GET /misses`, `POST /index` (`{name}`: whole card, artwork or DINOv2-base), `POST /benchmark` (`synthetic`, `labelled`, `compare-synthetic`, `compare-labelled`), `POST /stop` |
+| `backend/api/card_match.py` | admin API: `GET /api/card-match/status`, `GET /shadow`, `GET /misses`, `POST /index` (`{name}`: whole card, artwork or DINOv2-base), `POST /benchmark` (`synthetic`, `labelled`, `compare-synthetic`, `compare-labelled`, `ocr-check`), `POST /stop` |
 | `backend/scripts/scan_benchmark.py` | the same build/benchmark from a shell |
 | `backend/scripts/fetch_card_match_models.py` | build-time model download with checksum |
 | `frontend/src/components/settings/ScannerLabSection.jsx`, `ScannerLabMisses.jsx` | the Scanner lab page and its Misses view |
-| `backend/tests/test_card_match.py`, `test_card_match_shadow.py`, `test_card_match_recall.py` | tests with the fake embedder and generated fixture cards (one optional real-model test) |
+| `backend/tests/test_card_match.py`, `test_card_match_shadow.py`, `test_card_match_recall.py`, `test_card_match_ocr_read.py` | tests with the fake embedder and generated fixture cards (one optional real-model test) |
 
 On disk (`CARD_MATCH_DIR`, default `/app/data/card-match`; mounted in `docker-compose.nonprod.yml`):
 
@@ -236,7 +275,7 @@ Every confirmed card records `confirmation.source` in its trace: `scanner_decisi
 
 ## OCR choice
 
-RapidOCR (PP-OCRv4 detection and recognition models, ONNX Runtime) installs cleanly into the slim image when installed with `--no-deps` (its wheel otherwise drags in the full `opencv-python`, which needs system GL libraries and clashes with `opencv-python-headless`). The models ship inside the wheel (about 16 MB), so nothing downloads at runtime. Tesseract would have needed an apt package and a separate binary; it stays the fallback idea if RapidOCR proves too slow on the T340. A tight bottom strip is read first; the wider strip (3× zoom, sharpened) only if no complete number came out, and the turned card only when the picture search gave no orientation. HP is read only when `CardMatcher(read_hp=True)`; it is off by default because the strip is the slowest to read and HP is weak evidence.
+RapidOCR (PP-OCRv4 detection and recognition models, ONNX Runtime) installs cleanly into the slim image when installed with `--no-deps` (its wheel otherwise drags in the full `opencv-python`, which needs system GL libraries and clashes with `opencv-python-headless`). The models ship inside the wheel (about 16 MB), so nothing downloads at runtime. Tesseract would have needed an apt package and a separate binary; it stays the fallback idea if RapidOCR proves too slow on the T340. A tight bottom strip is read first, then the ladder described under matcher version 5, and the turned card only when the picture search gave no orientation. HP is read only when `CardMatcher(read_hp=True)`; it is off by default because the strip is the slowest to read and HP is weak evidence.
 
 ## Licences (checked 2026-11-04)
 

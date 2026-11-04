@@ -300,8 +300,9 @@ LEGACY_LADDER = (  # version 4: fixed strips, the wide ones only when the tight 
     ("number-right-wide", STRIPS["wide"][1], "sharp", WIDE_ZOOM, False),
 )
 BOTTOM_BAND = (0.0, 0.885, 1.0, 1.0)
-NUMBER_LADDER = LEGACY_LADDER[:2] + (  # the fast first try, then the whole bottom band under different preprocessing
+NUMBER_LADDER = LEGACY_LADDER[:2] + (  # the fast first try, the whole bottom band, the wide strips, then more preprocessing
     ("bottom-band", BOTTOM_BAND, "plain", 3.0, True),
+) + LEGACY_LADDER[2:] + (
     ("bottom-band", BOTTOM_BAND, "clahe", 2.5, True),
     ("bottom-band", BOTTOM_BAND, "deglare", 2.5, True),
     ("bottom-band", BOTTOM_BAND, "binary", 3.0, True),
