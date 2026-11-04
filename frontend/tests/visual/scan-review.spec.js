@@ -184,23 +184,20 @@ test('linked review is accessible, advances through a batch, and keeps resolved 
   const firstCandidate = page.getByRole('button', { name: 'Compare with your photo' }).first()
   await expect(firstCandidate.locator('..').getByText('🇯🇵 JA', { exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Expand photo' }).first().click()
-  let dialog = page.getByRole('dialog', { name: 'Compare with your photo' })
-  const photoOnlyImage = dialog.getByAltText('Your photo')
-  const photoOnlyFrame = await photoOnlyImage.evaluate(node => {
-    const frame = node.parentElement.getBoundingClientRect()
-    return { width: frame.width, height: frame.height }
-  })
-  await photoOnlyImage.click()
-  await expect.poll(() => photoOnlyImage.evaluate(node => node.style.transform)).toContain('scale(2)')
-  await photoOnlyImage.click()
-  await expect(dialog).toBeVisible()
-  await expect.poll(() => photoOnlyImage.evaluate(node => node.style.transform)).toBe('')
-  await dialog.getByRole('button', { name: 'Close' }).click()
-  await expect(dialog).toHaveCount(0)
+  // Your own photo opens the full-screen viewer: opaque, double-tap zooms, the close button closes.
+  const photoViewer = page.getByRole('dialog', { name: 'Zoomed picture' })
+  await expect(photoViewer).toBeVisible()
+  const zoomedPhoto = photoViewer.getByTestId('scan-zoom-image')
+  const photoBox = await zoomedPhoto.boundingBox()
+  expect((await photoViewer.boundingBox()).width).toBeGreaterThanOrEqual(page.viewportSize().width - 1) // full screen
+  await page.mouse.dblclick(photoBox.x + photoBox.width / 2, photoBox.y + photoBox.height / 3)
+  await expect(zoomedPhoto).not.toHaveAttribute('data-scale', '1.00')
+  await photoViewer.getByRole('button', { name: 'Close' }).click()
+  await expect(photoViewer).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Compare with your photo' }).first().click()
 
-  dialog = page.getByRole('dialog', { name: 'Compare with your photo' })
+  let dialog = page.getByRole('dialog', { name: 'Compare with your photo' })
   await expect(dialog).toBeVisible()
   await expect(dialog.getByText('Bill', { exact: true })).toBeVisible()
   await expect.poll(() => dialog.evaluate(node => getComputedStyle(node).cursor)).toBe('default')
@@ -226,7 +223,6 @@ test('linked review is accessible, advances through a batch, and keeps resolved 
   expect(Math.abs(frameSizes[0].width - frameSizes[1].width)).toBeLessThan(1)
   expect(Math.abs(frameSizes[0].height - frameSizes[1].height)).toBeLessThan(1)
   expect(frameSizes[0].height / frameSizes[0].width).toBeCloseTo(7 / 5, 2)
-  expect(photoOnlyFrame.width).toBeGreaterThan(frameSizes[0].width)
   await expect.poll(() => dialog.locator('figcaption').first().evaluate(
     node => getComputedStyle(node).fontSize,
   )).toBe('14px')

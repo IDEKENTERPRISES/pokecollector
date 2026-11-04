@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { AlertTriangle, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Loader2, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react'
 import { fetchScanCandidateImage, fetchScanJobItemImage } from '../api/client'
 import CardImage from './CardImage'
+import ScanZoomViewer from './ScanZoomViewer'
 import Button from './ios/Button'
 import { useDialogBehavior } from './ui/dialogBehavior'
 import { formatRetryCountdown } from '../utils/retryCountdown'
@@ -97,7 +98,7 @@ const CARD_IMAGE = 'h-full w-full object-cover rounded-xl'
 // the top candidates are pre-fetched during recognition (see
 // backend/services/scan_candidate_images.py), so this is usually a local
 // read.
-function useCandidateFullImage(jobId, itemId, index, fallbackUrl) {
+export function useCandidateFullImage(jobId, itemId, index, fallbackUrl) {
   const [url, setUrl] = useState(null)
 
   useEffect(() => {
@@ -417,11 +418,12 @@ export function CardZoomModal({
       // browsers a fixed, full-screen overlay can render partly behind the
       // address bar rather than below it, and safe-area-inset-top is the
       // platform's own answer for "how much is currently covered up top."
-      className="fixed inset-0 z-[400] flex cursor-default flex-col bg-black/90 p-4 [padding-top:max(1rem,env(safe-area-inset-top))]"
+      className="fixed inset-0 z-[400] flex cursor-default flex-col bg-black p-4 [padding-top:max(1rem,env(safe-area-inset-top))]"
       onClick={onClose}>
       <div className="flex flex-shrink-0 justify-end">
         <button type="button" onClick={onClose} aria-label={t('common.close')}
-          className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-white/10 transition-colors hover:bg-white/20">
+          className="relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-white/10 transition-colors hover:bg-white/20">
+          <span aria-hidden="true" className="absolute -inset-1" />
           <X size={18} className="text-white" />
         </button>
       </div>
@@ -775,7 +777,7 @@ export function ScanItemPanel({ jobId, item, onAdd, onRetry, onWait, isAdmin = f
       className="rounded-[20px] bg-card p-4 outline-none"
     >
       {photoExpanded && (
-        <CardZoomModal card={null} photoUrl={photoUrl} onClose={() => {
+        <ScanZoomViewer photoUrl={photoUrl} onClose={() => {
           setPhotoExpanded(false)
           onModalChange?.(false)
         }} t={t} />
