@@ -26,6 +26,8 @@ from services.idempotency import (
     replay_response,
 )
 from services.scan_candidate_images import fetch_and_cache_candidate_image
+from services.scanner_reachability import WAITING_REASON, endpoint_reachable
+from services.scan_providers import openai_base_url
 from services.scan_queue import (
     drain_scan_queue,
     job_progress,
@@ -447,6 +449,10 @@ async def retry_scan_job_item(
     current_user: User = Depends(get_current_user),
 ):
     item = _get_own_item(db, job_id, item_id, current_user)
+    if item.status == "retrying" and item.retry_reason == WAITING_REASON:
+        # "Try now": look again right away rather than waiting for the minute tick.
+        if not await endpoint_reachable(openai_base_url(), force=True):
+            return _item_payload(item)
     try:
         retry_scan_item(db, item)
     except (ValueError, ScanUploadError) as exc:

@@ -87,14 +87,18 @@ def run_scan_queue_maintenance():
     from services.provider_rate_limit import purge_stale_provider_limit_states
     from services.scan_queue import (
         drain_scan_queue,
+        hold_expiry_for_waiting_scans,
         purge_expired_scan_jobs,
         recover_expired_leases,
+        release_waiting_scans_if_reachable,
     )
     from services.scan_storage import purge_orphaned_scan_directories
 
     db = SessionLocal()
     try:
         recovered = recover_expired_leases(db)
+        # Scans waiting for the scanner must not be deleted unrecognised.
+        hold_expiry_for_waiting_scans(db)
         removed = purge_expired_scan_jobs(db)
         orphans = purge_orphaned_scan_directories(db)
         stale_quotas = purge_stale_quota_states()
@@ -116,8 +120,23 @@ def run_scan_queue_maintenance():
     finally:
         db.close()
 
+    async def _release_then_drain():
+        # One cheap check per minute frees every scan waiting for the scanner
+        # as soon as its endpoint answers.
+        release_db = SessionLocal()
+        try:
+            released = await release_waiting_scans_if_reachable(release_db)
+            if released:
+                logger.info("Released %s scan(s) waiting for the scanner", released)
+        except Exception:
+            release_db.rollback()
+            logger.exception("Scanner reachability check failed")
+        finally:
+            release_db.close()
+        await drain_scan_queue(max_items=50)
+
     try:
-        asyncio.run(drain_scan_queue(max_items=50))
+        asyncio.run(_release_then_drain())
     except Exception:
         logger.exception("Scan queue processing failed")
 

@@ -480,6 +480,21 @@ class ProviderRateLimitError(HTTPException):
         super().__init__(status_code=429, detail=detail, headers=headers)
 
 
+class ScannerUnreachableError(HTTPException):
+    """The endpoint refused or never answered the connection (it is switched off).
+
+    scan_queue parks such scans as "waiting for the scanner" instead of counting
+    them against the retry ladder.
+    """
+
+    def __init__(self, *, url: str = ""):
+        self.endpoint_url = url
+        super().__init__(
+            status_code=503,
+            detail="The scanner endpoint could not be reached. Check the connection and try again.",
+        )
+
+
 class ProviderRequestRejectedError(HTTPException):
     """A safe provider rejection with an internal, machine-readable reason."""
 
@@ -767,6 +782,17 @@ async def post_openai_chat(
             raise
         except httpx.RequestError as exc:
             last_error = exc
+            # Only a failure to connect means "switched off"; a slow answer
+            # (read timeout) keeps its ordinary retry handling.
+            if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(min(2 ** attempt, 2))
+                    continue
+                from services.scanner_reachability import record_reachability
+
+                base = url.rsplit("/chat/completions", 1)[0]
+                record_reachability(base, False)
+                raise ScannerUnreachableError(url=base)
             if attempt < max_attempts - 1:
                 await asyncio.sleep(2 ** attempt)
                 continue

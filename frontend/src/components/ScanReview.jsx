@@ -827,6 +827,15 @@ export function ScanItemPanel({ jobId, item, onAdd, onRetry, onDismiss, onReview
               {item.status === 'retrying'
                 ? formatRetryCountdown(item.next_attempt_at, t, retryNow, item.retry_reason)
                 : t('scanner.itemProcessing')}
+              {item.status === 'retrying' && !item.resolved && item.has_image && (
+                <button
+                  type="button"
+                  onClick={() => onRetry(item)}
+                  className="ml-1 rounded-full bg-fill-tertiary px-3 py-1 text-footnote font-semibold text-accent"
+                >
+                  {t('scanner.tryNow')}
+                </button>
+              )}
             </p>
           )}
 

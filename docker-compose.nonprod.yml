@@ -23,6 +23,9 @@ services:
       TELEGRAM_ENABLED: "false"
       # Wrapped opens outside 1 December to 15 January here, for testing (docs/NONPROD.md).
       WRAPPED_PREVIEW: "1"
+      # Scanner diagnostics: makes the per-user "Share scanner diagnostics" switch available
+      # (docs/NONPROD.md). Traces go to the already-mounted scan-traces folder below.
+      SCAN_TRACE_DIR: /app/data/scan-traces
     # Same container paths as the base and Portainer files, so these replace their mounts.
     volumes:
       - /home/rage/Documents/docker/pokelocal-nonprod/backups:/app/backups
