@@ -158,7 +158,6 @@ async def enqueue_scan_job(
 ):
     """Sanitize a batch, persist it, and return without waiting for its provider."""
     from services.scan_providers import (
-        SCANNER_CAPABILITY_DEGRADED,
         get_provider,
         require_scanner_capability_mode,
     )
@@ -183,7 +182,7 @@ async def enqueue_scan_job(
     from services.scan_providers import user_scan_error
 
     provider = get_provider(db, current_user.id)
-    capability_mode = require_scanner_capability_mode(
+    require_scanner_capability_mode(
         db, current_user.id, provider.name, provider.model()
     )
     if provider.requires_credential() and not provider.credential(db, current_user.id):
@@ -194,20 +193,10 @@ async def enqueue_scan_job(
     if idem is None:
         requested_individual = _requested_individual_positions(individual_positions, len(files))
 
-    # A composite asks the model to read several cards out of one image, which
-    # needs the same multi-image capability visual verification does. A model
-    # that already failed that probe (or was saved in acknowledged limited
-    # mode) cannot do this reliably either, so every photo goes through
-    # individually regardless of what the client requested — the client's own
-    # UI hides the toggle for the same reason, but the server does not trust
-    # that alone.
-    individual_set = set(requested_individual)
-    batch_modes = [
-        len(files) > 1
-        and position not in individual_set
-        and capability_mode != SCANNER_CAPABILITY_DEGRADED
-        for position in range(len(files))
-    ]
+    # Every photo is recognised on its own, whatever the client asked for: a composite (several cards in
+    # one model call) shrinks each card until its number is unreadable, and the picture matcher works per
+    # photo anyway. The composite code in services/scan_queue.py is kept but no job is created for it.
+    batch_modes = [False] * len(files)
     before_commit = None
     if idem is not None and idem.active:
         def before_commit(job):

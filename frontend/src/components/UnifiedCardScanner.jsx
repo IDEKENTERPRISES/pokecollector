@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Camera, Check, ImagePlus, Inbox, Loader2, Upload, X } from 'lucide-react'
+import { Camera, Inbox, Loader2, Upload, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 import { enqueueScanJob, getScanJobs, getScannerConfiguration } from '../api/client'
@@ -102,7 +102,6 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
       id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
       file,
       previewUrl: URL.createObjectURL(file),
-      individual: false,
     }))
     // Update the ref now so rapid consecutive captures all land.
     stagedFilesRef.current = [...stagedFilesRef.current, ...additions]
@@ -151,31 +150,14 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
     finishClose(after)
   }
 
-  const toggleIndividual = id => {
-    setStagedFiles(current => current.map(item => (
-      item.id === id ? { ...item, individual: !item.individual } : item
-    )))
-  }
-
-  const allIndividual = stagedFiles.length > 0 && stagedFiles.every(item => item.individual)
-  const toggleAllIndividual = () => {
-    setStagedFiles(current => current.map(item => ({ ...item, individual: !allIndividual })))
-  }
-  // A composite asks the model to read several cards out of one image, which
-  // needs the same multi-image capability visual verification does — a
-  // provider that already failed that probe cannot do this reliably either.
-  // The server enforces this regardless of what these toggles say, so
-  // showing them here would just be an override with nothing to override.
-  const canComposite = scannerConfiguration?.visual_verification === 'automatic'
-
   const startScanning = async () => {
     if (!stagedFiles.length || submitting) return
     submittingRef.current = true
     setSubmitting(true)
     try {
-      const individualPositions = stagedFiles
-        .map((item, position) => item.individual ? position : null)
-        .filter(position => position !== null)
+      // Every photo is read on its own: combining several cards into one model call shrinks each
+      // card until its number is unreadable.
+      const individualPositions = stagedFiles.map((_item, position) => position)
       if (queueEnabled) {
         const result = await submitScanBatch({
           files: stagedFiles.map(item => item.file),
@@ -241,16 +223,6 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
       container={overlayEl}
       footer={(
         <div className="space-y-2">
-          {count > 1 && canComposite && (
-            <button
-              type="button"
-              onClick={toggleAllIndividual}
-              className="btn-ghost flex w-full items-center justify-center gap-2"
-            >
-              {allIndividual ? <ImagePlus size={16} /> : <Check size={16} />}
-              <span>{allIndividual ? t('scanner.useAutomaticGrouping') : t('scanner.scanAllIndividually')}</span>
-            </button>
-          )}
           <button
             type="button"
             onClick={startScanning}
@@ -305,20 +277,6 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
                     <X size={13} />
                   </button>
                 </div>
-                {count > 1 && canComposite && (
-                  <button
-                    type="button"
-                    onClick={() => toggleIndividual(item.id)}
-                    className={`flex w-full items-center justify-center gap-1 rounded-lg border px-1 py-1 text-[9px] font-semibold transition-colors ${
-                      item.individual
-                        ? 'border-red/50 bg-red/20 text-red'
-                        : 'border-white/10 bg-white/5 text-text-muted'
-                    }`}
-                  >
-                    {item.individual && <Check size={10} />}
-                    <span>{t('scanner.scanIndividually')}</span>
-                  </button>
-                )}
               </div>
             ))}
           </div>
