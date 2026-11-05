@@ -238,3 +238,44 @@ describe('Scanner lab OCR views', () => {
     expect(html).toContain('30C | 017/128')
   })
 })
+
+describe('Scanner lab matcher version 6 views', () => {
+  const group = { n: 120, top1: 70, top20: 96.7, decided: 68.3, decided_right: 100, decided_wrong: 0 }
+
+  it('splits the real-photo report by photo size and says plainly when there are no full-size scans', () => {
+    const base = { ...report, kind: 'labelled' }
+    const both = renderToStaticMarkup(<Report report={{ ...base, by_resolution: { 1024: group, full: { ...group, n: 30 } } }} title="Real scans" />)
+    expect(both).toContain('Older scans (1024 px)')
+    expect(both).toContain('Newer scans (full size)')
+    expect(both).not.toContain('No full-size scans yet')
+    const none = renderToStaticMarkup(<Report report={{ ...base, by_resolution: { 1024: group, full: null } }} title="Real scans" />)
+    expect(none).toContain('No full-size scans yet')
+    expect(none).not.toContain('Newer scans (full size)')
+  })
+
+  it('shows the scans where the card was not found, and what each reading step rescues', () => {
+    const fallback = { scans: 10, by_kind: { full_photo: null, guide_crop: { ...group, n: 10, decided: 0, decided_right: null } }, found_on_photo: group }
+    const html = renderToStaticMarkup(<Report report={{ ...report, kind: 'labelled', fallback }} title="Real scans" />)
+    expect(html).toContain('not found (10 scans)')
+    expect(html).toContain('Read from the guide frame')
+    const steps = {
+      all: {
+        scans: 100, never_number: 12, never_name: 5,
+        number: [{ step: 'bottom-band / binary', label: 'bottom-band', variant: 'binary', run: 20, first_right: 3, mean_ms: 310, total_seconds: 6.2 }],
+        name: [{ step: 'name-line / plain', label: 'name-line', variant: 'plain', run: 100, first_right: 90, mean_ms: 120, total_seconds: 12 }],
+      },
+    }
+    const check = renderToStaticMarkup(<OcrCheckView report={{ traces: 100, skipped: 0, by_resolution: {}, steps }} />)
+    expect(check).toContain('What each reading step rescues')
+    expect(check).toContain('Number: whole bottom band · black and white')
+    expect(check).toContain('Never right')
+    expect(check).toContain('310 ms')
+  })
+
+  it('names the faster reading option', () => {
+    const html = renderToStaticMarkup(
+      <CompareTable report={{ kind: 'compare-labelled', n: 139, created_at: '2026-11-06T01:00:00+00:00', duration_seconds: 100, winner: null, rows: [{ label: 'names+art+fastread', status: 'skipped', missing_indexes: ['x'] }] }} title="Compare" />,
+    )
+    expect(html).toContain('faster reading')
+  })
+})

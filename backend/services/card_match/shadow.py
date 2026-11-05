@@ -59,9 +59,7 @@ def default_matcher():
         from .ocr import get_reader
         from database import SessionLocal
 
-        options = variants.parse(variants.active_label())
-        if variants.missing_indexes(options):  # an option whose index is not built yet runs without that part
-            options = variants.Options(names=options.names, tta=options.tta)
+        options = variants.usable(variants.parse(variants.active_label()))  # an unbuilt index's option runs without that part
         return variants.build_matcher(options, SessionLocal, ocr_reader=get_reader()), None
     except Exception as exc:  # a corrupt model file, ONNX Runtime missing, ...
         logger.warning("Shadow matcher not ready: %s", exc)

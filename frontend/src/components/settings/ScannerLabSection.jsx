@@ -45,6 +45,71 @@ function PassBar({ items }) {
   )
 }
 
+const GROUP_HEAD = (
+  <tr className="text-left text-text-secondary">
+    <th className="pr-2 font-normal">Group</th><th className="pr-2 font-normal">Scans</th><th className="pr-2 font-normal">Top 1</th>
+    <th className="pr-2 font-normal">Top 20</th><th className="pr-2 font-normal">Decided</th><th className="font-normal">Right</th>
+  </tr>
+)
+
+function GroupRow({ name, g }) {
+  return (
+    <tr className="tabular-nums">
+      <td className="pr-2">{name}</td>
+      <td className="pr-2">{g.n}</td><td className="pr-2">{percent(g.top1)}</td><td className="pr-2">{percent(g.top20)}</td>
+      <td className="pr-2">{percent(g.decided)}</td><td>{percent(g.decided_right)}{g.decided_wrong ? ` (${g.decided_wrong} wrong)` : ''}</td>
+    </tr>
+  )
+}
+
+/** Real scans split by the resolution the text was read from: older 1024 px scans and newer full-resolution scans. */
+export function ResolutionGroups({ groups }) {
+  if (!groups) return null
+  return (
+    <div data-testid="scanner-lab-resolution-groups">
+      <h4 className="text-footnote font-semibold">By photo size</h4>
+      <table className="w-full text-footnote">
+        <thead>{GROUP_HEAD}</thead>
+        <tbody>
+          {groups[1024] && <GroupRow name="Older scans (1024 px)" g={groups[1024]} />}
+          {groups.full && <GroupRow name="Newer scans (full size)" g={groups.full} />}
+        </tbody>
+      </table>
+      {!groups.full && (
+        <p className="text-footnote text-text-secondary" data-testid="scanner-lab-no-full">
+          No full-size scans yet, so there is nothing to show for them. They were not used for tuning, so once they exist they are the fair test.
+        </p>
+      )}
+      {!groups[1024] && <p className="text-footnote text-text-secondary">No older (1024 px) scans in this run.</p>}
+    </div>
+  )
+}
+
+/** Scans where the card was not found on the photo the matcher looks at (the fallbacks). */
+export function FallbackGroups({ data }) {
+  if (!data) return null
+  const kinds = [['full_photo', 'Found on the full photo'], ['guide_crop', 'Read from the guide frame']]
+  return (
+    <div data-testid="scanner-lab-fallback">
+      <h4 className="text-footnote font-semibold">When the card was not found ({number(data.scans)} scans)</h4>
+      {data.scans > 0 ? (
+        <table className="w-full text-footnote">
+          <thead>{GROUP_HEAD}</thead>
+          <tbody>
+            {kinds.filter(([key]) => data.by_kind?.[key]).map(([key, label]) => <GroupRow key={key} name={label} g={data.by_kind[key]} />)}
+            {data.found_on_photo && <GroupRow name="Card found normally" g={data.found_on_photo} />}
+          </tbody>
+        </table>
+      ) : (
+        <p className="text-footnote text-text-secondary">The card was found on every scan.</p>
+      )}
+      <p className="text-footnote text-text-secondary">
+        These scans are listed under “Card not found: read by fallback” in Misses. A card found this way is only decided when a number was read from it and the picture agrees.
+      </p>
+    </div>
+  )
+}
+
 export function Report({ report, title }) {
   const m = report.metrics
   const timings = report.timings_ms || {}
@@ -68,6 +133,8 @@ export function Report({ report, title }) {
         <Row label="Decided without a model" value={percent(m.decided_pct)} />
         <Row label="Of those, right" value={`${percent(m.decided_right_pct)} (${number(m.decided_wrong)} wrong)`} />
       </div>
+      {report.kind === 'labelled' && <ResolutionGroups groups={report.by_resolution} />}
+      {report.kind === 'labelled' && <FallbackGroups data={report.fallback} />}
       {report.groups && Object.keys(report.groups).length > 0 && (
         <table className="w-full text-footnote">
           <thead>
@@ -115,7 +182,7 @@ export function Report({ report, title }) {
   )
 }
 
-const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base' }
+const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', fastread: 'faster reading' }
 const describeOptions = label => (label === 'baseline' ? OPTION_NAMES.baseline : label.split('+').map(word => OPTION_NAMES[word] || word).join(' + '))
 
 /** The option sets side by side on the same photos: pick the row with the best top 20 and decided rate with 0 wrong. */
@@ -160,7 +227,7 @@ export function CompareTable({ report, title }) {
 
 const OCR_MODE_NAMES = { fixed: 'Fixed strips (old way)', detect: 'Find and read (new way)' }
 const OCR_VARIANT_NAMES = { plain: 'as photographed', sharp: 'sharpened', clahe: 'local contrast', binary: 'black and white', deglare: 'glare removed' }
-const RESOLUTION_NAMES = { 1024: 'Older scans: 1024 px crop', full: 'Newer scans: full resolution', all: 'All scans' }
+const RESOLUTION_NAMES = { 1024: 'Older scans: 1024 px crop', full: 'Newer scans: full resolution', guide_crop: 'Card not found: read from the guide frame', all: 'All scans' }
 
 function OcrRows({ rows }) {
   return (
@@ -187,6 +254,59 @@ function OcrRows({ rows }) {
   )
 }
 
+const STEP_LABELS = {
+  'number-left-tight': 'Number: left corner strip', 'number-right-tight': 'Number: right corner strip', 'bottom-band': 'Number: whole bottom band',
+  'number-left-wide': 'Number: left wide strip', 'number-right-wide': 'Number: right wide strip', 'bottom-wide': 'Number: tall band at the bottom',
+  'name-line': 'Name: top strip', 'name-band': 'Name: name band', 'top-wide': 'Name: tall band at the top',
+}
+
+function StepRows({ rows, kind, never, scans }) {
+  return (
+    <table className="w-full text-footnote">
+      <thead>
+        <tr className="text-left text-text-secondary">
+          <th className="pr-2 font-normal">Step, in order</th><th className="pr-2 font-normal">Run on</th>
+          <th className="pr-2 font-normal">First right {kind} here</th><th className="pr-2 font-normal">Time each</th><th className="font-normal">Time in all</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(row => (
+          <tr key={row.step} className="tabular-nums">
+            <td className="pr-2">{STEP_LABELS[row.label] || row.label} · {OCR_VARIANT_NAMES[row.variant] || row.variant}</td>
+            <td className="pr-2">{row.run}</td><td className="pr-2">{row.first_right}</td>
+            <td className="pr-2">{row.mean_ms != null ? `${number(Math.round(row.mean_ms))} ms` : '–'}</td><td>{duration(row.total_seconds)}</td>
+          </tr>
+        ))}
+        <tr className="tabular-nums text-text-secondary">
+          <td className="pr-2">Never right</td><td className="pr-2">{scans}</td><td className="pr-2">{never}</td><td /><td />
+        </tr>
+      </tbody>
+    </table>
+  )
+}
+
+/** What each reading step rescues: of the scans, how many first had the right number (name) at each step, and its time. */
+export function OcrSteps({ steps }) {
+  const groups = Object.entries(steps || {})
+  if (groups.length === 0) return null
+  return (
+    <div className="space-y-2" data-testid="scanner-lab-ocr-steps">
+      <h4 className="text-footnote font-semibold">What each reading step rescues</h4>
+      <p className="text-footnote text-text-secondary">
+        The steps run in this order and stop once the number is complete and sure. “First right” counts the scans whose right answer first appeared at that step, so a step with 0 there
+        saved nothing that an earlier step had not already saved. This is what decides which steps can be dropped for good.
+      </p>
+      {groups.map(([resolution, group]) => (
+        <div key={resolution} data-testid={`scanner-lab-ocr-steps-${resolution}`}>
+          <h5 className="text-footnote font-semibold">{RESOLUTION_NAMES[resolution] || resolution} ({number(group.scans)} scans)</h5>
+          <StepRows rows={group.number} kind="number" never={group.never_number} scans={group.scans} />
+          <StepRows rows={group.name} kind="name" never={group.never_name} scans={group.scans} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /** The OCR check: the text reader alone on the confirmed real photos, split by the resolution it read from. */
 export function OcrCheckView({ report }) {
   const groups = Object.entries(report.by_resolution || {})
@@ -195,7 +315,7 @@ export function OcrCheckView({ report }) {
       <div>
         <h3 className="text-subheadline font-semibold">OCR check: real scans</h3>
         <p className="text-footnote text-text-secondary">
-          {number(report.traces)} confirmed scans ({number(report.skipped)} skipped) · {report.created_at?.slice(0, 16).replace('T', ' ')} UTC · took {duration(report.duration_seconds)}.
+          {number(report.traces)} confirmed scans ({number(report.skipped)} skipped; not-found cards are read from the guide frame and shown as their own group) · {report.created_at?.slice(0, 16).replace('T', ' ')} UTC · took {duration(report.duration_seconds)}.
           What the reader got right against the confirmed card, before any lookup.
         </p>
       </div>
@@ -208,6 +328,7 @@ export function OcrCheckView({ report }) {
           </div>
         )
       })}
+      <OcrSteps steps={report.steps} />
       {(report.failures || []).length > 0 && (
         <details>
           <summary className="cursor-pointer text-footnote text-text-secondary">First {report.failures.length} scans where the name or the number was not read</summary>
@@ -412,10 +533,10 @@ export default function ScannerLabSection() {
               <FlaskConical size={13} aria-hidden="true" /> Run benchmark (synthetic)
             </button>
             <button type="button" className={button} disabled={busy || !ready || !index.built || !data.labelled_traces} onClick={() => benchmark.mutate('labelled')} data-testid="scanner-lab-labelled">
-              <FlaskConical size={13} aria-hidden="true" /> Run on diagnostics ({number(data.labelled_traces)} confirmed)
+              <FlaskConical size={13} aria-hidden="true" /> Run on diagnostics ({number(data.labelled_traces)} scans)
             </button>
             <button type="button" className={button} disabled={busy || !ready || !data.labelled_traces || !data.ocr_available} onClick={() => benchmark.mutate('ocr-check')} data-testid="scanner-lab-ocr-check-run">
-              <FlaskConical size={13} aria-hidden="true" /> OCR check ({number(data.labelled_traces)} confirmed)
+              <FlaskConical size={13} aria-hidden="true" /> OCR check ({number(data.labelled_traces)} scans)
             </button>
             <button type="button" className={button} disabled={busy || !ready || !index.built || !data.labelled_traces} onClick={() => benchmark.mutate('compare-labelled')} data-testid="scanner-lab-compare">
               <GitCompare size={13} aria-hidden="true" /> Compare options (real scans)

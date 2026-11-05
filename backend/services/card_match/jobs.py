@@ -134,9 +134,12 @@ def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=Non
         base_kind = kind.split("-", 1)[1]
         if base_kind == "labelled" and not trace_dir:
             raise RuntimeError("No diagnostics traces with a confirmed answer for English cards yet")
+        # The synthetic comparison chooses nothing (only real photos do), so it runs a short list on fewer photos.
+        synthetic = base_kind == "synthetic"
         report = benchmark.run_compare(
-            base_kind, factory, variants.COMPARE_LABELS, data_dir=data_dir, trace_dir=trace_dir, ocr_reader=get_reader(),
-            progress=jobs._progress, should_stop=jobs._stop.is_set,
+            base_kind, factory, variants.SYNTHETIC_COMPARE_LABELS if synthetic else variants.COMPARE_LABELS, data_dir=data_dir,
+            trace_dir=trace_dir, ocr_reader=get_reader(), progress=jobs._progress, should_stop=jobs._stop.is_set,
+            count=variants.SYNTHETIC_COMPARE_COUNT if synthetic else count,
         )
         if base_kind == "labelled" and report["winner"] and not jobs._stop.is_set():
             winner = next(row for row in report["rows"] if row["label"] == report["winner"])
@@ -194,6 +197,27 @@ def index_after_warmup(warmer) -> None:
     threading.Thread(target=wait_then_build, name="card-match-after-sync", daemon=True).start()
 
 
+def autorun_plan(*, indexes_ready: bool, enough_real: bool) -> list[str]:
+    """The autorun's steps, in order. What the owner decides from comes first: the OCR check, the real-photo
+    benchmark and the real-photo comparison. The synthetic runs choose nothing and go last. When the indexes are already
+    built the real-photo steps run before the picture warm-up and the index update (version 5 ran those first and the
+    synthetic benchmark before any real-photo report: about two hours before the first report)."""
+    real = ["ocr-check", "labelled", "compare-labelled"] if enough_real else []
+    build = ["warm-up", "index", "art-index"]
+    synthetic = ["synthetic", "compare-synthetic"]
+    return (real + build + synthetic) if indexes_ready else (build + real + synthetic)
+
+
+def _autorun_log(entries: list[dict]) -> None:
+    """When each autorun step started and how long it took, so a slow rerun can be explained from the file."""
+    try:
+        path = config.data_dir() / "autorun-log.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"matcher_version": MATCHER_VERSION, "steps": entries}), encoding="utf-8")
+    except OSError:
+        logger.exception("Could not write the card-match autorun log")
+
+
 def _autorun_marker() -> Path:
     return config.data_dir() / "autorun.json"
 
@@ -207,39 +231,58 @@ def autorun_due(model: str = DEFAULT_MODEL) -> bool:
 
 
 def autorun_once(warmer=None, model: str = DEFAULT_MODEL, *, delay_seconds: float = 90) -> bool:
-    """SCAN_MATCHER_AUTORUN=1 (nonprod only): once per matcher version, fill the picture cache if it is
-    incomplete, build the index (and the artwork-only one), run the synthetic benchmark, and, when at least
-    ``AUTORUN_MIN_LABELLED`` scans are confirmed, the real-photo benchmark and the option comparison.
+    """SCAN_MATCHER_AUTORUN=1 (nonprod only): once per matcher version. In the order of ``autorun_plan``: the OCR
+    check, the real-photo benchmark and comparison (when at least ``AUTORUN_MIN_LABELLED`` scans are confirmed),
+    filling the picture cache and building the indexes, then the synthetic benchmark and its short comparison.
     Returns whether a run was started."""
     if not config.autorun_enabled() or not autorun_due(model):
         return False
 
     def chain() -> None:
         time.sleep(delay_seconds)  # let the app finish starting
-        if warmer is not None:
-            warmer.start()
-            deadline = time.monotonic() + AUTORUN_WARMUP_WAIT_SECONDS
-            while warmer.is_running() and time.monotonic() < deadline:
-                time.sleep(10)
-        from . import benchmark, variants
+        from . import benchmark, index as index_module, variants
         from services import scan_trace
 
-        steps = [lambda: start_index(model), lambda: start_index(variants.ART_INDEX), lambda: start_benchmark("synthetic", model)]
-        if benchmark.count_labelled_traces(scan_trace.trace_root() or scan_trace.trace_storage_root()) >= AUTORUN_MIN_LABELLED:
-            steps += [lambda: start_benchmark("ocr-check", model), lambda: start_benchmark("labelled", model), lambda: start_benchmark("compare-labelled", model)]
-        for step in steps:
+        enough = benchmark.count_labelled_traces(scan_trace.trace_root() or scan_trace.trace_storage_root()) >= AUTORUN_MIN_LABELLED
+        try:
+            ready = all(index_module.index_status(name).get("built") and index_module.index_status(name).get("count")
+                        for name in (model, variants.ART_INDEX))
+        except Exception:
+            ready = False
+        actions = {
+            "index": lambda: start_index(model), "art-index": lambda: start_index(variants.ART_INDEX),
+            "ocr-check": lambda: start_benchmark("ocr-check", model), "labelled": lambda: start_benchmark("labelled", model),
+            "compare-labelled": lambda: start_benchmark("compare-labelled", model),
+            "synthetic": lambda: start_benchmark("synthetic", model), "compare-synthetic": lambda: start_benchmark("compare-synthetic", model),
+        }
+        log: list[dict] = []
+        for name in autorun_plan(indexes_ready=ready, enough_real=enough):
+            began, clock = _now(), time.monotonic()
+            if name == "warm-up":
+                if warmer is not None:
+                    warmer.start()
+                    deadline = time.monotonic() + AUTORUN_WARMUP_WAIT_SECONDS
+                    while warmer.is_running() and time.monotonic() < deadline:
+                        time.sleep(10)
+                log.append({"step": name, "started_at": began, "seconds": round(time.monotonic() - clock, 1)})
+                _autorun_log(log)
+                continue
+            step = actions[name]
             started, _status = step()
             while not started:  # another job (a manual one) is running: wait our turn
                 time.sleep(15)
                 started, _status = step()
             jobs.wait()
-            if jobs.status().get("error"):
-                logger.error("Card-match autorun stopped: %s", jobs.status()["error"])
+            error = jobs.status().get("error")
+            log.append({"step": name, "started_at": began, "seconds": round(time.monotonic() - clock, 1), "error": error})
+            _autorun_log(log)
+            if error:
+                logger.error("Card-match autorun stopped: %s", error)
                 return
         try:
             marker = _autorun_marker()
             marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(json.dumps({"matcher_version": MATCHER_VERSION, "model": model, "finished_at": _now()}), encoding="utf-8")
+            marker.write_text(json.dumps({"matcher_version": MATCHER_VERSION, "model": model, "finished_at": _now(), "steps": log}), encoding="utf-8")
         except OSError:
             logger.exception("Could not write the card-match autorun marker")
 

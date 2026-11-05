@@ -379,8 +379,8 @@ class AutorunTests(unittest.TestCase):
     def test_the_autorun_adds_the_real_photo_benchmark_only_with_enough_confirmed_scans(self):
         from services.card_match import jobs
 
-        for traces, expected in ((99, ["index", "index", "benchmark-synthetic"]),
-                                 (100, ["index", "index", "benchmark-synthetic", "benchmark-ocr-check", "benchmark-labelled", "benchmark-compare-labelled"])):
+        for traces, expected in ((99, ["index", "index", "benchmark-synthetic", "benchmark-compare-synthetic"]),
+                                 (100, ["index", "index", "benchmark-ocr-check", "benchmark-labelled", "benchmark-compare-labelled", "benchmark-synthetic", "benchmark-compare-synthetic"])):
             started = []
 
             def fake_start(kind, work):
