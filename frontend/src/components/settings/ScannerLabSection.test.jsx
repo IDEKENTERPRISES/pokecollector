@@ -45,7 +45,7 @@ describe('Scanner lab report', () => {
         title="Real scans"
       />,
     )
-    expect(html).toContain('same 120 photos')
+    expect(html).toContain('the 120 photos where it ran')
     expect(html).toContain('88.2%')
   })
 
@@ -242,15 +242,29 @@ describe('Scanner lab OCR views', () => {
 describe('Scanner lab matcher version 6 views', () => {
   const group = { n: 120, top1: 70, top20: 96.7, decided: 68.3, decided_right: 100, decided_wrong: 0 }
 
-  it('splits the real-photo report by photo size and says plainly when there are no full-size scans', () => {
+  it('splits the real-photo report by scan time and says plainly when there are no new scans', () => {
     const base = { ...report, kind: 'labelled' }
-    const both = renderToStaticMarkup(<Report report={{ ...base, by_resolution: { 1024: group, full: { ...group, n: 30 } } }} title="Real scans" />)
-    expect(both).toContain('Older scans (1024 px)')
-    expect(both).toContain('Newer scans (full size)')
-    expect(both).not.toContain('No full-size scans yet')
-    const none = renderToStaticMarkup(<Report report={{ ...base, by_resolution: { 1024: group, full: null } }} title="Real scans" />)
-    expect(none).toContain('No full-size scans yet')
-    expect(none).not.toContain('Newer scans (full size)')
+    const both = renderToStaticMarkup(<Report report={{ ...base, by_scan_time: { tuning: group, new: { ...group, n: 30 } } }} title="Real scans" />)
+    expect(both).toContain('Used for tuning')
+    expect(both).toContain('New scans, not used for tuning')
+    expect(both).not.toContain('No new scans yet')
+    const none = renderToStaticMarkup(<Report report={{ ...base, by_scan_time: { tuning: group, new: null } }} title="Real scans" />)
+    expect(none).toContain('No new scans yet')
+  })
+
+  it('counts the right first picks that were not decided, by reason, and says how many scans Ollama ran on', () => {
+    const undecided = { all: { scans: 30, first_right: 30, undecided: 10, reasons: [{ reason: 'rules_choice_not_close_in_picture', n: 7 }, { reason: 'odd_new_reason', n: 3 }] } }
+    const html = renderToStaticMarkup(
+      <Report
+        report={{ ...report, kind: 'labelled', undecided_first_right: undecided, ollama_today: { n: 120, not_run: 20, decided_pct: 15, decided_right_pct: 88, in_candidates_pct: 80, top1_pct: 63 } }}
+        title="Real scans"
+      />,
+    )
+    expect(html).toContain('10 of 30 scans with the right first pick')
+    expect(html).toContain('its picture is not close enough')
+    expect(html).toContain('odd new reason')
+    expect(html).toContain('on the 120 photos where it ran')
+    expect(html).toContain('20 more were decided by the picture first')
   })
 
   it('shows the scans where the card was not found, and what each reading step rescues', () => {

@@ -62,25 +62,57 @@ function GroupRow({ name, g }) {
   )
 }
 
-/** Real scans split by the resolution the text was read from: older 1024 px scans and newer full-resolution scans. */
-export function ResolutionGroups({ groups }) {
+/** Real scans split by when they were made: the ones used for tuning, and the new ones that were not (the fair test). */
+export function BatchGroups({ groups }) {
   if (!groups) return null
   return (
-    <div data-testid="scanner-lab-resolution-groups">
-      <h4 className="text-footnote font-semibold">By photo size</h4>
+    <div data-testid="scanner-lab-batch-groups">
+      <h4 className="text-footnote font-semibold">Used for tuning, and new scans</h4>
       <table className="w-full text-footnote">
         <thead>{GROUP_HEAD}</thead>
         <tbody>
-          {groups[1024] && <GroupRow name="Older scans (1024 px)" g={groups[1024]} />}
-          {groups.full && <GroupRow name="Newer scans (full size)" g={groups.full} />}
+          {groups.tuning && <GroupRow name="Used for tuning" g={groups.tuning} />}
+          {groups.new && <GroupRow name="New scans, not used for tuning" g={groups.new} />}
         </tbody>
       </table>
-      {!groups.full && (
-        <p className="text-footnote text-text-secondary" data-testid="scanner-lab-no-full">
-          No full-size scans yet, so there is nothing to show for them. They were not used for tuning, so once they exist they are the fair test.
+      {!groups.new && (
+        <p className="text-footnote text-text-secondary" data-testid="scanner-lab-no-new">
+          No new scans yet, so there is nothing to show for them. They were not used for tuning, so once they exist they are the fair test.
         </p>
       )}
-      {!groups[1024] && <p className="text-footnote text-text-secondary">No older (1024 px) scans in this run.</p>}
+      {!groups.tuning && <p className="text-footnote text-text-secondary">No scans used for tuning in this run.</p>}
+    </div>
+  )
+}
+
+const REASON_NAMES = {
+  rules_choice_not_close_in_picture: 'The number says one card, but its picture is not close enough',
+  number_matches_several_printings: 'The number fits several printings and the picture cannot split them',
+  number_not_among_picture_matches: 'The number read is on none of the close pictures',
+  no_number_and_picture_not_clear: 'No number read and the picture is not clear enough',
+  number_lookup_conflicts_with_name: 'The number and the name point at different cards',
+  card_not_found_no_number_read: 'Card not found and no number read from it',
+  no_picture_matches: 'No picture matches',
+}
+
+/** Scans where the first pick is right but nothing was decided, by reason: what holds back "decided". */
+export function UndecidedReasons({ data }) {
+  if (!data) return null
+  const rows = [['all', 'All scans'], ['new', 'New scans, not used for tuning'], ['tuning', 'Used for tuning']].filter(([key]) => data[key]?.scans)
+  return (
+    <div data-testid="scanner-lab-undecided">
+      <h4 className="text-footnote font-semibold">Right first pick, but not decided</h4>
+      {rows.map(([key, label]) => (
+        <div key={key}>
+          <p className="text-footnote">{label}: {number(data[key].undecided)} of {number(data[key].first_right)} scans with the right first pick</p>
+          {data[key].reasons.length > 0 && (
+            <ul className="text-footnote text-text-secondary">
+              {data[key].reasons.map(item => <li key={item.reason}>{item.n} · {REASON_NAMES[item.reason] || item.reason.replace(/_/g, ' ')}</li>)}
+            </ul>
+          )}
+        </div>
+      ))}
+      <p className="text-footnote text-text-secondary">Only counted here; no rule was relaxed.</p>
     </div>
   )
 }
@@ -133,7 +165,8 @@ export function Report({ report, title }) {
         <Row label="Decided without a model" value={percent(m.decided_pct)} />
         <Row label="Of those, right" value={`${percent(m.decided_right_pct)} (${number(m.decided_wrong)} wrong)`} />
       </div>
-      {report.kind === 'labelled' && <ResolutionGroups groups={report.by_resolution} />}
+      {report.kind === 'labelled' && <BatchGroups groups={report.by_scan_time} />}
+      {report.kind === 'labelled' && <UndecidedReasons data={report.undecided_first_right} />}
       {report.kind === 'labelled' && <FallbackGroups data={report.fallback} />}
       {report.groups && Object.keys(report.groups).length > 0 && (
         <table className="w-full text-footnote">
@@ -170,7 +203,10 @@ export function Report({ report, title }) {
       </p>
       {report.ollama_today && (
         <div data-testid="scanner-lab-ollama">
-          <h4 className="text-footnote font-semibold">What today’s Ollama path got on the same {number(report.ollama_today.n)} photos</h4>
+          <h4 className="text-footnote font-semibold">What today’s Ollama path got on the {number(report.ollama_today.n)} photos where it ran</h4>
+          {report.ollama_today.not_run > 0 && (
+            <p className="text-footnote text-text-secondary">{number(report.ollama_today.not_run)} more were decided by the picture first, so Ollama never saw them and they are not counted here.</p>
+          )}
           <Row label="Decided" value={percent(report.ollama_today.decided_pct)} />
           <Row label="Of those, right" value={percent(report.ollama_today.decided_right_pct)} />
           <Row label="Right card among its candidates" value={percent(report.ollama_today.in_candidates_pct)} />
@@ -182,7 +218,7 @@ export function Report({ report, title }) {
   )
 }
 
-const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', fastread: 'faster reading' }
+const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading' }
 const describeOptions = label => (label === 'baseline' ? OPTION_NAMES.baseline : label.split('+').map(word => OPTION_NAMES[word] || word).join(' + '))
 
 /** The option sets side by side on the same photos: pick the row with the best top 20 and decided rate with 0 wrong. */
@@ -352,7 +388,7 @@ function SideBySide({ data }) {
   const view = data.recorded || data.rerun
   return (
     <div data-testid="scanner-lab-side-by-side">
-      <h4 className="text-footnote font-semibold">Matcher and Ollama side by side ({number(view.n)} confirmed photos{data.recorded ? ', matcher as recorded at scan time' : ', matcher run again now'})</h4>
+      <h4 className="text-footnote font-semibold">Matcher and Ollama side by side ({number(view.n)} confirmed photos, Ollama ran on {number(view.current?.n ?? view.n)}{data.recorded ? ', matcher as recorded at scan time' : ', matcher run again now'})</h4>
       <Row label="Matcher decided / right" value={`${percent(view.matcher.decided_pct)} / ${percent(view.matcher.right_pct)}`} />
       <Row label="Ollama decided / right" value={`${percent(view.current.decided_pct)} / ${percent(view.current.right_pct)}`} />
       <Row label="Both decided, but differently" value={`${number(view.differ)} of ${number(view.both_decided)}`} />
@@ -562,7 +598,7 @@ export default function ScannerLabSection() {
         {data.reports?.['ocr-check'] && <OcrCheckView report={data.reports['ocr-check']} />}
         {data.reports?.['compare-labelled'] && <CompareTable report={data.reports['compare-labelled']} title="Option comparison: real scans" />}
         {data.reports?.['compare-synthetic'] && <CompareTable report={data.reports['compare-synthetic']} title="Option comparison: synthetic photos" />}
-        {data.misses && <Misses />}
+        {data.misses && <Misses version={data.misses.created_at} />}
         {!data.reports?.synthetic && !data.reports?.labelled && (
           <p className="border-t border-separator px-4 py-3 text-footnote text-text-secondary">No benchmark has run yet.</p>
         )}

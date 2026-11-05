@@ -217,11 +217,12 @@ export function MissesView({ data, tag, onTag, onMore }) {
 }
 
 /** Loads the misses of the last real-photo run, a page at a time. Admin only (the endpoint refuses others). */
-export default function Misses() {
+export default function Misses({ version = null }) {
   const [tag, setTag] = useState(null)
   const [limit, setLimit] = useState(PAGE)
   const { data } = useQuery({
-    queryKey: ['card-match-misses', tag, limit],
+    // ``version`` is the time of the latest run (from the status): a newer run reloads the list instead of showing the old one
+    queryKey: ['card-match-misses', tag, limit, version],
     queryFn: () => api.get('/card-match/misses', { params: { tag: tag || undefined, offset: 0, limit } }).then(response => response.data),
     placeholderData: keepPreviousData,
     staleTime: 60000,

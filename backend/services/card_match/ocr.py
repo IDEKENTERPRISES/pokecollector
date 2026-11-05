@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from . import config
+from . import config, lookup as lookup_module
 
 # (x0, y0, x1, y1) as fractions of the flat card picture. The tight strips are quick (little text in them);
 # when no number is found there, the wide strips take a second look (older cards print flavour text lower).
@@ -81,6 +81,8 @@ def _clean_number_part(text: str, *, digits_only_tail: bool = True) -> str:
         return text
     prefix, body, suffix = match.groups()
     if prefix.upper() in _LANG_CODES:  # "SSP EN 038/270": the language code belongs to the set code, not the number
+        prefix = ""
+    if lookup_module.is_set_code_prefix(prefix):  # "PBL039/084": PBL is the set code; the number is 039 (the code stays a token)
         prefix = ""
     if len(prefix) == 1 and prefix in "OoIlSBZDQ":  # real prefixes are two letters or more: this is a misread digit
         prefix, body = "", prefix.translate(_DIGITISE) + body

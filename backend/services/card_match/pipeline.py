@@ -289,6 +289,7 @@ class CardMatcher:
         self, index: CardIndex, embedder, candidate_loader: CandidateLoader, ocr_reader=None, *, read_hp: bool = False,
         extra_signals=(), tta: bool = False, names=None, label: str = "baseline",
         lookup=None, use_number: bool = False, use_text: bool = False, reprint: bool = False, fastread: bool = False,
+        number_once: bool = False,
     ) -> None:
         self.index = index
         self.embedder = embedder
@@ -302,6 +303,7 @@ class CardMatcher:
         self.lookup = lookup  # a lookup.LookupIndex: the number / set code lane and the card-text lane
         self.use_number = bool(lookup is not None and use_number)
         self.use_text = bool(lookup is not None and use_text)
+        self.number_once = number_once  # a read number is worth one boost in the ranking, not two (see ``merge_candidates``)
         self.fastread = fastread  # a shorter reading ladder and a lower time budget (ocr.FAST_BUDGET_SECONDS)
         self.reprint = reprint  # break ties between reprints by the artwork-only similarity
         self._row_maps: dict[int, np.ndarray] = {}
@@ -502,6 +504,7 @@ class CardMatcher:
                 hits, added = merge_candidates(
                     hits, scores, self.index.row_of, self.names, name_read.name if name_read else None,
                     ocr_result.number_local, ocr_result.number_total, top_k, evidence=evidence,
+                    number_once=self.number_once,
                 )
                 ocr_info["text_candidates_added"] = added
                 timings["name"] = (_timer() - t0) * 1000
@@ -597,12 +600,16 @@ def _same_card(first: np.ndarray, second: np.ndarray, floor: float = 0.6) -> boo
     return denom > 0 and float(a @ b) / denom >= floor
 
 
-def merge_candidates(hits, scores, row_of, names, name: str | None, number: str | None, total: str | None, top_k: int = TOP_K, evidence=None):
+def merge_candidates(hits, scores, row_of, names, name: str | None, number: str | None, total: str | None, top_k: int = TOP_K, evidence=None, number_once: bool = False):
     """The picture top list and the text candidates as one ranking of at most ``top_k`` printings.
 
     Returns ``([(card id, picture similarity)], how many came from the text search only)``. Every printing is
     scored ``picture similarity + name, number and total agreement``; the closest ``PICTURE_KEEP`` pictures
     always stay, so a wrong name read can push other printings down but never the picture's own best guesses.
+
+    A read number is counted twice by default: once by the name search (``NUMBER_WEIGHT`` + ``TOTAL_WEIGHT``) and once by the
+    number lookup (its level's boost), up to 0.36 in all, which let a wrong card with the read number outrank the right one
+    whose picture was far closer. ``number_once`` counts it once: the larger of the two.
     """
     use_names = names is not None and bool(name)
     use_lookup = evidence is not None and not evidence.empty()
@@ -622,15 +629,19 @@ def merge_candidates(hits, scores, row_of, names, name: str | None, number: str 
 
     def combined(card_id: str) -> float:
         bonus = 0.0
+        read_number = 0.0
         if use_names:
             name_score = names.name_score_of(card_id, name)
             agreement = names.agreement(card_id, name_score, number, total)
             bonus = NAME_WEIGHT * max(0.0, (name_score - 0.72) / 0.28)
-            bonus += NUMBER_WEIGHT if agreement.number_ok else 0.0
-            bonus += TOTAL_WEIGHT if agreement.total_ok else 0.0
+            read_number = (NUMBER_WEIGHT if agreement.number_ok else 0.0) + (TOTAL_WEIGHT if agreement.total_ok else 0.0)
         if use_lookup:
-            bonus += evidence.bonus(card_id)
-        return pool[card_id] + bonus
+            if number_once:
+                read_number = max(read_number, evidence.number_bonus(card_id))
+                bonus += evidence.bonus(card_id, number=False)
+            else:
+                bonus += evidence.bonus(card_id)
+        return pool[card_id] + bonus + read_number
 
     keep = picture_ids[:min(PICTURE_KEEP, top_k)]
     rest = sorted((card_id for card_id in pool if card_id not in keep), key=lambda card_id: -combined(card_id))

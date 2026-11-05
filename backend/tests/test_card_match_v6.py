@@ -159,23 +159,7 @@ class StepTableTests(unittest.TestCase):
 
 
 @unittest.skipUnless(DEPS_AVAILABLE, "backend dependencies are not installed")
-class ResolutionGroupTests(unittest.TestCase):
-    def result(self, resolution, rank, decided=False, right=False, fallback=None):
-        return {"resolution": resolution, "rank": rank, "decided": decided, "decided_right": right, "fallback": fallback}
-
-    def test_the_groups_have_n_top1_top20_decided_and_right(self):
-        results = [self.result("1024", 1, True, True), self.result("1024", 3), self.result("1024", None),
-                   self.result("full", 1, True, True), self.result("full", 1, True, False)]
-        groups = benchmark.resolution_groups(results)
-        self.assertEqual(groups["1024"]["n"], 3)
-        self.assertEqual((groups["1024"]["top1"], groups["1024"]["top20"], groups["1024"]["decided"]), (33.3, 66.7, 33.3))
-        self.assertEqual(groups["1024"]["decided_right"], 100.0)
-        self.assertEqual((groups["full"]["n"], groups["full"]["decided_right"], groups["full"]["decided_wrong"]), (2, 50.0, 1))
-
-    def test_a_group_with_no_scans_is_none_so_the_lab_can_say_so(self):
-        groups = benchmark.resolution_groups([self.result("1024", 1)])
-        self.assertIsNone(groups["full"])
-        self.assertEqual(benchmark.resolution_groups([])["1024"], None)
+class GroupTests(unittest.TestCase):
 
     def test_confirmed_scans_are_counted_once_per_scan_as_the_benchmarks_group_them(self):
         with tempfile.TemporaryDirectory() as tmp:

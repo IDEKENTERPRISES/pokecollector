@@ -322,10 +322,13 @@ def score_pairs(pairs: list[tuple[str, str | None, str | None]]) -> dict:
     ``pairs`` holds ``(confirmed card, matcher's pick or None, current path's pick or None)``; a pick is None
     when that path did not decide. Where both decided and differ, says who was right.
     """
+    ran = [pair[3] if len(pair) > 3 else True for pair in pairs]  # an optional 4th item: Ollama really ran on this scan
+    pairs = [tuple(pair[:3]) for pair in pairs]
     matcher_decided = sum(1 for _t, m, _c in pairs if m)
     matcher_right = sum(1 for t, m, _c in pairs if m and m == t)
     current_decided = sum(1 for _t, _m, c in pairs if c)
     current_right = sum(1 for t, _m, c in pairs if c and c == t)
+    current_n = sum(1 for flag in ran if flag)
     both = [(t, m, c) for t, m, c in pairs if m and c]
     differ = [(t, m, c) for t, m, c in both if m != c]
     matcher_wins = sum(1 for t, m, c in differ if m == t)
@@ -334,7 +337,8 @@ def score_pairs(pairs: list[tuple[str, str | None, str | None]]) -> dict:
     return {
         "n": n,
         "matcher": {"decided": matcher_decided, "right": matcher_right, "decided_pct": _pct(matcher_decided, n), "right_pct": _pct(matcher_right, matcher_decided)},
-        "current": {"decided": current_decided, "right": current_right, "decided_pct": _pct(current_decided, n), "right_pct": _pct(current_right, current_decided)},
+        "current": {"decided": current_decided, "right": current_right, "decided_pct": _pct(current_decided, current_n),
+                    "right_pct": _pct(current_right, current_decided), "n": current_n},
         "both_decided": len(both),
         "agree": len(both) - len(differ),
         "differ": len(differ),
@@ -416,7 +420,11 @@ def how_confirmed(trace_dir: Path | None) -> dict:
 
 def shadow_report(trace_dir: Path | None, *, examples: int = 8) -> dict:
     """What the Scanner lab shows: the two paths side by side on the scans recorded in shadow mode."""
+    from services import scan_trace
+
     traces = latest_traces(trace_dir)
+    for d in traces:  # agreement as stored may count a picture-first decision as Ollama's: work it out again
+        scan_trace.apply_shadow_agreement(d)
     ran = [d for d in traces if d["shadow"].get("status") == "ok"]
     skipped = collections.Counter(d["shadow"].get("reason") or "unknown" for d in traces if d["shadow"].get("status") == "skipped")
     agreement = collections.Counter(d["shadow"].get("agreement") for d in ran)
@@ -426,7 +434,7 @@ def shadow_report(trace_dir: Path | None, *, examples: int = 8) -> dict:
     # Only English cards are a fair test: the index holds nothing else.
     confirmed = [d for d in ran if d.get("ground_truth") and d["shadow"].get("truth_lang") in (None, "en")]
     pairs = [
-        (d["ground_truth"], (d["shadow"].get("decision") or {}).get("tcg_card_id"), (d.get("decision") or {}).get("selected"))
+        (d["ground_truth"], (d["shadow"].get("decision") or {}).get("tcg_card_id"), scan_trace.ollama_selected(d), scan_trace.ollama_ran(d))
         for d in confirmed
     ]
     confirmed_scores = score_pairs(pairs)
