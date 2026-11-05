@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from . import config
+from . import config, lookup as lookup_module
 
 # (x0, y0, x1, y1) as fractions of the flat card picture. The tight strips are quick (little text in them);
 # when no number is found there, the wide strips take a second look (older cards print flavour text lower).
@@ -81,6 +81,8 @@ def _clean_number_part(text: str, *, digits_only_tail: bool = True) -> str:
         return text
     prefix, body, suffix = match.groups()
     if prefix.upper() in _LANG_CODES:  # "SSP EN 038/270": the language code belongs to the set code, not the number
+        prefix = ""
+    if lookup_module.is_set_code_prefix(prefix):  # "PBL039/084": PBL is the set code; the number is 039 (the code stays a token)
         prefix = ""
     if len(prefix) == 1 and prefix in "OoIlSBZDQ":  # real prefixes are two letters or more: this is a misread digit
         prefix, body = "", prefix.translate(_DIGITISE) + body
@@ -314,6 +316,12 @@ NAME_LADDER = (
     ("name-band", NAME_BAND, "binary", 3.0, True),
     ("name-band", NAME_BAND, "deglare", 2.5, True),
 )
+# fastread (matcher version 6): the same ladders without the late black-and-white and glare-removal steps, and a
+# lower time budget. Not the default: the T340's comparison decides whether it is worth what it loses.
+SLOW_VARIANTS = ("binary", "deglare")
+NUMBER_LADDER_FAST = tuple(step for step in NUMBER_LADDER if step[2] not in SLOW_VARIANTS)
+NAME_LADDER_FAST = tuple(step for step in NAME_LADDER if step[2] not in SLOW_VARIANTS)
+FAST_BUDGET_SECONDS = 0.9
 EXPANDED = {"top": (0.0, 0.0, 1.0, 0.24), "bottom": (0.0, 0.72, 1.0, 1.0)}  # the last-resort bands
 WHOLE_SIDE = 960  # the longest side the detector looks at in one read
 BUDGET_SECONDS = 1.2  # no further region is read once one card's reading has taken this long
@@ -390,11 +398,13 @@ class OcrReader:
         x0, y0, x1, y1 = box
         crop = card[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)]
         zoom = self._zoom(card, zoom)
+        began = time.perf_counter()
         strip = prepare(cv2.resize(crop, None, fx=zoom, fy=zoom, interpolation=cv2.INTER_CUBIC), variant)
         if strip is None:
             return None
         lines = self._run(strip, low=low)
         record.append({"label": label, "box": [round(v, 4) for v in box], "variant": variant, "zoom": round(zoom, 3), "low": low, "flipped": flipped,
+                       "ms": round((time.perf_counter() - began) * 1000, 1),
                        "lines": [{"text": line.text, "score": round(line.score, 3)} for line in lines[:14]]})
         return lines
 
@@ -411,7 +421,7 @@ class OcrReader:
             lines = self._scan(card, f"{which}-wide", EXPANDED[which], "clahe", 2.0, True, scratch, flipped) or []
             self._whole[key] = (lines, scratch[0])
         lines, entry = self._whole[key]
-        record.append(entry)
+        record.append({**entry, "ms": 0.0, "cached": True})  # a copy: the step table marks it on this read only
         return lines
 
     def _strip_items(self, card: np.ndarray, box: tuple[float, float, float, float], *, zoom: float = 2.0, sharpen: bool = False) -> list[tuple[str, float]]:
@@ -431,7 +441,7 @@ class OcrReader:
 
     # -- the name -------------------------------------------------------------
 
-    def read_name(self, card: np.ndarray, *, flipped: bool = False):
+    def read_name(self, card: np.ndarray, *, flipped: bool = False, fast: bool = False):
         """The name line (and the HP) at the top of the flat card; ``flipped`` turns the card first."""
         from . import names
 
@@ -439,21 +449,25 @@ class OcrReader:
         if flipped:
             card = np.ascontiguousarray(card[::-1, ::-1])
         record: list[dict] = []
-        ladder = NAME_LADDER[:1] if self.mode == "fixed" else NAME_LADDER
+        budget = FAST_BUDGET_SECONDS if fast else BUDGET_SECONDS
+        ladder = NAME_LADDER[:1] if self.mode == "fixed" else (NAME_LADDER_FAST if fast else NAME_LADDER)
         found: list[Line] = []
         all_lines: list[Line] = []
         for label, box, variant, zoom, low in ladder:
-            if found or (all_lines and time.monotonic() - started > BUDGET_SECONDS):
+            if found or (all_lines and time.monotonic() - started > budget):
                 break
             lines = self._scan(card, label, box or names.NAME_STRIP, variant, zoom if box else names.NAME_ZOOM, low, record, flipped)
             if lines is None:
                 continue
             all_lines += lines
             found = [line for line in lines if is_name_like(line.text)]
-        if not found and self.mode != "fixed" and time.monotonic() - started <= BUDGET_SECONDS * 1.5:
+            # What the name ladder had after this step (the OCR check's "what each step rescues" table).
+            record[-1]["after"] = {"name": names.parse_name_lines([(line.text, line.height) for line in found]).name}
+        if not found and self.mode != "fixed" and time.monotonic() - started <= budget * 1.5:
             top = self._expanded(card, record, flipped, "top")
             all_lines += top
             found = [line for line in top if is_name_like(line.text) and line.y1 / record[-1]["zoom"] / card.shape[0] <= 0.2]
+            record[-1]["after"] = {"name": names.parse_name_lines([(line.text, line.height) for line in found]).name}
         read = names.parse_name_lines([(line.text, line.height) for line in found])
         read.raw = [line.text for line in all_lines][:12]
         read.strips = record
@@ -462,18 +476,19 @@ class OcrReader:
 
     # -- the number -----------------------------------------------------------
 
-    def _read_card(self, card: np.ndarray) -> OcrResult:
+    def _read_card(self, card: np.ndarray, fast: bool = False) -> OcrResult:
         flipped = bool(getattr(self, "_turned", False))  # set by ``read``: which way up this card is being read
         record: list[dict] = []
         started = time.monotonic()
-        ladder = LEGACY_LADDER if self.mode == "fixed" else NUMBER_LADDER
+        budget = FAST_BUDGET_SECONDS if fast else BUDGET_SECONDS
+        ladder = LEGACY_LADDER if self.mode == "fixed" else (NUMBER_LADDER_FAST if fast else NUMBER_LADDER)
         lines: list[Line] = []
         best: OcrResult | None = None
         reads = 0
         for label, box, variant, zoom, low in ladder:
             if best is not None and completeness(best) == 2 and (best.number_confidence or 0.0) >= ACCEPT_CONFIDENCE:
                 break
-            if reads and time.monotonic() - started > BUDGET_SECONDS:
+            if reads and time.monotonic() - started > budget:
                 break
             got = self._scan(card, label, box, variant, zoom, low, record, flipped)
             if got is None:
@@ -487,19 +502,22 @@ class OcrReader:
             else:  # the strips are halves of one reading: pick from everything read so far
                 best, confidence = pick_number_lines(lines)
                 best.number_confidence = confidence
-        if (best is None or completeness(best) < 2) and self.mode != "fixed" and time.monotonic() - started <= BUDGET_SECONDS * 1.5:
+            # What the number ladder had after this step (the OCR check's "what each step rescues" table).
+            record[-1]["after"] = {"number": best.number_local, "total": best.number_total}
+        if (best is None or completeness(best) < 2) and self.mode != "fixed" and time.monotonic() - started <= budget * 1.5:
             bottom = self._expanded(card, record, flipped, "bottom")
             lines += bottom
             reading, confidence = pick_number_lines(bottom)
             reading.number_confidence = confidence
             best = better_read(best, reading) if best is not None else reading
+            record[-1]["after"] = {"number": best.number_local, "total": best.number_total}
         result = best or parse_text([])
         result.lines = [line.text for line in lines]
         result.attempts = reads
         result.strips = record
         return result
 
-    def read(self, card: np.ndarray, *, read_hp: bool = True, flipped: bool | None = None) -> OcrResult:
+    def read(self, card: np.ndarray, *, read_hp: bool = True, flipped: bool | None = None, fast: bool = False) -> OcrResult:
         """``flipped`` True/False: the picture search already says which way up the card is, so read only that
         way. None: unknown, so try upright first and the turned card when no complete number came out."""
         started = time.monotonic()
@@ -507,11 +525,11 @@ class OcrReader:
         if turned:
             card = np.ascontiguousarray(card[::-1, ::-1])
         self._turned = turned
-        result = self._read_card(card)
+        result = self._read_card(card, fast)
         if flipped is None and not is_complete(result):
             other = np.ascontiguousarray(card[::-1, ::-1])
             self._turned = not turned
-            retry = self._read_card(other)
+            retry = self._read_card(other, fast)
             if completeness(retry) > completeness(result):
                 result, card, turned = retry, other, not turned
             else:

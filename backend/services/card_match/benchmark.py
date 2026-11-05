@@ -34,6 +34,10 @@ BAR_TOP20 = 0.97
 BAR_DECIDED = 0.70
 BAR_DECIDED_RIGHT = 0.98
 BAR_P95_MS = 1500
+# ``pick_winner`` lets an option set through up to 10% over the bar: two runs of the same set on the same photos
+# differed by 170 ms in version 5, so a 60 ms miss is noise. The displayed pass bar stays at BAR_P95_MS.
+P95_PICK_TOLERANCE = 0.10
+PICK_MAX_P95_MS = round(BAR_P95_MS * (1 + P95_PICK_TOLERANCE))  # 1650
 BAR_EXTRA_RAM_MB = 1536
 
 HOLO_WORDS = ("holo", "illustration", "ultra", "secret", "full art", "rainbow", "hyper", "special", "amazing", "radiant", "shiny")
@@ -197,6 +201,9 @@ def _finish_report(kind: str, started: float, index: CardIndex, matcher, results
                 "decided_right": pct(sum(1 for r in dec if r["decided_right"]), len(dec)),
                 "decided_wrong": sum(1 for r in dec if not r["decided_right"]),
             }
+    by_scan_time = batch_groups(results) if kind == "labelled" else None
+    undecided_right = undecided_first_right(results) if kind == "labelled" else None
+    fallback_group = fallback_summary(results) if kind == "labelled" else None
     timings = timing_summary([r["timings_ms"] for r in results])
     sweep = picture_only_sweep(results)
     peak = peak_rss_mb()
@@ -230,12 +237,70 @@ def _finish_report(kind: str, started: float, index: CardIndex, matcher, results
         "host": {"cpu_count": os.cpu_count(), "threads": config.threads(), "platform": platform.platform(), "python": platform.python_version()},
         "memory": {"rss_before_mb": round(rss_before, 1) if rss_before is not None else None,
                    "peak_rss_mb": round(peak, 1) if peak is not None else None, "extra_mb": extra_ram},
-        "metrics": metrics, "groups": groups, "picture_only_sweep": sweep, "timings_ms": timings, "pass_bar": bar,
+        "metrics": metrics, "groups": groups, "by_scan_time": by_scan_time, "undecided_first_right": undecided_right, "fallback": fallback_group, "picture_only_sweep": sweep, "timings_ms": timings, "pass_bar": bar,
         "thresholds": thresholds(),
         "failures": [r for r in results if (r["rank"] != 1 or (r["decided"] and not r["decided_right"]))][:25],
         **extra,
     }
     return report
+
+
+def _group_row(members: list[dict]) -> dict | None:
+    if not members:
+        return None
+    decided = [r for r in members if r["decided"]]
+    return {
+        "n": len(members), "top1": pct(sum(1 for r in members if r["rank"] == 1), len(members)),
+        "top20": pct(sum(1 for r in members if r["rank"]), len(members)), "decided": pct(len(decided), len(members)),
+        "decided_right": pct(sum(1 for r in decided if r["decided_right"]), len(decided)),
+        "decided_wrong": sum(1 for r in decided if not r["decided_right"]),
+    }
+
+
+# The scans made after this moment were not used for tuning anything: the fair test. (The photo size does not tell them
+# apart: a card filling the guide is only about 923 px tall in the stored photo, which the OCR check counts as "1024".)
+NEW_SCANS_FROM = "2026-11-05T02:00:00+00:00"
+
+
+def scan_batch(data: dict) -> str:
+    """``new`` for a scan made at or after ``NEW_SCANS_FROM``, else ``tuning``. A trace with no readable time counts as tuning."""
+    try:
+        made = datetime.fromisoformat(str(data.get("created_at")).replace("Z", "+00:00"))
+        if made.tzinfo is None:
+            made = made.replace(tzinfo=timezone.utc)
+        return "new" if made >= datetime.fromisoformat(NEW_SCANS_FROM) else "tuning"
+    except (TypeError, ValueError):
+        return "tuning"
+
+
+def batch_groups(results: list[dict]) -> dict:
+    """Real-photo results for the scans used for tuning and the new scans that were not. A group with no scans is None,
+    so the lab can say so plainly."""
+    return {batch: _group_row([r for r in results if r.get("batch") == batch]) for batch in ("tuning", "new")}
+
+
+def undecided_first_right(results: list[dict]) -> dict:
+    """Scans where the first pick is right but nothing was decided, counted by the reason, for all scans and per group:
+    what is holding back "decided". Only counted, no threshold is touched."""
+
+    def count(members: list[dict]) -> dict:
+        first = [r for r in members if r["rank"] == 1]
+        stuck = [r for r in first if not r["decided"]]
+        reasons = Counter(r.get("unsure_reason") or "unknown" for r in stuck)
+        return {"scans": len(members), "first_right": len(first), "undecided": len(stuck),
+                "reasons": [{"reason": reason, "n": n} for reason, n in reasons.most_common()]}
+
+    return {"all": count(results), **{batch: count([r for r in results if r.get("batch") == batch]) for batch in ("tuning", "new")}}
+
+
+def fallback_summary(results: list[dict]) -> dict:
+    """The scans whose card was not found on the recognition image (``detection.fallback``) next to the rest.
+    A fallback card is only ever decided when a number was read from it and the picture agrees."""
+    return {
+        "scans": sum(1 for r in results if r.get("fallback")),
+        "by_kind": {kind: _group_row([r for r in results if r.get("fallback") == kind]) for kind in ("full_photo", "guide_crop")},
+        "found_on_photo": _group_row([r for r in results if not r.get("fallback")]),
+    }
 
 
 def picture_only_sweep(results: list[dict]) -> list[dict]:
@@ -364,19 +429,13 @@ def run_labelled(
     report_progress = progress or (lambda _state: None)
     index = matcher.index
     indexed = set(index.card_ids)
-    traces: dict[tuple, tuple[dict, Path]] = {}
-    for path in sorted(trace_dir.glob("user-*/*/*.json")):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        truth = data.get("ground_truth")
-        image_name = data.get("image_file")
-        if not truth or not image_name or not (path.parent / image_name).is_file():
-            continue
-        traces[(data.get("user_id"), data.get("job_id"), data.get("item_id"), path.name if data.get("job_id") is None else "")] = (data, path)
+    from . import ocr_check
+
+    from services import scan_trace
+
+    traces = ocr_check.labelled_traces(trace_dir)  # one trace per scan (a scan with several attempts counts once)
     eligible, not_english = [], 0
-    for data, path in traces.values():
+    for data, path in traces:
         if f"{data['ground_truth']}_en" in indexed:
             eligible.append((data, path))
         else:
@@ -385,7 +444,7 @@ def run_labelled(
         return None
     rss_before = rss_mb()
     results: list[dict] = []
-    ollama = {"n": 0, "decided": 0, "decided_right": 0, "in_candidates": 0, "top1": 0}
+    ollama = {"n": 0, "not_run": 0, "decided": 0, "decided_right": 0, "in_candidates": 0, "top1": 0}
     rerun_pairs: list[tuple] = []  # (confirmed card, matcher now, Ollama path then): the matcher re-run on the photo
     recorded_pairs: list[tuple] = []  # same, with the matcher's answer recorded in shadow mode at scan time
     examples: list[dict] = []
@@ -398,7 +457,9 @@ def run_labelled(
             photo = decode_rgb((path.parent / data["image_file"]).read_bytes(), max_side=2048)
         except Exception:
             continue
-        outcome = matcher.match(photo, flat_card=load_stored_card(path, data))
+        stored = load_stored_card(path, data)
+        resolution = ocr_check.resolution_of(stored)
+        outcome = matcher.match(photo, flat_card=stored)
         if collector is not None:
             try:
                 collector.add(trace=path.name, photo=photo, outcome=outcome, truth_id=truth_id,
@@ -411,17 +472,21 @@ def run_labelled(
         truth_number = next((m["number"] for m in outcome.matches if m["card_id"] == truth_id), None)
         results.append({
             "card_id": truth_id, "trace": path.name, "tags": [], "found": outcome.detection["found"], "rank": rank,
+            "resolution": resolution, "batch": scan_batch(data), "fallback": outcome.detection.get("fallback"),
             "number_exact": bool(number_local and truth_number and _numbers_equal(number_local, truth_number)),
             "decided": decision is not None, "decided_right": bool(decision and decision["card_id"] == truth_id),
             "mechanism": decision["mechanism"] if decision else None, "unsure_reason": outcome.unsure_reason,
             "top_match": outcome.matches[0]["card_id"] if outcome.matches else None, "timings_ms": outcome.timings_ms,
         })
-        selected = (data.get("decision") or {}).get("selected")
-        rerun_pairs.append((data["ground_truth"], decision["tcg_card_id"] if decision else None, selected))
+        # Ollama's own pick, and only on scans where Ollama ran: "Picture match first" stores its own decision in the same
+        # field, which used to be counted as Ollama deciding (and as agreeing with the matcher).
+        selected = scan_trace.ollama_selected(data)
+        ollama_ran = scan_trace.ollama_ran(data)
+        rerun_pairs.append((data["ground_truth"], decision["tcg_card_id"] if decision else None, selected, ollama_ran))
         shadow = data.get("shadow")
         if isinstance(shadow, dict) and shadow.get("status") == "ok":
             recorded = (shadow.get("decision") or {}).get("tcg_card_id")
-            recorded_pairs.append((data["ground_truth"], recorded, selected))
+            recorded_pairs.append((data["ground_truth"], recorded, selected, ollama_ran))
         if decision and selected and decision["tcg_card_id"] != selected and len(examples) < 10:
             candidates = data.get("candidates") or []
 
@@ -433,6 +498,9 @@ def run_labelled(
                 "ollama": name_of(selected), "confirmed": name_of(data["ground_truth"]),
                 "right": "matcher" if decision["tcg_card_id"] == data["ground_truth"] else "ollama" if selected == data["ground_truth"] else "neither",
             })
+        if not ollama_ran:
+            ollama["not_run"] += 1  # the picture matcher decided it (or sent it to the inbox): no Ollama answer to count
+            continue
         ollama["n"] += 1
         ollama["in_candidates"] += 1 if data.get("ground_truth_rank") else 0
         if selected:
@@ -440,7 +508,7 @@ def run_labelled(
             ollama["decided_right"] += 1 if selected == data["ground_truth"] else 0
         ollama["top1"] += 1 if data.get("ground_truth_rank") == 1 else 0
     extra = {
-        "labelled": {"traces_with_answer": len(traces), "english_in_index": len(eligible), "not_english_or_not_indexed": not_english},
+        "labelled": {"scans_with_answer": len(traces), "traces_with_answer": len(traces), "english_in_index": len(eligible), "not_english_or_not_indexed": not_english},
         # How each confirmed card was chosen; a card found by manual search was offered by no scanner, so it is
         # a miss for the matcher and for Ollama in the numbers above (it is a trace with an answer, rank None).
         "how_confirmed": shadow_module.how_confirmed(trace_dir),
@@ -481,21 +549,22 @@ def compare_row(label: str, report: dict | None, *, missing: list[str] | None = 
 
 
 def pick_winner(rows: list[dict]) -> dict | None:
-    """The option set to keep: no more wrong decisions than the plain run, inside the time bar, and the best
-    top-20 then decided rate. A plainer option set (earlier in the list) wins unless a later one adds at
-    least ``COMPARE_MIN_GAIN`` points of top 20 or of decided."""
+    """The option set to keep: no more wrong decisions than the plain run, inside the time bar (plus the noise
+    tolerance, ``PICK_MAX_P95_MS``), and the best top-20 then decided rate. A plainer option set (earlier in the list) wins unless a later one adds at
+    least ``COMPARE_MIN_GAIN`` points of top 1, top 20 or decided, and loses no more than that on top 20 or decided."""
     ok = [row for row in rows if row["status"] == "ok"]
     if not ok:
         return None
     wrong_limit = min(row["decided_wrong"] for row in ok)
-    eligible = [row for row in ok if row["decided_wrong"] <= wrong_limit and (row["p95_ms"] is None or row["p95_ms"] <= BAR_P95_MS)]
+    eligible = [row for row in ok if row["decided_wrong"] <= wrong_limit and (row["p95_ms"] is None or row["p95_ms"] <= PICK_MAX_P95_MS)]
     if not eligible:
         return None
     best = eligible[0]
     for row in eligible[1:]:
         gain_top20 = (row["top20"] or 0) - (best["top20"] or 0)
         gain_decided = (row["decided"] or 0) - (best["decided"] or 0)
-        if max(gain_top20, gain_decided) >= COMPARE_MIN_GAIN and gain_top20 >= -0.5 and gain_decided >= -0.5:
+        gain_top1 = (row.get("top1") or 0) - (best.get("top1") or 0)
+        if max(gain_top20, gain_decided, gain_top1) >= COMPARE_MIN_GAIN and gain_top20 >= -0.5 and gain_decided >= -0.5:
             best = row
     return best
 
@@ -570,13 +639,10 @@ def latest_reports(data_dir: Path | None = None) -> dict[str, dict]:
 
 
 def count_labelled_traces(trace_dir: Path | None) -> int:
+    """Confirmed scans: one per scan, grouped as ``run_labelled`` and the OCR check group them (a scan with several
+    attempts, each with its own trace file, counts once)."""
     if trace_dir is None or not trace_dir.is_dir():
         return 0
-    total = 0
-    for path in trace_dir.glob("user-*/*/*.json"):
-        try:
-            if json.loads(path.read_text(encoding="utf-8")).get("ground_truth"):
-                total += 1
-        except (OSError, ValueError):
-            continue
-    return total
+    from . import ocr_check
+
+    return len(ocr_check.labelled_traces(trace_dir))

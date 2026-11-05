@@ -45,7 +45,7 @@ describe('Scanner lab report', () => {
         title="Real scans"
       />,
     )
-    expect(html).toContain('same 120 photos')
+    expect(html).toContain('the 120 photos where it ran')
     expect(html).toContain('88.2%')
   })
 
@@ -236,5 +236,60 @@ describe('Scanner lab OCR views', () => {
     expect(html).toContain('900 ms')
     expect(html).toContain('Lapras #017/128')
     expect(html).toContain('30C | 017/128')
+  })
+})
+
+describe('Scanner lab matcher version 6 views', () => {
+  const group = { n: 120, top1: 70, top20: 96.7, decided: 68.3, decided_right: 100, decided_wrong: 0 }
+
+  it('splits the real-photo report by scan time and says plainly when there are no new scans', () => {
+    const base = { ...report, kind: 'labelled' }
+    const both = renderToStaticMarkup(<Report report={{ ...base, by_scan_time: { tuning: group, new: { ...group, n: 30 } } }} title="Real scans" />)
+    expect(both).toContain('Used for tuning')
+    expect(both).toContain('New scans, not used for tuning')
+    expect(both).not.toContain('No new scans yet')
+    const none = renderToStaticMarkup(<Report report={{ ...base, by_scan_time: { tuning: group, new: null } }} title="Real scans" />)
+    expect(none).toContain('No new scans yet')
+  })
+
+  it('counts the right first picks that were not decided, by reason, and says how many scans Ollama ran on', () => {
+    const undecided = { all: { scans: 30, first_right: 30, undecided: 10, reasons: [{ reason: 'rules_choice_not_close_in_picture', n: 7 }, { reason: 'odd_new_reason', n: 3 }] } }
+    const html = renderToStaticMarkup(
+      <Report
+        report={{ ...report, kind: 'labelled', undecided_first_right: undecided, ollama_today: { n: 120, not_run: 20, decided_pct: 15, decided_right_pct: 88, in_candidates_pct: 80, top1_pct: 63 } }}
+        title="Real scans"
+      />,
+    )
+    expect(html).toContain('10 of 30 scans with the right first pick')
+    expect(html).toContain('its picture is not close enough')
+    expect(html).toContain('odd new reason')
+    expect(html).toContain('on the 120 photos where it ran')
+    expect(html).toContain('20 more were decided by the picture first')
+  })
+
+  it('shows the scans where the card was not found, and what each reading step rescues', () => {
+    const fallback = { scans: 10, by_kind: { full_photo: null, guide_crop: { ...group, n: 10, decided: 0, decided_right: null } }, found_on_photo: group }
+    const html = renderToStaticMarkup(<Report report={{ ...report, kind: 'labelled', fallback }} title="Real scans" />)
+    expect(html).toContain('not found (10 scans)')
+    expect(html).toContain('Read from the guide frame')
+    const steps = {
+      all: {
+        scans: 100, never_number: 12, never_name: 5,
+        number: [{ step: 'bottom-band / binary', label: 'bottom-band', variant: 'binary', run: 20, first_right: 3, mean_ms: 310, total_seconds: 6.2 }],
+        name: [{ step: 'name-line / plain', label: 'name-line', variant: 'plain', run: 100, first_right: 90, mean_ms: 120, total_seconds: 12 }],
+      },
+    }
+    const check = renderToStaticMarkup(<OcrCheckView report={{ traces: 100, skipped: 0, by_resolution: {}, steps }} />)
+    expect(check).toContain('What each reading step rescues')
+    expect(check).toContain('Number: whole bottom band · black and white')
+    expect(check).toContain('Never right')
+    expect(check).toContain('310 ms')
+  })
+
+  it('names the faster reading option', () => {
+    const html = renderToStaticMarkup(
+      <CompareTable report={{ kind: 'compare-labelled', n: 139, created_at: '2026-11-06T01:00:00+00:00', duration_seconds: 100, winner: null, rows: [{ label: 'names+art+fastread', status: 'skipped', missing_indexes: ['x'] }] }} title="Compare" />,
+    )
+    expect(html).toContain('faster reading')
   })
 })

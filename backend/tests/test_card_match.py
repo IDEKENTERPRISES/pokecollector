@@ -307,7 +307,7 @@ class IndexAndPipelineTests(unittest.TestCase):
             def __init__(self):
                 pass
 
-            def _read_card(self, card):
+            def _read_card(self, card, fast=False):
                 calls.append(int(card[0, 0, 0]))
                 # Readable only when the marker pixel is at the top-left of what we are given.
                 return ocr.parse_text(["58/102"] if card[0, 0, 0] == 1 else [])

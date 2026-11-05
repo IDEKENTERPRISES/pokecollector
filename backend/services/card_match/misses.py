@@ -26,6 +26,7 @@ from .pipeline import ORIENT_MARGIN
 logger = logging.getLogger(__name__)
 
 TAGS = {
+    "fallback": "Card not found: read by fallback",
     "not_found": "Card not found or corners off",
     "generic": "Generic card (Basic Energy, common Trainer)",
     "glare": "Sleeve or top-loader glare",
@@ -35,7 +36,7 @@ TAGS = {
     "reprint_art": "Same artwork in another set",
     "other": "No clear cause",
 }
-PRIORITY = ("not_found", "upside_down", "generic", "reprint_art", "glare", "dark_or_blur", "holo")
+PRIORITY = ("fallback", "not_found", "upside_down", "generic", "reprint_art", "glare", "dark_or_blur", "holo")
 HOLO_WORDS = ("holo", "illustration", "ultra", "secret", "full art", "rainbow", "hyper", "special", "amazing", "radiant", "shiny", "vmax", "vstar")
 BASIC_ENERGY = {"grass", "fire", "water", "lightning", "psychic", "fighting", "darkness", "metal", "fairy"}
 GLARE_FRACTION = 0.04  # of the flat card's pixels that are blown out to near white
@@ -68,13 +69,15 @@ def is_holo(truth: dict) -> bool:
     return any(word in rarity for word in HOLO_WORDS)
 
 
-def tag_miss(*, found: bool, rotated: bool | None, truth: dict, others: list[dict], stats: dict | None) -> list[str]:
+def tag_miss(*, found: bool, rotated: bool | None, truth: dict, others: list[dict], stats: dict | None, fallback: str | None = None) -> list[str]:
     """Likely causes of a miss. ``others`` are the matcher's other picks (dicts with a ``name``); ``stats`` are
     the flat card's measurements (``card_stats``) or None when the card was not found. ``rotated`` is a
     measurement (``CardMatcher.card_rotation``: the confirmed card's own picture is clearly closer to the
     photo turned 180 degrees), never the matcher's own choice of orientation: a card the matcher merely
     guessed was turned is not "upside down"."""
     tags: list[str] = []
+    if fallback:  # the card was not found on the recognition image: the full photo or the guide-frame crop was used
+        tags.append("fallback")
     if not found:
         tags.append("not_found")
     if rotated:
@@ -187,6 +190,7 @@ class MissCollector:
         self.run_dir = self.root / f"run-{self.stamp}"
         self.items: list[dict] = []
         self.scans = 0
+        self.fallback_scans = 0  # scans (misses or not) whose card was not found on the recognition image
 
     def add(self, *, trace: str, photo, outcome, truth_id: str, label: str = "", confirmation: str | None = None, matcher=None) -> None:
         """Record one scan if it is a miss (the right card is not the first pick). ``matcher`` measures whether
@@ -194,10 +198,15 @@ class MissCollector:
         from . import detect
 
         self.scans += 1
+        if outcome.detection.get("fallback"):
+            self.fallback_scans += 1
         rank = next((m["rank"] for m in outcome.matches if m["card_id"] == truth_id), None)
         if rank == 1 or len(self.items) >= MAX_ITEMS:
             return
-        card = detect.detect_card(photo)
+        fallback = outcome.detection.get("fallback")
+        # The card the matcher embedded (a fallback card may come from the full photo); else find it again.
+        card = detect.Detection(card=outcome.card, found=bool(outcome.detection.get("found")), confidence=0.0, method="") \
+            if getattr(outcome, "card", None) is not None else detect.detect_card(photo)
         loaded = self.loader([truth_id] + [m["card_id"] for m in outcome.matches[:3]])
         truth = {"card_id": truth_id, **(loaded.get(truth_id) or {})}
         top3 = outcome.matches[:3]
@@ -209,11 +218,13 @@ class MissCollector:
                 logger.exception("Card-match: could not measure the rotation for %s", trace)
         tags = tag_miss(
             found=bool(outcome.detection.get("found")), rotated=bool(rotation and rotation["rotated"]), truth=truth,
-            others=outcome.matches, stats=card_stats(card.card) if card.found else None,
+            others=outcome.matches, stats=card_stats(card.card) if card.found else None, fallback=fallback,
         )
         key = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in Path(trace).stem)[:80] or f"scan{self.scans}"
         self.run_dir.mkdir(parents=True, exist_ok=True)
         corners = outcome.detection.get("corners") or []
+        if outcome.detection.get("corners_space") == "full_photo":
+            corners = []  # found in the full photo: its corners do not fit this recognition image
         (self.run_dir / f"{key}-photo.jpg").write_bytes(photo_thumb(photo, corners))
         (self.run_dir / f"{key}-card.jpg").write_bytes(card_thumb(card.card))
         (self.run_dir / f"{key}-photo-full.jpg").write_bytes(photo_thumb(photo, corners, side=FULL_PHOTO_SIDE, quality=FULL_QUALITY))
@@ -240,7 +251,8 @@ class MissCollector:
                 "hp": outcome.ocr.get("hp"), "lines": (outcome.ocr.get("lines") or [])[:6], "name_lines": (outcome.ocr.get("name_lines") or [])[:4],
                 "strips": outcome.ocr.get("strips") or [],  # every region read: box, preprocessing, text and confidence per line
             },
-            "detection": {k: outcome.detection.get(k) for k in ("found", "confidence", "method")},
+            "detection": {k: outcome.detection.get(k) for k in ("found", "confidence", "method", "fallback")},
+            "fallback": fallback,
             "rotation": rotation, "orientation": outcome.ocr.get("orientation"), "text_input": outcome.ocr.get("text_input"),
             "stats": card_stats(card.card) if card.found else None,
         })
@@ -249,6 +261,7 @@ class MissCollector:
         report = {
             "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(), "matcher_version": MATCHER_VERSION,
             "options": label, "scans": self.scans, "misses": len(self.items),
+            "fallback_scans": self.fallback_scans, "fallback_misses": sum(1 for item in self.items if item.get("fallback")),
             "tags": {tag: TAGS.get(tag, tag) for tag in TAGS}, "counts": count_tags(self.items),
             "primary_counts": {tag: sum(1 for item in self.items if item["primary"] == tag) for tag in TAGS if any(item["primary"] == tag for item in self.items)},
             "run": self.run_dir.name, "items": self.items, "orientation_check": orientation_check(self.items),
@@ -339,5 +352,6 @@ def page(tag: str | None = None, offset: int = 0, limit: int = PAGE_SIZE, data_d
     return {
         "available": True, "created_at": report["created_at"], "matcher_version": report["matcher_version"], "options": report.get("options"),
         "scans": report["scans"], "misses": report["misses"], "tags": report["tags"], "counts": report["counts"],
-        "primary_counts": report.get("primary_counts", {}), "orientation_check": report.get("orientation_check"), "filter": tag, "offset": offset, "total": len(items), "items": window,
+        "primary_counts": report.get("primary_counts", {}),
+        "fallback_scans": report.get("fallback_scans"), "fallback_misses": report.get("fallback_misses"), "orientation_check": report.get("orientation_check"), "filter": tag, "offset": offset, "total": len(items), "items": window,
     }

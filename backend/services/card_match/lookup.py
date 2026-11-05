@@ -37,6 +37,20 @@ EXTRA_SET_CODES = {
     "XYP": ("xyp",), "BWP": ("bwp",), "MEP": ("mep",),
 }
 
+# Letters that really are part of a printed card number (gallery subsets, promo series, old sets). Any other run of three
+# or more letters in front of a number ("PBL039/084") is the set code printed next to it, not part of the number.
+NUMBER_PREFIXES = frozenset({
+    "TG", "GG", "SV", "RC", "SWSH", "SVP", "SMP", "SM", "XYP", "XY", "BWP", "BW", "DP", "HGSS", "MEP", "SH", "PR", "PRSV", "PRSW", "PRSM",
+    "H", "S", "P", "NP", "RT",
+})
+
+
+def is_set_code_prefix(letters: str) -> bool:
+    """Letters glued to a number that are a set code, not a number prefix ("PBL" in "PBL039")."""
+    letters = str(letters or "").upper()
+    return len(letters) >= 3 and letters not in NUMBER_PREFIXES
+
+
 LEVEL_ORDER = ("number_total_set", "number_total", "number_set", "number")
 # How much each level moves a printing up the combined ranking (picture similarity is the base).
 LEVEL_BONUS = {"number_total_set": 0.20, "number_total": 0.14, "number_set": 0.10, "number": 0.0}
@@ -91,7 +105,13 @@ def number_pairs(lines: Iterable[str], parsed_number: str | None = None, parsed_
         key = _number_key(number)
         if key is None:
             return
-        pair = (key, _total_key(total) if total else None)
+        total_key = _total_key(total) if total else None
+        letters = re.match(r"[A-Z]*", key).group(0)
+        if is_set_code_prefix(letters):  # "PBL039": the letters are a set code, so look the bare number up as well
+            bare = (key[len(letters):], total_key)
+            if bare not in pairs:
+                pairs.append(bare)
+        pair = (key, total_key)
         if pair not in pairs:
             pairs.append(pair)
 
@@ -115,6 +135,9 @@ def set_code_tokens(tokens: Iterable[str], lines: Iterable[str] = ()) -> list[st
         token = str(token).upper()
         if re.search(r"[A-Z]", token) and 2 <= len(token) <= 6 and token not in out:
             out.append(token)
+        glued = re.fullmatch(r"([A-Z]{2,5})\d{1,3}[A-Z]?", token)  # "PBL039": the set code in front of the number
+        if glued and glued.group(1) not in out:
+            out.append(glued.group(1))
     return out
 
 
@@ -164,11 +187,13 @@ class LookupEvidence:
         out += [card_id for card_id, hit in self.text.items() if hit.cards <= TEXT_ADD_MAX_CARDS]
         return list(dict.fromkeys(out))
 
-    def bonus(self, card_id: str) -> float:
-        total = 0.0
+    def number_bonus(self, card_id: str) -> float:
         hit = self.numbers.get(card_id)
-        if hit:
-            total += LEVEL_BONUS[hit.level]
+        return LEVEL_BONUS[hit.level] if hit else 0.0
+
+    def bonus(self, card_id: str, *, number: bool = True) -> float:
+        """The lookup's boost for one card; ``number=False`` leaves the number lane's part out (it is counted elsewhere)."""
+        total = self.number_bonus(card_id) if number else 0.0
         text = self.text.get(card_id)
         if text:
             total += TEXT_WEIGHT * text.score

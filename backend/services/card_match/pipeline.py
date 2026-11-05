@@ -88,6 +88,7 @@ class MatchResult:
     ocr: dict
     timings_ms: dict = field(default_factory=dict)
     text_card: object = None  # the flat card the text was read from (numpy array); not part of ``as_dict``
+    card: object = None  # the flat card the picture was embedded from (numpy array); not part of ``as_dict``
 
     def as_dict(self) -> dict:
         return {
@@ -177,15 +178,22 @@ def _reprint_choice(candidates: list[dict]) -> dict | None:
     return {"candidate": winner, "mechanism": "reprint_art_lead", "lead": round(lead, 4)}
 
 
-def decide(card_info: dict, candidates: list[dict], *, reprint: bool = False) -> tuple[dict | None, str | None]:
+def decide(card_info: dict, candidates: list[dict], *, reprint: bool = False, fallback: bool = False,
+           number_read: bool = True) -> tuple[dict | None, str | None]:
     """(chosen candidate + mechanism, or None + reason) from OCR'd identifiers and picture scores.
 
     Each candidate carries ``_similarity``, ``_rank`` (1 = closest picture) and ``_lead`` for the top one.
+    ``fallback``: the card was not found on the recognition image (it came from the full photo or the plain guide
+    crop). Such a card may add and rank candidates, but it is only decided when a number was actually read from it
+    (``number_read``: OCR's own, not one filled in from a lookup) and the picture agrees; a picture-only
+    decision, which would rest on a crop that may not be the card at all, is never taken.
     """
     from api import recognize as rules  # the existing rules; imported here so this package imports cheaply
 
     if not candidates:
         return None, "no_picture_matches"
+    if fallback and not (number_read and card_info.get("number_local")):
+        return None, "card_not_found_no_number_read"
     by_similarity = sorted(candidates, key=lambda card: card["_rank"])
     top_picture = by_similarity[0]
     lead = top_picture["_similarity"] - (by_similarity[1]["_similarity"] if len(by_similarity) > 1 else 0.0)
@@ -201,7 +209,7 @@ def decide(card_info: dict, candidates: list[dict], *, reprint: bool = False) ->
                 return {"candidate": chosen, "mechanism": mechanism, "lead": round(lead, 4)}, None
             return None, "rules_choice_not_close_in_picture"
         if not number_hits:
-            if top_picture["_similarity"] >= SIM_MIN_PICTURE_STRONG and lead >= LEAD_MIN_PICTURE_STRONG:
+            if not fallback and top_picture["_similarity"] >= SIM_MIN_PICTURE_STRONG and lead >= LEAD_MIN_PICTURE_STRONG:
                 return {"candidate": top_picture, "mechanism": "picture_lead_strong", "lead": round(lead, 4)}, None
             return None, "number_not_among_picture_matches"
         # The number matches several printings: the picture breaks the tie only when it is clear.
@@ -210,7 +218,7 @@ def decide(card_info: dict, candidates: list[dict], *, reprint: bool = False) ->
             gap = number_hits[0]["_similarity"] - number_hits[1]["_similarity"]
             if gap >= LEAD_MIN_PICTURE_ONLY and number_hits[0]["_similarity"] >= SIM_MIN_WITH_RULES:
                 return {"candidate": number_hits[0], "mechanism": "number_and_picture", "lead": round(gap, 4)}, None
-        if reprint and (found := _reprint_choice(candidates)):
+        if reprint and not fallback and (found := _reprint_choice(candidates)):
             return found, None
         return None, "number_matches_several_printings"
     if top_picture["_similarity"] >= SIM_MIN_PICTURE_ONLY and lead >= LEAD_MIN_PICTURE_ONLY:
@@ -280,7 +288,8 @@ class CardMatcher:
     def __init__(
         self, index: CardIndex, embedder, candidate_loader: CandidateLoader, ocr_reader=None, *, read_hp: bool = False,
         extra_signals=(), tta: bool = False, names=None, label: str = "baseline",
-        lookup=None, use_number: bool = False, use_text: bool = False, reprint: bool = False,
+        lookup=None, use_number: bool = False, use_text: bool = False, reprint: bool = False, fastread: bool = False,
+        number_once: bool = False,
     ) -> None:
         self.index = index
         self.embedder = embedder
@@ -294,6 +303,8 @@ class CardMatcher:
         self.lookup = lookup  # a lookup.LookupIndex: the number / set code lane and the card-text lane
         self.use_number = bool(lookup is not None and use_number)
         self.use_text = bool(lookup is not None and use_text)
+        self.number_once = number_once  # a read number is worth one boost in the ranking, not two (see ``merge_candidates``)
+        self.fastread = fastread  # a shorter reading ladder and a lower time budget (ocr.FAST_BUDGET_SECONDS)
         self.reprint = reprint  # break ties between reprints by the artwork-only similarity
         self._row_maps: dict[int, np.ndarray] = {}
 
@@ -376,9 +387,11 @@ class CardMatcher:
         something better: a number, or a name that is in the catalogue. Returns
         ``(ocr result, name read or None, flipped, how)`` with ``how`` = picture | text | default."""
 
+        fast = {"fast": True} if self.fastread else {}  # only passed when on, so a reader without the option still works
+
         def attempt(flipped: bool):
-            result = self.ocr_reader.read(card, read_hp=self.read_hp, flipped=flipped)
-            name_read = self.ocr_reader.read_name(card, flipped=flipped) if use_names else None
+            result = self.ocr_reader.read(card, read_hp=self.read_hp, flipped=flipped, **fast)
+            name_read = self.ocr_reader.read_name(card, flipped=flipped, **fast) if use_names else None
             return result, name_read
 
         if picture_flipped:
@@ -392,12 +405,28 @@ class CardMatcher:
             return other_result, other_name, True, "text"
         return result, name_read, False, "default"
 
-    def _text_card(self, detection, upright: np.ndarray, full_photo, flat_card) -> tuple[np.ndarray, str]:
+    def _find_card(self, photo_rgb: np.ndarray, full_photo) -> tuple[object, str | None]:
+        """(detection, fallback). When no card is found on the recognition image the full photo is tried (the card may
+        be cut by the guide crop); failing that, the plain guide-frame crop is used, because the trainer lined the card
+        up with the guide. ``fallback`` is None for a normal find, ``full_photo`` or ``guide_crop`` otherwise."""
+        detection = detect_module.detect_card(photo_rgb)
+        if detection.found:
+            return detection, None
+        if full_photo is not None:
+            other = detect_module.detect_card(full_photo)
+            if other.found:
+                other.corners_space = "full_photo"  # these corners are in the full photo, not in ``photo_rgb``
+                return other, "full_photo"
+        return detection, "guide_crop"
+
+    def _text_card(self, detection, upright: np.ndarray, full_photo, flat_card, fallback: str | None = None) -> tuple[np.ndarray, str]:
         """The flat card the text is read from, and where it came from. Text is small, so it is read from the
         sharpest picture there is: a stored high-resolution card (a trace), or the full-resolution photo
         flattened at the detected corners, or this photo's own detail; the matcher's 630x880 card is the last resort."""
         if flat_card is not None:
             return flat_card, "stored_card"
+        if fallback == "full_photo":
+            return (detection.hires if detection.hires is not None else detection.card), "full_photo"
         if full_photo is not None and detection.found:
             other = detect_module.detect_card(full_photo)
             if other.found and _same_card(other.card, upright):
@@ -413,7 +442,7 @@ class CardMatcher:
         config.apply_thread_caps()
         timings: dict[str, float] = {}
         t0 = _timer()
-        detection = detect_module.detect_card(photo_rgb)
+        detection, fallback = self._find_card(photo_rgb, full_photo)
         timings["detect"] = (_timer() - t0) * 1000
 
         t0 = _timer()
@@ -438,7 +467,7 @@ class CardMatcher:
         evidence = None
         if use_ocr and self.ocr_reader is not None:
             t0 = _timer()
-            text_card, text_source = self._text_card(detection, upright, full_photo, flat_card)
+            text_card, text_source = self._text_card(detection, upright, full_photo, flat_card, fallback)
             can_read_names = self.names is not None and hasattr(self.ocr_reader, "read_name")
             ocr_result, name_read, flipped, how = self._read_text(text_card, picture_flipped, use_names=can_read_names)
             timings["ocr"] = (_timer() - t0) * 1000
@@ -475,6 +504,7 @@ class CardMatcher:
                 hits, added = merge_candidates(
                     hits, scores, self.index.row_of, self.names, name_read.name if name_read else None,
                     ocr_result.number_local, ocr_result.number_total, top_k, evidence=evidence,
+                    number_once=self.number_once,
                 )
                 ocr_info["text_candidates_added"] = added
                 timings["name"] = (_timer() - t0) * 1000
@@ -517,7 +547,8 @@ class CardMatcher:
         corrected = correct_number(card_info, candidates, ocr_result.lines if ocr_result else [])
         if corrected:
             ocr_info["corrected"] = corrected
-        chosen, reason = decide(card_info, candidates, reprint=self.reprint)
+        chosen, reason = decide(card_info, candidates, reprint=self.reprint, fallback=fallback is not None,
+                                number_read=bool(ocr_result and ocr_result.number_local and not looked_up))
         timings["decide"] = (_timer() - t0) * 1000
         timings["total"] = sum(timings.values())
 
@@ -547,9 +578,12 @@ class CardMatcher:
         return MatchResult(
             status="decided" if decision else "unsure", decision=decision, unsure_reason=None if decision else reason,
             matches=matches,
-            detection={"found": detection.found, "confidence": detection.confidence, "method": detection.method,
-                       "corners": [[round(x, 1), round(y, 1)] for x, y in detection.corners]},
-            ocr=ocr_info, timings_ms={key: round(value, 1) for key, value in timings.items()}, text_card=text_card,
+            detection={"found": detection.found and fallback != "full_photo", "confidence": detection.confidence, "method": detection.method,
+                       "corners": [[round(x, 1), round(y, 1)] for x, y in detection.corners],
+                       # Not found on the recognition image: "full_photo" (found there, which does not count as a find) or
+                       # "guide_crop" (the plain guide-frame crop); None for a normal find. See ``decide``.
+                       "fallback": fallback, "corners_space": getattr(detection, "corners_space", "photo")},
+            ocr=ocr_info, timings_ms={key: round(value, 1) for key, value in timings.items()}, text_card=text_card, card=upright,
         )
 
 
@@ -566,12 +600,16 @@ def _same_card(first: np.ndarray, second: np.ndarray, floor: float = 0.6) -> boo
     return denom > 0 and float(a @ b) / denom >= floor
 
 
-def merge_candidates(hits, scores, row_of, names, name: str | None, number: str | None, total: str | None, top_k: int = TOP_K, evidence=None):
+def merge_candidates(hits, scores, row_of, names, name: str | None, number: str | None, total: str | None, top_k: int = TOP_K, evidence=None, number_once: bool = False):
     """The picture top list and the text candidates as one ranking of at most ``top_k`` printings.
 
     Returns ``([(card id, picture similarity)], how many came from the text search only)``. Every printing is
     scored ``picture similarity + name, number and total agreement``; the closest ``PICTURE_KEEP`` pictures
     always stay, so a wrong name read can push other printings down but never the picture's own best guesses.
+
+    A read number is counted twice by default: once by the name search (``NUMBER_WEIGHT`` + ``TOTAL_WEIGHT``) and once by the
+    number lookup (its level's boost), up to 0.36 in all, which let a wrong card with the read number outrank the right one
+    whose picture was far closer. ``number_once`` counts it once: the larger of the two.
     """
     use_names = names is not None and bool(name)
     use_lookup = evidence is not None and not evidence.empty()
@@ -591,15 +629,19 @@ def merge_candidates(hits, scores, row_of, names, name: str | None, number: str 
 
     def combined(card_id: str) -> float:
         bonus = 0.0
+        read_number = 0.0
         if use_names:
             name_score = names.name_score_of(card_id, name)
             agreement = names.agreement(card_id, name_score, number, total)
             bonus = NAME_WEIGHT * max(0.0, (name_score - 0.72) / 0.28)
-            bonus += NUMBER_WEIGHT if agreement.number_ok else 0.0
-            bonus += TOTAL_WEIGHT if agreement.total_ok else 0.0
+            read_number = (NUMBER_WEIGHT if agreement.number_ok else 0.0) + (TOTAL_WEIGHT if agreement.total_ok else 0.0)
         if use_lookup:
-            bonus += evidence.bonus(card_id)
-        return pool[card_id] + bonus
+            if number_once:
+                read_number = max(read_number, evidence.number_bonus(card_id))
+                bonus += evidence.bonus(card_id, number=False)
+            else:
+                bonus += evidence.bonus(card_id)
+        return pool[card_id] + bonus + read_number
 
     keep = picture_ids[:min(PICTURE_KEEP, top_k)]
     rest = sorted((card_id for card_id in pool if card_id not in keep), key=lambda card_id: -combined(card_id))

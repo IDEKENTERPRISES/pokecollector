@@ -492,7 +492,7 @@ def apply_shadow_agreement(data: dict) -> None:
     if not isinstance(shadow, dict) or shadow.get("status") != "ok":
         return
     matcher = (shadow.get("decision") or {}).get("tcg_card_id")
-    current = (data.get("decision") or {}).get("selected")
+    current = ollama_selected(data)
     if matcher and current:
         agreement = "same" if matcher == current else "different"
     elif matcher:
@@ -508,6 +508,22 @@ def apply_shadow_agreement(data: dict) -> None:
     shadow["current_rank_in_matcher"] = ranks.index(current) + 1 if current in ranks else None
     if data.get("ground_truth"):
         label_shadow(data)
+
+
+def ollama_ran(data: dict) -> bool:
+    """Whether Ollama (today's scanner path) really looked at this scan. With "Picture match first" a scan the picture
+    matcher decided, or sent straight to the inbox, never reached Ollama; only ``unsure_ollama`` did."""
+    picture = data.get("picture_match")
+    return not isinstance(picture, dict) or not picture.get("path") or picture.get("path") == "unsure_ollama"
+
+
+def ollama_selected(data: dict) -> str | None:
+    """What Ollama picked, or None when it did not decide or never ran. ``decision.selected`` also holds a picture-first
+    decision (mechanism ``picture_match``), which is the matcher's pick, not Ollama's."""
+    decision = data.get("decision") or {}
+    if decision.get("mechanism") == "picture_match" or not ollama_ran(data):
+        return None
+    return decision.get("selected")
 
 
 def label_shadow(data: dict) -> None:
