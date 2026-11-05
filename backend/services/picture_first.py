@@ -97,7 +97,7 @@ class PictureRun:
         return self.result.status == "decided" and bool(self.result.decision)
 
 
-def _run_blocking(image_bytes: bytes, deadline: float, full_bytes: bytes | None = None):
+def _run_blocking(image_bytes: bytes, deadline: float, full_bytes: bytes | None = None, capture: dict | None = None):
     from services.card_match.images import decode_rgb
 
     if time.monotonic() >= deadline:
@@ -117,17 +117,21 @@ def _run_blocking(image_bytes: bytes, deadline: float, full_bytes: bytes | None 
     result = matcher.match(photo, full_photo=full_photo) if full_photo is not None else matcher.match(photo)
     elapsed = (time.perf_counter() - started) * 1000
     info = {"bytes": len(image_bytes), "width": int(photo.shape[1]), "height": int(photo.shape[0])}
+    from services.card_match import shadow
+
+    info.update(shadow.camera_input_info(capture, result))
     return PictureRun(result=result, elapsed_ms=round(elapsed, 1), matcher=matcher, input_info=info)
 
 
-async def run_matcher(image_bytes: bytes, full_bytes: bytes | None = None) -> PictureRun | None:
-    """Run the matcher on one recognition image (``full_bytes``: the full-resolution photo, for reading the
-    text). ``None`` when it is not ready, failed or took too long."""
+async def run_matcher(image_bytes: bytes, full_bytes: bytes | None = None, capture: dict | None = None) -> PictureRun | None:
+    """Run the matcher on one recognition image (``full_bytes``: the sharpest stored picture of the card, for
+    reading the text; ``capture``: the camera frame and crop sizes, only recorded). ``None`` when it is not
+    ready, failed or took too long."""
     limit = timeout_seconds()
     deadline = time.monotonic() + limit
     loop = asyncio.get_running_loop()
     try:
-        return await asyncio.wait_for(loop.run_in_executor(_executor, _run_blocking, image_bytes, deadline, full_bytes), timeout=limit)
+        return await asyncio.wait_for(loop.run_in_executor(_executor, _run_blocking, image_bytes, deadline, full_bytes, capture), timeout=limit)
     except asyncio.TimeoutError:
         logger.warning("Picture match took longer than %.1f s; using the scanner path", limit)
     except Exception as exc:
@@ -194,6 +198,9 @@ def _meta(run: PictureRun, path: str, **extra) -> dict:
     }
     if decision:
         meta["decided_card"] = decision.get("tcg_card_id")
+    camera = {k: v for k, v in run.input_info.items() if k in ("frame", "crop", "text_height")}
+    if camera:
+        meta["camera"] = camera
     meta.update(extra)
     return meta
 

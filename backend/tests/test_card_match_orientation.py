@@ -217,6 +217,30 @@ class TextResolutionTests(OrientationBase):
         self.assertEqual(replay.decision, live.decision)
         self.assertEqual(replay.ocr["number_local"], live.ocr["number_local"])
 
+    def test_a_tight_guide_crop_from_the_camera_frame_is_found_matches_and_read_sharper(self):
+        """The upload keeps the guide box cut from the original frame (services.scan_storage); the card must
+        still be found in it, look like the card found in the recognition image, and be read at HIRES_H."""
+        from PIL import Image
+
+        from services import scan_storage
+
+        big = Image.fromarray(np.asarray(self.pictures[4])).resize((1008, 1408))
+        frame = Image.new("RGB", (3840, 2160), (70, 80, 90))
+        card = big.resize((1400, 1955))
+        frame.paste(card, ((3840 - 1400) // 2, (2160 - 1955) // 2))
+        buffer = __import__("io").BytesIO()
+        frame.save(buffer, format="JPEG", quality=92)
+        box = (0.3, 0.02, 0.4, 0.96)  # what the camera screen's guide frame (plus margin) would send
+        sanitized = scan_storage.sanitize_image_bytes(buffer.getvalue(), box)
+        small = images.decode_rgb(scan_storage.make_recognition_image(sanitized.data, box), max_side=1024)
+        sharp_crop = images.decode_rgb(sanitized.sharp_crop, max_side=2048)
+        self.assertEqual(max(sharp_crop.shape[:2]), 1600)
+
+        result = self.matcher(RecordingReader("upright")).match(small, full_photo=sharp_crop)
+        self.assertEqual(result.ocr["text_input"]["source"], "full_photo")
+        self.assertGreater(result.ocr["text_input"]["height"], detect.CARD_H)
+        self.assertLessEqual(result.ocr["text_input"]["height"], detect.HIRES_H)
+
     def test_a_full_photo_of_another_scene_is_not_used(self):
         full, small = self.full_photo()
         other = np.full_like(full, 90)

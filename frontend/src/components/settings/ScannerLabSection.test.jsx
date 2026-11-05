@@ -101,6 +101,24 @@ describe('Scanner lab shadow section', () => {
     expect(html).toContain('index not built (2)')
   })
 
+  it('shows the typical camera frame and the card height read, new scans against older ones', () => {
+    const camera = { verdict: 'sharp', new_scans: 12, older_scans: 30, frame_long_side: 3840, frame_common: [3840, 2160], crop_long_side: 1600, card_height_new: 1408, card_height_older: 880 }
+    const html = renderToStaticMarkup(<ShadowView data={{ ...data, report: { ...data.report, camera } }} />)
+    expect(html).toContain('Camera and reading detail')
+    expect(html).toContain('3,840 × 2,160')
+    expect(html).toContain('1,408 px')
+    expect(html).toContain('older scans (30)')
+    expect(html).toContain('880 px')
+    expect(html).toContain('keeps real detail')
+  })
+
+  it('says plainly when the phone only sends 1080p frames, so the sharper crop cannot help', () => {
+    const camera = { verdict: 'hd', new_scans: 9, older_scans: 30, frame_long_side: 1920, frame_common: [1920, 1080], crop_long_side: 1400, card_height_new: 867, card_height_older: 880 }
+    const html = renderToStaticMarkup(<ShadowView data={{ ...data, report: { ...data.report, camera } }} />)
+    expect(html).toContain('about 1080p')
+    expect(html).toContain('cannot add detail')
+  })
+
   it('says so when the server has shadow mode switched off', () => {
     const html = renderToStaticMarkup(<ShadowView data={{ ...data, enabled: false }} />)
     expect(html).toContain('switched off on this server')
