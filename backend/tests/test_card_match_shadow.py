@@ -427,5 +427,41 @@ class ShadowAgreementTests(ShadowTestBase):
         self.assertEqual(report["side_by_side"]["rerun"]["n"], 1)
 
 
+class CameraReportTests(unittest.TestCase):
+    @staticmethod
+    def trace(frame=None, crop=None, height=880):
+        info = {"bytes": 1, "width": 1, "height": 1}
+        if frame:
+            info.update(frame=frame, crop=crop)
+        return {"shadow": {"status": "ok", "input": info, "ocr": {"text_input": {"source": "full_photo", "height": height}}}}
+
+    def test_4k_frames_are_reported_with_new_and_older_card_heights(self):
+        report = shadow.camera_report([
+            self.trace([3840, 2160], [1422, 1600], 1408), self.trace([3840, 2160], [1400, 1600], 1408),
+            self.trace(height=880), self.trace(height=900),
+        ])
+        self.assertEqual(report["verdict"], "sharp")
+        self.assertEqual(report["frame_common"], [3840, 2160])
+        self.assertEqual((report["new_scans"], report["older_scans"]), (2, 2))
+        self.assertEqual((report["card_height_new"], report["card_height_older"]), (1408, 890))
+        self.assertEqual(report["crop_long_side"], 1600)
+
+    def test_1080p_frames_are_flagged_as_unable_to_help(self):
+        report = shadow.camera_report([self.trace([1920, 1080], [750, 867], 867)])
+        self.assertEqual(report["verdict"], "hd")
+
+    def test_no_frame_sizes_yet(self):
+        self.assertEqual(shadow.camera_report([self.trace()])["verdict"], "none")
+        self.assertEqual(shadow.camera_report([])["card_height_new"], None)
+
+    def test_camera_input_info_needs_a_capture(self):
+        result = SimpleNamespace(ocr={"text_input": {"source": "full_photo", "width": 700, "height": 1000}})
+        self.assertEqual(shadow.camera_input_info(None, result), {})
+        self.assertEqual(
+            shadow.camera_input_info({"frame": [3840, 2160], "crop": [1422, 1600]}, result),
+            {"frame": [3840, 2160], "crop": [1422, 1600], "text_height": 1000, "text_source": "full_photo"},
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

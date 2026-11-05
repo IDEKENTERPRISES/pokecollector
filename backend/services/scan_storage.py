@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import io
+import json
 import os
 import re
 import shutil
@@ -40,6 +41,9 @@ ALLOWED_IMAGE_FORMATS = frozenset({"JPEG", "PNG", "WEBP", "HEIF", "HEIC"})
 # What a model is sent: about 1024 px on the long side, not the 2048 px review
 # photo (an image costs roughly pixels / 750 tokens, so 2048 px was ~2,300-3,100).
 RECOGNITION_LONG_SIDE = 1024
+# The guide-frame crop cut from the original camera frame, before it is shrunk to the 2048 px review photo,
+# is kept as a sharper picture of the card for reading its text (never sent to a model).
+SHARP_CROP_LONG_SIDE = 1600
 # The camera screen writes where its guide frame sat into the file name, e.g.
 # "scan-1700000000000-g118_142_764_820.jpg": x, y, width, height of the frame
 # in thousandths of the photo (so it survives the offline queue and re-encoding).
@@ -54,6 +58,11 @@ class ScanUploadError(ValueError):
 class SanitizedScanImage:
     data: bytes
     content_type: str = "image/jpeg"
+    # Only when the upload had a guide box: the box cut from the original (not the shrunk) image, and the sizes
+    # (width, height) of that original frame and of the crop, for the Scanner lab.
+    sharp_crop: bytes | None = None
+    frame_size: tuple[int, int] | None = None
+    crop_size: tuple[int, int] | None = None
 
 
 def scan_upload_root() -> Path:
@@ -87,8 +96,30 @@ async def read_limited_upload(upload, *, remaining_job_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
-def sanitize_image_bytes(raw: bytes) -> SanitizedScanImage:
-    """Decode, verify, orient, resize, and metadata-strip a scan photo."""
+def _cut_sharp_crop(image: Image.Image, box: tuple[float, float, float, float]) -> tuple[bytes, tuple[int, int]] | None:
+    """The guide box cut from a decoded, oriented RGB image, long side capped, as an EXIF-free JPEG."""
+    width, height = image.size
+    x, y, w, h = box
+    left, top = max(0, int(round(x * width))), max(0, int(round(y * height)))
+    right, bottom = min(width, int(round((x + w) * width))), min(height, int(round((y + h) * height)))
+    if right - left < 16 or bottom - top < 16:
+        return None
+    crop = image.crop((left, top, right, bottom))
+    if max(crop.size) > SHARP_CROP_LONG_SIDE:
+        crop.thumbnail((SHARP_CROP_LONG_SIDE, SHARP_CROP_LONG_SIDE), Image.Resampling.LANCZOS)
+    output = io.BytesIO()
+    crop.save(output, format="JPEG", quality=JPEG_QUALITY, optimize=True, progressive=True)
+    return output.getvalue(), (int(crop.width), int(crop.height))
+
+
+def sanitize_image_bytes(
+    raw: bytes, box: tuple[float, float, float, float] | None = None
+) -> SanitizedScanImage:
+    """Decode, verify, orient, resize, and metadata-strip a scan photo.
+
+    With a guide ``box`` the same decoded image is also cut to that box before it is shrunk, so the crop keeps
+    the camera's own detail (see ``SanitizedScanImage.sharp_crop``).
+    """
     if not raw:
         raise ScanUploadError("An uploaded scan photo is empty.")
 
@@ -117,6 +148,8 @@ def sanitize_image_bytes(raw: bytes) -> SanitizedScanImage:
                     oriented = rgb
                 else:
                     oriented = oriented.convert("RGB")
+                frame_size = (int(oriented.width), int(oriented.height))
+                cut = _cut_sharp_crop(oriented, box) if box is not None else None
                 oriented.thumbnail((MAX_IMAGE_EDGE, MAX_IMAGE_EDGE), Image.Resampling.LANCZOS)
                 output = io.BytesIO()
                 oriented.save(
@@ -133,7 +166,9 @@ def sanitize_image_bytes(raw: bytes) -> SanitizedScanImage:
     except (UnidentifiedImageError, OSError, ValueError):
         raise ScanUploadError("The uploaded file is not a valid supported image.")
 
-    return SanitizedScanImage(output.getvalue())
+    if cut is None:
+        return SanitizedScanImage(output.getvalue())
+    return SanitizedScanImage(output.getvalue(), sharp_crop=cut[0], frame_size=frame_size, crop_size=cut[1])
 
 
 def _job_directory(job_id: int) -> Path:
@@ -243,6 +278,60 @@ def read_recognition_image(relative_path: str) -> bytes:
     return path.read_bytes()
 
 
+def _crop_sibling(path: Path) -> Path:
+    return path.with_name(f"{path.stem}.crop.jpg")
+
+
+def _frame_sibling(path: Path) -> Path:
+    return path.with_name(f"{path.stem}.frame.json")
+
+
+def _write_private(path: Path, data: bytes) -> None:
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        with temporary.open("wb") as handle:
+            handle.write(data)
+        temporary.chmod(0o600)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def store_sharp_crop(relative_path: str, image: SanitizedScanImage) -> bool:
+    """Keep the sharper guide crop (and the frame/crop sizes) beside the stored photo. False when there is none."""
+    if not image.sharp_crop:
+        return False
+    path = resolve_scan_path(relative_path)
+    _write_private(_crop_sibling(path), image.sharp_crop)
+    sizes = {
+        "frame": list(image.frame_size) if image.frame_size else None,
+        "crop": list(image.crop_size) if image.crop_size else None,
+    }
+    _write_private(_frame_sibling(path), json.dumps(sizes).encode("utf-8"))
+    return True
+
+
+def read_text_photo(relative_path: str) -> bytes:
+    """What the card's text is read from: the sharper guide crop when there is one, else today's stored photo."""
+    path = resolve_scan_path(relative_path)
+    sibling = _crop_sibling(path)
+    if sibling.is_file():
+        try:
+            return sibling.read_bytes()
+        except OSError:
+            pass
+    return path.read_bytes()
+
+
+def read_capture_info(relative_path: str) -> dict | None:
+    """``{"frame": [w, h], "crop": [w, h]}`` as the camera delivered it, or None when no crop was kept."""
+    try:
+        data = json.loads(_frame_sibling(resolve_scan_path(relative_path)).read_text(encoding="utf-8"))
+    except (OSError, ValueError, ScanUploadError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def resolve_scan_path(relative_path: str) -> Path:
     root = scan_upload_root()
     candidate = (root / str(relative_path or "")).resolve()
@@ -260,6 +349,8 @@ def delete_scan_image(relative_path: str | None) -> None:
         return
     path.unlink(missing_ok=True)
     _recognition_sibling(path).unlink(missing_ok=True)
+    _crop_sibling(path).unlink(missing_ok=True)
+    _frame_sibling(path).unlink(missing_ok=True)
     try:
         path.parent.rmdir()
     except OSError:
@@ -340,13 +431,12 @@ async def create_scan_job(
                 remaining_job_bytes=MAX_JOB_BYTES - raw_total,
             )
             raw_total += len(raw)
-            sanitized = sanitize_image_bytes(raw)
+            box = guide_box_from_filename(getattr(upload, "filename", None))
+            sanitized = sanitize_image_bytes(raw, box)
             relative_path, byte_size = store_sanitized_image(job.id, sanitized)
+            store_sharp_crop(relative_path, sanitized)
             lighter = (
-                make_recognition_image(
-                    sanitized.data,
-                    guide_box_from_filename(getattr(upload, "filename", None)),
-                )
+                make_recognition_image(sanitized.data, box)
                 if crop_for_recognition
                 else None
             )

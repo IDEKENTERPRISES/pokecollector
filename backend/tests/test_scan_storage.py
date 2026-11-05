@@ -3,6 +3,7 @@ import io
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 try:
@@ -135,6 +136,148 @@ class ScanJobStorageTests(unittest.IsolatedAsyncioTestCase):
                     [_upload(small), _upload(small)],
                 )
         self.assertEqual(list(scan_storage.scan_upload_root().iterdir()), [])
+
+
+def _camera_frame(size=(3840, 2160)):
+    """A 4K frame: fine vertical stripes that a 2048 px shrink blurs but the original keeps."""
+    image = Image.new("RGB", size, "white")
+    pixels = image.load()
+    for x in range(0, size[0], 2):
+        for y in range(0, size[1], 8):
+            pixels[x, y] = (0, 0, 0)
+    output = io.BytesIO()
+    image.save(output, format="JPEG", quality=95)
+    return output.getvalue()
+
+
+def _guided_upload(data, name="scan-1700000000000-g300_100_400_800.jpg"):
+    return UploadFile(file=io.BytesIO(data), filename=name, headers=Headers({"content-type": "image/jpeg"}))
+
+
+BOX = (0.3, 0.1, 0.4, 0.8)
+
+
+@unittest.skipUnless(DEPS_AVAILABLE, "Scanner image dependencies are not installed")
+class SharpGuideCropTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.env = patch.dict(os.environ, {"SCAN_UPLOAD_DIR": self.temp_dir.name})
+        self.env.start()
+        self.engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Base.metadata.create_all(self.engine)
+        self.db = sessionmaker(bind=self.engine)()
+        self.user = User(username="crop-owner", hashed_password="x")
+        self.db.add(self.user)
+        self.db.commit()
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+        self.env.stop()
+        self.temp_dir.cleanup()
+
+    async def _job(self, uploads, **kwargs):
+        job = await create_scan_job(self.db, self.user.id, uploads, **kwargs)
+        return job, self.db.query(ScanJobItem).filter(ScanJobItem.job_id == job.id).order_by(ScanJobItem.position).all()
+
+    def test_the_crop_is_cut_from_the_original_not_from_the_shrunken_photo(self):
+        raw = _camera_frame()
+        sanitized = sanitize_image_bytes(raw, BOX)
+
+        self.assertEqual(sanitized.frame_size, (3840, 2160))
+        # 40% x 80% of the original is 1536 x 1728: capped at 1600 on the long side, still a real 1.0 scale.
+        self.assertEqual(max(sanitized.crop_size), 1600)
+        with Image.open(io.BytesIO(sanitized.sharp_crop)) as crop:
+            self.assertEqual(crop.format, "JPEG")
+            self.assertEqual(crop.size, sanitized.crop_size)
+            self.assertFalse(crop.getexif())
+        # Cutting the same box from the 2048 px review photo gives a much smaller picture.
+        with Image.open(io.BytesIO(sanitized.data)) as photo:
+            self.assertEqual(max(photo.size), 2048)
+            shrunk_crop_height = round(BOX[3] * photo.height)
+        self.assertGreater(sanitized.crop_size[1], shrunk_crop_height * 1.5)
+
+    def test_the_review_photo_is_exactly_what_it_was_without_a_box(self):
+        raw = _camera_frame()
+        self.assertEqual(sanitize_image_bytes(raw, BOX).data, sanitize_image_bytes(raw).data)
+
+    def test_no_guide_box_means_no_crop(self):
+        sanitized = sanitize_image_bytes(_camera_frame())
+        self.assertIsNone(sanitized.sharp_crop)
+        self.assertIsNone(sanitized.frame_size)
+
+    async def test_upload_with_a_box_keeps_the_crop_beside_the_photo_with_private_files(self):
+        _job, (item,) = await self._job([_guided_upload(_camera_frame())])
+        stored = scan_storage.resolve_scan_path(item.image_path)
+        crop = stored.with_name(f"{stored.stem}.crop.jpg")
+        self.assertTrue(crop.is_file())
+        self.assertEqual(scan_storage.read_text_photo(item.image_path), crop.read_bytes())
+        info = scan_storage.read_capture_info(item.image_path)
+        self.assertEqual(info["frame"], [3840, 2160])
+        self.assertEqual(max(info["crop"]), 1600)
+        if os.name != "nt":
+            self.assertEqual(crop.stat().st_mode & 0o777, 0o600)
+
+    async def test_upload_without_a_box_has_no_crop_and_reads_the_stored_photo(self):
+        _job, (item,) = await self._job([_upload(_image_bytes(size=(1200, 900)))])
+        stored = scan_storage.resolve_scan_path(item.image_path)
+        self.assertEqual(sorted(path.name for path in stored.parent.iterdir()), [stored.name])
+        self.assertIsNone(scan_storage.read_capture_info(item.image_path))
+        self.assertEqual(scan_storage.read_text_photo(item.image_path), stored.read_bytes())
+
+    async def test_reading_falls_back_to_the_photo_when_the_crop_is_gone(self):
+        _job, (item,) = await self._job([_guided_upload(_camera_frame())])
+        stored = scan_storage.resolve_scan_path(item.image_path)
+        stored.with_name(f"{stored.stem}.crop.jpg").unlink()
+        self.assertEqual(scan_storage.read_text_photo(item.image_path), stored.read_bytes())
+
+    async def test_the_matcher_is_handed_the_crop_and_falls_back_to_the_photo(self):
+        from services import scan_queue
+
+        _job, (guided, plain) = await self._job([_guided_upload(_camera_frame()), _upload(_image_bytes(size=(900, 1200)))])
+        self.assertEqual(scan_queue._full_photo_for_item(self.db, guided.id), scan_storage.read_text_photo(guided.image_path))
+        self.assertNotEqual(
+            scan_queue._full_photo_for_item(self.db, guided.id), scan_storage.resolve_scan_path(guided.image_path).read_bytes()
+        )
+        self.assertEqual(scan_queue._full_photo_for_item(self.db, plain.id), scan_storage.resolve_scan_path(plain.image_path).read_bytes())
+        self.assertEqual(scan_queue._capture_info_for_item(self.db, guided.id)["frame"], [3840, 2160])
+        self.assertIsNone(scan_queue._capture_info_for_item(self.db, plain.id))
+        from services.card_match import shadow
+
+        self.assertEqual(shadow._read_full_photo(guided.image_path), scan_storage.read_text_photo(guided.image_path))
+        self.assertEqual(shadow._read_full_photo(plain.image_path), scan_storage.resolve_scan_path(plain.image_path).read_bytes())
+
+    async def test_what_the_model_receives_does_not_change(self):
+        raw = _camera_frame()
+        _job, (item,) = await self._job([_guided_upload(raw)], crop_for_recognition=True)
+        without_crop = sanitize_image_bytes(raw)
+        self.assertEqual(scan_storage.resolve_scan_path(item.image_path).read_bytes(), without_crop.data)
+        expected = scan_storage.make_recognition_image(without_crop.data, BOX)
+        self.assertEqual(scan_storage.read_recognition_image(item.image_path), expected)
+        with Image.open(io.BytesIO(expected)) as sent:
+            self.assertLessEqual(max(sent.size), 1024)
+
+    async def test_deleting_the_photo_or_the_job_removes_the_crop_too(self):
+        _job, (first, second) = await self._job([_guided_upload(_camera_frame()), _guided_upload(_camera_frame(), "scan-2-g300_100_400_800.jpg")])
+        directory = scan_storage.resolve_scan_path(first.image_path).parent
+        scan_storage.delete_scan_image(first.image_path)
+        left = {path.name for path in directory.iterdir()}
+        self.assertEqual({name for name in left if name.startswith(Path(first.image_path).stem)}, set())
+        self.assertIn(Path(second.image_path).name, left)
+        self.assertIn(f"{Path(second.image_path).stem}.crop.jpg", left)
+        self.assertIsNone(scan_storage.read_capture_info(first.image_path))
+        scan_storage.delete_job_directory(first.job_id)
+        self.assertFalse(directory.exists())
+
+    async def test_expired_jobs_and_orphaned_directories_leave_no_crop_behind(self):
+        from services.scan_queue import purge_expired_scan_jobs
+
+        job, (item,) = await self._job([_guided_upload(_camera_frame())])
+        directory = scan_storage.resolve_scan_path(item.image_path).parent
+        job.expires_at = datetime.datetime.utcnow() - datetime.timedelta(days=1)
+        self.db.commit()
+        self.assertEqual(purge_expired_scan_jobs(self.db), 1)
+        self.assertFalse(directory.exists())
 
 
 if __name__ == "__main__":

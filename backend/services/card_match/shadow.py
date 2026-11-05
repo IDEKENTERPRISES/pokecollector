@@ -78,10 +78,38 @@ def _read_stored_photo(relative_path: str) -> bytes:
 
 
 def _read_full_photo(relative_path: str) -> bytes:
-    """The full-resolution stored photo (up to 2048 px): what the text is read from, flattened at the card corners."""
+    """The sharpest stored picture of the card (what the text is read from, flattened at the card corners): the
+    guide crop cut from the camera's original frame when the upload had one, else the stored photo (up to 2048 px)."""
     from services import scan_storage
 
-    return scan_storage.resolve_scan_path(relative_path).read_bytes()
+    return scan_storage.read_text_photo(relative_path)
+
+
+def _capture_info(relative_path: str) -> dict | None:
+    from services import scan_storage
+
+    try:
+        return scan_storage.read_capture_info(relative_path)
+    except Exception:
+        return None
+
+
+def camera_input_info(capture: dict | None, result=None) -> dict:
+    """What the camera delivered and what the text was read from, for the trace and the Scanner lab: the original
+    frame size, the guide-crop size and the height (px) of the flat card the text was read from. Empty values are
+    left out, so older records simply lack them."""
+    info: dict = {}
+    if not capture:
+        return info  # an upload without a guide box: nothing new is recorded (ocr.text_input has the card height)
+    for key, name in (("frame", "frame"), ("crop", "crop")):
+        size = (capture or {}).get(key)
+        if isinstance(size, (list, tuple)) and len(size) == 2 and all(isinstance(v, int) and v > 0 for v in size):
+            info[name] = [int(size[0]), int(size[1])]
+    text_input = (getattr(result, "ocr", None) or {}).get("text_input") or {}
+    if isinstance(text_input.get("height"), int) and text_input["height"] > 0:
+        info["text_height"] = text_input["height"]
+        info["text_source"] = text_input.get("source")
+    return info
 
 
 def store_text_card(user_id: int, job_id: int, item_id: int, result) -> None:
@@ -281,6 +309,7 @@ class ShadowRunner:
             self._skip(user_id, job_id, item_id, "match_failed")
             return
         input_info = {"bytes": len(raw), "width": int(photo.shape[1]), "height": int(photo.shape[0])}
+        input_info.update(camera_input_info(_capture_info(image_path), result))
         if scan_trace.record_shadow(user_id, job_id, item_id, _shadow_payload(result, input_info=input_info, matcher=matcher)):
             store_text_card(user_id, job_id, item_id, result)
             with self._lock:
@@ -416,6 +445,54 @@ def how_confirmed(trace_dir: Path | None) -> dict:
     }
 
 
+HD_LONG_SIDE = 2100  # a frame this long or shorter is 1080p-class (1920 px): the sharper crop cannot add detail
+
+
+def _median(values: list[int | float]) -> int | None:
+    return int(round(statistics.median(values))) if values else None
+
+
+def camera_report(ran: list[dict]) -> dict:
+    """What the phone camera really delivers and how tall the card was that the text was read from.
+
+    ``ran`` are the traces with a finished shadow record. Scans stored with a guide crop carry the original
+    frame and crop size (``input.frame`` / ``input.crop``); older ones only have the height the text was read
+    from (``ocr.text_input.height``). ``verdict`` is "none" (no new scans yet), "hd" (frames are 1080p-class,
+    so the sharper crop cannot help) or "sharp" (frames are bigger than the 2048 px review photo).
+    """
+    new_heights: list[int] = []
+    old_heights: list[int] = []
+    frames: list[tuple[int, int]] = []
+    crops: list[tuple[int, int]] = []
+    for data in ran:
+        shadow = data["shadow"]
+        info = shadow.get("input") or {}
+        height = ((shadow.get("ocr") or {}).get("text_input") or {}).get("height")
+        frame, crop = info.get("frame"), info.get("crop")
+        if isinstance(frame, list) and len(frame) == 2:
+            frames.append((int(frame[0]), int(frame[1])))
+            if isinstance(crop, list) and len(crop) == 2:
+                crops.append((int(crop[0]), int(crop[1])))
+            if isinstance(height, int):
+                new_heights.append(height)
+        elif isinstance(height, int):
+            old_heights.append(height)
+    frame_long = _median([max(size) for size in frames])
+    crop_long = _median([max(size) for size in crops])
+    common = collections.Counter(frames).most_common(1)
+    verdict = "none" if frame_long is None else "hd" if frame_long <= HD_LONG_SIDE else "sharp"
+    return {
+        "verdict": verdict,
+        "new_scans": len(frames),
+        "older_scans": len(old_heights),
+        "frame_long_side": frame_long,
+        "frame_common": list(common[0][0]) if common else None,
+        "crop_long_side": crop_long,
+        "card_height_new": _median(new_heights),
+        "card_height_older": _median(old_heights),
+    }
+
+
 def shadow_report(trace_dir: Path | None, *, examples: int = 8) -> dict:
     """What the Scanner lab shows: the two paths side by side on the scans recorded in shadow mode."""
     traces = latest_traces(trace_dir)
@@ -464,5 +541,6 @@ def shadow_report(trace_dir: Path | None, *, examples: int = 8) -> dict:
         "median_ms": round(statistics.median(totals), 1) if totals else None,
         "disagreements": disagreements,
         "how_confirmed": how_confirmed(trace_dir),
+        "camera": camera_report(ran),
         "matcher_version": MATCHER_VERSION,
     }

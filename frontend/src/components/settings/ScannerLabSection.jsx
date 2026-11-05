@@ -293,6 +293,29 @@ export function HowConfirmedView({ data }) {
   )
 }
 
+const CAMERA_VERDICTS = {
+  none: 'No scans with a camera frame size yet. Scan a card on the phone to find out.',
+  hd: 'The phone sends frames of about 1080p (1920 px). The sharper crop cannot add detail, because the card is already as sharp as the camera gives. A higher-quality camera stream is needed instead.',
+  sharp: 'The phone sends frames bigger than the 2048 px review photo, so the sharper crop keeps real detail the old photo threw away.',
+}
+
+/** What the phone camera really delivers, and how tall the card was that the text was read from. */
+export function CameraView({ camera }) {
+  if (!camera) return null
+  const size = value => (value ? `${number(value)} px` : '–')
+  const frame = camera.frame_common ? `${number(camera.frame_common[0])} × ${number(camera.frame_common[1])}` : '–'
+  return (
+    <div data-testid="scanner-lab-camera" className={`rounded-lg border px-3 py-2 ${camera.verdict === 'hd' ? 'border-amber-500/50 bg-amber-500/5' : 'border-separator'}`}>
+      <h4 className="text-footnote font-semibold">Camera and reading detail</h4>
+      <p className="text-footnote text-text-secondary" data-testid="scanner-lab-camera-verdict">{CAMERA_VERDICTS[camera.verdict] || CAMERA_VERDICTS.none}</p>
+      <Row testId="scanner-lab-camera-frame" label={`Typical camera frame (${number(camera.new_scans)} new scans)`} value={`${frame} · long side ${size(camera.frame_long_side)}`} />
+      <Row label="Typical sharper crop kept (long side)" value={size(camera.crop_long_side)} />
+      <Row testId="scanner-lab-camera-height-new" label="Card height the text was read from: new scans" value={size(camera.card_height_new)} />
+      <Row testId="scanner-lab-camera-height-older" label={`Card height the text was read from: older scans (${number(camera.older_scans)})`} value={size(camera.card_height_older)} />
+    </div>
+  )
+}
+
 export function ShadowView({ data }) {
   const report = data.report
   const confirmed = report.confirmed
@@ -310,6 +333,7 @@ export function ShadowView({ data }) {
       <Row label="Agree when both decided" value={`${percent(report.agreement.agree_pct)} (${number(report.agreement.same)} of ${number(report.agreement.both_decided)})`} />
       <Row label="Matcher would decide on its own" value={percent(report.matcher_decided_pct)} />
       <Row label="Median matcher time" value={report.median_ms != null ? `${number(report.median_ms)} ms` : '–'} />
+      <CameraView camera={report.camera} />
       <div data-testid="scanner-lab-shadow-confirmed">
         <h4 className="text-footnote font-semibold">On the {number(confirmed.n)} scans you confirmed (English cards)</h4>
         <Row label="Matcher decided / of those, right" value={`${percent(confirmed.matcher.decided_pct)} / ${percent(confirmed.matcher.right_pct)}`} />
