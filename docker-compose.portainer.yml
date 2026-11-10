@@ -23,6 +23,13 @@ services:
       SCAN_MATCHER_INDEX_AFTER_SYNC: ${SCAN_MATCHER_INDEX_AFTER_SYNC:-}
       # Default for the admin switch "Picture match first". Unset means off.
       SCAN_PICTURE_FIRST: ${SCAN_PICTURE_FIRST:-}
+      # Scanner diagnostics (docs/CARD_MATCH.md, "Running it on prod"): every trainer's scans are kept on this server
+      # for testing card recognition; only an admin can switch it off for themselves or delete a trainer's data.
+      # Photos never leave the server. Set SCAN_TRACE_REQUIRED to 0 in the stack's environment to go back to opt-in.
+      SCAN_TRACE_DIR: ${SCAN_TRACE_DIR:-/app/data/scan-traces}
+      SCAN_TRACE_REQUIRED: ${SCAN_TRACE_REQUIRED:-1}
+      # Days to keep them (365 = 12 months). 0 keeps everything (empty falls back to 365).
+      SCAN_TRACE_KEEP_DAYS: ${SCAN_TRACE_KEEP_DAYS:-365}
     # Same container paths as the base file, so these replace its ./data/... mounts.
     volumes:
       - /home/rage/Documents/docker/pokelocal/backups:/app/backups

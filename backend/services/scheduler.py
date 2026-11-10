@@ -158,6 +158,16 @@ def run_idempotency_cleanup():
         db.close()
 
 
+def run_scan_trace_cleanup():
+    """Delete scanner diagnostics older than SCAN_TRACE_KEEP_DAYS (nothing when it is unset)."""
+    from services.scan_trace import purge_old_traces
+
+    try:
+        purge_old_traces()
+    except Exception:
+        logger.exception("Scan diagnostics cleanup failed")
+
+
 def run_pokedex_metadata_backfill():
     """One-time startup backfill for Pokédex mappings added to existing card rows."""
     from database import SessionLocal
@@ -425,6 +435,17 @@ def start_scheduler():
             name="Progress Nightly Safety Net",
             replace_existing=True,
             coalesce=True,
+        )
+
+        scheduler.add_job(
+            run_scan_trace_cleanup,
+            trigger=CronTrigger(hour=4, minute=10),
+            id="scan_trace_cleanup_job",
+            name="Scanner Diagnostics Retention",
+            replace_existing=True,
+            misfire_grace_time=6 * 3600,
+            coalesce=True,
+            max_instances=1,
         )
 
         if needs_pokedex_backfill:
