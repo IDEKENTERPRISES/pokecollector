@@ -100,7 +100,7 @@ class PrefsTests(NotificationTestCase):
         self.assertTrue(n.category_enabled(self.db, user.id, "wishlist_dips"))
         self.assertFalse(n.category_enabled(self.db, user.id, "big_movers"))
         self.assertFalse(n.category_enabled(self.db, user.id, "weekly_recap"))
-        self.assertEqual(n.UI_CATEGORIES, ["scans_ready", "wishlist_alerts", "new_sets", "wishlist_dips", "big_movers", "weekly_recap", "badges", "goal_milestones"])
+        self.assertEqual(n.UI_CATEGORIES, ["scans_ready", "wishlist_alerts", "new_sets", "wishlist_dips", "big_movers", "weekly_recap", "wrapped", "badges", "goal_milestones", "swap_offers", "feed_activity"])
 
     def test_user_value_overrides_default(self):
         user = _user(self.db)
@@ -187,8 +187,19 @@ class QuietHoursTests(NotificationTestCase):
         early = datetime.datetime(2026, 10, 28, 3, 0)   # 04:00 local
         self.assertEqual(n.quiet_hours_end(early, berlin), datetime.datetime(2026, 10, 28, 7, 0))
 
+    def test_quiet_hours_are_off_by_default(self):
+        user = _user(self.db, time_zone="Europe/Berlin")
+        self.assertFalse(n.quiet_hours_enabled(self.db, user.id))
+        self.assertEqual(n.default_settings()["notify_quiet_hours"], "false")
+        late = datetime.datetime(2026, 10, 28, 22, 30)
+        job = self.make_job(user, status="done")
+        n.notify_scans_ready(self.db, user.id, job.id, now=late)
+        self.db.commit()
+        self.assertEqual(self.db.query(NotificationQueue).one().send_after, late)
+
     def test_instant_push_waits_until_morning(self):
         user = _user(self.db, time_zone="Europe/Berlin")
+        _set_pref(self.db, user.id, "notify_quiet_hours", "true")
         late = datetime.datetime(2026, 10, 28, 22, 30)
         job = self.make_job(user, status="done")
         self.assertTrue(n.notify_scans_ready(self.db, user.id, job.id, now=late))
@@ -312,6 +323,7 @@ class ScansReadyLogTests(NotificationTestCase):
 
     def test_deferred_for_quiet_hours_logs_the_end_time(self):
         user = _user(self.db, time_zone="Europe/Berlin")
+        _set_pref(self.db, user.id, "notify_quiet_hours", "true")
         late = datetime.datetime(2026, 10, 28, 22, 30)
         job = self.make_job(user)
         scan_queue._refresh_job_status(self.db, job, NOON_UTC)  # queued for noon, due immediately
@@ -381,6 +393,7 @@ class WishlistAlertTests(NotificationTestCase):
         self.webpush.assert_not_called()
 
     def test_alert_in_quiet_hours_waits_until_08_00(self):
+        _set_pref(self.db, self.user.id, "notify_quiet_hours", "true")
         late = datetime.datetime(2026, 10, 28, 23, 30)
         n.notify_wishlist_alert(self.db, self.user.id, self.card.id, now=late)
         self.db.commit()

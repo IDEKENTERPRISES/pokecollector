@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { AlertTriangle, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Loader2, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react'
 import { fetchScanCandidateImage, fetchScanJobItemImage } from '../api/client'
 import CardImage from './CardImage'
+import ScanZoomViewer from './ScanZoomViewer'
 import Button from './ios/Button'
 import { useDialogBehavior } from './ui/dialogBehavior'
 import { formatRetryCountdown } from '../utils/retryCountdown'
@@ -97,7 +98,7 @@ const CARD_IMAGE = 'h-full w-full object-cover rounded-xl'
 // the top candidates are pre-fetched during recognition (see
 // backend/services/scan_candidate_images.py), so this is usually a local
 // read.
-function useCandidateFullImage(jobId, itemId, index, fallbackUrl) {
+export function useCandidateFullImage(jobId, itemId, index, fallbackUrl) {
   const [url, setUrl] = useState(null)
 
   useEffect(() => {
@@ -417,11 +418,12 @@ export function CardZoomModal({
       // browsers a fixed, full-screen overlay can render partly behind the
       // address bar rather than below it, and safe-area-inset-top is the
       // platform's own answer for "how much is currently covered up top."
-      className="fixed inset-0 z-[400] flex cursor-default flex-col bg-black/90 p-4 [padding-top:max(1rem,env(safe-area-inset-top))]"
+      className="fixed inset-0 z-[400] flex cursor-default flex-col bg-black p-4 [padding-top:max(1rem,env(safe-area-inset-top))]"
       onClick={onClose}>
       <div className="flex flex-shrink-0 justify-end">
         <button type="button" onClick={onClose} aria-label={t('common.close')}
-          className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-white/10 transition-colors hover:bg-white/20">
+          className="relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-white/10 transition-colors hover:bg-white/20">
+          <span aria-hidden="true" className="absolute -inset-1" />
           <X size={18} className="text-white" />
         </button>
       </div>
@@ -715,7 +717,7 @@ function PhotoThumb({ url, onZoom, t }) {
   )
 }
 
-export function ScanItemPanel({ jobId, item, onAdd, onRetry, onDismiss, onReview, onModalChange, retryNow, t }) {
+export function ScanItemPanel({ jobId, item, onAdd, onRetry, onWait, isAdmin = false, onDismiss, onReview, onModalChange, retryNow, t }) {
   const photoUrl = useScanItemPhoto(jobId, item)
   // Photo-only zoom stays local. Expanding a *candidate* starts a review,
   // which the page owns because accepting can walk on into the next photo
@@ -727,6 +729,11 @@ export function ScanItemPanel({ jobId, item, onAdd, onRetry, onDismiss, onReview
 
   const active = ['pending', 'processing', 'retrying'].includes(item.status)
   const noMatches = item.status === 'done' && !item.matches?.length
+  // Set by "picture match first" (docs/CARD_MATCH.md): the picture decided the card, or was unsure and the scan came
+  // to the inbox while the scanner was unreachable.
+  const picture = item.recognized?._picture
+  const pictureUnsure = item.status === 'done' && !item.resolved && picture?.path === 'unsure_inbox'
+  const matchedByPicture = isAdmin && picture?.path === 'decided'
 
   // A resolved item is finished business. Left expanded it takes as much
   // room as one still needing a decision, and worse: resolving drops the
@@ -770,7 +777,7 @@ export function ScanItemPanel({ jobId, item, onAdd, onRetry, onDismiss, onReview
       className="rounded-[20px] bg-card p-4 outline-none"
     >
       {photoExpanded && (
-        <CardZoomModal card={null} photoUrl={photoUrl} onClose={() => {
+        <ScanZoomViewer photoUrl={photoUrl} onClose={() => {
           setPhotoExpanded(false)
           onModalChange?.(false)
         }} t={t} />
@@ -797,6 +804,11 @@ export function ScanItemPanel({ jobId, item, onAdd, onRetry, onDismiss, onReview
               )}
               {item.recognized?.number && (
                 <p className="text-footnote text-text-secondary">Nr. {item.recognized.number}</p>
+              )}
+              {matchedByPicture && (
+                <p className="mt-0.5 text-caption-1 text-text-tertiary" data-testid="scan-matched-by-picture">
+                  {t('scanner.matchedByPicture')}
+                </p>
               )}
               {item.recognized?._gemini_fallback_used && (
                 <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-blue/20 px-2 py-0.5 text-caption-1 font-semibold text-blue">
@@ -827,6 +839,15 @@ export function ScanItemPanel({ jobId, item, onAdd, onRetry, onDismiss, onReview
               {item.status === 'retrying'
                 ? formatRetryCountdown(item.next_attempt_at, t, retryNow, item.retry_reason)
                 : t('scanner.itemProcessing')}
+              {item.status === 'retrying' && !item.resolved && item.has_image && (
+                <button
+                  type="button"
+                  onClick={() => onRetry(item)}
+                  className="ml-1 rounded-full bg-fill-tertiary px-3 py-1 text-footnote font-semibold text-accent"
+                >
+                  {t('scanner.tryNow')}
+                </button>
+              )}
             </p>
           )}
 
@@ -854,6 +875,21 @@ export function ScanItemPanel({ jobId, item, onAdd, onRetry, onDismiss, onReview
           )}
         </div>
       </div>
+
+      {pictureUnsure && (
+        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl bg-fill-tertiary px-3 py-2" data-testid="scan-picture-unsure">
+          <p className="min-w-0 flex-1 text-subheadline text-text-secondary">{t('scanner.pictureUnsure')}</p>
+          {item.has_image && onWait && (
+            <button
+              type="button"
+              onClick={() => onWait(item)}
+              className="rounded-full bg-fill-tertiary px-3 py-1 text-footnote font-semibold text-accent"
+            >
+              {t('scanner.waitForScanner')}
+            </button>
+          )}
+        </div>
+      )}
 
       {item.status === 'done' && item.matches?.length > 0 && (
         <div className="mt-4">

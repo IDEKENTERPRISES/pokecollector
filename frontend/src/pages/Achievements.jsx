@@ -28,7 +28,7 @@ function AchievementCard({ achievement, t }) {
     >
       <div className="flex items-start gap-3">
         <span className="flex-shrink-0">
-          <BadgeMedal track={achievement.track} tier={achievement.tier} earned={Boolean(achievement.unlocked)} size={52} />
+          <BadgeMedal track={achievement.track} tier={achievement.tier} glyph={achievement.art} earned={Boolean(achievement.unlocked)} size={52} />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">

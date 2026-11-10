@@ -25,6 +25,7 @@ from models import (
     Card, CollectionItem, NotificationQueue, Set, User, UserAchievement, UserSetting, WishlistItem,
 )
 from services import push, telegram
+from services.job_isolation import trainer_savepoint
 from services.card_values import effective_market_price, normalize_price_field
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,14 @@ DEFAULT_DIGEST_HOUR = 18
 QUIET_START_HOUR = 22
 QUIET_END_HOUR = 8
 QUEUE_RETENTION_DAYS = 30
+
+# Reactions and comments on a trainer's feed events (docs/SOCIAL_DESIGN.md §6.7).
+# The first activity on an event pushes at once; more within this many seconds folds into one follow-up push.
+# The scheduler's notification job runs every 30 s, so the follow-up leaves within about a minute of the window ending.
+FEED_PUSH_WINDOW_SECONDS = 30
+# Most pushes of this category per trainer per rolling hour; the rest waits as one summary.
+FEED_PUSH_HOURLY_CAP = 6
+FEED_PUSH_CAP_WINDOW_MINUTES = 60
 
 TIME_ZONE_KEY = "time_zone"
 DIGEST_HOUR_KEY = "notify_digest_hour"
@@ -73,10 +82,13 @@ CATEGORIES: dict[str, Category] = {
     "wishlist_dips": Category("wishlist_dips", True, DIGEST, "/wishlist", "wishlist dip"),
     "big_movers": Category("big_movers", False, DIGEST, "/collection", "big mover"),
     "weekly_recap": Category("weekly_recap", False, INSTANT, "/", "recap"),
+    "wrapped": Category("wrapped", True, INSTANT, "/", "Wrapped"),
     "badges": Category("badges", True, INSTANT, "/achievements", "badge"),
     "goal_milestones": Category("goal_milestones", True, INSTANT, "/goals", "goal"),
-    "swap_offers": Category("swap_offers", True, None, "/", "swap offer"),
+    "swap_offers": Category("swap_offers", True, INSTANT, "/trades/offers", "swap offer"),
+    "feed_activity": Category("feed_activity", True, INSTANT, "/leaderboard/activity", "reaction or comment"),
 }
+# Swap offers are social: the frontend shows their Settings row only while the admin's switch is on.
 UI_CATEGORIES = [c.id for c in CATEGORIES.values() if c.timing]
 
 
@@ -88,7 +100,7 @@ def default_settings() -> dict[str, str]:
     """Defaults merged into the settings API response."""
     defaults = {pref_key(c.id): "true" if c.default else "false" for c in CATEGORIES.values()}
     defaults[DIGEST_HOUR_KEY] = str(DEFAULT_DIGEST_HOUR)
-    defaults[QUIET_ENABLED_KEY] = "true"
+    defaults[QUIET_ENABLED_KEY] = "false"
     defaults[SHOW_DETAILS_KEY] = "true"
     return defaults
 
@@ -133,7 +145,7 @@ def digest_hour(db: Session, user_id: int) -> int:
 
 def quiet_hours_enabled(db: Session, user_id: int) -> bool:
     value = _setting(db, user_id, QUIET_ENABLED_KEY)
-    return True if value is None else value.strip().lower() in {"true", "1", "yes", "on"}
+    return False if value is None else value.strip().lower() in {"true", "1", "yes", "on"}
 
 
 def show_details(db: Session, user_id: int) -> bool:
@@ -294,14 +306,15 @@ def on_new_sets(db: Session, set_ids: list[str]) -> None:
     rows = db.query(Set).filter(Set.id.in_(set_ids)).all()
     new_sets = [{"name": s.name, "series": s.series or ""} for s in rows]
     for user_id in _active_user_ids(db):
-        if not category_enabled(db, user_id, "new_sets"):
-            continue
-        try:
-            telegram.send_new_sets_notification(new_sets, db=db, user_id=user_id)
-        except Exception:
-            logger.exception("Telegram new-sets notification failed for user %s", user_id)
-        for s in rows:
-            enqueue(db, user_id, "new_sets", f"set:{s.id}", details={"name": s.name, "series": s.series or ""})
+        with trainer_savepoint(db, "New-sets notification", user_id):
+            if not category_enabled(db, user_id, "new_sets"):
+                continue
+            try:
+                telegram.send_new_sets_notification(new_sets, db=db, user_id=user_id)
+            except Exception:
+                logger.exception("Telegram new-sets notification failed for user %s", user_id)
+            for s in rows:
+                enqueue(db, user_id, "new_sets", f"set:{s.id}", details={"name": s.name, "series": s.series or ""})
     db.commit()
 
 
@@ -357,41 +370,43 @@ def queue_price_events(db: Session, card_ids: list[str], now: datetime.datetime 
         WishlistItem.card_id.in_(ids)
     ).all()
     for item in wishlist:
-        if not category_enabled(db, item.user_id, "wishlist_dips"):
-            continue
-        price = effective_market_price(item.card, price_field=_price_field(db, item.user_id))
-        if is_dip(price, item.card.price_avg30):
-            avg30 = item.card.price_avg30
-            details = _card_details(
-                db, item.card,
-                price=round(price, 2), avg30=round(avg30, 2), drop_pct=round((avg30 - price) / avg30 * 100, 1),
-            )
-            queued += enqueue(
-                db, item.user_id, "wishlist_dips", f"card:{item.card_id}", now=now, repeat_days=REPEAT_DAYS,
-                details=details,
-            )
+        with trainer_savepoint(db, "Wishlist dip check", item.user_id):
+            if not category_enabled(db, item.user_id, "wishlist_dips"):
+                continue
+            price = effective_market_price(item.card, price_field=_price_field(db, item.user_id))
+            if is_dip(price, item.card.price_avg30):
+                avg30 = item.card.price_avg30
+                details = _card_details(
+                    db, item.card,
+                    price=round(price, 2), avg30=round(avg30, 2), drop_pct=round((avg30 - price) / avg30 * 100, 1),
+                )
+                queued += enqueue(
+                    db, item.user_id, "wishlist_dips", f"card:{item.card_id}", now=now, repeat_days=REPEAT_DAYS,
+                    details=details,
+                )
 
     owned = db.query(CollectionItem).join(Card, Card.id == CollectionItem.card_id).filter(
         CollectionItem.card_id.in_(ids)
     ).all()
     seen: set[tuple[int, str]] = set()
     for item in owned:
-        key = (item.user_id, item.card_id)
-        if key in seen or not category_enabled(db, item.user_id, "big_movers"):
-            continue
-        seen.add(key)
-        price = effective_market_price(item.card, price_field=_price_field(db, item.user_id))
-        if is_big_move(price, item.card.price_avg7, mover_threshold(db, item.user_id)):
-            baseline = item.card.price_avg7
-            details = _card_details(
-                db, item.card,
-                price=round(price, 2), baseline=round(baseline, 2),
-                change_pct=round((price - baseline) / baseline * 100, 1),
-            )
-            queued += enqueue(
-                db, item.user_id, "big_movers", f"card:{item.card_id}", now=now, repeat_days=REPEAT_DAYS,
-                details=details,
-            )
+        with trainer_savepoint(db, "Big-mover check", item.user_id):
+            key = (item.user_id, item.card_id)
+            if key in seen or not category_enabled(db, item.user_id, "big_movers"):
+                continue
+            seen.add(key)
+            price = effective_market_price(item.card, price_field=_price_field(db, item.user_id))
+            if is_big_move(price, item.card.price_avg7, mover_threshold(db, item.user_id)):
+                baseline = item.card.price_avg7
+                details = _card_details(
+                    db, item.card,
+                    price=round(price, 2), baseline=round(baseline, 2),
+                    change_pct=round((price - baseline) / baseline * 100, 1),
+                )
+                queued += enqueue(
+                    db, item.user_id, "big_movers", f"card:{item.card_id}", now=now, repeat_days=REPEAT_DAYS,
+                    details=details,
+                )
     db.commit()
     return queued
 
@@ -642,6 +657,130 @@ def scans_needing_review(db: Session, user_id: int) -> int:
     ).count()
 
 
+def swap_offers_waiting(db: Session, user_id: int) -> int:
+    """Swap offers waiting for this trainer's answer. 0 while the social switch is off."""
+    from services.social_feature import social_enabled
+    from services.swaps import waiting_count
+
+    return waiting_count(db, user_id) if social_enabled(db) else 0
+
+
+def icon_number(db: Session, user_id: int) -> int:
+    """The app-icon number: scans waiting for review plus swap offers waiting for the trainer (social on only)."""
+    return scans_needing_review(db, user_id) + swap_offers_waiting(db, user_id)
+
+
+_SWAP_TITLES = {
+    "offer": "Swap offer",
+    "counter": "Swap counter-offer",
+    "accepted": "Swap accepted",
+    "swapped": "Confirm your swap",
+    "completed": "Swap complete",
+    "declined": "Swap declined",
+    "cancelled": "Swap called off",
+}
+_SWAP_LIGHT = {
+    "offer": "You have a new swap offer",
+    "counter": "A swap offer was updated",
+    "accepted": "Your swap offer was accepted",
+    "swapped": "Your swap partner tapped Swapped",
+    "completed": "Your swap is complete",
+    "declined": "A swap offer was declined",
+    "cancelled": "A swap was called off",
+}
+SWAP_NAMED_CARDS = 2  # a side with more cards than this is counted ("3 cards") instead of listed
+
+
+def _swap_side(cards, cash: bool = False) -> str:
+    """"Charizard ex (OBF 125)", "A and B", or "3 cards"; never an amount. `cash` adds "+ cash"."""
+    cards = [_clip(c, MAX_NAME_CHARS + 12) for c in (cards or []) if c]
+    if not cards:
+        return ""
+    text = " and ".join(cards) if len(cards) <= SWAP_NAMED_CARDS else f"{len(cards)} cards"
+    return f"{text} + cash" if cash else text
+
+
+def build_swap_payload(details: dict | None, detailed: bool, badge: int | None = None) -> str:
+    """Swap-offer push. Detailed: names the trainer and the cards ("Brock offered Charizard ex (OBF 125) for
+    your Greninja ex (TWM 106)"), cash as "+ cash", never an amount. Content-light otherwise.
+    It opens the offer itself. `badge` is the icon number (scans plus offers waiting); a decline carries none.
+
+    Rows queued before the cards were named only carry counts, and keep their old wording."""
+    details = details or {}
+    kind = details.get("kind") if details.get("kind") in _SWAP_TITLES else "offer"
+    name = " ".join(str(details.get("partner") or "").split())
+    gives, gets = details.get("gives"), details.get("gets")
+    give_cards, get_cards = details.get("give_cards"), details.get("get_cards")
+    named = isinstance(give_cards, list) and isinstance(get_cards, list)
+    offer_id = details.get("offer_id")
+    navigate = f"/trades/offers/{int(offer_id)}" if isinstance(offer_id, int) else "/trades/offers"
+    if not detailed or not name:
+        body = _SWAP_LIGHT[kind]
+    else:
+        who = _clip(name, 30)
+        cash = bool(details.get("cash"))
+        got = _swap_side(get_cards) if named else ""
+        gave = _swap_side(give_cards, cash) if named else ""
+        if named and cash and not gave:
+            got = _swap_side(get_cards, True)
+        if kind in ("offer", "counter") and named and got:
+            verb = "offered" if kind == "offer" else "countered:"
+            body = f"{who} {verb} {got} for your {gave}" if gave else f"{who} {verb} {got}"
+        elif kind in ("offer", "counter") and isinstance(gives, int) and isinstance(gets, int):
+            verb = "offered" if kind == "offer" else "countered with"
+            body = f"{who} {verb} {gets} card{'' if gets == 1 else 's'} for {gives} of yours"
+        elif kind == "accepted" and named and got:
+            body = f"{who} accepted: {got} for your {gave}. Meet up, then both tap Swapped." if gave else (
+                f"{who} accepted: {got}. Meet up, then both tap Swapped.")
+        elif kind == "accepted":
+            body = f"{who} accepted your swap"
+        elif kind == "swapped" and named and got:
+            body = f"{who} tapped Swapped. Tap yours once you have {got}."
+        elif kind == "swapped":
+            body = f"{who} tapped Swapped. Tap yours once you have the cards"
+        elif kind == "completed" and named and got:
+            body = f"{got} is in your collection." if len(get_cards) == 1 else f"{got} are in your collection."
+        elif kind == "completed":
+            body = f"Your swap with {who} is complete"
+        elif kind == "declined":
+            body = f"{who} declined your swap offer"
+        elif kind == "cancelled":
+            body = f"{who} called off your swap"
+        else:
+            body = f"{who} sent a swap offer"
+    payload = json.loads(push.encode_payload_fitted(_SWAP_TITLES[kind], body, navigate))
+    if badge is not None and kind not in ("declined", "cancelled"):
+        payload["app_badge"] = int(badge)
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def swap_push_still_relevant(db: Session, row: NotificationQueue) -> bool:
+    """False when the offer moved on while the push waited (answered, cancelled, expired, confirmed)."""
+    from models import SwapOffer
+
+    details = row.details or {}
+    offer = db.query(SwapOffer).filter(SwapOffer.id == details.get("offer_id")).first()
+    if offer is None:
+        return False
+    kind = details.get("kind")
+    if kind in ("offer", "counter"):
+        return (
+            offer.state in ("proposed", "countered")
+            and offer.turn_user_id == row.user_id
+            and int(offer.revision) == details.get("revision")
+        )
+    if kind == "accepted":
+        return offer.state == "accepted"
+    if kind == "swapped":
+        mine = offer.from_confirmed_at if row.user_id == offer.from_user_id else offer.to_confirmed_at
+        return offer.state == "accepted" and mine is None
+    if kind == "declined":
+        return offer.state == "declined"
+    if kind == "cancelled":
+        return offer.state == "cancelled"
+    return offer.state == "completed"
+
+
 def _mark_sent(rows, now: datetime.datetime) -> None:
     for row in rows:
         row.sent_at = now
@@ -663,6 +802,17 @@ def _sent_reason(outcome: dict | None) -> str:
     return f"sent={outcome.get('sent', 0)} removed={outcome.get('removed', 0)}{delivered}"
 
 
+def _flush_isolated(db: Session, label: str, user_id: int, step, *args) -> None:
+    """One flush step, committed on its own. Sending commits inside `push.send_to_user`, which a savepoint
+    cannot span, so a failure rolls back only the uncommitted work of this step; steps already committed stay."""
+    try:
+        step(db, *args)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("%s failed for user %s", label, user_id)
+
+
 def flush_due(db: Session, now: datetime.datetime | None = None) -> dict:
     """Send what is due. Run every 30 seconds by the scheduler."""
     now = now or datetime.datetime.utcnow()
@@ -678,12 +828,12 @@ def flush_due(db: Session, now: datetime.datetime | None = None) -> dict:
         if spec is None or spec.timing is None:
             continue
         if spec.timing == INSTANT:
-            _flush_instant(db, row, now, result)
+            _flush_isolated(db, "Notification flush", row.user_id, _flush_instant, row, now, result)
         else:
             by_user_digest.setdefault(row.user_id, []).append(row)
 
     for user_id, rows in by_user_digest.items():
-        _flush_digest(db, user_id, rows, now, result)
+        _flush_isolated(db, "Digest flush", user_id, _flush_digest, user_id, rows, now, result)
 
     cutoff = now - datetime.timedelta(days=QUEUE_RETENTION_DAYS)
     db.query(NotificationQueue).filter(NotificationQueue.created_at < cutoff).delete(synchronize_session=False)
@@ -699,6 +849,9 @@ def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, 
             row.send_after = quiet_hours_end(now, zone)
             _log("deferred", category, user_id, subject, f"reason=quiet_hours until={row.send_after.isoformat()}")
             return
+    if category == "feed_activity":  # sends every due row of the trainer, folded per event
+        flush_feed_activity(db, user_id, now, result)
+        return
     count = scans_needing_review(db, user_id) if category == "scans_ready" else 0
     row.sent_at = now
     if not category_enabled(db, user_id, category):
@@ -713,7 +866,7 @@ def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, 
             # This job's items as they were when it finished, but never more than are still waiting.
             kept = (row.details or {}).get("count")
             review_count = min(int(kept), count) if isinstance(kept, int) and kept > 0 else count
-        outcome = _send(db, user_id, build_scans_payload(count, review_count))
+        outcome = _send(db, user_id, build_scans_payload(count + swap_offers_waiting(db, user_id), review_count))
         result["instant"] += 1
         _log("flushed", category, user_id, subject, f"{_sent_reason(outcome)} to_review={count}")
     elif category == "wishlist_alerts":
@@ -742,11 +895,31 @@ def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, 
         outcome = _send(db, user_id, build_goal_payload(details, show_details(db, user_id)))
         result["instant"] += 1
         _log("flushed", category, user_id, subject, _sent_reason(outcome))
+    elif category == "swap_offers":
+        from services.social_feature import social_enabled
+
+        if not social_enabled(db):
+            _log("skipped", category, user_id, subject, "reason=social_off")
+            return
+        if not swap_push_still_relevant(db, row):
+            _log("skipped", category, user_id, subject, "reason=offer_moved_on")
+            return
+        payload = build_swap_payload(row.details, show_details(db, user_id), icon_number(db, user_id))
+        outcome = _send(db, user_id, payload)
+        result["instant"] += 1
+        _log("flushed", category, user_id, subject, _sent_reason(outcome))
     elif category == "weekly_recap":
         from services.recap import build_recap_push
 
         title, body = build_recap_push(row.details if show_details(db, user_id) else None)
         outcome = _send(db, user_id, push.encode_payload_fitted(title, body, CATEGORIES[category].navigate))
+        result["instant"] += 1
+        _log("flushed", category, user_id, subject, _sent_reason(outcome))
+    elif category == "wrapped":
+        from services.recap import build_wrapped_push
+
+        title, body, navigate = build_wrapped_push(subject, row.details if show_details(db, user_id) else None)
+        outcome = _send(db, user_id, push.encode_payload_fitted(title, body, navigate))
         result["instant"] += 1
         _log("flushed", category, user_id, subject, _sent_reason(outcome))
 
@@ -811,3 +984,259 @@ def on_scan_job_finished(db: Session, job, now: datetime.datetime | None = None)
                 _log("not queued", "scans_ready", job.user_id, f"job:{job.id}", "reason=nothing_to_review")
     except Exception:
         logger.exception("Could not queue the scans-ready notification for job %s", getattr(job, "id", None))
+
+
+# --- reactions and comments on feed events -------------------------------------------------------
+# Rows: subject `e{event}:r:{actor}:{kind}` (a reaction) or `e{event}:c:{comment}` (a comment), owner = the
+# event's trainer. `details`: kind, event_id, actor, label (what the event was, never an amount) and
+# `lead` (this row opened a window and pushes at once). Flags set at send time: `pushed`, `head` (the
+# first row of one push, so pushes can be counted), `capped` (held back by the hourly cap).
+
+
+def _feed_event_label(db: Session, event) -> str:
+    """What the event was, as the push names it: "Base Set completion", "Charizard ex pull". Never an amount."""
+    from services.progress.evaluator import (
+        EVENT_ACHIEVEMENT_UNLOCKED, EVENT_BIG_PULL, EVENT_GOAL_COMPLETED, EVENT_SET_COMPLETED,
+    )
+
+    payload = event.payload or {}
+    if event.kind == EVENT_SET_COMPLETED:
+        name = _clip(payload.get("set_name"), 50)
+        return f"{name} completion" if name else "set completion"
+    if event.kind == EVENT_BIG_PULL:
+        name = _clip(payload.get("name"), 50)
+        if not name and payload.get("card_id"):
+            card = db.query(Card).filter(Card.id == payload["card_id"]).first()
+            name = _clip(card.name, 50) if card else ""
+        return f"{name} pull" if name else "big pull"
+    if event.kind == EVENT_ACHIEVEMENT_UNLOCKED:
+        from services.achievements import registry_by_id
+
+        name = _clip((registry_by_id().get(payload.get("achievement_id") or event.subject_key) or {}).get("name"), 50)
+        return f"{name} badge" if name else "badge"
+    if event.kind == EVENT_GOAL_COMPLETED:
+        name = _clip(payload.get("title"), 50)
+        return f"{name} goal" if name else "goal"
+    return "challenge result"
+
+
+def feed_activity_link(event_id: int, comments: bool) -> str:
+    """Where the push opens: the feed at the event, with its comments sheet open for a comment."""
+    return f"/leaderboard/activity?event={int(event_id)}" + ("&comments=1" if comments else "")
+
+
+def _feed_window_end(db: Session, owner_id: int, event_id: int, now: datetime.datetime) -> datetime.datetime | None:
+    """When the current window on the event ends, or None when no window is open (the next activity leads)."""
+    window = datetime.timedelta(seconds=FEED_PUSH_WINDOW_SECONDS)
+    rows = db.query(NotificationQueue).filter(
+        NotificationQueue.user_id == owner_id,
+        NotificationQueue.category == "feed_activity",
+        NotificationQueue.subject_key.like(f"e{int(event_id)}:%"),
+        NotificationQueue.created_at > now - datetime.timedelta(hours=2),
+    ).all()
+    ends = []
+    for row in rows:
+        details = row.details or {}
+        if row.sent_at is not None and details.get("pushed"):
+            ends.append(row.sent_at + window)
+        elif row.sent_at is None and details.get("lead"):
+            ends.append(row.send_after + window)
+    end = max(ends, default=None)
+    return end if end is not None and end > now else None
+
+
+def _queue_feed_activity(db: Session, event, actor, subject: str, details: dict, now) -> bool:
+    from services.social_feature import social_enabled
+
+    if actor.id == event.user_id or not social_enabled(db):
+        return False
+    end = _feed_window_end(db, event.user_id, event.id, now)
+    details = {
+        **details, "event_id": event.id, "actor": actor.username,
+        "label": _feed_event_label(db, event), "lead": end is None,
+    }
+    key = f"e{event.id}:{subject}"
+    if not enqueue(db, event.user_id, "feed_activity", key, now=now, details=details):
+        return False
+    if end is not None:
+        db.flush()
+        row = db.query(NotificationQueue).filter_by(
+            user_id=event.user_id, category="feed_activity", subject_key=key
+        ).first()
+        row.send_after = max(row.send_after, end)
+    return True
+
+
+def notify_feed_reaction(db: Session, event, actor, kind: str, now: datetime.datetime | None = None) -> bool:
+    """Another trainer reacted to the event's owner. Never for your own event. The caller commits."""
+    return _queue_feed_activity(
+        db, event, actor, f"r:{actor.id}:{kind}", {"kind": "reaction", "reaction": kind},
+        now or datetime.datetime.utcnow(),
+    )
+
+
+def notify_feed_comment(db: Session, event, actor, comment, now: datetime.datetime | None = None) -> bool:
+    return _queue_feed_activity(
+        db, event, actor, f"c:{comment.id}", {"kind": "comment"}, now or datetime.datetime.utcnow()
+    )
+
+
+def cancel_feed_reaction(db: Session, event_id: int, actor_id: int, kind: str) -> None:
+    """A reaction was taken back: if its push has not gone out, it never does."""
+    from models import UserEvent
+
+    owner_id = db.query(UserEvent.user_id).filter(UserEvent.id == event_id).scalar()
+    if owner_id is None:
+        return
+    db.query(NotificationQueue).filter(
+        NotificationQueue.user_id == owner_id,
+        NotificationQueue.category == "feed_activity",
+        NotificationQueue.subject_key == f"e{event_id}:r:{actor_id}:{kind}",
+        NotificationQueue.sent_at.is_(None),
+    ).delete(synchronize_session=False)
+
+
+def _feed_row_still_there(db: Session, row: NotificationQueue) -> bool:
+    """False when the reaction was removed or the comment deleted while its push waited."""
+    from models import EventComment, EventReaction
+
+    parts = row.subject_key.split(":")
+    try:
+        event_id = int(parts[0][1:])
+        if parts[1] == "r":
+            return db.query(EventReaction.id).filter_by(
+                event_id=event_id, user_id=int(parts[2]), kind=parts[3]
+            ).first() is not None
+        return db.query(EventComment.id).filter_by(id=int(parts[2]), event_id=event_id).first() is not None
+    except (IndexError, ValueError):
+        return False
+
+
+def _names_phrase(names: list[str]) -> str:
+    names = [_clip(n, 24) for n in names]
+    if len(names) == 1:
+        return names[0]
+    if len(names) == 2:
+        return f"{names[0]} and {names[1]}"
+    return f"{names[0]} and {len(names) - 1} others"
+
+
+def build_feed_activity_payload(rows: list[dict], detailed: bool, event_id: int | None = None) -> str:
+    """One push about the activity on one event (or, without `event_id`, a summary of several).
+
+    Detailed: "Misty and 2 others reacted to your Base Set completion", "3 new comments on your Charizard ex
+    pull". Content-light: no names, no event. Never an amount. A push with a comment opens the comments sheet.
+    """
+    reactions = [r for r in rows if r.get("kind") == "reaction"]
+    comments = [r for r in rows if r.get("kind") == "comment"]
+    label = _clip(rows[0].get("label"), 70) if rows else ""
+    if event_id is None:
+        body = f"{len(rows)} new reactions and comments" if detailed else "You have new reactions and comments"
+        return push.encode_payload_fitted("New activity", body, CATEGORIES["feed_activity"].navigate)
+    navigate = feed_activity_link(event_id, bool(comments))
+    if reactions and comments:
+        title = "New activity"
+        body = (
+            f"{len(rows)} new reactions and comments on your {label}"
+            if detailed and label else "New reactions and comments on your activity"
+        )
+    elif comments:
+        title = "New comment" if len(comments) == 1 else "New comments"
+        if not detailed or not label:
+            body = "Someone commented on your activity" if len(comments) == 1 else "New comments on your activity"
+        elif len(comments) == 1:
+            body = f"{_clip(comments[0].get('actor'), 24) or 'Someone'} commented on your {label}"
+        else:
+            body = f"{len(comments)} new comments on your {label}"
+    else:
+        title = "New reaction" if len(reactions) == 1 else "New reactions"
+        if not detailed or not label:
+            body = "Someone reacted to your activity" if len(reactions) == 1 else "New reactions on your activity"
+        else:
+            actors = list(dict.fromkeys(r.get("actor") or "Someone" for r in reactions))
+            body = f"{_names_phrase(actors)} reacted to your {label}"
+    return push.encode_payload_fitted(title, body, navigate)
+
+
+def _feed_pushes_in_window(db: Session, user_id: int, now: datetime.datetime) -> list[datetime.datetime]:
+    """Send times of this trainer's feed pushes in the last hour, oldest first."""
+    rows = db.query(NotificationQueue).filter(
+        NotificationQueue.user_id == user_id,
+        NotificationQueue.category == "feed_activity",
+        NotificationQueue.sent_at > now - datetime.timedelta(minutes=FEED_PUSH_CAP_WINDOW_MINUTES),
+    ).all()
+    return sorted(r.sent_at for r in rows if (r.details or {}).get("head"))
+
+
+def _mark_feed_rows(rows, now: datetime.datetime, *, pushed: bool) -> None:
+    for index, row in enumerate(rows):
+        row.sent_at = now
+        if pushed:
+            row.details = {**(row.details or {}), "pushed": True, **({"head": True} if index == 0 else {})}
+
+
+def _hold_feed_rows(rows, until: datetime.datetime) -> None:
+    for row in rows:
+        row.send_after = until
+        row.details = {**(row.details or {}), "capped": True}
+
+
+def flush_feed_activity(db: Session, user_id: int, now: datetime.datetime, result: dict) -> None:
+    """Send what is due for one trainer: one push per event, or one summary after the cap held pushes back.
+    Handles every due row of the trainer at once, so the rows of one event fold into one push."""
+    from services.feed import visible_event
+    from services.social_feature import social_enabled
+
+    due = db.query(NotificationQueue).filter(
+        NotificationQueue.user_id == user_id,
+        NotificationQueue.category == "feed_activity",
+        NotificationQueue.sent_at.is_(None),
+        NotificationQueue.send_after <= now,
+    ).order_by(NotificationQueue.id).all()
+    if not due:
+        return
+    if not social_enabled(db) or not category_enabled(db, user_id, "feed_activity"):
+        _mark_feed_rows(due, now, pushed=False)
+        _log("skipped", "feed_activity", user_id, "feed", "reason=social_or_category_off")
+        return
+    groups: dict[int, list[NotificationQueue]] = {}
+    for row in due:
+        event_id = int(row.subject_key.split(":")[0][1:])
+        if _feed_row_still_there(db, row) and visible_event(db, user_id, event_id, include_own=True) is not None:
+            groups.setdefault(event_id, []).append(row)
+        else:
+            _mark_feed_rows([row], now, pushed=False)
+            _log("skipped", "feed_activity", user_id, row.subject_key, "reason=gone")
+    if not groups:
+        return
+    detailed = show_details(db, user_id)
+
+    def blocked() -> datetime.datetime | None:
+        sent = _feed_pushes_in_window(db, user_id, now)
+        if len(sent) < FEED_PUSH_HOURLY_CAP:
+            return None
+        return sent[len(sent) - FEED_PUSH_HOURLY_CAP] + datetime.timedelta(minutes=FEED_PUSH_CAP_WINDOW_MINUTES)
+
+    all_rows = [r for rs in groups.values() for r in rs]
+    held_before = any((r.details or {}).get("capped") for r in all_rows)
+    if held_before and len(groups) > 1:
+        until = blocked()
+        if until is not None:
+            _hold_feed_rows(all_rows, until)
+            return
+        outcome = _send(db, user_id, build_feed_activity_payload([r.details or {} for r in all_rows], detailed))
+        _mark_feed_rows(all_rows, now, pushed=True)
+        result["instant"] += 1
+        _log("flushed", "feed_activity", user_id, "summary", _sent_reason(outcome))
+        return
+    for event_id, rows in groups.items():
+        until = blocked()
+        if until is not None:
+            _hold_feed_rows(rows, until)
+            _log("deferred", "feed_activity", user_id, f"e{event_id}", f"reason=hourly_cap until={until.isoformat()}")
+            continue
+        outcome = _send(db, user_id, build_feed_activity_payload([r.details or {} for r in rows], detailed, event_id))
+        _mark_feed_rows(rows, now, pushed=True)
+        db.flush()
+        result["instant"] += 1
+        _log("flushed", "feed_activity", user_id, f"e{event_id}", _sent_reason(outcome))

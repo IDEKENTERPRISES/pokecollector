@@ -35,7 +35,8 @@ export const READ_CACHE_DENY = new Set([
   'user-sessions',
   'sessions', // signed-in devices
   'scanner-configuration', // provider setup (keys are masked server-side, but it is admin configuration)
-  'progress', // the trainer's own events (/api/progress/events) until P12 decides what is shareable
+  'progress', // the trainer's own events (/api/progress/events); the shareable ones are the feed below
+  'feed', // other trainers' events: a saved copy would outlive a trainer hiding it or the admin switching social off
   'push', // push subscriptions
   'push-subscription',
   'telegram-status', // bot tokens and chat ids

@@ -96,6 +96,11 @@ def openai_chat_completions_url() -> str:
     return f"{openai_base_url()}/chat/completions"
 
 
+def openai_is_self_hosted() -> bool:
+    """True when OPENAI_BASE_URL points at a compatible server (Ollama, vLLM ...)."""
+    return openai_base_url() != DEFAULT_OPENAI_BASE_URL
+
+
 def openai_model() -> str:
     return (os.environ.get("OPENAI_MODEL") or "").strip() or DEFAULT_OPENAI_MODEL
 
@@ -385,20 +390,33 @@ def normalize_scanner_request_timeout(value: object) -> int:
     return timeout
 
 
+# A local model on a modest GPU takes tens of seconds per photo (and loads from
+# disk on the first one), so the 30 s default meant queued scans timed out.
+SELF_HOSTED_DEFAULT_TIMEOUT_SECONDS = 120
+
+
+def default_scanner_request_timeout(provider: str) -> int:
+    if provider == OPENAI and openai_is_self_hosted():
+        return SELF_HOSTED_DEFAULT_TIMEOUT_SECONDS
+    return DEFAULT_SCANNER_REQUEST_TIMEOUT_SECONDS
+
+
 def resolve_scanner_request_timeout(
     db: Session,
     user_id: int | None,
     provider: str,
 ) -> int:
     """Return a safe provider-specific timeout, defaulting legacy/bad rows."""
+    default = default_scanner_request_timeout(provider)
     if user_id is None and not global_scanner_config_enabled():
-        return DEFAULT_SCANNER_REQUEST_TIMEOUT_SECONDS
+        return default
     try:
-        return normalize_scanner_request_timeout(
-            scanner_setting_value(db, user_id, SCANNER_REQUEST_TIMEOUT_SETTINGS[provider]) or None
-        )
+        raw = scanner_setting_value(db, user_id, SCANNER_REQUEST_TIMEOUT_SETTINGS[provider])
+        if not raw:
+            return default
+        return normalize_scanner_request_timeout(raw)
     except ValueError:
-        return DEFAULT_SCANNER_REQUEST_TIMEOUT_SECONDS
+        return default
 
 
 def configured_provider_name(db: Session, user_id: int | None) -> str | None:
@@ -480,6 +498,21 @@ class ProviderRateLimitError(HTTPException):
         super().__init__(status_code=429, detail=detail, headers=headers)
 
 
+class ScannerUnreachableError(HTTPException):
+    """The endpoint refused or never answered the connection (it is switched off).
+
+    scan_queue parks such scans as "waiting for the scanner" instead of counting
+    them against the retry ladder.
+    """
+
+    def __init__(self, *, url: str = ""):
+        self.endpoint_url = url
+        super().__init__(
+            status_code=503,
+            detail="The scanner endpoint could not be reached. Check the connection and try again.",
+        )
+
+
 class ProviderRequestRejectedError(HTTPException):
     """A safe provider rejection with an internal, machine-readable reason."""
 
@@ -541,11 +574,12 @@ def openai_rejection_reason(resp: httpx.Response) -> str:
         "too many images",
         "multi-image input is not supported",
     )
-    return (
-        "multiple_images_unsupported"
-        if any(marker in normalized for marker in multi_image_markers)
-        else "request_rejected"
-    )
+    if any(marker in normalized for marker in multi_image_markers):
+        return "multiple_images_unsupported"
+    if "exceeds the available context" in normalized or "context length" in normalized:
+        # Ollama's default 4,096-token context: the request never started.
+        return "context_too_small"
+    return "request_rejected"
 
 
 # Match the queue's 14-day retention ceiling and keep hostile values inside what
@@ -767,6 +801,17 @@ async def post_openai_chat(
             raise
         except httpx.RequestError as exc:
             last_error = exc
+            # Only a failure to connect means "switched off"; a slow answer
+            # (read timeout) keeps its ordinary retry handling.
+            if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(min(2 ** attempt, 2))
+                    continue
+                from services.scanner_reachability import record_reachability
+
+                base = url.rsplit("/chat/completions", 1)[0]
+                record_reachability(base, False)
+                raise ScannerUnreachableError(url=base)
             if attempt < max_attempts - 1:
                 await asyncio.sleep(2 ** attempt)
                 continue
@@ -800,6 +845,20 @@ def extract_openai_text(payload: dict) -> str:
             if isinstance(part, dict)
         )
     raise ValueError(f"Unexpected message content type: {type(content).__name__}")
+
+
+def self_hosted_request_options(
+    *, json_output: bool = False, max_tokens: int | None = None
+) -> dict:
+    """Extra chat-completions fields for a self-hosted server; empty for OpenAI."""
+    if not openai_is_self_hosted():
+        return {}
+    options: dict = {"temperature": 0}
+    if json_output:
+        options["response_format"] = {"type": "json_object"}
+    if max_tokens:
+        options["max_tokens"] = int(max_tokens)
+    return options
 
 
 class ScanProvider:
@@ -852,8 +911,14 @@ class ScanProvider:
         parts: list[dict],
         *,
         max_attempts: int = 3,
+        json_output: bool = False,
+        max_tokens: int | None = None,
     ) -> tuple[str, dict | None]:
         """Run one multimodal request and return (text, usage).
+
+        ``json_output`` and ``max_tokens`` only shape requests to a self-hosted
+        OpenAI-compatible server, which otherwise rambles or loops on a small
+        model. Gemini and OpenAI proper are sent exactly what they always were.
 
         Usage is whatever the provider reports, or None. Callers record it for
         diagnostics and must not depend on its shape.
@@ -878,16 +943,32 @@ class ScanProvider:
             text = payload["candidates"][0]["content"]["parts"][0]["text"]
             return text, payload.get("usageMetadata")
 
-        response = await post_openai_chat(
-            client,
-            openai_chat_completions_url(),
-            api_key,
-            {
-                "model": self.model(),
-                "messages": [{"role": "user", "content": _openai_content(parts)}],
-            },
-            max_attempts=max_attempts,
-        )
+        body = {
+            "model": self.model(),
+            "messages": [{"role": "user", "content": _openai_content(parts)}],
+        }
+        options = self_hosted_request_options(json_output=json_output, max_tokens=max_tokens)
+        try:
+            response = await post_openai_chat(
+                client,
+                openai_chat_completions_url(),
+                api_key,
+                {**body, **options},
+                max_attempts=max_attempts,
+            )
+        except ProviderRequestRejectedError as exc:
+            # A compatible server that dislikes an option still gets the request,
+            # just without the options. A request that is simply too big for the
+            # model's context would fail again, so it is not repeated.
+            if not options or getattr(exc, "rejection_reason", "") != "request_rejected":
+                raise
+            response = await post_openai_chat(
+                client,
+                openai_chat_completions_url(),
+                api_key,
+                body,
+                max_attempts=max_attempts,
+            )
         try:
             payload = response.json()
             return extract_openai_text(payload), payload.get("usage")

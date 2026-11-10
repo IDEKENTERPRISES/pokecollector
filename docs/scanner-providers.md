@@ -113,6 +113,29 @@ OPENAI_API_KEY_REQUIRED=false
 
 On Linux, Ollama normally listens only on `127.0.0.1`, which a Docker container cannot reach through `host.docker.internal`. Configure Ollama with `OLLAMA_HOST=0.0.0.0:11434`, restart it, and use the host firewall to restrict port `11434` to trusted networks. See the [Ollama FAQ](https://docs.ollama.com/faq#how-do-i-configure-ollama-server) for the operating-system-specific service configuration.
 
+### Tuning a local model (Ollama on a separate PC)
+
+What PokéCollector sends a self-hosted OpenAI-compatible endpoint (any `OPENAI_BASE_URL` other than api.openai.com; Gemini and hosted OpenAI are unchanged):
+
+- **A lighter picture.** The camera screen records where its card guide frame sat and the server keeps a second copy of the photo cropped to that frame, about 1024 px on the long side. That is what the model sees (about 1,600 image tokens instead of about 3,600 for the full 2048 px photo). Photos picked from the library, which have no guide frame, are shrunk to 1024 px. The full photo is still kept for the review screen.
+- **Steady answers.** `temperature` 0, a JSON response format on the card-reading call, and `max_tokens` (400 to read a card, 16 to pick a candidate). If the endpoint rejects those options, the request is repeated once without them.
+- **One photo at a time.** `SCAN_MAX_CONCURRENT_OPENAI` (default 1) limits how many scans are in flight per endpoint; Gemini keeps `SCAN_MAX_CONCURRENT_GEMINI` (default 3). Raise the first only after setting `OLLAMA_NUM_PARALLEL` below.
+- **A longer wait.** The default AI response timeout is 120 seconds for a self-hosted endpoint (30 s for Gemini and hosted OpenAI). A timeout already chosen in Scanner Settings is kept.
+- **Picture-by-picture comparison is capped.** When metadata cannot decide, the model may be shown the photo and candidate card pictures to choose from. Each candidate picture costs it about 1,000 tokens, so thirteen of them can never fit in Ollama's default 4,096-token context. Self-hosted endpoints are shown at most `SCAN_LOCAL_VISUAL_MAX_CANDIDATES` (default 4; 0 turns the comparison off). Four pictures plus the photo need about 5,600 tokens, which fits once `OLLAMA_CONTEXT_LENGTH=8192` is set. Until then the endpoint answers "exceeds the available context size", the comparison pauses for ten minutes, and scans fall back to the ranked candidates, so nothing breaks.
+- **Pictures come from the server.** Candidate pictures for matching are read from the server's own picture cache when it has them; the TCGdex CDN is only the fallback.
+- **Waiting for the scanner.** If the endpoint is switched off, scans show "Waiting for the scanner" without using up retries and are released within about a minute of the endpoint answering (see the queue section below).
+
+Recommended settings on the machine running Ollama (set by you, not by PokéCollector):
+
+| Variable | Value | Why |
+| --- | --- | --- |
+| `OLLAMA_CONTEXT_LENGTH` | `8192` | The default 4,096 tokens cannot hold a photo plus four candidate pictures. 8,192 costs a little more graphics memory for the cache (about 1 GB on a 4B model, fine on 8 GB). |
+| `OLLAMA_KEEP_ALIVE` | `30m` (or `-1` to keep it loaded) | The model unloads after 5 minutes by default, and the next scan then waits for it to load from disk. |
+| `OLLAMA_NUM_PARALLEL` | `1` | One scan at a time matches `SCAN_MAX_CONCURRENT_OPENAI=1`, and each extra parallel slot multiplies the context memory. Leave it at 1 on an 8 GB card. |
+| `OLLAMA_HOST` | `0.0.0.0` | Already set; lets the server reach the PC. Keep port 11434 closed to the internet. |
+
+On Windows, open Start, search for "Edit the system environment variables", choose **Environment Variables**, add each as a **User variable** (New…, name and value), press OK, then **quit Ollama from the system tray and start it again** so it reads them. In PowerShell: `setx OLLAMA_CONTEXT_LENGTH 8192` (then quit and reopen Ollama). Check with `ollama ps`: the CONTEXT column shows the loaded model's context.
+
 ### Ollama as another Compose service
 
 Add an Ollama service to the same Compose project (or use a Compose override):
@@ -181,6 +204,14 @@ Provider-specific errors are translated into the same scanner states:
 - If no reliable reset time is supplied, the queue uses bounded increasing delays.
 - Invalid keys, unavailable models, unsupported image requests, malformed requests, and exhausted billing quota stop immediately with an actionable message instead of retrying for days.
 - A provider block is shared safely across scans using a non-reversible credential fingerprint, or the configured endpoint for a keyless server. PokéCollector does not repeatedly hit a provider that has already asked it to wait.
+- **Scanner switched off.** When a keyless or self-hosted endpoint refuses connections, the scan is parked as "Waiting for the scanner" instead of climbing the retry delays. The backend checks the endpoint about once a minute (a 2-second request, cached for a minute) and releases every waiting scan when it answers. "Try now" on a scan checks immediately. While scans wait, their 14-day expiry is held at least two days ahead, so unrecognised photos are not deleted.
+
+## Reviewing scans: one list, card by card
+
+- **No photo limit.** A batch can be any size. The phone still uploads in chunks (12 photos or about 10 MB each, whichever comes first) so a request stays small and the offline outbox can resume, but that is invisible: each chunk is a job on the server, and the Scan inbox reads `GET /api/cards/recognize/queue`, one list of every scan still waiting, oldest first, with no cap (`limit` and `offset` page it). The old per-job pages (`/scans/<id>`) still open, but the inbox no longer lists jobs. Composites (2–4 photos in one model call) are only an internal recognition detail and are never shown as groups.
+- **Review all** opens a full-screen flow: the photo, the best match large (name, set, number), the other candidates below, and quantity, condition, variant and language inline (pre-filled as in the Add sheet). *Add to collection* moves straight to the next card; *Pick another* steps through the candidates; *None of these* or *Search for the card* opens the app's card search; *Skip* puts the card at the end; *Dismiss* deletes the photo after a confirmation. Scans still recognising are reached when ready. Leaving loses nothing: reopening starts at the first scan still waiting.
+- **Manual add.** A scan with no result (failed, or nothing found) shows the search straight away; a scan with candidates gets it from *None of these*. A scan waiting for the scanner can also be added by search. The pick goes through `resolve-and-add` with `manual_search: true`: the card may be any catalogue card, the photo is cleaned up, and the confirmed card is recorded as ground truth exactly like a normal confirm. With diagnostics on, a scan that has no trace yet gets one holding its photo and the card.
+- **What a big batch costs on an iPhone.** Photos are full-resolution JPEGs (roughly 1–3 MB each) held in memory while staged, then copied into IndexedDB (the outbox, budget `OUTBOX_MAX_BYTES` = 300 MiB, and at least 100 MiB must stay free). The outbox budget is the first thing a very large batch meets (about 150–250 photos). There is a soft warning from 120 photos or 200 MB staged, and a storage error keeps the chunks already saved queued. Nothing is capped.
 
 ## Troubleshooting
 

@@ -1,6 +1,7 @@
 import logging
 import os
-from datetime import timedelta
+import re
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
@@ -95,6 +96,24 @@ def validate_new_password(password: str | None) -> None:
 def validate_role(role: str | None) -> None:
     if role is not None and role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail=f"role must be one of: {', '.join(VALID_ROLES)}")
+
+
+TUTORIAL_OUTCOMES = ("finished", "skipped", "dismissed")
+
+
+def tutorial_fields(user) -> dict:
+    done = user.tutorial_completed_at
+    return {
+        "tutorial_completed_at": done.isoformat() if done else None,
+        "tutorial_outcome": user.tutorial_outcome,
+    }
+
+
+def account_fields(user) -> dict:
+    """What the client needs to run the tour: whether it is done, and how old the account is
+    (a new account starts the tour by itself, an older one gets the Take the tour card)."""
+    created = user.created_at
+    return {**tutorial_fields(user), "created_at": created.isoformat() if created else None}
 
 
 def validate_avatar_id(avatar_id: int | None):
@@ -264,7 +283,9 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db
             "username": user.username,
             "role": user.role,
             "avatar_id": user.avatar_id,
+            "whats_new_seen": user.whats_new_seen,
             "must_change_password": user.must_change_password,
+            **account_fields(user),
         },
     )
 
@@ -276,7 +297,9 @@ def get_me(current_user: User = Depends(get_current_user)):
         "username": current_user.username,
         "role": current_user.role,
         "avatar_id": current_user.avatar_id,
+        "whats_new_seen": current_user.whats_new_seen,
         "must_change_password": current_user.must_change_password,
+        **account_fields(current_user),
     }
 
 
@@ -409,9 +432,12 @@ def delete_user(
         BinderCard,
         BinderSlot,
         Card,
+        ChallengeProgress,
         CollectionCardPhoto,
         CollectionItem,
         CustomCardMatch,
+        EventComment,
+        EventReaction,
         ImageCache,
         NotificationQueue,
         PortfolioSnapshot,
@@ -420,6 +446,8 @@ def delete_user(
         ProductCard,
         ProductLedgerEntry,
         ProductPurchase,
+        SwapOffer,
+        SwapOfferItem,
         Trade,
         TradeItem,
         UserAchievement,
@@ -456,10 +484,32 @@ def delete_user(
     db.query(Trade).filter(Trade.user_id == user_id).delete(
         synchronize_session=False
     )
+    # Swap offers this trainer is part of go; the other trainer's logged trade stays, unlinked.
+    user_offer_ids = db.query(SwapOffer.id).filter(
+        (SwapOffer.from_user_id == user_id) | (SwapOffer.to_user_id == user_id)
+    )
+    db.query(Trade).filter(Trade.swap_offer_id.in_(user_offer_ids)).update(
+        {"swap_offer_id": None}, synchronize_session=False
+    )
+    db.query(SwapOfferItem).filter(SwapOfferItem.offer_id.in_(user_offer_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(SwapOffer).filter(
+        (SwapOffer.from_user_id == user_id) | (SwapOffer.to_user_id == user_id)
+    ).delete(synchronize_session=False)
     db.query(PortfolioSnapshot).filter(PortfolioSnapshot.user_id == user_id).delete()
     db.query(UserSetting).filter(UserSetting.user_id == user_id).delete()
+    # Reactions first: the ones this trainer gave, and everyone's reactions to this trainer's events.
+    own_event_ids = db.query(UserEvent.id).filter(UserEvent.user_id == user_id)
+    db.query(EventReaction).filter(
+        (EventReaction.user_id == user_id) | EventReaction.event_id.in_(own_event_ids)
+    ).delete(synchronize_session=False)
+    db.query(EventComment).filter(
+        (EventComment.user_id == user_id) | EventComment.event_id.in_(own_event_ids)
+    ).delete(synchronize_session=False)
     for progress_model in (
         UserAchievement, UserDailyActivity, UserEvent, UserGoal, UserXpLedger, ProgressState, NotificationQueue,
+        ChallengeProgress,
     ):
         db.query(progress_model).filter(progress_model.user_id == user_id).delete(
             synchronize_session=False
@@ -615,6 +665,57 @@ def change_avatar(data: dict, current_user: User = Depends(get_current_user), db
     current_user.avatar_id = avatar_id
     db.commit()
     return {"id": current_user.id, "username": current_user.username, "role": current_user.role, "avatar_id": current_user.avatar_id}
+
+
+@router.put("/me/tutorial")
+def set_tutorial(data: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Mark the tour done. The earliest completion wins, so two devices that both
+    finish it (one of them offline) agree. `completed_at` is the time the trainer
+    actually finished, sent by a device that was offline at the time."""
+    outcome = data.get("outcome")
+    if outcome not in TUTORIAL_OUTCOMES:
+        raise HTTPException(status_code=400, detail="outcome must be finished, skipped or dismissed")
+    completed_at = datetime.utcnow()
+    raw = data.get("completed_at")
+    if raw:
+        try:
+            parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="completed_at must be an ISO date") from None
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        completed_at = min(parsed, completed_at)
+    if current_user.tutorial_completed_at is None or completed_at < current_user.tutorial_completed_at:
+        current_user.tutorial_completed_at = completed_at
+        current_user.tutorial_outcome = outcome
+        db.commit()
+    return tutorial_fields(current_user)
+
+
+@router.delete("/me/tutorial")
+def clear_tutorial(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """'Show the tour again': forget that the tour was done."""
+    current_user.tutorial_completed_at = None
+    current_user.tutorial_outcome = None
+    db.commit()
+    return tutorial_fields(current_user)
+
+
+WHATS_NEW_ID = re.compile(r"^\d{4}-\d{2}-\d{2}(\.\d{1,3})?$")
+
+
+@router.put("/me/whats-new-seen")
+def set_whats_new_seen(data: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Records the newest release the trainer has seen. It only moves forward, so a device that
+    is behind can't undo what another device saved; a "since:" marker is replaced by any real id."""
+    release_id = data.get("id")
+    if not isinstance(release_id, str) or not WHATS_NEW_ID.match(release_id):
+        raise HTTPException(status_code=400, detail="id must be a release id such as 2026-10-30")
+    current = current_user.whats_new_seen
+    if current is None or current.startswith("since:") or release_id > current:
+        current_user.whats_new_seen = release_id
+        db.commit()
+    return {"whats_new_seen": current_user.whats_new_seen}
 
 
 @router.put("/me/username")

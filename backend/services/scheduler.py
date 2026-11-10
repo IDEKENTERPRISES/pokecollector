@@ -4,6 +4,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.date import DateTrigger
 import logging
 import datetime
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 # Give the persistent scan queue a short recovery window without changing other jobs.
@@ -86,14 +87,18 @@ def run_scan_queue_maintenance():
     from services.provider_rate_limit import purge_stale_provider_limit_states
     from services.scan_queue import (
         drain_scan_queue,
+        hold_expiry_for_waiting_scans,
         purge_expired_scan_jobs,
         recover_expired_leases,
+        release_waiting_scans_if_reachable,
     )
     from services.scan_storage import purge_orphaned_scan_directories
 
     db = SessionLocal()
     try:
         recovered = recover_expired_leases(db)
+        # Scans waiting for the scanner must not be deleted unrecognised.
+        hold_expiry_for_waiting_scans(db)
         removed = purge_expired_scan_jobs(db)
         orphans = purge_orphaned_scan_directories(db)
         stale_quotas = purge_stale_quota_states()
@@ -115,8 +120,23 @@ def run_scan_queue_maintenance():
     finally:
         db.close()
 
+    async def _release_then_drain():
+        # One cheap check per minute frees every scan waiting for the scanner
+        # as soon as its endpoint answers.
+        release_db = SessionLocal()
+        try:
+            released = await release_waiting_scans_if_reachable(release_db)
+            if released:
+                logger.info("Released %s scan(s) waiting for the scanner", released)
+        except Exception:
+            release_db.rollback()
+            logger.exception("Scanner reachability check failed")
+        finally:
+            release_db.close()
+        await drain_scan_queue(max_items=50)
+
     try:
-        asyncio.run(drain_scan_queue(max_items=50))
+        asyncio.run(_release_then_drain())
     except Exception:
         logger.exception("Scan queue processing failed")
 
@@ -212,6 +232,19 @@ def run_progress_nightly_job():
         db.close()
 
 
+_WRAPPED_CHECK_EVERY = datetime.timedelta(minutes=10)
+_last_wrapped_check: datetime.datetime | None = None
+
+
+def _wrapped_check_due(now: datetime.datetime) -> bool:
+    """The Wrapped check loads each trainer's year, so it runs on the first tick and then every 10 minutes."""
+    global _last_wrapped_check
+    if _last_wrapped_check is not None and now - _last_wrapped_check < _WRAPPED_CHECK_EVERY:
+        return False
+    _last_wrapped_check = now
+    return True
+
+
 def run_notification_job():
     """Send due notifications: instant ones after quiet hours, and the daily digest."""
     from database import SessionLocal
@@ -222,10 +255,45 @@ def run_notification_job():
         from services.recap import queue_weekly_recaps
 
         queue_weekly_recaps(db)
+        from services.recap import queue_wrapped_ready
+
+        if _wrapped_check_due(datetime.datetime.utcnow()):
+            queue_wrapped_ready(db)
         flush_due(db)
     except Exception:
         db.rollback()
         logger.exception("Notification job failed")
+    finally:
+        db.close()
+
+
+def run_swap_expiry_job():
+    """Expire swap offers nobody touched for 14 days: one indexed UPDATE."""
+    from database import SessionLocal
+    from services.swaps import expire_stale
+
+    db = SessionLocal()
+    try:
+        if expire_stale(db):
+            db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Swap offer expiry job failed")
+    finally:
+        db.close()
+
+
+def run_challenge_close_job():
+    """Close the finished challenge week (just after Monday 00:00 UK time, and again at start-up after downtime)."""
+    from database import SessionLocal
+    from services.challenge import close_due_weeks
+
+    db = SessionLocal()
+    try:
+        close_due_weeks(db)
+    except Exception:
+        db.rollback()
+        logger.exception("Challenge close job failed")
     finally:
         db.close()
 
@@ -317,6 +385,37 @@ def start_scheduler():
             misfire_grace_time=_SCAN_QUEUE_MISFIRE_GRACE_SECONDS,
             coalesce=True,
             max_instances=1,
+        )
+
+        scheduler.add_job(
+            run_swap_expiry_job,
+            trigger=IntervalTrigger(seconds=_PROGRESS_NOTIFICATION_INTERVAL_SECONDS),
+            id="swap_expiry_job",
+            name="Swap Offer Expiry",
+            replace_existing=True,
+            next_run_time=now_utc + datetime.timedelta(seconds=_PROGRESS_NOTIFICATION_INTERVAL_SECONDS),
+            misfire_grace_time=_SCAN_QUEUE_MISFIRE_GRACE_SECONDS,
+            coalesce=True,
+            max_instances=1,
+        )
+
+        scheduler.add_job(
+            run_challenge_close_job,
+            trigger=CronTrigger(day_of_week="mon", hour=0, minute=5, timezone=ZoneInfo("Europe/London")),
+            id="challenge_close_job",
+            name="Weekly Challenge Close",
+            replace_existing=True,
+            misfire_grace_time=6 * 3600,
+            coalesce=True,
+            max_instances=1,
+        )
+        # A server that was down at Monday 00:05 catches up shortly after it starts.
+        scheduler.add_job(
+            run_challenge_close_job,
+            trigger=DateTrigger(run_date=now_utc + datetime.timedelta(seconds=90)),
+            id="challenge_close_startup_job",
+            name="Weekly Challenge Close (catch-up)",
+            replace_existing=True,
         )
 
         scheduler.add_job(

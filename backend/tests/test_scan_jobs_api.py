@@ -137,7 +137,7 @@ class ScanJobsApiTests(unittest.TestCase):
             404,
         )
 
-    def test_enqueue_preserves_order_and_individual_choices(self):
+    def test_enqueue_preserves_order_and_never_composites(self):
         with patch("api.recognize.get_gemini_key", return_value="secret-key"), \
                 patch("api.scan_jobs.drain_scan_queue", new=AsyncMock(return_value=0)):
             response = self.client.post(
@@ -153,7 +153,7 @@ class ScanJobsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         items = self.db.query(ScanJobItem).order_by(ScanJobItem.position).all()
         self.assertEqual([item.position for item in items], [0, 1, 2])
-        self.assertEqual([item.batch_mode for item in items], [True, False, True])
+        self.assertEqual([item.batch_mode for item in items], [False, False, False])
 
     def test_single_photo_is_always_individual(self):
         created = self._enqueue()
@@ -294,6 +294,113 @@ class ScanJobsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         label.assert_called_once_with(self.user.id, created["id"], item.id, "card-1")
 
+    def _manual_item(self, *, matches, status="done"):
+        created = self._enqueue()
+        item = self.db.query(ScanJobItem).filter(ScanJobItem.job_id == created["id"]).one()
+        item.status = status
+        item.matches = matches
+        self.db.add(Card(id="other-9_en", tcg_card_id="other-9", name="Eevee", number="9", lang="en", is_custom=False))
+        self.db.commit()
+        payload = {
+            "confirmed_card_id": "other-9", "card_id": "other-9_en", "quantity": 1,
+            "condition": "NM", "variant": "Normal", "lang": "en", "purchase_price": None,
+            "manual_search": True,
+        }
+        return created, item, payload
+
+    def test_manual_search_adds_a_card_that_was_not_a_candidate(self):
+        created, item, payload = self._manual_item(matches=[{"id": "card-1_en", "tcg_card_id": "card-1"}])
+        stored = resolve_scan_path(item.image_path)
+        with patch("services.scan_trace.record_ground_truth", return_value=1) as label:
+            response = self.client.post(
+                f"/api/cards/recognize/jobs/{created['id']}/items/{item.id}/resolve-and-add", json=payload,
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.db.query(CollectionItem).one().card_id, "other-9_en")
+        self.assertTrue(response.json()["item"]["resolved"])
+        self.assertFalse(stored.exists())
+        label.assert_called_once_with(
+            self.user.id, created["id"], item.id, "other-9",
+            manual=True, had_matches=True, lang="en",
+        )
+
+    def test_manual_search_on_a_scan_with_no_result_records_a_trace_with_the_photo(self):
+        created, item, payload = self._manual_item(matches=None, status="failed")
+        with patch("services.scan_trace.record_ground_truth", return_value=0) as label, \
+                patch("services.scan_trace.record_manual_trace", return_value=True) as stub:
+            response = self.client.post(
+                f"/api/cards/recognize/jobs/{created['id']}/items/{item.id}/resolve-and-add", json=payload,
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(label.call_args.kwargs["had_matches"], False)
+        stub.assert_called_once()
+        self.assertEqual(stub.call_args.args[4], "other-9")
+        self.assertEqual(stub.call_args.kwargs["image_bytes"][:2], b"\xff\xd8")
+
+    def test_a_card_outside_the_candidates_is_refused_without_manual_search(self):
+        created, item, payload = self._manual_item(matches=[{"id": "card-1_en", "tcg_card_id": "card-1"}])
+        payload["manual_search"] = False
+        response = self.client.post(
+            f"/api/cards/recognize/jobs/{created['id']}/items/{item.id}/resolve-and-add", json=payload,
+        )
+        self.assertEqual(response.status_code, 422)
+
+    def test_manual_search_must_submit_the_confirmed_card(self):
+        created, item, payload = self._manual_item(matches=None, status="failed")
+        payload["confirmed_card_id"] = "someone-else"
+        response = self.client.post(
+            f"/api/cards/recognize/jobs/{created['id']}/items/{item.id}/resolve-and-add", json=payload,
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertFalse(self.db.get(ScanJobItem, item.id).resolved)
+
+    def test_a_scan_still_recognising_cannot_be_added_by_search(self):
+        created, item, payload = self._manual_item(matches=None, status="processing")
+        response = self.client.post(
+            f"/api/cards/recognize/jobs/{created['id']}/items/{item.id}/resolve-and-add", json=payload,
+        )
+        self.assertEqual(response.status_code, 409)
+
+    def test_a_job_can_hold_more_than_fifty_photos(self):
+        files = [("files", (f"p{i}.jpg", _jpeg_bytes(), "image/jpeg")) for i in range(55)]
+        with patch("api.recognize.get_gemini_key", return_value="secret-key"), \
+                patch("api.scan_jobs.drain_scan_queue", new=AsyncMock(return_value=0)):
+            response = self.client.post("/api/cards/recognize/jobs", files=files)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["total"], 55)
+
+    def test_queue_is_one_oldest_first_list_across_jobs_with_no_cap(self):
+        now = datetime.datetime.utcnow()
+        for job_number in range(9):
+            job = ScanJob(user_id=self.user.id, status="done", created_at=now + datetime.timedelta(minutes=job_number),
+                          updated_at=now, expires_at=now + datetime.timedelta(days=14))
+            self.db.add(job)
+            self.db.flush()
+            for position in range(7):
+                self.db.add(ScanJobItem(
+                    job_id=job.id, user_id=self.user.id, position=position, image_path=None, content_type="image/jpeg",
+                    byte_size=1, batch_mode=True, status="done" if position else "processing", resolved=False, attempts=0,
+                ))
+        other_job = ScanJob(user_id=self.other_user.id, status="done", created_at=now, updated_at=now, expires_at=now + datetime.timedelta(days=14))
+        self.db.add(other_job)
+        self.db.flush()
+        self.db.add(ScanJobItem(job_id=other_job.id, user_id=self.other_user.id, position=0, content_type="image/jpeg",
+                                byte_size=1, batch_mode=False, status="done", resolved=False, attempts=0))
+        self.db.add(ScanJobItem(job_id=job.id, user_id=self.user.id, position=99, content_type="image/jpeg",
+                                byte_size=1, batch_mode=False, status="done", resolved=True, attempts=0))
+        self.db.commit()
+
+        body = self.client.get("/api/cards/recognize/queue").json()
+        self.assertEqual(body["total"], 63)
+        self.assertEqual(len(body["items"]), 63)
+        self.assertEqual(body["counts"], {"ready": 54, "failed": 0, "processing": 9, "waiting": 0})
+        job_ids = [item["job_id"] for item in body["items"]]
+        self.assertEqual(job_ids, sorted(job_ids))
+        self.assertTrue(all(item["resolved"] is False for item in body["items"]))
+        page = self.client.get("/api/cards/recognize/queue", params={"limit": 10, "offset": 60}).json()
+        self.assertEqual([item["id"] for item in page["items"]], [item["id"] for item in body["items"][60:70]])
+        self.assertEqual(len(self.client.get("/api/cards/recognize/jobs").json()["jobs"]), 9)
+
     def test_resolve_rejects_an_already_handled_item(self):
         created = self._enqueue()
         item = self.db.query(ScanJobItem).filter(ScanJobItem.job_id == created["id"]).one()
@@ -353,7 +460,10 @@ class ScanJobsApiTests(unittest.TestCase):
         self.assertEqual(duplicate.status_code, 409, duplicate.text)
         self.assertEqual(self.db.query(CollectionItem).one().quantity, 2)
         self.assertFalse(stored.exists())
-        label.assert_called_once_with(self.user.id, created["id"], item.id, "card-1")
+        label.assert_called_once_with(
+            self.user.id, created["id"], item.id, "card-1",
+            manual=False, had_matches=True, lang="en",
+        )
 
     def test_resolve_rejects_ground_truth_outside_the_returned_candidates(self):
         created = self._enqueue()
@@ -388,6 +498,41 @@ class ScanJobsApiTests(unittest.TestCase):
         self.assertEqual(response.json()["status"], "pending")
         self.assertEqual(response.json()["attempts"], 0)
         self.assertTrue(stored.exists())
+
+    def test_try_now_releases_a_scan_waiting_for_the_scanner(self):
+        created = self._enqueue()
+        item = self.db.query(ScanJobItem).filter(ScanJobItem.job_id == created["id"]).one()
+        item.status = "retrying"
+        item.retry_reason = "scanner_unreachable"
+        item.next_attempt_at = None
+        self.db.commit()
+        url = f"/api/cards/recognize/jobs/{created['id']}/items/{item.id}/retry"
+
+        # Still switched off: the scan keeps waiting.
+        with patch("api.scan_jobs.endpoint_reachable", new=AsyncMock(return_value=False)):
+            still = self.client.post(url)
+        self.assertEqual(still.status_code, 200)
+        self.assertEqual(still.json()["status"], "retrying")
+        self.assertEqual(still.json()["retry_reason"], "scanner_unreachable")
+
+        with patch("api.scan_jobs.endpoint_reachable", new=AsyncMock(return_value=True)),                 patch("api.scan_jobs.drain_scan_queue", new=AsyncMock(return_value=0)):
+            response = self.client.post(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "pending")
+        self.assertIsNone(response.json()["retry_reason"])
+
+    def test_try_now_accepts_an_ordinary_retrying_scan(self):
+        created = self._enqueue()
+        item = self.db.query(ScanJobItem).filter(ScanJobItem.job_id == created["id"]).one()
+        item.status = "retrying"
+        item.next_attempt_at = datetime.datetime.utcnow() + datetime.timedelta(hours=5)
+        self.db.commit()
+        with patch("api.scan_jobs.drain_scan_queue", new=AsyncMock(return_value=0)):
+            response = self.client.post(
+                f"/api/cards/recognize/jobs/{created['id']}/items/{item.id}/retry"
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "pending")
 
     def test_deleting_job_removes_database_rows_and_photo_directory(self):
         created = self._enqueue()

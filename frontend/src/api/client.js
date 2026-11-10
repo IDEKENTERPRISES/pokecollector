@@ -97,6 +97,10 @@ export const logoutSession = () => api.post('/auth/logout', null, {
 export const logoutOtherDevices = () => api.post('/auth/logout-others').then(r => r.data)
 export const forceChangePassword = (newPassword) => api.put('/auth/me/force-password', { new_password: newPassword }).then(r => r.data)
 export const changeAvatar = (avatarId) => api.put('/auth/me/avatar', { avatar_id: avatarId }).then(r => r.data)
+// The hands-on tour (docs/WELCOME_DESIGN.md §3.10): finished, skipped or dismissed; the earliest completion wins on the server.
+export const setTutorialDone = (outcome, completedAt) => api.put('/auth/me/tutorial', { outcome, completed_at: completedAt }).then(r => r.data)
+export const clearTutorialDone = () => api.delete('/auth/me/tutorial').then(r => r.data)
+export const setWhatsNewSeen = (id) => api.put('/auth/me/whats-new-seen', { id }).then(r => r.data)
 export const changeUsername = (username) => api.put('/auth/me/username', { username }).then(r => r.data)
 
 
@@ -165,6 +169,8 @@ export const enqueueScanJob = async (files = [], individualPositions = []) => {
   }).then(r => r.data)
 }
 export const getScanJobs = () => api.get('/cards/recognize/jobs').then(r => r.data)
+// Every scan still waiting on the trainer as one list, oldest first, whichever upload it came from.
+export const getScanQueue = () => api.get('/cards/recognize/queue').then(r => r.data)
 export const getScanJob = jobId => api.get(`/cards/recognize/jobs/${jobId}`).then(r => r.data)
 export const resolveScanJobItem = (jobId, itemId, cardId = null) =>
   api.post(`/cards/recognize/jobs/${jobId}/items/${itemId}/resolve`, {
@@ -175,6 +181,8 @@ export const resolveAndAddScanJobItem = (jobId, itemId, data) =>
     .then(r => r.data)
 export const retryScanJobItem = (jobId, itemId) =>
   api.post(`/cards/recognize/jobs/${jobId}/items/${itemId}/retry`).then(r => r.data)
+export const waitForScannerJobItem = (jobId, itemId) =>
+  api.post(`/cards/recognize/jobs/${jobId}/items/${itemId}/wait`).then(r => r.data)
 export const deleteScanJob = jobId =>
   api.delete(`/cards/recognize/jobs/${jobId}`).then(r => r.data)
 export const fetchScanJobItemImage = (jobId, itemId) =>
@@ -511,5 +519,32 @@ export const makeGoalBinder = (id, name) => api.post(`/goals/${id}/binder`, name
 export const getCollectionDna = () => api.get('/analytics/dna').then(r => r.data)
 export const getShowcase = () => api.get('/profile/showcase').then(r => r.data)
 export const putShowcase = (ids) => api.put('/profile/showcase', { ids }).then(r => r.data)
+
+// Activity feed and reactions (engagement P12a; social switch on). The feed is never read-cached.
+export const getFeed = (params) => api.get('/feed', { params }).then(r => r.data)
+export const addFeedReaction = (eventId, kind) => api.put(`/feed/${eventId}/reactions/${kind}`).then(r => r.data)
+export const removeFeedReaction = (eventId, kind) => api.delete(`/feed/${eventId}/reactions/${kind}`).then(r => r.data)
+export const getFeedEvent = (eventId, params) => api.get(`/feed/${eventId}`, { params }).then(r => r.data)
+export const getFeedComments = (eventId) => api.get(`/feed/${eventId}/comments`).then(r => r.data)
+export const addFeedComment = (eventId, text) => api.post(`/feed/${eventId}/comments`, { text }).then(r => r.data)
+export const deleteFeedComment = (eventId, commentId) => api.delete(`/feed/${eventId}/comments/${commentId}`).then(r => r.data)
+
+// Swap offers (engagement P11). All 404 while an admin keeps the social switch off.
+// The weekly challenge (404 while the social switch is off): this week, the board, and last week's result Monday and Tuesday.
+export const getChallenge = () => api.get('/challenge').then(r => r.data)
+export const getSwaps = () => api.get('/swaps').then(r => r.data)
+export const getSwapsWaiting = () => api.get('/swaps/waiting').then(r => r.data)
+// The cards that can go on the table: your own (side=give) or the partner's spares (side=get).
+export const getSwapCandidates = (params) => api.get('/swaps/candidates', { params }).then(r => r.data)
+export const getSwap = (id) => api.get(`/swaps/${id}`).then(r => r.data)
+// body: { to_user_id, items: [{ collection_item_id, quantity }], cash_amount, cash_payer_user_id, note }
+export const createSwap = (body) => api.post('/swaps', body).then(r => r.data)
+// body: { items, cash_amount, cash_payer_user_id, note, revision }
+export const counterSwap = (id, body) => api.post(`/swaps/${id}/counter`, body).then(r => r.data)
+export const acceptSwap = (id, revision) => api.post(`/swaps/${id}/accept`, revision == null ? {} : { revision }).then(r => r.data)
+export const declineSwap = (id, revision) => api.post(`/swaps/${id}/decline`, revision == null ? {} : { revision }).then(r => r.data)
+export const cancelSwap = (id) => api.post(`/swaps/${id}/cancel`).then(r => r.data)
+// The second trainer's tap completes the swap; a 409 carries `unavailable` (the cards that are gone).
+export const confirmSwapped = (id) => api.post(`/swaps/${id}/confirm-swapped`).then(r => r.data)
 
 export default api

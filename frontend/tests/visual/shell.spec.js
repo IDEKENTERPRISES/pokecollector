@@ -75,6 +75,7 @@ const SAMPLE = {
   '/collection/user/:userId': '/collection/user/2',
   '/achievements/:userId': '/achievements/2',
   '/settings/:section': '/settings/appearance',
+  '/settings/about/versions/:id': '/settings/about/versions/2026-10-30',
 }
 const sample = pattern => SAMPLE[pattern] ?? pattern
 
@@ -185,10 +186,10 @@ test.describe('shell on a phone', () => {
     for (const path of ['/', '/collection', '/search', '/profile']) {
       await page.goto(path)
       await page.getByTestId('scan-button').click()
-      await expect(page.getByText('0/50 Photos')).toBeVisible()
+      await expect(page.getByText('0 Photos')).toBeVisible()
       await expect(page.getByTestId('tab-bar')).toHaveCount(0)
       await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).first().click()
-      await expect(page.getByText('0/50 Photos')).toBeHidden()
+      await expect(page.getByText('0 Photos')).toBeHidden()
       await expect(page.getByTestId('tab-bar')).toBeVisible()
       await expect(page).toHaveURL(new RegExp(`${path === '/' ? '/$' : `${path}$`}`))
     }
@@ -458,6 +459,6 @@ test.describe('shell on a desktop', () => {
     await expect(page.getByTestId('tab-bar')).toBeHidden()
     await expect(page.getByTestId('sidebar-nav').getByRole('link', { name: 'Card Lists' })).toBeVisible()
     await page.getByTestId('sidebar-nav').getByRole('button', { name: 'Scan cards' }).click()
-    await expect(page.getByText('0/50 Photos')).toBeVisible()
+    await expect(page.getByText('0 Photos')).toBeVisible()
   })
 })

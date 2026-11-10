@@ -20,6 +20,7 @@ export default function ScanButton({ badge = 0, active = false, processing = fal
         onClick={onPress}
         aria-label={label}
         data-testid="scan-button"
+        data-tour="tab-scan"
         data-active={active ? 'true' : 'false'}
         data-processing={processing ? 'true' : 'false'}
         className="ios-press absolute -top-4 left-1/2 h-[60px] w-[60px] -translate-x-1/2 rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tint"

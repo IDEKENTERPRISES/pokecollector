@@ -11,7 +11,7 @@ from api.auth import get_current_user
 from sqlalchemy.orm import Session
 from database import get_db
 from models import CollectionCardPhoto, Setting, UserSetting, User
-from services import notifications
+from services import challenge, feed as feed_service, notifications
 from services.audit import record_audit
 from services.debug_logging import configure_debug_logging, get_debug_log_path
 from services.digital_sets import DIGITAL_SETS_SETTING_KEY, refresh_digital_catalogue_flags
@@ -27,6 +27,7 @@ from services.exchange_rates import (
 )
 from services.card_visibility import get_visible_filter_languages
 from services.public_profile_feature import PUBLIC_PROFILES_SETTING_KEY
+from services.social_feature import SOCIAL_SETTING_KEY
 from services.tcgdex_languages import (
     DEFAULT_TCGDEX_SYNC_LANGUAGES,
     supported_tcgdex_language_payload,
@@ -35,6 +36,7 @@ from services.tcgdex_languages import (
 from services.scan_trace import (
     SCAN_DIAGNOSTICS_SETTING_KEY,
     delete_user_traces,
+    diagnostics_default_on,
     trace_available,
     trace_deletion_available,
 )
@@ -86,6 +88,8 @@ from services.scan_providers import (
 router = APIRouter()
 logger = logging.getLogger(__name__)
 PHOTO_PREFERENCE_SETTING_KEY = "prefer_own_card_photos"
+# Admin switch "Picture match first" (services/picture_first.py); the environment sets the default.
+PICTURE_FIRST_SETTING_KEY = "scan_picture_first"
 
 PER_USER_KEYS = {
     "language", "currency", "price_primary", "price_display",
@@ -169,6 +173,8 @@ ADMIN_ONLY_KEYS = {
     "cross_language_price_fallback", "cross_language_image_fallback",
     DIGITAL_SETS_SETTING_KEY,
     PUBLIC_PROFILES_SETTING_KEY,
+    SOCIAL_SETTING_KEY,
+    PICTURE_FIRST_SETTING_KEY,
 }
 
 DEFAULT_SETTINGS = {
@@ -192,6 +198,7 @@ DEFAULT_SETTINGS = {
     "cross_language_image_fallback": "true",
     "debug_mode": "false",
     PUBLIC_PROFILES_SETTING_KEY: "false",
+    SOCIAL_SETTING_KEY: "false",
     SCAN_DIAGNOSTICS_SETTING_KEY: "false",
     PHOTO_PREFERENCE_SETTING_KEY: "false",
     SCANNER_GEMINI_FALLBACK_SETTING_KEY: "false",
@@ -206,8 +213,11 @@ def _normalize_tcgdex_sync_languages(value) -> str:
 
 
 def _coerce_setting_value(key: str, value) -> str:
-    if key in notifications.boolean_keys():
+    if key in notifications.boolean_keys() or key in feed_service.boolean_keys() or key in challenge.boolean_keys():
         return "true" if str(value).lower() in {"true", "1", "yes", "on"} else "false"
+    if key.startswith(feed_service.SHARE_PREFIX):
+        # Only the known sharing choices: a typo must not store a setting that silently does nothing.
+        raise HTTPException(status_code=422, detail=f"{key} is not a feed sharing setting")
     if key == notifications.DIGEST_HOUR_KEY:
         return notifications.normalize_digest_hour(value)
     if key == "tcgdex_sync_languages":
@@ -215,8 +225,9 @@ def _coerce_setting_value(key: str, value) -> str:
     if key in {
         "debug_mode", "cross_language_price_fallback",
         "cross_language_image_fallback", DIGITAL_SETS_SETTING_KEY,
-        PUBLIC_PROFILES_SETTING_KEY, SCAN_DIAGNOSTICS_SETTING_KEY,
+        PUBLIC_PROFILES_SETTING_KEY, SOCIAL_SETTING_KEY, SCAN_DIAGNOSTICS_SETTING_KEY,
         PHOTO_PREFERENCE_SETTING_KEY, SCANNER_GEMINI_FALLBACK_SETTING_KEY,
+        PICTURE_FIRST_SETTING_KEY,
     }:
         return "true" if str(value).lower() in {"true", "1", "yes", "on"} else "false"
     if key == "portfolio_display_mode":
@@ -272,9 +283,23 @@ def _get_user_settings(db: Session, user_id: int) -> dict:
             if env_chat_id:
                 result["telegram_chat_id"] = env_chat_id
 
+    if _is_admin(db, user_id):
+        from services import picture_first
+
+        result[PICTURE_FIRST_SETTING_KEY] = "true" if picture_first.enabled(db) else "false"
+    else:
+        result.pop(PICTURE_FIRST_SETTING_KEY, None)
+
+    if diagnostics_default_on() and trace_available():
+        # A test server collects from everyone who hasn't switched diagnostics off.
+        result.setdefault(SCAN_DIAGNOSTICS_SETTING_KEY, "true")
     for key, value in DEFAULT_SETTINGS.items():
         result.setdefault(key, value)
     for key, value in notifications.default_settings().items():
+        result.setdefault(key, value)
+    for key, value in feed_service.default_settings().items():
+        result.setdefault(key, value)
+    for key, value in challenge.default_settings().items():
         result.setdefault(key, value)
     if global_scanner_config_enabled():
         if _is_admin(db, user_id):
@@ -979,7 +1004,7 @@ def update_settings(
         coerced_value = _coerce_setting_value(key, value)
         if key in ADMIN_ONLY_KEYS:
             if current_user.role != "admin":
-                if key == PUBLIC_PROFILES_SETTING_KEY:
+                if key in {PUBLIC_PROFILES_SETTING_KEY, SOCIAL_SETTING_KEY}:
                     raise HTTPException(status_code=403, detail="Admin only")
                 continue
             row = db.query(Setting).filter(Setting.key == key).first()

@@ -16,9 +16,12 @@ import UpdateBanner from './components/pwa/UpdateBanner'
 import { OfflineProvider, useRestoreGate } from './offline/OfflineProvider'
 import { CardDbAutoSync } from './offline/carddb/useCardDb'
 import LaunchSplash from './components/splash/LaunchSplash'
+import TourHost from './welcome/TourHost'
+import WhatsNewHost from './welcome/WhatsNewHost'
 
 const HomeScreen = lazy(() => import('./pages/HomeScreen'))
 const Profile = lazy(() => import('./pages/Profile'))
+const SwapOffer = lazy(() => import('./pages/SwapOffer'))
 const CardSearch = lazy(() => import('./pages/CardSearch'))
 const Collection = lazy(() => import('./pages/Collection'))
 const Pokedex = lazy(() => import('./pages/Pokedex'))
@@ -38,6 +41,7 @@ const WrappedStory = lazy(() => import('./wrapped/WrappedStory'))
 const Products = lazy(() => import('./pages/Products'))
 const Trades = lazy(() => import('./pages/Trades'))
 const Settings = lazy(() => import('./pages/Settings'))
+const VersionHistory = lazy(() => import('./welcome/VersionHistory'))
 const CardMigration = lazy(() => import('./pages/CardMigration'))
 const ScanQueue = lazy(() => import('./pages/ScanQueue'))
 const OfflineCenter = lazy(() => import('./pages/OfflineCenter'))
@@ -212,6 +216,7 @@ function ProtectedRoutes() {
   }
 
   return (
+    <>
     <Routes>
       <Route path="/" element={<Layout />}>
         <Route index element={lazyRoute(<HomeScreen />)} />
@@ -241,13 +246,19 @@ function ProtectedRoutes() {
         <Route path="wrapped/:year" element={lazyRoute(<WrappedStory />)} />
         <Route path="products" element={lazyRoute(<Products />)} />
         <Route path="trades" element={lazyRoute(<Trades />)} />
+        <Route path="trades/offers" element={lazyRoute(<Trades />)} />
+        <Route path="trades/offers/:offerId" element={lazyRoute(<SwapOffer />)} />
         <Route path="leaderboard" element={lazyRoute(<Leaderboard />)} />
+        <Route path="leaderboard/activity" element={lazyRoute(<Leaderboard segment="activity" />)} />
+        <Route path="leaderboard/challenge" element={lazyRoute(<Leaderboard segment="challenge" />)} />
         <Route path="leaderboard/compare/:userId" element={lazyRoute(<Compare />)} />
         <Route path="goals" element={lazyRoute(<Goals />)} />
         <Route path="goals/:goalId" element={lazyRoute(<GoalDetail />)} />
         <Route path="achievements" element={lazyRoute(<Achievements />)} />
         <Route path="achievements/:userId" element={lazyRoute(<Achievements />)} />
         <Route path="settings" element={lazyRoute(<Settings />)} />
+        <Route path="settings/about/versions" element={lazyRoute(<VersionHistory />)} />
+        <Route path="settings/about/versions/:id" element={lazyRoute(<VersionHistory />)} />
         <Route path="settings/:section" element={lazyRoute(<Settings />)} />
         <Route path="migration" element={lazyRoute(<CardMigration />)} />
         <Route path="scans" element={lazyRoute(<ScanQueue />)} />
@@ -256,6 +267,9 @@ function ProtectedRoutes() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
+    {/* Opens after an update, once no tour is showing (docs/WELCOME_DESIGN.md §5.2); the tour mounts beside it. */}
+    <WhatsNewHost />
+    </>
   )
 }
 
@@ -283,6 +297,8 @@ export default function App() {
               </Route>
               <Route path="/*" element={<ProtectedRoutes />} />
             </Routes>
+            {/* The hands-on tour for new trainers (docs/WELCOME_DESIGN.md); shows nothing in single-user mode. */}
+            <TourHost />
           </BrowserRouter>
           <UpdateBanner />
           {/* Fresh launches only; portaled above everything while the app renders underneath. */}

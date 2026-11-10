@@ -21,6 +21,9 @@ The owner chose these from a review of the shipped app (2026-10-28) and accepted
 - A book view for sets and binders (Grid | Book). **Drag and drop is wanted**, so a binder's pockets mirror the physical binder.
 - On this day, Showcase 6, and Collection DNA.
 - Social: swap offers, an activity feed and a weekly challenge, all three, behind an admin switch that is off by default.
+- Added on 2 November 2026 (milestone E):
+  - a skippable tutorial for new trainers, once per account;
+  - a "What's new" sheet after an update, with a full version history in Settings.
 
 **Dropped:** pack-opening mode and deck playtest.
 
@@ -329,7 +332,7 @@ Size: S = one PR, M = a few days of worker time, L = several PRs.
 - Wishlist dips: the effective price is at least 15 % below `avg30` **and** at least €1 lower (constants). Each card is told at most once a week.
 - Big movers: owned cards move by the existing `price_alert_threshold` percent (default 10) **and** at least €2. That repurposes the dead global setting as the default.
 - New sets: when a sync marks sets `is_new`, push to users with the category on. `send_new_sets_notification` is also called for Telegram.
-- The digest is one push a day at 18:00 in the user's time zone (falling back to the server's). Quiet hours are 22:00–08:00, and instant pushes wait until the end of quiet hours.
+- The digest is one push a day at 18:00 in the user's time zone (falling back to the server's). Quiet hours are 22:00–08:00 and **off by default**; a trainer who switches them on has instant pushes wait until 08:00 (the digest hour still avoids 22–08).
 - The service worker routes each notification to its page (`navigate`).
 - **Push texts** (English, prices in EUR as stored, a body fitted to 300 characters with "and N more", never more than 4096 bytes). Each queued row keeps a `details` JSON (card name, set name and code, number, price, baseline, drop or change %, threshold, set name, scan count, badge id) as of the event.
 
@@ -461,17 +464,103 @@ Social phases may be built during B and C, because the switch keeps them dormant
   - product-linked copies handled like Trades does.
 - Then it logs a `Trade` for each side through the existing trade engine, with `partner_name` filled and a link to the other trade.
 - Push to the other trainer (category "swap offers"). The icon number counts offers waiting for you.
+- **P11a (backend, as built):** tables `swap_offers` and `swap_offer_items`, column `trades.swap_offer_id`, routes under `/api/swaps` (list, get, create, counter, accept, decline, cancel, confirm-swapped, waiting), all behind `require_social`. Logic in `services/swaps.py`; completion calls the trade engine `api.trades.create_trade_for_user` once per trainer in one transaction. Offers expire 14 days after the last change (scheduler job `swap_expiry_job`). The icon number is `notifications.icon_number` (scans plus offers whose turn it is, social on only). The UI comes in P11b.
 
 **P12 Activity feed and reactions (M).** After P6 and P11.
 - A feed of other trainers' shareable events. Each trainer picks per kind what to share (default: set completions and badges); values are hidden unless they opt in.
 - One-tap reactions (table `event_reactions`), no comments.
 - It lives as a segment on Leaderboard.
+- P12a (backend, built): `GET /api/feed` (`before` + `limit`, `require_social`), `PUT`/`DELETE /api/feed/{event_id}/reactions/{kind}`, table `event_reactions`, and per-trainer settings `feed_share_<kind>` and `feed_share_values`. Code: `backend/services/feed.py`, `backend/api/feed.py`. Sharing is applied when the feed is read. The feed is on `READ_CACHE_DENY` (key `feed`): other trainers' data must not outlive a trainer hiding it or the admin switch going off.
 
 **P13 Weekly challenge (M).** After P7 and P12.
 - One shared goal a week from a catalogue, built on the quest engine.
 - A progress board, a badge for everyone who finishes, and a top-3 podium.
 
-**P14 Docs and cleanup (S).**
+### Milestone E — welcome and what's new (round 5, promotion 5)
+
+The owner added this milestone on 2 November 2026. Both phases are for every trainer, in single-user and multi-user mode, and neither sits behind the social switch. Mockups come first (Wave 4 on the Design canvas), and the owner approves them before the build.
+
+**P15 Tutorial for new trainers (M).**
+- **When it shows:** once per account, and skippable at every step. Finishing or skipping is stored on the account, server side (for example `tutorial_completed_at`), so a second device doesn't show it again. "Show the tour again" in Settings replays it.
+- **Steps:** one short step per section, pointing at the real tab or control:
+  - Home: the Today card, streak and quests.
+  - Collection: cards, binders, the wishlist, Grid | List, and Book.
+  - Scan.
+  - Search: sets and the Pokédex.
+  - Profile: analytics, trades, goals and badges. Leaderboard appears only in multi-user mode, and the social features only while their switch is on.
+- **Scan step:** it says that recognising a card can take a while, and offers to turn on notifications right there, so a push says when scans are ready. On iPhone, pushes need the Home Screen app, so the step says so when the app is open in Safari.
+- **Offline step:**
+  - what works without a connection: browsing the collection, binders and card pages from the saved copy; changes are queued and sent once back online; Sync & offline in Profile;
+  - what needs a connection: scanning, fresh prices and other trainers.
+- **Accessibility:** it respects Reduce Motion and VoiceOver, with 44 pt targets and safe areas, and it works offline itself.
+
+**P16 What's new and version history (M).**
+- **Facts:**
+  - The update button arrived with the service worker (#7, 18 October 2026), first deployed in `8f5acbf`.
+  - `VERSION` is the upstream release and has stayed `1.51.6` through every deploy since, so the app has no version of its own to compare.
+- **A release list of our own:**
+  - Every merge into `deploy` gets an entry with two levels:
+    - **highlights**: a few friendly lines about only what a trainer would notice or care about, in plain words with no technical terms;
+    - **details**: the full list of changes, for the version history.
+  - Each entry also has an id, a date and a title.
+  - The entries live in one file that ships with the app, and the build carries the current release id.
+  - `VERSION` stays upstream's.
+- **What's new sheet:**
+  - When the update button reloads the app and the trainer is signed in, a "What's new" sheet shows the **highlights** of every entry newer than the last one that trainer saw. It's short and friendly, and it links to the version history for more.
+  - The last seen release is stored per account, server side, so each trainer sees the notes once, whichever device they update on.
+  - An offline device uses its own stored id until it can sync.
+- **New accounts** get no backlog: their last seen is set to the current release, and the tutorial covers them.
+- **Version history:** Settings › About lists every entry, newest first, in **full detail**, and it's readable offline.
+- **Open questions:** the owner answers them on the tracker (q19 onwards) before the detailed plan and the mockups.
+
+**Owner's answers for milestone E (2 November 2026)**
+
+These replace the bullets above wherever they differ.
+
+*Tutorial (P15)*
+- **Existing accounts** get a "Take the tour" card on Home, which they can start or dismiss. New accounts get the tour on their own.
+- **Style:** a short welcome, then hints that point at each real tab and button one at a time, with the rest dimmed, and Next and Skip.
+- **Length:** about seven short steps, under a minute in total.
+  - The tour also introduces **swapping**, the **daily quests** and the **weekly challenge**. The social steps appear only while the social switch is on.
+  - There are **no admin steps**.
+  - **Single-user mode** gets no tour.
+- **Home Screen:** a trainer using the app in a browser rather than as the Home Screen app is pushed hard to add it to the Home Screen.
+  - The push is needed for notifications and a proper app.
+  - After a couple of "are you sure?" confirmations, they can carry on in the browser. They're told they can add it later.
+- **Completion:**
+  - The tour is marked complete on the account only once it's **fully** finished.
+  - A tour left part-way, for example to add the app to the Home Screen, **starts over** from the beginning the next time, including in the Home Screen app, until it's finished.
+  - **Skip** counts as done: the tour never comes back on its own, and "Show the tour again" in Settings replays it.
+  - A tour finished in the browser counts, so the Home Screen app won't show it again.
+- **Notifications:** on the Home Screen app, the scan step asks for notification permission with a button. If they turn it down, Settings › Notifications offers it later.
+- **The end:** it explains only, and ends with "Scan your first card" and "Explore on my own".
+- **Offline step:**
+  - The collection, binders and card pages work from the saved copy.
+  - Changes wait and are sent when back online.
+  - **Scanning works offline too:** the photo is kept on the phone, and recognition starts once the connection is back.
+  - Fresh prices and other trainers need a connection.
+  - Sync & offline is in Profile.
+
+*What's new and version history (P16)*
+- **Release names** (q37):
+  - Each major release, meaning a milestone or a big feature drop, is named after the next **starter** Pokémon: Bulbasaur, Charmander and Squirtle, then each later generation's starters in Pokédex order (Chikorita, Cyndaquil, Totodile, Treecko and so on). If they ever run out, naming continues from Caterpie onwards.
+  - Smaller releases before the next major one take its evolutions (Bulbasaur, then Ivysaur, then Venusaur). After the final form they add the date, as in "Venusaur · 4 Nov". The version history shows the date under each name.
+  - The past releases are Bulbasaur (the Home Screen app and offline, 18–19 October), Charmander (the iPhone redesign, 20–23 October), Squirtle (badges, the daily loop and binder pockets, 29 October) and Chikorita (Wrapped and goals, 30 October). Milestone D is the next major release: Cyndaquil.
+- **Approval:** the owner approves both the What's new highlights and the full notes for every release before the deploy merge.
+- **Missed releases:** they appear in one sheet, newest first, with at most three highlights per release and "See everything" at the end.
+- **When it shows:** What's new appears on the first open after any update, including updates iOS does on its own, once per account.
+- **New accounts** see the tutorial only. Their What's new starts with their next update.
+- **No admin notes.**
+- **Full detail:** every change or fix a trainer could notice, plus a short "Under the hood" list. No PR numbers or code names.
+- **Nonprod** shows the next release's draft notes as "Coming next" at the top of the version history.
+- **Timing:** the Wave 4 mockups start while milestone D is being tested. The build follows the owner's approval.
+- **Backfill:**
+  - Write entries for the 23 deploys from `8f5acbf` (18 October) to `2a630ce` (30 October), from the merge history, the PRs and the tracker log.
+  - Group deploys that shipped together on one day.
+  - A trainer last on an old build sees what has changed since that build, back as far as the first deploy with the update button.
+- **Promotion procedure:** it gains a step: add the release entry before merging into `deploy`.
+
+**P14 Docs and cleanup (S).** Runs last, after milestone E.
 - README feature bullets and screenshots; `FRONTEND.md`, `BACKEND.md`, `PWA.md`.
 - Remove dead code that the rollout replaced.
 - An optional translation pass.
@@ -496,6 +585,7 @@ The tracker page holds each round's checks for the owner, on the nonprod Home Sc
 - **B:** drag and drop, badges, the daily loop over two or more days including one offline, small delights.
 - **C:** recap, Wrapped (with a date override for testing), goals.
 - **D:** social, with a second trainer account on nonprod.
+- **E:** the tutorial on a new account (finish it, skip it, replay it); What's new after updating from an older build; the version history.
 
 ## 10. Risks
 

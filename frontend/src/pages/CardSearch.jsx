@@ -70,10 +70,11 @@ const CARD_SEARCH_FILTER_DEFINITIONS = {
 }
 const CARD_SEARCH_TEXT_DEBOUNCE_MS = 300
 
-function BrowseTile({ to, title, icon: Icon, gradient, shadow, lines, testId }) {
+function BrowseTile({ to, title, icon: Icon, gradient, shadow, lines, testId, tour }) {
   return (
     <Link
       to={to}
+      data-tour={tour}
       data-testid={testId}
       className="relative flex min-h-[116px] flex-col justify-between overflow-hidden rounded-[22px] p-4 text-white ios-press"
       style={{ background: gradient, boxShadow: `0 8px 22px color-mix(in srgb, ${shadow} 55%, transparent)` }}
@@ -655,6 +656,7 @@ export default function CardSearch() {
 
       <div
         className="sticky z-20 -mx-4 bg-bg/90 px-4 py-2 backdrop-blur-(--blur-radius) [@media(prefers-reduced-transparency:reduce)]:backdrop-blur-none"
+        data-tour="search-field"
         style={{ top: 'calc(var(--safe-top, 0px) + var(--navbar-height, 44px))' }}
       >
         <SearchField
@@ -679,6 +681,7 @@ export default function CardSearch() {
             <BrowseTile
               to="/sets"
               testId="browse-sets"
+              tour="browse-sets"
               title={t('nav.sets')}
               icon={Layers}
               gradient="linear-gradient(150deg, var(--type-water-top), var(--type-water-bottom))"

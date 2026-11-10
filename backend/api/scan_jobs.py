@@ -6,11 +6,11 @@ import datetime
 import json
 from typing import List
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from api.auth import get_current_user
 from database import get_db
@@ -25,7 +25,10 @@ from services.idempotency import (
     has_idempotency_key,
     replay_response,
 )
+from services import picture_first
 from services.scan_candidate_images import fetch_and_cache_candidate_image
+from services.scanner_reachability import WAITING_REASON, endpoint_reachable
+from services.scan_providers import OPENAI, openai_base_url, openai_is_self_hosted
 from services.scan_queue import (
     drain_scan_queue,
     job_progress,
@@ -49,6 +52,8 @@ class ResolveScanItemRequest(BaseModel):
 
 class ResolveAndAddScanItemRequest(CollectionItemCreate):
     confirmed_card_id: str
+    # True when the trainer found the card with the search box instead of picking one of the scan's candidates.
+    manual_search: bool = False
 
 
 class ResolveAndAddScanItemResponse(BaseModel):
@@ -153,7 +158,6 @@ async def enqueue_scan_job(
 ):
     """Sanitize a batch, persist it, and return without waiting for its provider."""
     from services.scan_providers import (
-        SCANNER_CAPABILITY_DEGRADED,
         get_provider,
         require_scanner_capability_mode,
     )
@@ -178,7 +182,7 @@ async def enqueue_scan_job(
     from services.scan_providers import user_scan_error
 
     provider = get_provider(db, current_user.id)
-    capability_mode = require_scanner_capability_mode(
+    require_scanner_capability_mode(
         db, current_user.id, provider.name, provider.model()
     )
     if provider.requires_credential() and not provider.credential(db, current_user.id):
@@ -189,20 +193,10 @@ async def enqueue_scan_job(
     if idem is None:
         requested_individual = _requested_individual_positions(individual_positions, len(files))
 
-    # A composite asks the model to read several cards out of one image, which
-    # needs the same multi-image capability visual verification does. A model
-    # that already failed that probe (or was saved in acknowledged limited
-    # mode) cannot do this reliably either, so every photo goes through
-    # individually regardless of what the client requested — the client's own
-    # UI hides the toggle for the same reason, but the server does not trust
-    # that alone.
-    individual_set = set(requested_individual)
-    batch_modes = [
-        len(files) > 1
-        and position not in individual_set
-        and capability_mode != SCANNER_CAPABILITY_DEGRADED
-        for position in range(len(files))
-    ]
+    # Every photo is recognised on its own, whatever the client asked for: a composite (several cards in
+    # one model call) shrinks each card until its number is unreadable, and the picture matcher works per
+    # photo anyway. The composite code in services/scan_queue.py is kept but no job is created for it.
+    batch_modes = [False] * len(files)
     before_commit = None
     if idem is not None and idem.active:
         def before_commit(job):
@@ -215,10 +209,18 @@ async def enqueue_scan_job(
             files,
             batch_modes=batch_modes,
             before_commit=before_commit,
+            # Only a self-hosted model is sent the guide-frame crop; Gemini and
+            # OpenAI proper keep receiving the whole photo.
+            crop_for_recognition=(provider.name == OPENAI and openai_is_self_hosted()),
         )
     except ScanUploadError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    # Shadow mode (nonprod, diagnostics consent only): the picture matcher also looks at each stored photo,
+    # in its own low-priority thread. It never waits for or changes the real recognition below.
+    from services.card_match import shadow as matcher_shadow
+
+    matcher_shadow.schedule_job(db, current_user.id, job)
     background_tasks.add_task(drain_scan_queue, max_items=len(files))
     return job_progress(db, job)
 
@@ -238,10 +240,55 @@ def list_scan_jobs(
         )
         .distinct()
         .order_by(ScanJob.created_at.desc())
-        .limit(50)
         .all()
     )
     return {"jobs": [job_progress(db, job) for job in jobs]}
+
+
+QUEUE_STATUS_ORDER = {"done": 0, "failed": 0, "pending": 1, "processing": 1, "retrying": 1}
+
+
+@router.get("/recognize/queue")
+def list_scan_queue(
+    limit: int | None = Query(None, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Every scan still waiting on the trainer as ONE list, oldest first, whichever upload it came from.
+
+    Uploads are cut into several jobs (the phone sends a big batch in chunks), so the jobs are an
+    implementation detail: the review flow and the inbox read this flat list instead. No fixed cap;
+    ``limit``/``offset`` page it when a client wants to.
+    """
+    query = (
+        db.query(ScanJobItem)
+        .join(ScanJob, ScanJob.id == ScanJobItem.job_id)
+        .options(joinedload(ScanJobItem.job))
+        .filter(ScanJob.user_id == current_user.id, ScanJobItem.resolved.is_(False))
+        .order_by(ScanJob.created_at.asc(), ScanJob.id.asc(), ScanJobItem.position.asc(), ScanJobItem.id.asc())
+    )
+    rows = query.all()
+    counts = {"ready": 0, "failed": 0, "processing": 0, "waiting": 0}
+    for item in rows:
+        if item.status == "done":
+            counts["ready"] += 1
+        elif item.status == "failed":
+            counts["failed"] += 1
+        elif item.status == "retrying" and item.retry_reason == WAITING_REASON:
+            counts["waiting"] += 1
+        else:
+            counts["processing"] += 1
+    page = rows[offset:] if limit is None else rows[offset:offset + limit]
+    return {
+        "total": len(rows),
+        "offset": offset,
+        "counts": counts,
+        "items": [
+            {**_item_payload(item), "job_id": item.job_id, "expires_at": item.job.expires_at.isoformat() if item.job and item.job.expires_at else None}
+            for item in page
+        ],
+    }
 
 
 @router.get("/recognize/jobs/{job_id}")
@@ -380,17 +427,24 @@ def resolve_and_add_scan_job_item(
         ensure_card_exists,
     )
     from services import pokemon_api
-    from services.scan_trace import record_ground_truth
+    from services.scan_trace import record_ground_truth, record_manual_trace
 
-    collection_data = CollectionItemCreate(**data.model_dump(exclude={"confirmed_card_id"}))
+    collection_data = CollectionItemCreate(**data.model_dump(exclude={"confirmed_card_id", "manual_search"}))
+    manual_search = bool(data.manual_search)
     confirmed_card_id = str(data.confirmed_card_id or "").strip()
     submitted_tcg_card_id, _ = pokemon_api.strip_lang_suffix(collection_data.card_id)
 
     def validate_review(row: ScanJobItem) -> None:
         if row.resolved:
             raise HTTPException(status_code=409, detail="This scan has already been handled.")
-        if row.status != "done":
+        waiting = row.status == "retrying" and row.retry_reason == WAITING_REASON
+        if row.status != "done" and not (manual_search and (row.status == "failed" or waiting)):
             raise HTTPException(status_code=409, detail="This scan is not ready to add.")
+        if manual_search:
+            # A card found by search can be any catalogue card; the submitted card still has to be the confirmed one.
+            if not confirmed_card_id or submitted_tcg_card_id != confirmed_card_id:
+                raise HTTPException(status_code=422, detail="Collection card does not match the confirmed card.")
+            return
         allowed_ids = {
             str(match.get("tcg_card_id") or "")
             for match in (row.matches or [])
@@ -424,11 +478,27 @@ def resolve_and_add_scan_job_item(
         ensure_catalogue_card=False,
     )
     relative_path = item.image_path
+    had_matches = bool(item.matches)
+    photo_bytes = None
+    if manual_search and relative_path:
+        try:
+            photo_bytes = resolve_scan_path(relative_path).read_bytes()
+        except (OSError, ScanUploadError):
+            photo_bytes = None
     item.resolved = True
     item.image_path = None
     item.updated_at = datetime.datetime.utcnow()
-    record_ground_truth(current_user.id, job_id, item_id, confirmed_card_id)
+    picture_first.record_confirmation(item, confirmed_card_id)
     db.commit()
+    labelled = record_ground_truth(
+        current_user.id, job_id, item_id, confirmed_card_id,
+        manual=manual_search, had_matches=had_matches, lang=collection_data.lang,
+    )
+    if manual_search and not labelled and not had_matches:
+        record_manual_trace(
+            db, current_user.id, job_id, item_id, confirmed_card_id,
+            image_bytes=photo_bytes, lang=collection_data.lang,
+        )
     db.refresh(item)
     db.refresh(collection_item)
     delete_scan_image(relative_path)
@@ -447,11 +517,31 @@ async def retry_scan_job_item(
     current_user: User = Depends(get_current_user),
 ):
     item = _get_own_item(db, job_id, item_id, current_user)
+    if item.status == "retrying" and item.retry_reason == WAITING_REASON:
+        # "Try now": look again right away rather than waiting for the minute tick.
+        if not await endpoint_reachable(openai_base_url(), force=True):
+            return _item_payload(item)
     try:
         retry_scan_item(db, item)
     except (ValueError, ScanUploadError) as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     background_tasks.add_task(drain_scan_queue, max_items=1)
+    return _item_payload(item)
+
+
+@router.post("/recognize/jobs/{job_id}/items/{item_id}/wait")
+def wait_for_scanner(
+    job_id: int,
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """"Wait for the scanner": a scan the picture sent to the inbox unsure goes back to the waiting state."""
+    item = _get_own_item(db, job_id, item_id, current_user, for_update=True)
+    if not picture_first.can_wait(item):
+        raise HTTPException(status_code=409, detail="This scan cannot wait for the scanner.")
+    picture_first.put_back_to_wait(db, item)
+    db.refresh(item)
     return _item_payload(item)
 
 

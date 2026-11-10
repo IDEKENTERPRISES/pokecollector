@@ -25,7 +25,7 @@ function Sparkline({ values, colour }) {
  *
  * icon: a lucide component or element shown beside the label.
  */
-export default function StatTile({ type, icon, label, value, detail, to, sparkline, className = '', children }) {
+export default function StatTile({ type, icon, label, value, detail, to, sparkline, className = '', children, tour }) {
   const key = typeKeyFor(type) ?? 'colorless'
   const { text } = TYPE_COLOURS[key]
   const iconNode = icon ? (isValidElement(icon) ? icon : createElement(icon, { size: 15, strokeWidth: 2.25, 'aria-hidden': true })) : null
@@ -63,6 +63,6 @@ export default function StatTile({ type, icon, label, value, detail, to, sparkli
     </>
   )
 
-  if (to) return <Link to={to} className={classes} style={style}>{body}</Link>
-  return <div className={classes} style={style}>{body}</div>
+  if (to) return <Link to={to} className={classes} style={style} data-tour={tour}>{body}</Link>
+  return <div className={classes} style={style} data-tour={tour}>{body}</div>
 }

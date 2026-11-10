@@ -14,9 +14,10 @@ class ScanQueueSchedulerTests(unittest.TestCase):
     def test_maintenance_runs_quota_cleanup_and_queue_drain(self):
         db = MagicMock()
         drain = AsyncMock(return_value=0)
+        release = AsyncMock(return_value=0)
 
         with patch("database.SessionLocal", return_value=db), \
-                patch("services.scan_queue.recover_expired_leases", return_value=0), \
+                patch("services.scan_queue.recover_expired_leases", return_value=0),                 patch("services.scan_queue.hold_expiry_for_waiting_scans", return_value=0) as hold,                 patch("services.scan_queue.release_waiting_scans_if_reachable", new=release), \
                 patch("services.scan_queue.purge_expired_scan_jobs", return_value=0), \
                 patch("services.scan_storage.purge_orphaned_scan_directories", return_value=0), \
                 patch("services.gemini_rate_limit.purge_stale_quota_states", return_value=0) as purge_quotas, \
@@ -25,7 +26,10 @@ class ScanQueueSchedulerTests(unittest.TestCase):
 
         purge_quotas.assert_called_once_with()
         drain.assert_awaited_once_with(max_items=50)
-        db.close.assert_called_once_with()
+        hold.assert_called_once_with(db)
+        release.assert_awaited_once_with(db)
+        # One session for upkeep, one for the scanner reachability check.
+        self.assertEqual(db.close.call_count, 2)
 
 
 if __name__ == "__main__":

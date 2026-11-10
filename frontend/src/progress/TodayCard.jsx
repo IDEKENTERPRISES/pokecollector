@@ -13,6 +13,8 @@ import { HOME_FACTS } from '../components/splash/config'
 import { factLabelKey, fill, typeColour } from '../components/splash/format'
 import { ensureDay } from '../components/splash/prefetch'
 import WhosThatPokemon from './WhosThatPokemon'
+import { ChallengeTodayRow } from '../social/challenge/ChallengeParts'
+import { useSocialEnabled } from '../social/social'
 import { priciestLabel } from './daily'
 import { xpProgress } from './xp'
 
@@ -192,6 +194,7 @@ export default function DailyTodayCard() {
   const lang = splashLanguage(language)
   const date = localDate()
   const userId = user?.id
+  const socialOn = useSocialEnabled()
 
   const { data: entry } = useQuery({
     queryKey: ['pokemon-of-the-day', date, lang],
@@ -226,7 +229,7 @@ export default function DailyTodayCard() {
   const xp = summary?.xp
   const tint = entry ? typeColour(entry.types) : 'var(--type-colorless)'
   return (
-    <section id="today-card" aria-labelledby="today-card-title" className="scroll-mt-20 space-y-2" data-testid="today-card">
+    <section id="today-card" aria-labelledby="today-card-title" className="scroll-mt-20 space-y-2" data-testid="today-card" data-tour="today">
       <div className="flex items-center justify-between gap-2 px-1">
         <h2 id="today-card-title" className="text-title-3 font-display text-text-primary">{t('today.title')}</h2>
         {summary && <Streak streak={summary.streak} t={t} />}
@@ -279,6 +282,7 @@ export default function DailyTodayCard() {
           </div>
         )}
         {summary?.quests?.length > 0 && <Quests quests={summary.quests} t={t} />}
+        {socialOn && <ChallengeTodayRow />}
         {typeof userId === 'number' && (
           <WhosThatPokemon
             date={date}

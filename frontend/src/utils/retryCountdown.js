@@ -25,6 +25,8 @@ export function retryCountdownParts(nextAttemptAt, nowMs = Date.now()) {
 }
 
 export function formatRetryCountdown(nextAttemptAt, t, nowMs = Date.now(), retryReason = null) {
+  // The scanner is switched off: there is no countdown, the scan simply waits.
+  if (retryReason === 'scanner_unreachable') return t('scanner.waitingForScanner')
   const parts = retryCountdownParts(nextAttemptAt, nowMs)
   if (!parts) return retryReason === 'daily_quota'
     ? t('scanner.dailyQuotaWaiting')

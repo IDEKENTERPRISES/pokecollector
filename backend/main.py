@@ -102,6 +102,12 @@ async def lifespan(app: FastAPI):
     from services.scheduler import start_scheduler
     start_scheduler()
 
+    # Nonprod only (SCAN_MATCHER_AUTORUN=1): build the picture index and run the benchmark once.
+    from services.card_match.jobs import autorun_once
+    from services.card_picture_packs import card_picture_warmer
+    if autorun_once(card_picture_warmer):
+        logger.info("Card matcher: the index build and benchmark will start shortly")
+
     yield
 
     # Shutdown
@@ -182,7 +188,7 @@ async def debug_request_logging(request: Request, call_next):
     return response
 
 # Include routers
-from api import auth, cards, collection, sets, wishlist, binders, decks, dashboard, analytics, sync, products, trades, export, backup, settings, images, social, pokedex, public, profile, scan_jobs, community, push, offline_carddb, progress, goals
+from api import auth, cards, collection, sets, wishlist, binders, decks, dashboard, analytics, sync, products, trades, export, backup, settings, images, social, pokedex, public, profile, scan_jobs, community, push, offline_carddb, progress, goals, feed, swaps, challenge, card_match
 from api.github import router as github_router
 from api.invites import router as invites_router
 from api.recognize import router as recognize_router
@@ -219,6 +225,10 @@ app.include_router(push.router, prefix="/api/push", tags=["push"])
 app.include_router(offline_carddb.router, prefix="/api/offline/carddb", tags=["offline-carddb"])
 app.include_router(progress.router, prefix="/api/progress", tags=["progress"])
 app.include_router(goals.router, prefix="/api/goals", tags=["goals"])
+app.include_router(feed.router, prefix="/api/feed", tags=["feed"])
+app.include_router(swaps.router, prefix="/api/swaps", tags=["swaps"])
+app.include_router(challenge.router, prefix="/api/challenge", tags=["challenge"])
+app.include_router(card_match.router, prefix="/api/card-match", tags=["card-match"])
 
 
 @app.get("/api/health")

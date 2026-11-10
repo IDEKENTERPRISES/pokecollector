@@ -159,6 +159,11 @@ class User(Base):
     role = Column(String, default="trainer")  # "admin" or "trainer"
     is_active = Column(Boolean, default=True)
     avatar_id = Column(Integer, nullable=True)  # Pokemon number (1-151) for avatar sprite
+    tutorial_completed_at = Column(DateTime, nullable=True)  # engagement P15: when the tour was finished, skipped or dismissed
+    tutorial_outcome = Column(String(12), nullable=True)  # 'finished', 'skipped' or 'dismissed'
+    # Last release id the trainer has seen in What's new (docs/WELCOME_DESIGN.md §5.5), or a
+    # "since:YYYY-MM-DD" marker the migration wrote for accounts that existed before it.
+    whats_new_seen = Column(String(24), nullable=True)
     public_handle = Column(String, nullable=True)
     is_profile_public = Column(Boolean, default=False, nullable=False)
     public_show_values = Column(Boolean, default=False, nullable=False)
@@ -637,6 +642,8 @@ class Trade(Base):
     outgoing_value = Column(Float, default=0, nullable=False)
     incoming_value = Column(Float, default=0, nullable=False)
     value_delta = Column(Float, default=0, nullable=False)
+    # The swap offer this trade was logged from (P11); each side's trade links to it, and through it to the other's.
+    swap_offer_id = Column(Integer, ForeignKey("swap_offers.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, default=func.now())
 
     items = relationship(
@@ -972,6 +979,32 @@ class UserEvent(Base):
     __table_args__ = (UniqueConstraint("user_id", "dedupe_key", name="uq_user_event_dedupe"),)
 
 
+class EventReaction(Base):
+    """A one-tap reaction from one trainer to another trainer's feed event (docs/ENGAGEMENT_DESIGN.md P12)."""
+
+    __tablename__ = "event_reactions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(Integer, ForeignKey("user_events.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String(24), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+
+    __table_args__ = (UniqueConstraint("event_id", "user_id", "kind", name="uq_event_reaction"),)
+
+
+class EventComment(Base):
+    """A short plain-text comment under a feed event (docs/SOCIAL_DESIGN.md D6). It follows the event's visibility."""
+
+    __tablename__ = "event_comments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(Integer, ForeignKey("user_events.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    text = Column(String(280), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+
+
 class UserGoal(Base):
     """A chase goal: a rule over the catalogue (a set, a generation, a family, an artist, a card list)."""
 
@@ -1054,3 +1087,99 @@ class NotificationQueue(Base):
     details = Column(JSON, nullable=True)
 
     __table_args__ = (Index("ix_notification_queue_subject", "user_id", "category", "subject_key"),)
+
+
+class SwapOffer(Base):
+    """A card swap between two trainers (P11): proposed, countered, accepted, then both tap "Swapped"."""
+
+    __tablename__ = "swap_offers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    from_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    to_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    # proposed, countered, accepted, completed, declined, cancelled, expired
+    state = Column(String(16), nullable=False, default="proposed")
+    # Whose move it is while proposed or countered; NULL once accepted or finished.
+    turn_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    revision = Column(Integer, nullable=False, default=1)
+    cash_amount = Column(Float, nullable=False, default=0)
+    cash_payer_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    note = Column(String(140), nullable=True)
+    # What the last counter changed against the previous revision (see services.swaps.diff_revisions).
+    changes = Column(JSON, nullable=True)
+    # Who cancelled it (either trainer once accepted); NULL on rows cancelled before this column existed.
+    cancelled_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    expires_at = Column(DateTime, nullable=False)
+    from_confirmed_at = Column(DateTime, nullable=True)
+    to_confirmed_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    updated_at = Column(DateTime, nullable=False, default=func.now())
+
+    items = relationship(
+        "SwapOfferItem",
+        back_populates="offer",
+        cascade="all, delete-orphan",
+        order_by="SwapOfferItem.id.asc()",
+    )
+
+    __table_args__ = (
+        CheckConstraint("cash_amount >= 0", name="ck_swap_offers_cash_non_negative"),
+        Index("ix_swap_offers_state_expires", "state", "expires_at"),
+    )
+
+
+class SwapOfferItem(Base):
+    """One copy (or part of a stack) on the table; replaced wholesale by a counter."""
+
+    __tablename__ = "swap_offer_items"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    offer_id = Column(Integer, ForeignKey("swap_offers.id", ondelete="CASCADE"), nullable=False, index=True)
+    giver_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    # Not a foreign key: the copy is gone after the swap.
+    collection_item_id = Column(Integer, nullable=True)
+    card_id = Column(String, nullable=True)
+    variant = Column(String, nullable=True)
+    condition = Column(String, nullable=True)
+    lang = Column(String, nullable=True)
+    quantity = Column(Integer, nullable=False, default=1)
+    card_name = Column(String, nullable=True)
+    set_id = Column(String, nullable=True)
+    card_number = Column(String, nullable=True)
+    value_per_card = Column(Float, nullable=False, default=0)
+
+    offer = relationship("SwapOffer", back_populates="items")
+
+    __table_args__ = (CheckConstraint("quantity >= 1", name="ck_swap_offer_items_quantity"),)
+
+
+class ChallengeWeek(Base):
+    """One weekly challenge (docs/SOCIAL_DESIGN.md §7). `week` is the ISO week of the UK-time Monday, "2026-W44"."""
+
+    __tablename__ = "challenge_weeks"
+
+    week = Column(String(10), primary_key=True)
+    challenge_id = Column(String(40), nullable=False)
+    closed_at = Column(DateTime, nullable=True)
+    # Frozen when the week closes, so the result card still reads right after trainers come and go.
+    trainer_count = Column(Integer, nullable=False, default=0)
+    finished_count = Column(Integer, nullable=False, default=0)
+
+
+class ChallengeProgress(Base):
+    """A trainer's count in one challenge week. It keeps counting past the target."""
+
+    __tablename__ = "challenge_progress"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    week = Column(String(10), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    progress = Column(Integer, nullable=False, default=0)
+    # When the current count was reached: the podium tie-break (earlier wins).
+    reached_at = Column(DateTime, nullable=True)
+    # When the target was first reached; set once, never cleared.
+    finished_at = Column(DateTime, nullable=True)
+    place = Column(Integer, nullable=True)
+
+    __table_args__ = (UniqueConstraint("week", "user_id", name="uq_challenge_progress_week_user"),)

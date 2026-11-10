@@ -17,6 +17,7 @@ export default function BackButton({ label }) {
       type="button"
       onClick={() => runViewTransition(goBack, { direction: 'back' })}
       data-testid="nav-back"
+      data-tour="back"
       aria-label={label ? t('nav.backTo').replace('{name}', label) : t('common.back')}
       className="glass ios-press inline-flex h-11 flex-shrink-0 items-center gap-0.5 rounded-full pl-2.5 pr-3.5 text-body text-text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tint"
     >

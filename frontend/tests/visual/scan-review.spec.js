@@ -113,6 +113,10 @@ async function installScanReviewApi(page, { failAtomic = false } = {}) {
       return route.fulfill({ json: { languages: [{ code: 'en', name: 'English' }] } })
     }
     if (path === '/api/cards/recognize/jobs') return route.fulfill({ json: { jobs: [job()] } })
+    if (path === '/api/cards/recognize/queue') {
+      const open = items.filter(candidate => !candidate.resolved).map(candidate => ({ ...candidate, job_id: 7 }))
+      return route.fulfill({ json: { total: open.length, offset: 0, counts: { ready: open.filter(c => c.status === 'done').length, failed: open.filter(c => c.status === 'failed').length, processing: 0, waiting: 0 }, items: open } })
+    }
     if (path === '/api/cards/recognize/jobs/7') return route.fulfill({ json: job() })
     if (/\/api\/cards\/recognize\/jobs\/7\/items\/\d+\/(image|candidates\/\d+\/image)$/.test(path)) {
       return route.fulfill({ body: pixel, contentType: 'image/png' })
@@ -180,23 +184,20 @@ test('linked review is accessible, advances through a batch, and keeps resolved 
   const firstCandidate = page.getByRole('button', { name: 'Compare with your photo' }).first()
   await expect(firstCandidate.locator('..').getByText('🇯🇵 JA', { exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Expand photo' }).first().click()
-  let dialog = page.getByRole('dialog', { name: 'Compare with your photo' })
-  const photoOnlyImage = dialog.getByAltText('Your photo')
-  const photoOnlyFrame = await photoOnlyImage.evaluate(node => {
-    const frame = node.parentElement.getBoundingClientRect()
-    return { width: frame.width, height: frame.height }
-  })
-  await photoOnlyImage.click()
-  await expect.poll(() => photoOnlyImage.evaluate(node => node.style.transform)).toContain('scale(2)')
-  await photoOnlyImage.click()
-  await expect(dialog).toBeVisible()
-  await expect.poll(() => photoOnlyImage.evaluate(node => node.style.transform)).toBe('')
-  await dialog.getByRole('button', { name: 'Close' }).click()
-  await expect(dialog).toHaveCount(0)
+  // Your own photo opens the full-screen viewer: opaque, double-tap zooms, the close button closes.
+  const photoViewer = page.getByRole('dialog', { name: 'Zoomed picture' })
+  await expect(photoViewer).toBeVisible()
+  const zoomedPhoto = photoViewer.getByTestId('scan-zoom-image')
+  const photoBox = await zoomedPhoto.boundingBox()
+  expect((await photoViewer.boundingBox()).width).toBeGreaterThanOrEqual(page.viewportSize().width - 1) // full screen
+  await page.mouse.dblclick(photoBox.x + photoBox.width / 2, photoBox.y + photoBox.height / 3)
+  await expect(zoomedPhoto).not.toHaveAttribute('data-scale', '1.00')
+  await photoViewer.getByRole('button', { name: 'Close' }).click()
+  await expect(photoViewer).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Compare with your photo' }).first().click()
 
-  dialog = page.getByRole('dialog', { name: 'Compare with your photo' })
+  let dialog = page.getByRole('dialog', { name: 'Compare with your photo' })
   await expect(dialog).toBeVisible()
   await expect(dialog.getByText('Bill', { exact: true })).toBeVisible()
   await expect.poll(() => dialog.evaluate(node => getComputedStyle(node).cursor)).toBe('default')
@@ -222,7 +223,6 @@ test('linked review is accessible, advances through a batch, and keeps resolved 
   expect(Math.abs(frameSizes[0].width - frameSizes[1].width)).toBeLessThan(1)
   expect(Math.abs(frameSizes[0].height - frameSizes[1].height)).toBeLessThan(1)
   expect(frameSizes[0].height / frameSizes[0].width).toBeCloseTo(7 / 5, 2)
-  expect(photoOnlyFrame.width).toBeGreaterThan(frameSizes[0].width)
   await expect.poll(() => dialog.locator('figcaption').first().evaluate(
     node => getComputedStyle(node).fontSize,
   )).toBe('14px')
@@ -312,15 +312,14 @@ test('a failed atomic add keeps the current review open and does not advance', a
   expect(api.items.find(item => item.id === 11).resolved).toBe(false)
 })
 
-test('the inbox lists a batch as a row and words the review count for one and for many', async ({ page }) => {
+test('the inbox is one flat list of the scans still waiting, and counts them', async ({ page }) => {
   const api = await installScanReviewApi(page)
   await page.goto('/scans')
-  const row = page.getByRole('button', { name: /4\/4 processed/ })
-  await expect(row).toBeVisible()
-  await expect(row).toContainText('2 need review')
+  await expect(page.getByTestId('scan-queue-total')).toHaveText('2 photos')
+  await expect(page.getByTestId('scan-queue-row-status')).toHaveCount(2)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 
   api.items.find(item => item.id === 12).resolved = true
   await page.goto('/scans')
-  await expect(page.getByRole('button', { name: /4\/4 processed/ })).toContainText('1 needs review')
+  await expect(page.getByTestId('scan-queue-total')).toHaveText('1 photos')
 })

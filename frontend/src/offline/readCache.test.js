@@ -136,7 +136,7 @@ describe('read cache', () => {
 
   describe('deny list', () => {
     it('keeps invite links, the audit log, admin lists, sessions, scanner configuration and push out', () => {
-      for (const key of ['invites', 'audit-log', 'users', 'user-sessions', 'sessions', 'scanner-configuration', 'push', 'push-subscription', 'telegram-status', 'setting']) {
+      for (const key of ['invites', 'audit-log', 'users', 'user-sessions', 'sessions', 'scanner-configuration', 'push', 'push-subscription', 'telegram-status', 'setting', 'feed']) {
         expect(isSavableKey([key]), key).toBe(false)
         expect(READ_CACHE_DENY.has(key)).toBe(true)
       }

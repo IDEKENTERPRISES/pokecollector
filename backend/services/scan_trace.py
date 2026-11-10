@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import shutil
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 SCAN_DIAGNOSTICS_SETTING_KEY = "scan_diagnostics_enabled"
 SCAN_TRACE_STORAGE_ENV = "SCAN_TRACE_STORAGE_DIR"
+SCAN_TRACE_DEFAULT_ON_ENV = "SCAN_TRACE_DEFAULT_ON"
 
 _SENSITIVE_ERROR_PATTERNS = (
     (re.compile(r"AIza[0-9A-Za-z_-]{20,}"), "[REDACTED_API_KEY]"),
@@ -62,6 +64,13 @@ CANDIDATE_FIELDS = (
 )
 
 
+SHADOW_DIR = "shadow"
+SHADOW_SUFFIX = ".shadow"
+# Guards every read-modify-write of a trace file and of a shadow record, so a shadow result that lands
+# while the real path is saving its trace is merged into it exactly once, whichever finishes first.
+_TRACE_LOCK = threading.Lock()
+
+
 def trace_root() -> Path | None:
     raw = (os.environ.get("SCAN_TRACE_DIR") or "").strip()
     return Path(raw) if raw else None
@@ -97,6 +106,11 @@ def trace_deletion_available() -> bool:
     return _root_is_writable(trace_storage_root())
 
 
+def diagnostics_default_on() -> bool:
+    """A test server can collect diagnostics from everyone unless they switch it off (SCAN_TRACE_DEFAULT_ON)."""
+    return (os.environ.get(SCAN_TRACE_DEFAULT_ON_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def user_trace_enabled(db, user_id: int) -> bool:
     if not trace_available():
         return False
@@ -108,7 +122,9 @@ def user_trace_enabled(db, user_id: int) -> bool:
         )
         .first()
     )
-    return bool(row and str(row.value).lower() == "true")
+    if row is None:
+        return diagnostics_default_on()
+    return str(row.value).lower() == "true"
 
 
 def _safe(value: Any) -> str:
@@ -362,11 +378,25 @@ class ScanTrace:
                 "selected": selected,
             }
 
+    def record_picture_match(self, info: dict) -> None:
+        """Which path the picture matcher took for this scan (docs/CARD_MATCH.md, "Picture match first")."""
+        if self.enabled:
+            self.data["picture_match"] = dict(info)
+
     def record_error(self, message: str) -> None:
         if self.enabled:
             self.data["error"] = self._sanitize(message)
 
     def save(self) -> Path | None:
+        with _TRACE_LOCK:
+            if self.enabled and self.data.get("job_id") and self.data.get("item_id"):
+                shadow = _read_shadow_file(self.user_id, self.data["job_id"], self.data["item_id"], self._root)
+                if shadow:
+                    self.data["shadow"] = shadow
+                    apply_shadow_agreement(self.data)
+            return self._save_unlocked()
+
+    def _save_unlocked(self) -> Path | None:
         user_dir = _user_dir(self.user_id, self._root)
         if (
             not self.enabled
@@ -449,11 +479,253 @@ def create_scan_trace(
     )
 
 
+# ── Matcher shadow mode (docs/CARD_MATCH.md) ─────────────────────────────────
+
+def apply_shadow_agreement(data: dict) -> None:
+    """Fill in how the matcher's shadow result compares with what the current path decided.
+
+    ``agreement`` is one of ``same``, ``different`` (both decided), ``matcher_only``, ``current_only``,
+    ``neither``; ``agrees`` is True/False only when both decided. Runs when the trace is saved and again
+    if the shadow result arrives afterwards.
+    """
+    shadow = data.get("shadow")
+    if not isinstance(shadow, dict) or shadow.get("status") != "ok":
+        return
+    matcher = (shadow.get("decision") or {}).get("tcg_card_id")
+    current = ollama_selected(data)
+    if matcher and current:
+        agreement = "same" if matcher == current else "different"
+    elif matcher:
+        agreement = "matcher_only"
+    elif current:
+        agreement = "current_only"
+    else:
+        agreement = "neither"
+    ranks = [match.get("tcg_card_id") for match in shadow.get("matches") or []]
+    shadow["agreement"] = agreement
+    shadow["agrees"] = (matcher == current) if matcher and current else None
+    shadow["current_selected"] = current
+    shadow["current_rank_in_matcher"] = ranks.index(current) + 1 if current in ranks else None
+    if data.get("ground_truth"):
+        label_shadow(data)
+
+
+def ollama_ran(data: dict) -> bool:
+    """Whether Ollama (today's scanner path) really looked at this scan. With "Picture match first" a scan the picture
+    matcher decided, or sent straight to the inbox, never reached Ollama; only ``unsure_ollama`` did."""
+    picture = data.get("picture_match")
+    return not isinstance(picture, dict) or not picture.get("path") or picture.get("path") == "unsure_ollama"
+
+
+def ollama_selected(data: dict) -> str | None:
+    """What Ollama picked, or None when it did not decide or never ran. ``decision.selected`` also holds a picture-first
+    decision (mechanism ``picture_match``), which is the matcher's pick, not Ollama's."""
+    decision = data.get("decision") or {}
+    if decision.get("mechanism") == "picture_match" or not ollama_ran(data):
+        return None
+    return decision.get("selected")
+
+
+def label_shadow(data: dict) -> None:
+    """Score the shadow result against the trainer's confirmed card (``data['ground_truth']``)."""
+    shadow = data.get("shadow")
+    truth = data.get("ground_truth")
+    if not isinstance(shadow, dict) or shadow.get("status") != "ok" or not truth:
+        return
+    matcher = (shadow.get("decision") or {}).get("tcg_card_id")
+    ranks = [match.get("tcg_card_id") for match in shadow.get("matches") or []]
+    shadow["ground_truth_rank"] = ranks.index(truth) + 1 if truth in ranks else None
+    # Like the current path's ``correct``: an abstention is not counted as a wrong decision.
+    shadow["correct"] = (matcher == truth) if matcher else None
+    # The index holds English printings only; the language of the confirmed card tells the lab whether
+    # this scan is a fair test of the matcher.
+    shadow["truth_lang"] = next(
+        (candidate.get("lang") for candidate in data.get("candidates") or [] if candidate.get("tcg_card_id") == truth),
+        None,
+    ) or (data.get("confirmation") or {}).get("lang")
+
+
+def _shadow_file(user_id: int, job_id, item_id, root: Path | None = None) -> Path | None:
+    user_dir = _user_dir(user_id, root)
+    if user_dir is None:
+        return None
+    return user_dir / SHADOW_DIR / f"job{_safe(job_id)}-item{_safe(item_id)}{SHADOW_SUFFIX}"
+
+
+def _read_shadow_file(user_id: int, job_id, item_id, root: Path | None = None) -> dict | None:
+    path = _shadow_file(user_id, job_id, item_id, root)
+    if path is None:
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+CARD_SUFFIX = ".card.jpg"
+
+
+def _shadow_card_file(user_id: int, job_id, item_id, root: Path | None = None) -> Path | None:
+    user_dir = _user_dir(user_id, root)
+    if user_dir is None:
+        return None
+    return user_dir / SHADOW_DIR / f"job{_safe(job_id)}-item{_safe(item_id)}{CARD_SUFFIX}"
+
+
+def record_shadow_card(user_id: int, job_id: int, item_id: int, jpeg: bytes) -> bool:
+    """Keep the flat card the picture matcher read its text from (up to about 1000 px wide) beside the shadow
+    record, so the labelled benchmark and the Misses view can show and re-read exactly what the live run saw.
+    The caller has checked the trainer's consent. Returns whether it was stored."""
+    root = trace_root()
+    if root is None or not jpeg or _is_revoked(user_id, root):
+        return False
+    path = _shadow_card_file(user_id, job_id, item_id, root)
+    if path is None:
+        return False
+    with _TRACE_LOCK:
+        temp: Path | None = None
+        try:
+            _ensure_private_dir(root)
+            _ensure_private_dir(path.parent.parent)
+            _ensure_private_dir(path.parent)
+            temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+            _write_private(temp, jpeg)
+            if _is_revoked(user_id, root):
+                temp.unlink(missing_ok=True)
+                return False
+            temp.replace(path)
+            return True
+        except Exception:
+            if temp:
+                temp.unlink(missing_ok=True)
+            logger.exception("Failed to write the matcher's flat card")
+            return False
+
+
+def stored_card_path(trace_path: Path, data: dict) -> Path | None:
+    """The flat card stored for a trace (``user-N/<day>/<trace>.json``), or None for older traces."""
+    job_id, item_id = data.get("job_id"), data.get("item_id")
+    if not job_id or not item_id:
+        return None
+    path = trace_path.parent.parent / SHADOW_DIR / f"job{_safe(job_id)}-item{_safe(item_id)}{CARD_SUFFIX}"
+    return path if path.is_file() else None
+
+
+def has_shadow(user_id: int, job_id: int, item_id: int) -> bool:
+    for root in _cleanup_roots():
+        path = _shadow_file(user_id, job_id, item_id, root)
+        if path is not None and path.is_file():
+            return True
+    return False
+
+
+def record_shadow(user_id: int, job_id: int, item_id: int, shadow: dict) -> bool:
+    """Store the matcher's shadow result for one scan photo (the caller has checked the trainer's consent).
+
+    Written beside the traces as ``user-N/shadow/jobJ-itemI.shadow`` and merged into the scan's trace when
+    that is saved; traces already saved for the item are updated now. Returns whether anything was stored.
+    """
+    root = trace_root()
+    if root is None or _is_revoked(user_id, root):
+        return False
+    path = _shadow_file(user_id, job_id, item_id, root)
+    if path is None:
+        return False
+    with _TRACE_LOCK:
+        temp: Path | None = None
+        try:
+            _ensure_private_dir(root)
+            _ensure_private_dir(path.parent.parent)
+            _ensure_private_dir(path.parent)
+            temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+            _write_private(temp, json.dumps(_redact_value(shadow, ()), indent=2, ensure_ascii=False, default=str))
+            if _is_revoked(user_id, root):
+                temp.unlink(missing_ok=True)
+                return False
+            temp.replace(path)
+        except Exception:
+            if temp:
+                temp.unlink(missing_ok=True)
+            logger.exception("Failed to write shadow diagnostics")
+            return False
+        stored = _read_shadow_file(user_id, job_id, item_id, root) or shadow
+        user_dir = _user_dir(user_id, root)
+        for trace_path in sorted(user_dir.glob(f"*/job{_safe(job_id)}-item{_safe(item_id)}-*.json")):
+            patch_temp: Path | None = None
+            try:
+                data = json.loads(trace_path.read_text(encoding="utf-8"))
+                data["shadow"] = json.loads(json.dumps(stored))
+                apply_shadow_agreement(data)
+                patch_temp = trace_path.with_name(f".{trace_path.name}.{uuid.uuid4().hex}.tmp")
+                _write_private(patch_temp, json.dumps(data, indent=2, ensure_ascii=False, default=str))
+                patch_temp.replace(trace_path)
+            except Exception:
+                if patch_temp:
+                    patch_temp.unlink(missing_ok=True)
+                logger.exception("Failed to add shadow diagnostics to %s", trace_path)
+    return True
+
+
+# How the trainer's confirmed card was chosen (shown as counts in the Scanner lab).
+CONFIRMATION_SOURCES = (
+    "scanner_decision",  # the scanner's own pick, accepted
+    "matcher_candidate",  # picked from the picture matcher's candidates
+    "ollama_candidate",  # picked from Ollama's candidates
+    "manual_search",  # found by search because no scanner offered it
+    "manual_no_result",  # found by search on a scan that had no result at all
+)
+
+
+def classify_confirmation(data: dict, card_id: str, *, manual: bool = False, had_matches: bool = True) -> str:
+    """Which of ``CONFIRMATION_SOURCES`` the confirmed ``card_id`` is, for one trace."""
+    if manual:
+        return "manual_search" if had_matches else "manual_no_result"
+    decision = data.get("decision") or {}
+    if decision.get("selected") and decision.get("selected") == card_id:
+        return "scanner_decision"
+    candidates = [candidate.get("tcg_card_id") for candidate in data.get("candidates") or []]
+    matcher_ids = [match.get("tcg_card_id") for match in (data.get("shadow") or {}).get("matches") or []]
+    mechanism = str(decision.get("mechanism") or "").lower()
+    if card_id in candidates:
+        return "matcher_candidate" if ("matcher" in mechanism or "picture" in mechanism) else "ollama_candidate"
+    if card_id in matcher_ids:
+        return "matcher_candidate"
+    return "ollama_candidate"
+
+
+def record_manual_trace(
+    db,
+    user_id: int,
+    job_id: int,
+    item_id: int,
+    card_id: str,
+    *,
+    image_bytes: bytes | None,
+    lang: str | None = None,
+) -> bool:
+    """A scan no scanner produced anything for still teaches the lab: store its photo with the card the
+    trainer found by search (only with the trainer's diagnostics consent)."""
+    trace = create_scan_trace(db, user_id, mode="manual", job_id=job_id, item_id=item_id)
+    if not trace.enabled:
+        return False
+    trace.set_image(image_bytes)
+    trace.data["ground_truth"] = card_id
+    trace.data["correct"] = None
+    trace.data["confirmation"] = {"source": "manual_no_result", "lang": lang}
+    trace.save()
+    return True
+
+
 def record_ground_truth(
     user_id: int,
     job_id: int,
     item_id: int,
     card_id: str,
+    *,
+    manual: bool = False,
+    had_matches: bool = True,
+    lang: str | None = None,
 ) -> int:
     """Label all attempts for one reviewed item with the user's confirmed card."""
     if not card_id:
@@ -468,27 +740,33 @@ def record_ground_truth(
     for path in sorted(paths):
         temp: Path | None = None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            data["ground_truth"] = card_id
-            selected = (data.get("decision") or {}).get("selected")
-            # A trace that deliberately abstained did not make a top-1 choice.
-            # Keep it labelled for retrieval analysis without counting it as an
-            # incorrect automatic decision.
-            data["correct"] = (selected == card_id) if selected else None
-            candidates = [
-                candidate.get("tcg_card_id")
-                for candidate in data.get("candidates") or []
-            ]
-            data["ground_truth_rank"] = (
-                candidates.index(card_id) + 1 if card_id in candidates else None
-            )
-            temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-            _write_private(
-                temp,
-                json.dumps(data, indent=2, ensure_ascii=False, default=str),
-            )
-            temp.replace(path)
-            updated += 1
+            with _TRACE_LOCK:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                data["ground_truth"] = card_id
+                data["confirmation"] = {
+                    "source": classify_confirmation(data, card_id, manual=manual, had_matches=had_matches),
+                    "lang": lang,
+                }
+                selected = (data.get("decision") or {}).get("selected")
+                # A trace that deliberately abstained did not make a top-1 choice.
+                # Keep it labelled for retrieval analysis without counting it as an
+                # incorrect automatic decision.
+                data["correct"] = (selected == card_id) if selected else None
+                candidates = [
+                    candidate.get("tcg_card_id")
+                    for candidate in data.get("candidates") or []
+                ]
+                data["ground_truth_rank"] = (
+                    candidates.index(card_id) + 1 if card_id in candidates else None
+                )
+                label_shadow(data)
+                temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+                _write_private(
+                    temp,
+                    json.dumps(data, indent=2, ensure_ascii=False, default=str),
+                )
+                temp.replace(path)
+                updated += 1
         except Exception:
             if temp:
                 temp.unlink(missing_ok=True)

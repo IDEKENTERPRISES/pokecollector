@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { readReleaseId } from './releases-build.mjs'
 
 export const BUDGET_BYTES = 12 * 1024 * 1024
 const FIXED_FILES = [
@@ -21,7 +22,9 @@ function walk(dir) {
   })
 }
 
-export function buildServiceWorker({ distDir, swSource, killSource, budgetBytes = BUDGET_BYTES }) {
+// `releaseId` (the newest release in src/welcome/releases.json) is part of the build id, so a new release
+// entry always gives the service worker a new build id, even when no precached file changed.
+export function buildServiceWorker({ distDir, swSource, killSource, budgetBytes = BUDGET_BYTES, releaseId = '' }) {
   const urlOf = file => '/' + relative(distDir, file).split(sep).join('/')
   const files = new Map()
   for (const file of walk(join(distDir, 'assets'))) {
@@ -44,7 +47,7 @@ export function buildServiceWorker({ distDir, swSource, killSource, budgetBytes 
   }
 
   const source = readFileSync(swSource, 'utf8')
-  const buildId = sha256(JSON.stringify(entries) + sha256(source)).slice(0, 12)
+  const buildId = sha256(JSON.stringify(entries) + sha256(source) + releaseId).slice(0, 12)
   const replaceOnce = (text, token, value) => {
     if (text.split(token).length !== 2) throw new Error(`Placeholder ${token} must appear exactly once`)
     return text.replace(token, () => value)
@@ -69,6 +72,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       distDir: join(root, 'dist'),
       swSource: join(root, 'src', 'sw', 'sw.js'),
       killSource: join(root, 'src', 'sw', 'sw.kill.js'),
+      releaseId: readReleaseId(root),
     })
     console.log(`Service worker ${buildId}: ${entries.length} precache entries, ${totalBytes} bytes (${(totalBytes / 1024 / 1024).toFixed(2)} MiB of 12 MiB)`)
   } catch (error) {

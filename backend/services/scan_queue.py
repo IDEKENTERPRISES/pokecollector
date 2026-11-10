@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import os
 import threading
 import uuid
 from dataclasses import dataclass
@@ -14,11 +15,21 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from models import ScanJob, ScanJobItem, ScanQueueUserState, User
+from services import picture_first
 from services.gemini_rate_limit import gemini_priority_scope
+from services.scanner_reachability import (
+    WAITING_EXPIRY_GRACE_DAYS,
+    WAITING_REASON,
+    endpoint_reachable,
+)
 from services.scan_storage import (
     ScanUploadError,
     delete_job_directory,
     delete_scan_image,
+    downscale_for_recognition,
+    read_capture_info,
+    read_recognition_image,
+    read_text_photo,
     resolve_scan_path,
 )
 
@@ -34,7 +45,20 @@ TRANSIENT_BACKOFF_SECONDS = (30, 120, 600, 1800, 3600, 21600)
 RECOGNITION_BACKOFF_SECONDS = (2, 10, 30)
 TERMINAL_ITEM_STATUSES = {"done", "failed"}
 
-MAX_CONCURRENT_SCAN_PROCESSING = 3
+def _env_positive_int(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, "").strip() or default)
+    except ValueError:
+        return default
+    return value if value >= 1 else default
+
+
+# Gemini is a cloud service that serves several photos at once.
+MAX_CONCURRENT_SCAN_PROCESSING = _env_positive_int("SCAN_MAX_CONCURRENT_GEMINI", 3)
+# An OpenAI-compatible endpoint (Ollama on a gaming PC) serves one photo at a
+# time; letting three wait on it made the queued ones time out. Raise this only
+# for a server that really runs requests in parallel (OLLAMA_NUM_PARALLEL).
+MAX_CONCURRENT_OPENAI_SCANS = _env_positive_int("SCAN_MAX_CONCURRENT_OPENAI", 1)
 _SCAN_PROCESSING_SLOT_POLL_SECONDS = 0.1
 
 
@@ -63,6 +87,57 @@ _scan_processing_semaphore = _ProcessWideAsyncSemaphore(
 )
 
 
+_endpoint_gates: dict[tuple[str, int], _ProcessWideAsyncSemaphore] = {}
+_endpoint_gates_lock = threading.Lock()
+
+
+def _endpoint_gate(url: str) -> _ProcessWideAsyncSemaphore:
+    """One process-wide gate per endpoint (and per configured limit)."""
+    key = (url, MAX_CONCURRENT_OPENAI_SCANS)
+    with _endpoint_gates_lock:
+        gate = _endpoint_gates.get(key)
+        if gate is None:
+            gate = _ProcessWideAsyncSemaphore(MAX_CONCURRENT_OPENAI_SCANS)
+            _endpoint_gates[key] = gate
+        return gate
+
+
+def _openai_endpoint_for_user(db: Session, user_id: int) -> str | None:
+    """The endpoint URL when this user scans through an OpenAI-compatible provider."""
+    from services.scan_providers import OPENAI, get_provider, openai_base_url
+
+    try:
+        return openai_base_url() if get_provider(db, user_id).name == OPENAI else None
+    except Exception:
+        return None
+
+
+class _ProcessingSlots:
+    """Endpoint gate first, then the shared slot, so waiters never hog global slots."""
+
+    def __init__(self, claim):
+        self._claim = claim
+        self._gate = None
+
+    async def __aenter__(self):
+        endpoint = getattr(self._claim, "openai_endpoint", None)
+        self._gate = _endpoint_gate(endpoint) if endpoint else None
+        if self._gate is not None:
+            await self._gate.__aenter__()
+        try:
+            await _scan_processing_semaphore.__aenter__()
+        except BaseException:
+            if self._gate is not None:
+                await self._gate.__aexit__(None, None, None)
+            raise
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        await _scan_processing_semaphore.__aexit__(exc_type, exc, traceback)
+        if self._gate is not None:
+            await self._gate.__aexit__(exc_type, exc, traceback)
+
+
 @dataclass(frozen=True)
 class ClaimedScanItem:
     item_id: int
@@ -70,6 +145,9 @@ class ClaimedScanItem:
     item_ids: tuple[int, ...] = ()
     composite: bool = False
     recognition_cache_item_ids: tuple[int, ...] = ()
+    # Set when the owner scans through an OpenAI-compatible endpoint, which
+    # serves one photo at a time (see MAX_CONCURRENT_OPENAI_SCANS).
+    openai_endpoint: str | None = None
 
     @property
     def all_item_ids(self) -> tuple[int, ...]:
@@ -97,9 +175,18 @@ class PermanentScanError(RuntimeError):
     pass
 
 
+class ScannerWaitingError(RuntimeError):
+    """The scanner endpoint is switched off: park the scan without a retry penalty."""
+
+    retry_reason = WAITING_REASON
+
+
 def _eligible_items(now: datetime.datetime):
     return and_(
         ScanJobItem.status.in_(["pending", "retrying"]),
+        # Scans waiting for the scanner are released by release_waiting_scans(),
+        # not by a timer.
+        or_(ScanJobItem.retry_reason.is_(None), ScanJobItem.retry_reason != WAITING_REASON),
         or_(ScanJobItem.next_attempt_at.is_(None), ScanJobItem.next_attempt_at <= now),
         ScanJob.expires_at > now,
     )
@@ -208,8 +295,10 @@ def claim_next_scan_item(
     if not job.started_at:
         job.started_at = now
     job.updated_at = now
+    openai_endpoint = _openai_endpoint_for_user(db, item.user_id)
     db.commit()
     return ClaimedScanItem(
+        openai_endpoint=openai_endpoint,
         item_id=item.id,
         item_ids=tuple(claimed_item.id for claimed_item in items),
         lease_token=lease_token,
@@ -346,6 +435,7 @@ def fail_claim(
     permanent: bool = False,
     retry_after_seconds: float | None = None,
     retry_reason: str | None = None,
+    waiting: bool = False,
 ) -> bool:
     now = datetime.datetime.utcnow()
     items = _leased_items(db, claim)
@@ -361,6 +451,13 @@ def fail_claim(
             item.status = "failed"
             item.next_attempt_at = None
             item.retry_reason = None
+        elif waiting:
+            # Neither attempts nor transient_failures move: being switched off
+            # is not the scan's fault and must not climb the retry ladder.
+            item.status = "retrying"
+            item.next_attempt_at = None
+            item.retry_reason = WAITING_REASON
+            item.error = None
         elif transient:
             item.transient_failures += 1
             item.status = "retrying"
@@ -479,6 +576,122 @@ def _clear_recognition_cache(claim: ClaimedScanItem) -> None:
         cache_db.close()
 
 
+def _full_photo_for_item(db: Session, item_id: int | None) -> bytes | None:
+    """The sharpest stored picture of a scan item, which the picture matcher reads its text from: the guide crop
+    cut from the camera's original frame when there is one, else the stored review photo (None when neither is
+    there: the matcher then reads the recognition image alone)."""
+    if item_id is None:
+        return None
+    try:
+        row = db.get(ScanJobItem, item_id)
+        return read_text_photo(row.image_path) if row is not None and row.image_path else None
+    except Exception:
+        return None
+
+
+def _capture_info_for_item(db: Session, item_id: int | None) -> dict | None:
+    """The camera frame and guide-crop sizes kept with the photo (None for an upload without a guide box)."""
+    if item_id is None:
+        return None
+    try:
+        row = db.get(ScanJobItem, item_id)
+        return read_capture_info(row.image_path) if row is not None and row.image_path else None
+    except Exception:
+        return None
+
+
+def _earlier_picture_for_item(db: Session, item_id: int | None) -> dict | None:
+    """What an earlier run of this scan recorded about the picture match (for "Wait for the scanner")."""
+    if item_id is None:
+        return None
+    try:
+        recognized = db.query(ScanJobItem.recognized).filter(ScanJobItem.id == item_id).scalar()
+        db.rollback()
+        return picture_first.earlier_picture(recognized)
+    except Exception:
+        db.rollback()
+        return None
+
+
+def _picture_meta_for_trace(scanner_result: dict, run) -> dict:
+    recognized = scanner_result.get("recognized")
+    meta = recognized.get("_picture") if isinstance(recognized, dict) else None
+    return meta if isinstance(meta, dict) else {"path": picture_first.PATH_OLLAMA}
+
+
+async def _scanner_answers() -> bool:
+    from services.scan_providers import openai_base_url
+
+    return await endpoint_reachable(openai_base_url())
+
+
+async def _picture_first_early_result(
+    db: Session,
+    user_id: int,
+    provider,
+    image_bytes: bytes,
+    run,
+    earlier: dict | None,
+    *,
+    job_id: int | None,
+    item_id: int | None,
+) -> dict | None:
+    """A finished scan result when the picture alone settles it (decided, or unsure with the scanner down)."""
+    try:
+        if run.decided:
+            result = picture_first.decided_result(db, run, earlier=earlier)
+            selected = run.result.decision["tcg_card_id"]
+        elif (
+            not provider.is_gemini
+            and not (earlier or {}).get("wait")
+            and not await _scanner_answers()
+        ):
+            result = picture_first.inbox_result(db, run, earlier=earlier)
+            selected = None
+        else:
+            return None
+        if result is None:
+            return None
+        from services.scan_trace import create_scan_trace
+
+        trace = create_scan_trace(
+            db, user_id, mode="single", job_id=job_id, item_id=item_id,
+            filename="sanitized-scan.jpg", provider="picture", model=run.result.status,
+        )
+        try:
+            trace.set_image(image_bytes)
+            trace.record_candidates(result["matches"])
+            picture_first.record_in_trace(
+                trace, user_id, job_id, item_id, run, result["recognized"]["_picture"], selected=selected
+            )
+        finally:
+            trace.save()
+        return result
+    except Exception:
+        logger.exception("Picture match result could not be used; using the scanner path")
+        db.rollback()
+        return None
+
+
+async def _require_scanner_reachable(provider) -> None:
+    """Park the scan (no retry penalty) while the local endpoint is switched off."""
+    if provider.is_gemini:
+        return
+    from services.scan_providers import openai_base_url
+
+    if not await endpoint_reachable(openai_base_url()):
+        raise ScannerWaitingError("Waiting for the scanner")
+
+
+def _fit_image_for_provider(provider, image_bytes: bytes, content_type: str):
+    """A self-hosted model is sent about 1024 px, never the 2048 px review photo."""
+    from services.scan_providers import openai_is_self_hosted
+
+    if provider.is_gemini or not openai_is_self_hosted():
+        return image_bytes, content_type
+    return downscale_for_recognition(image_bytes, content_type)
+
+
 async def default_scan_processor(
     db: Session,
     user_id: int,
@@ -499,6 +712,18 @@ async def default_scan_processor(
     if user is None or not user.is_active:
         raise PermanentScanError("The scan owner is no longer an active user.")
     provider = get_provider(db, user_id)
+    picture_run, picture_earlier = None, None
+    if picture_first.enabled(db):
+        picture_earlier = _earlier_picture_for_item(db, item_id)
+        picture_run = await picture_first.run_matcher(
+            image_bytes, _full_photo_for_item(db, item_id), _capture_info_for_item(db, item_id)
+        )
+        if picture_run is not None:
+            early = await _picture_first_early_result(
+                db, user_id, provider, image_bytes, picture_run, picture_earlier, job_id=job_id, item_id=item_id
+            )
+            if early is not None:
+                return early
     require_scanner_capability_mode(db, user_id, provider.name, provider.model())
     api_key = provider.credential(db, user_id)
     if provider.requires_credential() and not api_key:
@@ -506,6 +731,8 @@ async def default_scan_processor(
             status_code=400,
             detail=provider.missing_credential_message(),
         )
+    await _require_scanner_reachable(provider)
+    image_bytes, content_type = _fit_image_for_provider(provider, image_bytes, content_type)
     trace = create_scan_trace(
         db,
         user_id,
@@ -537,7 +764,7 @@ async def default_scan_processor(
         # Only Gemini has a shared per-key budget to protect; other providers get
         # a no-op scope rather than queueing behind Gemini's limiter.
         with provider.rate_limit_scope("background"):
-            return await recognize_sanitized_card(
+            scanner_result = await recognize_sanitized_card(
                 db,
                 user_id,
                 image_bytes,
@@ -553,6 +780,15 @@ async def default_scan_processor(
                     else None
                 ),
             )
+        if picture_run is not None:
+            picture_first.attach_to_scanner_result(
+                db, scanner_result, picture_run, earlier=picture_earlier
+            )
+            picture_first.record_in_trace(
+                trace, user_id, job_id, item_id, picture_run,
+                _picture_meta_for_trace(scanner_result, picture_run),
+            )
+        return scanner_result
     except Exception as exc:
         trace.record_error(str(getattr(exc, "detail", exc)))
         raise
@@ -614,7 +850,11 @@ async def default_composite_processor(
         raise PermanentScanError(
             f"No {provider.name} API key is configured for the scan owner."
         )
+    await _require_scanner_reachable(provider)
 
+    images = [
+        _fit_image_for_provider(provider, image, "image/jpeg")[0] for image in images
+    ]
     trace_item_ids = list(item_ids or [])
     traces = [
         create_scan_trace(
@@ -706,6 +946,10 @@ async def default_composite_processor(
 
 
 def _scan_error_from_http(error: HTTPException) -> RuntimeError:
+    from services.scan_providers import ScannerUnreachableError
+
+    if isinstance(error, ScannerUnreachableError):
+        return ScannerWaitingError(str(error.detail))
     if error.status_code in {429, 502, 503, 504}:
         return TransientScanError(
             str(error.detail),
@@ -728,7 +972,7 @@ async def process_claimed_scan_item(
     # Bounds how many of these run at once — see MAX_CONCURRENT_SCAN_PROCESSING
     # for why: the DB session opened just below stays checked out for the
     # entire recognition call, including the slow vision-model HTTP work.
-    async with _scan_processing_semaphore:
+    async with _ProcessingSlots(claim):
         db = SessionLocal()
         try:
             try:
@@ -736,7 +980,7 @@ async def process_claimed_scan_item(
                 if len(items) != len(claim.all_item_ids):
                     db.rollback()
                     return
-                image_bytes = [resolve_scan_path(item.image_path).read_bytes() for item in items]
+                image_bytes = [read_recognition_image(item.image_path) for item in items]
                 user_id = items[0].user_id
                 content_types = [item.content_type for item in items]
                 job_id = items[0].job_id
@@ -783,7 +1027,12 @@ async def process_claimed_scan_item(
             except (FileNotFoundError, OSError, ScanUploadError) as exc:
                 db.rollback()
                 error = PermanentScanError(f"Stored scan photo is unavailable: {exc}")
-            except (TransientScanError, RecognitionScanError, PermanentScanError) as exc:
+            except (
+                ScannerWaitingError,
+                TransientScanError,
+                RecognitionScanError,
+                PermanentScanError,
+            ) as exc:
                 db.rollback()
                 error = exc
             except Exception as exc:
@@ -812,6 +1061,7 @@ async def process_claimed_scan_item(
                 db,
                 claim,
                 str(error),
+                waiting=isinstance(error, ScannerWaitingError),
                 transient=isinstance(error, TransientScanError),
                 permanent=isinstance(error, PermanentScanError),
                 retry_after_seconds=getattr(error, "retry_after_seconds", None),
@@ -866,7 +1116,7 @@ def retry_scan_item(db: Session, item: ScanJobItem) -> ScanJobItem:
     """Start a fresh individual recognition cycle for a reviewable item."""
     if item.resolved:
         raise ValueError("This scan has already been handled.")
-    if item.status not in {"done", "failed"}:
+    if item.status not in {"done", "failed", "retrying", "pending"}:
         raise ValueError("This scan is still being processed.")
     if not item.image_path or not resolve_scan_path(item.image_path).is_file():
         raise ValueError("The stored scan photo is no longer available.")
@@ -891,6 +1141,84 @@ def retry_scan_item(db: Session, item: ScanJobItem) -> ScanJobItem:
     db.commit()
     db.refresh(item)
     return item
+
+
+def waiting_scan_count(db: Session) -> int:
+    return (
+        db.query(ScanJobItem)
+        .filter(
+            ScanJobItem.status == "retrying",
+            ScanJobItem.retry_reason == WAITING_REASON,
+        )
+        .count()
+    )
+
+
+def hold_expiry_for_waiting_scans(
+    db: Session, *, now: datetime.datetime | None = None
+) -> int:
+    """Pause the 14-day clock for jobs whose scans are waiting for the scanner.
+
+    The expiry is kept at least WAITING_EXPIRY_GRACE_DAYS ahead, so a scan that
+    was never recognised is not deleted unseen, and still has time to run once
+    the scanner is back. Call this before purge_expired_scan_jobs().
+    """
+    now = now or datetime.datetime.utcnow()
+    floor = now + datetime.timedelta(days=WAITING_EXPIRY_GRACE_DAYS)
+    job_ids = [
+        row[0]
+        for row in db.query(ScanJobItem.job_id)
+        .filter(
+            ScanJobItem.status == "retrying",
+            ScanJobItem.retry_reason == WAITING_REASON,
+        )
+        .distinct()
+        .all()
+    ]
+    if not job_ids:
+        return 0
+    updated = (
+        db.query(ScanJob)
+        .filter(ScanJob.id.in_(job_ids), ScanJob.expires_at < floor)
+        .update({ScanJob.expires_at: floor}, synchronize_session=False)
+    )
+    db.commit()
+    return updated
+
+
+def release_waiting_scans(
+    db: Session, *, now: datetime.datetime | None = None
+) -> int:
+    """Put every scan that was waiting for the scanner back in the queue."""
+    now = now or datetime.datetime.utcnow()
+    items = (
+        db.query(ScanJobItem)
+        .filter(
+            ScanJobItem.status == "retrying",
+            ScanJobItem.retry_reason == WAITING_REASON,
+            ScanJobItem.resolved.is_(False),
+        )
+        .all()
+    )
+    for item in items:
+        item.status = "pending"
+        item.retry_reason = None
+        item.next_attempt_at = now
+        item.updated_at = now
+    if items:
+        db.commit()
+    return len(items)
+
+
+async def release_waiting_scans_if_reachable(db: Session) -> int:
+    """Once-a-minute check: free all waiting scans as soon as the endpoint answers."""
+    if waiting_scan_count(db) == 0:
+        return 0
+    from services.scan_providers import openai_base_url
+
+    if not await endpoint_reachable(openai_base_url(), force=True):
+        return 0
+    return release_waiting_scans(db)
 
 
 def purge_expired_scan_jobs(db: Session, *, now: datetime.datetime | None = None) -> int:
@@ -931,6 +1259,11 @@ def job_progress(db: Session, job: ScanJob) -> dict:
         key=lambda item: item.next_attempt_at,
         default=None,
     )
+    waiting_count = sum(
+        1
+        for item in items
+        if item.status == "retrying" and item.retry_reason == WAITING_REASON
+    )
     return {
         "id": job.id,
         "status": job.status,
@@ -943,7 +1276,12 @@ def job_progress(db: Session, job: ScanJob) -> dict:
         "next_retry_at": (
             next_retry_item.next_attempt_at.isoformat() if next_retry_item else None
         ),
-        "retry_reason": next_retry_item.retry_reason if next_retry_item else None,
+        "retry_reason": (
+            WAITING_REASON
+            if waiting_count and waiting_count == counts["retrying"]
+            else (next_retry_item.retry_reason if next_retry_item else None)
+        ),
+        "waiting_for_scanner": waiting_count,
         # Kept as a stable alias for badge clients built against Lamiskin's
         # original queue payload.
         "unresolved": attention,

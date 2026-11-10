@@ -8,10 +8,11 @@ import { NAV_ICONS } from '../../navigation/navIcons'
 import { PROFILE_LINKS, SIDEBAR_CHILDREN, TABS, tabForPath } from '../../navigation/navConfig'
 import { readPwaFlags } from '../../pwa/flags'
 
-function SideLink({ to, active, icon: Icon, children, indent = false }) {
+function SideLink({ to, active, icon: Icon, children, indent = false, tour }) {
   return (
     <Link
       to={to}
+      data-tour={tour}
       aria-current={active ? 'page' : undefined}
       className={clsx(
         'flex min-h-[40px] items-center gap-3 rounded-xl px-3 text-body transition-colors',
@@ -49,6 +50,7 @@ export default function SidebarNav() {
       <button
         type="button"
         onClick={openScanner}
+        data-tour="tab-scan"
         className="btn-primary mb-3 w-full justify-center gap-2"
       >
         <ScanLine size={18} aria-hidden="true" />
@@ -57,7 +59,7 @@ export default function SidebarNav() {
 
       {TABS.map(tab => (
         <div key={tab.key} className="space-y-0.5">
-          <SideLink to={tab.root} active={activeTab === tab.key && !SIDEBAR_CHILDREN[tab.key]?.some(child => exact(child.to))} icon={NAV_ICONS[tab.key]}>
+          <SideLink tour={`tab-${tab.key}`} to={tab.root} active={activeTab === tab.key && !SIDEBAR_CHILDREN[tab.key]?.some(child => exact(child.to))} icon={NAV_ICONS[tab.key]}>
             {t(tab.labelKey)}
           </SideLink>
           {SIDEBAR_CHILDREN[tab.key]?.map(child => (

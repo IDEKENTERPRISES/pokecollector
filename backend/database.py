@@ -121,6 +121,10 @@ def _run_migrations(conn):
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS ebay_app_id VARCHAR",
         # v41: Add Pokemon avatar selection to users
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_id INTEGER",
+        "ALTER TABLE swap_offers ADD COLUMN IF NOT EXISTS cancelled_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL",
+        # Engagement P15: the tour is done once finished, skipped or dismissed
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS tutorial_completed_at TIMESTAMP",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS tutorial_outcome VARCHAR(12)",
         # v36: Add tcg_set_id column to sets (original TCGdex ID, separate from composite DB key)
         "ALTER TABLE sets ADD COLUMN IF NOT EXISTS tcg_set_id VARCHAR",
         # v36: Populate tcg_set_id for old-format rows (id has no lang suffix)
@@ -382,6 +386,11 @@ def _run_migrations(conn):
             CHECK (value_total >= 0)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_trades_user_date ON trades(user_id, trade_date DESC, id DESC)",
+        # Engagement P11: the swap offer a trade was logged from (swap_offers comes from create_all)
+        "ALTER TABLE trades ADD COLUMN IF NOT EXISTS swap_offer_id INTEGER REFERENCES swap_offers(id) ON DELETE SET NULL",
+        "CREATE INDEX IF NOT EXISTS ix_trades_swap_offer_id ON trades(swap_offer_id)",
+        # Engagement P11b: what a counter changed, for the "What changed" card
+        "ALTER TABLE swap_offers ADD COLUMN IF NOT EXISTS changes JSON",
         "CREATE INDEX IF NOT EXISTS idx_trade_items_trade ON trade_items(trade_id)",
         "CREATE INDEX IF NOT EXISTS idx_trade_items_user_card ON trade_items(user_id, card_id)",
         "ALTER TABLE trade_items DROP CONSTRAINT IF EXISTS trade_items_card_id_fkey",
@@ -720,6 +729,26 @@ def _run_migrations(conn):
                 UPDATE user_xp_ledger SET seen_at = NOW();
             END IF;
         END$$""",
+        # P16 What's new: accounts that existed before the column get a "since:YYYY-MM-DD" marker, the
+        # day of their latest recorded activity (17 Oct 2026 if none), so they see what they missed.
+        """DO $$
+        BEGIN
+            IF to_regclass('public.users') IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'whats_new_seen'
+               ) THEN
+                ALTER TABLE users ADD COLUMN whats_new_seen VARCHAR(24);
+                UPDATE users u SET whats_new_seen = 'since:' || to_char(COALESCE(GREATEST(
+                    (SELECT MAX(local_date)::timestamp FROM user_daily_activity a WHERE a.user_id = u.id),
+                    (SELECT MAX(last_seen_at) FROM push_subscriptions p WHERE p.user_id = u.id),
+                    (SELECT MAX(last_used_at) FROM user_sessions s WHERE s.user_id = u.id),
+                    (SELECT MAX(added_at) FROM collection c WHERE c.user_id = u.id)
+                ), TIMESTAMP '2026-10-17'), 'YYYY-MM-DD');
+            END IF;
+        END$$""",
+        # Same column on a database whose users table was created some other way.
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS whats_new_seen VARCHAR(24)",
     ]
     for stmt in migrations:
         try:

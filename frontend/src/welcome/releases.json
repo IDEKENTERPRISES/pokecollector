@@ -1,0 +1,204 @@
+{
+  "releases": [
+    {
+      "id": "2026-11-10",
+      "name": "Cyndaquil",
+      "nameDate": false,
+      "from": "2026-11-10",
+      "date": "2026-11-10",
+      "kind": "major",
+      "summary": "Card-by-card scan review, a tour of the app, and swaps, a feed and a weekly challenge",
+      "highlights": [
+        { "icon": "camera", "title": "Review scans one card at a time", "text": "Add a card and go straight to the next, with no limit on how many photos you take." },
+        { "icon": "smartphone", "title": "A tour of the app", "text": "A hands-on tour shows new trainers around. Replay it any time from Settings › About." },
+        { "icon": "repeat", "title": "Swaps, a feed and a weekly challenge", "text": "Swap with friends, cheer their pulls and chase one goal a week, once your server turns them on." }
+      ],
+      "details": {
+        "new": [
+          "Review all: go through your scans one card at a time. Add to collection moves straight to the next card.",
+          "Scan as many cards as you like in one go. The 50-photo limit is gone.",
+          "If none of the matches is right, tap None of these and search for the card yourself.",
+          "Tap your photo or the matched card in the review to see it full screen.",
+          "A hands-on tour for new trainers, and a Take the tour card on Home for everyone else.",
+          "What's new: after an update, a short summary of what changed. The full version history is in Settings › About.",
+          "Swap offers: offer some of your cards for some of a friend's spare cards, from the Trades page.",
+          "An Offers tab on Trades shows the offers waiting for you, with a number on the Trades tile on your Profile and a card on Home.",
+          "A fair-trade meter shows how even a swap is before you send it or answer it.",
+          "Accept, counter or decline an offer, or cancel one you sent. Add a short note to an offer.",
+          "Nothing moves until you both tap Swapped after you meet. Finished swaps appear in your trade history.",
+          "Notifications for swap offers name the cards (never amounts), including when an offer is declined.",
+          "An activity feed shows your friends' new sets, big pulls, badges and goals. React with Cheer, Wow, Fire or Love it, and add a short comment.",
+          "Your own shared moments appear in the feed too, marked You, with how many reactions they got.",
+          "A weekly challenge sets one goal for every trainer each week (Monday to Sunday, UK time). Everyone who finishes earns a badge, and the highest counts by Sunday night make the podium.",
+          "The challenge shows on Home under your daily quests and as a Challenge tab on the leaderboard.",
+          "Swaps, the feed and the weekly challenge appear once the person who runs your server turns them on."
+        ],
+        "better": [
+          "When the scanner is switched off, your scans say Waiting for the scanner and are recognised as soon as it is back.",
+          "The leaderboard opens at the top, with its tabs in view."
+        ],
+        "fixed": []
+      },
+      "underTheHood": [
+        "Swaps, the feed and the challenge have an on/off switch for the whole server.",
+        "A problem with one trainer's account no longer holds up background updates for everyone else."
+      ]
+    },
+    {
+      "id": "2026-10-30",
+      "name": "Chikorita",
+      "nameDate": false,
+      "from": "2026-10-30",
+      "date": "2026-10-30",
+      "kind": "major",
+      "summary": "Chase goals, a weekly recap and goals at a glance",
+      "highlights": [
+        { "icon": "target", "title": "Chase goals", "text": "Pick a set, a generation, an evolution family or an artist, and watch the ring fill as you collect." },
+        { "icon": "clock", "title": "Your weekly recap", "text": "On Sunday evening Home shows how your week went." },
+        { "icon": "layout-dashboard", "title": "Goals at a glance", "text": "A Goals tile on your Profile, and your goals next to your sets on Home." }
+      ],
+      "details": {
+        "new": [
+          "Goals, with a Goals tile on your Profile.",
+          "Family goals count every card in an evolution family.",
+          "A weekly recap card on Home from Sunday evening."
+        ],
+        "better": [
+          "Your goals show on Home next to your sets."
+        ],
+        "fixed": []
+      },
+      "underTheHood": [
+        "Your weekly numbers are now kept so they can be looked back on."
+      ]
+    },
+    {
+      "id": "2026-10-29",
+      "name": "Squirtle",
+      "nameDate": false,
+      "from": "2026-10-29",
+      "date": "2026-10-29",
+      "kind": "major",
+      "summary": "The daily loop, badges and binder pockets",
+      "highlights": [
+        { "icon": "flame", "title": "A reason to open the app every day", "text": "The Today card shows your Pokémon of the day, your streak, daily quests, XP and your trainer level, plus a game of Who's That Pokémon." },
+        { "icon": "award", "title": "Badges to earn", "text": "Unlock gym-style badges as your collection grows, with a moment of celebration each time." },
+        { "icon": "book-open", "title": "Binders that match the real thing", "text": "Drag cards into pockets just like a physical binder, and flip through sets and binders in Book view." }
+      ],
+      "details": {
+        "new": [
+          "The Today card, with a streak you can protect with a freeze.",
+          "Daily quests, XP and a trainer level.",
+          "Who's That Pokémon.",
+          "Achievements and gym-badge tracks.",
+          "Book view for sets and binders.",
+          "Binder pockets with drag and drop (press and hold to pick a card up).",
+          "Holo cards shine and tilt with your phone, with their own foil patterns.",
+          "Notifications by category and a number on the app icon.",
+          "Detailed notifications that name the cards, prices and badges.",
+          "On this day.",
+          "Showcase 6 on the leaderboard, and each trainer's streak.",
+          "Collection DNA.",
+          "Share your daily progress as a picture."
+        ],
+        "better": [
+          "Tap the most expensive print on the Today card to open it.",
+          "Prints on offer match your sync languages.",
+          "Foil is smoother on iPhone and matches in the zoom."
+        ],
+        "fixed": [
+          "Restoring an older backup into a newer app works.",
+          "Background restore, CSV pocket sizes and the \"scans ready\" notification are fixed."
+        ]
+      },
+      "underTheHood": [
+        "Your history (cards, streaks, quests) is recorded from now on.",
+        "Badge and notification checks run every 30 seconds."
+      ]
+    },
+    {
+      "id": "2026-10-23",
+      "name": "Charmander",
+      "nameDate": false,
+      "from": "2026-10-20",
+      "date": "2026-10-23",
+      "kind": "major",
+      "summary": "The iPhone redesign and your whole card list offline",
+      "highlights": [
+        { "icon": "smartphone", "title": "A new look made for iPhone", "text": "A tab bar at the bottom, big titles and sheets that slide up like the apps you already know." },
+        { "icon": "camera", "title": "Scan starts with the camera", "text": "Open Scan and you're ready to take the photo." },
+        { "icon": "download", "title": "Your whole card list offline", "text": "Download the card database and pictures, and Search and Sets work without a signal." }
+      ],
+      "details": {
+        "new": [
+          "A new Home, Collection, Search, Sets, Pokédex, Analytics and Settings.",
+          "A launch screen with your Pokémon of the day (you can skip it).",
+          "Pull down to refresh on any page.",
+          "Browse Sets by language, then series.",
+          "Search finds cards by name, set and number in any order and corrects typos.",
+          "A Scan inbox to review what you've scanned.",
+          "Download the card database and card pictures for offline use.",
+          "Choose which languages to sync and see the progress."
+        ],
+        "better": [
+          "The Profile page opens faster.",
+          "Prices fit on the tiles.",
+          "Every page opens offline.",
+          "The app launches faster when pictures are saved on your phone.",
+          "Offline settings are clearer, with a true storage breakdown."
+        ],
+        "fixed": [
+          "Settings no longer crashes on the Account page.",
+          "Pull to refresh no longer spins forever.",
+          "Japanese sets show their own cards.",
+          "Back from a large set no longer freezes.",
+          "Series logos stay after a sync."
+        ]
+      },
+      "underTheHood": [
+        "Scanner settings can be set for the whole server.",
+        "Faster automated tests."
+      ]
+    },
+    {
+      "id": "2026-10-19",
+      "name": "Bulbasaur",
+      "nameDate": false,
+      "from": "2026-10-18",
+      "date": "2026-10-19",
+      "kind": "major",
+      "summary": "PokéCollector on your Home Screen, and offline",
+      "highlights": [
+        { "icon": "smartphone", "title": "Add it to your Home Screen", "text": "PokéCollector now opens full screen like any other app." },
+        { "icon": "wifi-off", "title": "Works without a signal", "text": "Browse your collection even when you're offline, and scan cards anywhere: the photo waits on your phone and is sent when you're back." },
+        { "icon": "bell", "title": "Price alerts on your phone", "text": "Get a notification when a card on your wishlist changes price." }
+      ],
+      "details": {
+        "new": [
+          "Add PokéCollector to your Home Screen.",
+          "A Sync & offline page shows what's saved and what is waiting to send.",
+          "An offline banner tells you when you have no connection.",
+          "Pages you've opened before work offline.",
+          "Scan photos taken offline are kept and uploaded later.",
+          "Price alerts arrive as notifications on your phone.",
+          "You stay signed in while offline.",
+          "Settings and exchange rates are kept for offline use.",
+          "When a new version is ready, a bar at the top lets you update, with an \"Updating…\" screen while it installs."
+        ],
+        "better": [
+          "Offline features are on for everyone.",
+          "If a large card picture isn't saved, the small one shows instead."
+        ],
+        "fixed": [
+          "The app no longer hangs at start-up when your connection is poor.",
+          "The offline banner now sits below the iPhone's status bar and shows up reliably."
+        ]
+      },
+      "underTheHood": [
+        "A service worker keeps the app and your data on the phone.",
+        "Updates wait for you to tap Update.",
+        "Offline scans are queued in a local outbox."
+      ]
+    }
+  ]
+}

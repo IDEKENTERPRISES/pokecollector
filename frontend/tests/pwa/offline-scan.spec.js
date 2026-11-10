@@ -35,7 +35,7 @@ async function openScanner(page) {
   // The tab bar's Scan circle (the sidebar's "Scan cards" button from 1024 px). Without a camera the
   // review sheet opens on its own with the photo pickers.
   await page.locator('[data-testid="scan-button"]:visible, [data-testid="sidebar-nav"] button:has-text("Scan cards")').first().click()
-  await expect(page.getByText('0/50 Photos')).toBeVisible()
+  await expect(page.getByText('0 Photos')).toBeVisible()
 }
 
 const outboxItemCount = page => page.evaluate(() => new Promise((resolve, reject) => {
@@ -59,7 +59,7 @@ test('a scan taken while the server is unreachable is saved on the device and up
   await page.locator('input[multiple]').setInputFiles([jpeg(2000, 'a.jpg'), jpeg(3000, 'b.jpg'), jpeg(4000, 'c.jpg')])
   await page.getByRole('button', { name: 'Start scanning' }).click()
   await expect(page.getByText('Saved on this device. It will sync automatically.')).toBeVisible()
-  await expect(page.getByText('0/50 Photos')).toBeHidden()
+  await expect(page.getByText('0 Photos')).toBeHidden()
   expect(await outboxItemCount(page)).toBe(1)
   expect(state.uploads).toHaveLength(0)
 
@@ -79,7 +79,7 @@ test('a photo larger than 15 MB is refused', async ({ page }) => {
   await openScanner(page)
   await page.locator('input[capture]').setInputFiles(jpeg(16 * 1024 * 1024, 'big.jpg'))
   await expect(page.getByText("This photo is larger than 15 MB and can't be uploaded.")).toBeVisible()
-  await expect(page.getByText('0/50 Photos')).toBeVisible()
+  await expect(page.getByText('0 Photos')).toBeVisible()
 })
 
 test('storage that is full keeps the staged photos', async ({ page }) => {
@@ -89,5 +89,5 @@ test('storage that is full keeps the staged photos', async ({ page }) => {
   await page.locator('input[capture]').setInputFiles(jpeg(2000))
   await page.getByRole('button', { name: 'Start scanning' }).click()
   await expect(page.getByText(/Not enough storage/)).toBeVisible()
-  await expect(page.getByText('1/50 Photos')).toBeVisible()
+  await expect(page.getByText('1 Photos')).toBeVisible()
 })

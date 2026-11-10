@@ -223,7 +223,7 @@ class DailyLoopTests(ProgressTestBase):
         self.assertIn("view_pokemon", daily.sync_daily(self.db, self.user.id)["done"])
 
     def test_daily_badges_unlock_and_the_registry_version_backfills(self):
-        self.assertEqual(achievements.REGISTRY_VERSION, 3)
+        self.assertEqual(achievements.REGISTRY_VERSION, 4)
         for offset in range(7):
             self.open_day(self.today - datetime.timedelta(days=offset))
         self.open_day(wtp={"dex_id": 1, "correct": True})

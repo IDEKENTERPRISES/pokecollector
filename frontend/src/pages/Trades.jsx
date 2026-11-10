@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowRightLeft, Check, PenLine, Plus, Search, Trash2, Wallet } from 'lucide-react'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { Check, PenLine, Plus, Search, Trash2, Wallet } from 'lucide-react'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
 import {
@@ -28,7 +29,13 @@ import { buildTradeUpdatePayload, findNewTradeDraftItem, isCashTradeItem, snapsh
 import PrintingDetailBadges from '../components/PrintingDetailBadges'
 import PrintingDetailSelector from '../components/PrintingDetailSelector'
 import SegmentedControl from '../components/ios/SegmentedControl'
+import Badge from '../components/ios/Badge'
+import HideValuesToggle from '../components/ios/HideValuesToggle'
 import { useNavBar } from '../navigation/useNavBar'
+import { getSwapsWaiting } from '../api/client'
+import { SWAPS_WAITING_QUERY_KEY, useSocialEnabled } from '../social/social'
+import { FairTradeMeter } from '../social/SwapParts'
+import OffersSegment from '../social/OffersSegment'
 
 const CONDITIONS = ['Mint', 'NM', 'LP', 'MP', 'HP']
 
@@ -54,74 +61,6 @@ function cardSubtitle(card) {
 function moneyToEur(value, exchangeRate) {
   const parsed = parseMoneyInputValue(value, exchangeRate, null)
   return parsed == null ? 0 : parsed
-}
-
-function TradeHealthBar({ outgoingValue, incomingValue, scoreOutgoingValue, missingPrices, t, formatPrice }) {
-  const delta = incomingValue - outgoingValue
-  const deltaPct = scoreOutgoingValue > 0
-    ? (delta / scoreOutgoingValue) * 100
-    : (delta > 0 ? 100 : (delta < 0 ? -100 : 0))
-  let label = t('trades.emptyTrade')
-  let score = 12
-  let barColor = '#6b7280'
-
-  if (missingPrices) {
-    label = t('trades.missingPrices')
-    score = 45
-    barColor = '#f5c842'
-  } else if (outgoingValue > 0 || incomingValue > 0) {
-    if (deltaPct >= 15) {
-      label = t('trades.youGain')
-      score = 96
-      barColor = '#66bb6a'
-    } else if (deltaPct >= -5) {
-      label = t('trades.fairTrade')
-      score = 72
-      barColor = '#66bb6a'
-    } else if (deltaPct >= -15) {
-      label = t('trades.closeTrade')
-      score = 44
-      barColor = '#f5c842'
-    } else {
-      label = t('trades.youLose')
-      score = 18
-      barColor = '#e3000b'
-    }
-  }
-  const barWidth = Math.max(6, Math.min(100, score))
-
-  return (
-    <div className="rounded-lg border border-brand-red/30 bg-bg-card p-4 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)] space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full border border-brand-red/30 bg-brand-red/10">
-            <ArrowRightLeft size={17} className="text-brand-red flex-shrink-0" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-text-muted">{t('trades.tradeMeter')}</p>
-            <p className="text-sm font-black text-text-primary truncate">{label}</p>
-            <p className={clsx('text-xs font-black', delta >= 0 ? 'text-green' : 'text-brand-red')}>
-              {delta >= 0 ? '+' : ''}{formatPrice(delta)}
-            </p>
-          </div>
-        </div>
-        <div className="text-right text-xs font-bold text-text-muted flex-shrink-0">
-          <div>{t('trades.give')}: {formatPrice(outgoingValue)}</div>
-          <div>{t('trades.receive')}: {formatPrice(incomingValue)}</div>
-        </div>
-      </div>
-      <div className="flex items-center gap-2 rounded-full border border-border bg-bg-elevated px-2 py-1">
-        <span className="text-[10px] font-black leading-none text-brand-red">{t('trades.profitLossShort')}</span>
-        <div className="h-4 flex-1 rounded-full border border-black/50 bg-black/50 p-[3px]">
-          <div
-            className="h-full rounded-full transition-all duration-300"
-            style={{ width: `${barWidth}%`, backgroundColor: barColor }}
-          />
-        </div>
-        <span className="w-14 text-right text-[10px] font-black tabular-nums text-text-secondary">{score}/100</span>
-      </div>
-    </div>
-  )
 }
 
 function MiniCardRow({ collectionItem = null, card, variant, meta, value, rightAction }) {
@@ -265,13 +204,30 @@ function SelectedPanel({ title, total, children, formatPrice }) {
 }
 
 const NAV_BAR = {}
+const NAV_BAR_SOCIAL = { trailing: <HideValuesToggle /> }
 
 export default function Trades() {
-  useNavBar(NAV_BAR)
+  const social = useSocialEnabled()
+  useNavBar(social ? NAV_BAR_SOCIAL : NAV_BAR)
   const { t, formatPrice, pricePrimaryField, exchangeRate } = useSettings()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const { data: waiting } = useQuery({ queryKey: SWAPS_WAITING_QUERY_KEY, queryFn: getSwapsWaiting, enabled: social })
+  const waitingCount = Number(waiting?.count) || 0
   const queryClient = useQueryClient()
   const priceField = priceFieldFromPrimary(pricePrimaryField)
-  const [tab, setTab] = useState('live')
+  const onOffersPath = location.pathname.startsWith('/trades/offers')
+  const [tabState, setTabState] = useState(() => (searchParams.get('trade') ? 'history' : null))
+  // Trades opens on Offers while an offer waits for your answer, otherwise on Live trade.
+  const defaultTab = social && waitingCount > 0 && location.pathname === '/trades' && !location.state?.liveTrade && !searchParams.get('trade') ? 'offers' : 'live'
+  const tab = social && onOffersPath ? 'offers' : (tabState ?? defaultTab)
+  const setTab = (next) => {
+    setTabState(next)
+    if (!social) return
+    if (next === 'offers') navigate('/trades/offers', { replace: true })
+    else if (onOffersPath || tab === 'offers') navigate('/trades', { replace: true, state: { liveTrade: true } })
+  }
   const [partnerName, setPartnerName] = useState('')
   const [tradeDate, setTradeDate] = useState(today())
   const [notes, setNotes] = useState('')
@@ -539,12 +495,24 @@ export default function Trades() {
     <div className="space-y-4 pb-2">
       <div className="space-y-2">
         <h1 className="sr-only">{t('trades.title')}</h1>
-        <p className="text-footnote text-text-secondary">{t('trades.subtitle')}</p>
+        <p className="text-footnote text-text-secondary">{tab === 'offers' ? t('swaps.subtitle') : t('trades.subtitle')}</p>
         <SegmentedControl
           size="md"
           ariaLabel={t('trades.title')}
+          tour={social ? undefined : 'trades-offers'}
           options={[
             { value: 'live', label: t('trades.liveTrade') },
+            ...(social ? [{
+              value: 'offers',
+              tour: 'trades-offers',
+              ariaLabel: waitingCount > 0 ? t('swaps.offersTabLabel').replace('{count}', waitingCount) : undefined,
+              label: (
+                <span className="inline-flex items-center justify-center gap-1.5">
+                  {t('swaps.offersTab')}
+                  <Badge count={waitingCount} tone="yellow" />
+                </span>
+              ),
+            }] : []),
             { value: 'history', label: t('trades.history') },
           ]}
           value={tab}
@@ -552,15 +520,15 @@ export default function Trades() {
         />
       </div>
 
-      {tab === 'live' ? (
+      {tab === 'offers' ? (
+        <OffersSegment />
+      ) : tab === 'live' ? (
         <>
-          <TradeHealthBar
-            outgoingValue={totals.outgoingValue}
-            incomingValue={totals.incomingValue}
-            scoreOutgoingValue={totals.scoreOutgoingValue}
+          <FairTradeMeter
+            gives={totals.outgoingValue}
+            gets={totals.incomingValue}
+            scoreGives={totals.scoreOutgoingValue}
             missingPrices={totals.missing}
-            t={t}
-            formatPrice={formatPrice}
           />
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">

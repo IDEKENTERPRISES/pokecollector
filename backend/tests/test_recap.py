@@ -344,5 +344,145 @@ class ApiTests(ApiBase):
             self.assertEqual(self.client.get("/api/progress/wrapped?year=2020&preview_date=2020-10-05").status_code, 404)
 
 
+@unittest.skipUnless(DEPS_AVAILABLE, "FastAPI is not installed")
+class WrappedReadyPushTests(RecapBase):
+    OPEN_UTC = datetime.datetime(2026, 12, 1, 10, 0)
+
+    def setUp(self):
+        super().setUp()
+        env = patch.dict(os.environ, {recap.PREVIEW_ENV: ""})
+        env.start()
+        self.addCleanup(env.stop)
+        self.zone("UTC")
+
+    def queued(self):
+        return self.db.query(NotificationQueue).filter_by(category="wrapped").all()
+
+    def with_cards(self):
+        self.own("tst-001", acquired_at=datetime.datetime(2026, 3, 5))
+        item = self.own("tst-002", acquired_at=datetime.datetime(2026, 4, 5))
+        item.quantity = 2
+        self.db.commit()
+
+    def set_zone(self, name):
+        self.db.query(UserSetting).filter_by(user_id=self.user.id, key="time_zone").delete()
+        self.db.add(UserSetting(user_id=self.user.id, key="time_zone", value=name))
+        self.db.commit()
+
+    def test_category_is_on_by_default_and_has_a_settings_row(self):
+        self.assertTrue(notifications.category_enabled(self.db, self.user.id, "wrapped"))
+        self.assertIn("wrapped", notifications.UI_CATEGORIES)
+
+    def test_nothing_before_1_december_10_local(self):
+        self.with_cards()
+        for now in (datetime.datetime(2026, 11, 3, 12), datetime.datetime(2026, 11, 30, 23, 59),
+                    datetime.datetime(2026, 12, 1, 9, 59)):
+            self.assertEqual(recap.queue_wrapped_ready(self.db, now), 0)
+        self.assertEqual(self.queued(), [])
+
+    def test_sends_from_10_on_1_december(self):
+        self.with_cards()
+        self.assertEqual(recap.queue_wrapped_ready(self.db, self.OPEN_UTC), 1)
+        self.assertEqual([r.subject_key for r in self.queued()], ["wrapped:2026"])
+
+    def test_a_late_tick_still_sends_during_the_window(self):
+        self.with_cards()
+        self.assertEqual(recap.queue_wrapped_ready(self.db, datetime.datetime(2026, 12, 9, 15, 0)), 1)
+        self.assertEqual(recap.queue_wrapped_ready(self.db, datetime.datetime(2027, 1, 14, 15, 0)), 0)  # already told
+
+    def test_nothing_after_the_window_closes(self):
+        self.with_cards()
+        self.assertEqual(recap.queue_wrapped_ready(self.db, datetime.datetime(2027, 1, 16, 12, 0)), 0)
+
+    def test_the_gate_follows_the_trainers_time_zone(self):
+        self.with_cards()
+        self.set_zone("Pacific/Auckland")  # UTC+13 in December: 10:00 on 1 December is 21:00 UTC on 30 November
+        self.assertEqual(recap.queue_wrapped_ready(self.db, datetime.datetime(2026, 11, 30, 20, 59)), 0)
+        self.assertEqual(recap.queue_wrapped_ready(self.db, datetime.datetime(2026, 11, 30, 21, 0)), 1)
+
+    def test_a_western_zone_waits_for_its_own_10(self):
+        self.with_cards()
+        self.set_zone("America/Los_Angeles")  # UTC-8: 10:00 local is 18:00 UTC
+        self.assertEqual(recap.queue_wrapped_ready(self.db, datetime.datetime(2026, 12, 1, 17, 59)), 0)
+        self.assertEqual(recap.queue_wrapped_ready(self.db, datetime.datetime(2026, 12, 1, 18, 0)), 1)
+
+    def test_once_per_year_and_the_second_run_does_not_recompute(self):
+        self.with_cards()
+        self.assertEqual(recap.queue_wrapped_ready(self.db, self.OPEN_UTC), 1)
+        with patch.object(recap, "wrapped", return_value={"totals": {"cards": 0}}) as compute:
+            self.assertEqual(recap.queue_wrapped_ready(self.db, self.OPEN_UTC + datetime.timedelta(minutes=1)), 0)
+            self.assertEqual(recap.queue_wrapped_ready(self.db, datetime.datetime(2026, 12, 20, 12)), 0)
+        self.assertEqual([c for c in compute.call_args_list if c.args[1] == self.user.id], [])  # the trainer already told is not recomputed
+        self.assertEqual(len(self.queued()), 1)
+
+    def test_a_new_year_is_a_new_subject(self):
+        self.own("big-001", acquired_at=datetime.datetime(2027, 2, 1))
+        self.assertEqual(recap.queue_wrapped_ready(self.db, datetime.datetime(2027, 12, 1, 10, 0)), 1)
+        self.assertEqual([r.subject_key for r in self.queued()], ["wrapped:2027"])
+
+    def test_nothing_for_a_trainer_with_no_cards_that_year(self):
+        self.own("tst-001", acquired_at=datetime.datetime(2025, 5, 1))  # last year only
+        self.assertEqual(recap.queue_wrapped_ready(self.db, self.OPEN_UTC), 0)
+        self.assertEqual(self.queued(), [])
+        self.own("tst-002", acquired_at=datetime.datetime(2026, 5, 1))
+        self.assertEqual(recap.queue_wrapped_ready(self.db, self.OPEN_UTC + datetime.timedelta(hours=1)), 1)
+
+    def test_nothing_for_an_inactive_trainer(self):
+        self.with_cards()
+        self.user.is_active = False
+        self.db.commit()
+        self.assertEqual(recap.queue_wrapped_ready(self.db, self.OPEN_UTC), 0)
+
+    def test_nothing_when_the_category_is_switched_off(self):
+        self.with_cards()
+        self.db.add(UserSetting(user_id=self.user.id, key="notify_wrapped", value="false"))
+        self.db.commit()
+        self.assertEqual(recap.queue_wrapped_ready(self.db, self.OPEN_UTC), 0)
+        self.assertEqual(self.queued(), [])
+
+    def test_preview_sends_on_the_first_tick_without_the_date_and_only_once(self):
+        self.with_cards()
+        with patch.dict(os.environ, {recap.PREVIEW_ENV: "1"}):
+            self.assertEqual(recap.queue_wrapped_ready(self.db, datetime.datetime(2026, 11, 3, 12, 0)), 1)
+            self.assertEqual(recap.queue_wrapped_ready(self.db, datetime.datetime(2026, 11, 3, 12, 1)), 0)
+        self.assertEqual([r.subject_key for r in self.queued()], ["wrapped:2026"])
+
+    def test_text_and_link(self):
+        self.assertEqual(
+            recap.build_wrapped_push("wrapped:2026", None),
+            ("Your 2026 Wrapped is ready", "See your year in cards", "/wrapped/2026"),
+        )
+        title, body, link = recap.build_wrapped_push("wrapped:2026", {"year": 2026, "cards": 1, "value": 99})
+        self.assertIn("1 card added", body)
+        self.assertNotIn("99", body)
+        self.assertNotIn("€", body)
+
+    def test_flush_sends_the_link_and_respects_the_details_switch(self):
+        self.with_cards()
+        recap.queue_wrapped_ready(self.db, self.OPEN_UTC)
+        for details_on in (True, False):
+            self.db.query(NotificationQueue).update({"sent_at": None})
+            self.db.query(UserSetting).filter_by(user_id=self.user.id, key="notify_show_details").delete()
+            self.db.add(UserSetting(user_id=self.user.id, key="notify_show_details", value="true" if details_on else "false"))
+            self.db.commit()
+            with patch.object(notifications.push, "send_to_user", return_value={"sent": 1, "removed": 0}) as send:
+                notifications.flush_due(self.db, self.OPEN_UTC + datetime.timedelta(minutes=1))
+            payload = json.loads(send.call_args[0][2])
+            self.assertEqual(payload["notification"]["title"], "Your 2026 Wrapped is ready")
+            self.assertEqual("3 cards added" in payload["notification"]["body"], details_on)
+            self.assertIn("/wrapped/2026", json.dumps(payload))
+
+    def test_quiet_hours_hold_it_back_until_morning(self):
+        self.with_cards()
+        self.set_zone("Pacific/Auckland")
+        self.db.add(UserSetting(user_id=self.user.id, key="notify_quiet_hours", value="true"))
+        self.db.commit()
+        late = datetime.datetime(2026, 12, 1, 9, 30)  # 22:30 on 1 December in Auckland: quiet hours
+        self.assertEqual(recap.queue_wrapped_ready(self.db, late), 1)
+        with patch.object(notifications.push, "send_to_user", return_value={"sent": 1, "removed": 0}) as send:
+            notifications.flush_due(self.db, late)
+        send.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

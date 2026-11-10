@@ -4,6 +4,7 @@ import { formatRetryCountdown, retryCountdownParts } from './retryCountdown'
 const now = Date.parse('2026-08-09T16:00:00Z')
 const t = key => ({
   'scanner.itemRetrying': 'Waiting to retry…',
+  'scanner.waitingForScanner': 'Waiting for the scanner',
   'scanner.retryingInSeconds': 'Retrying in {seconds}s',
   'scanner.retryingInMinutes': 'Retrying in {minutes}m',
   'scanner.retryingInHours': 'Retrying in {hours}h {minutes}m',
@@ -26,6 +27,11 @@ describe('retry countdown', () => {
 
   it('falls back to the generic retry status without a timestamp', () => {
     expect(formatRetryCountdown(null, t, now)).toBe('Waiting to retry…')
+  })
+
+  it('says Waiting for the scanner, never a long countdown', () => {
+    expect(formatRetryCountdown(null, t, now, 'scanner_unreachable')).toBe('Waiting for the scanner')
+    expect(formatRetryCountdown('2026-08-09T21:40:00Z', t, now, 'scanner_unreachable')).toBe('Waiting for the scanner')
   })
 
   it('explains daily quota waits while retaining the live countdown', () => {

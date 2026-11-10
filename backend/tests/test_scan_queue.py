@@ -1085,7 +1085,7 @@ class ScanProcessingConcurrencyTests(unittest.IsolatedAsyncioTestCase):
         return (
             patch("database.SessionLocal", side_effect=session_factory),
             patch("services.scan_queue._leased_items", side_effect=leased_items),
-            patch("services.scan_queue.resolve_scan_path", return_value=image_path),
+            patch("services.scan_queue.read_recognition_image", return_value=b"safe-jpeg"),
             patch("services.scan_queue.complete_claim", return_value=True),
             patch("services.scan_queue.fail_claim", return_value=True),
         )

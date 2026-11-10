@@ -114,7 +114,7 @@ export default function SetsLanguages() {
         <h1 className="text-title-2 font-display">{t('sets.chooseLanguage')}</h1>
         <p className="text-subheadline text-text-secondary">{t('sets.chooseLanguageDesc')}</p>
       </div>
-      <ListSection className="mx-0">
+      <ListSection className="mx-0" data-tour="sets-language">
         {rows.map(row => {
           const notSaved = offline && row.setCount === 0
           const ownedPart = row.ownedKnown ? ` · ${t('ios.ownedOfTotal').replace('{owned}', row.owned).replace('{total}', row.total)} ${t('sets.cards')}` : ''

@@ -5,6 +5,7 @@ import toast from 'react-hot-toast'
 import { useSettings } from '../contexts/SettingsContext'
 import Badge from './ios/Badge'
 import PokeBall from './ios/PokeBall'
+import { guideBoxInFrame, guideFileName } from '../utils/scanGuideCrop'
 
 export { liveCameraSupported } from './scanCamera'
 
@@ -35,6 +36,8 @@ export default function BatchCameraCapture({
 }) {
   const { t } = useSettings()
   const videoRef = useRef(null)
+  const containerRef = useRef(null)
+  const guideRef = useRef(null)
   const streamRef = useRef(null)
   const unavailableRef = useRef(onUnavailable)
   const [ready, setReady] = useState(false)
@@ -83,25 +86,25 @@ export default function BatchCameraCapture({
     }
   }, [stopStream])
 
-  const atLimit = count >= max
+  const atLimit = Number.isFinite(max) && count >= max
 
   const capture = () => {
-    if (atLimit) {
-      toast.error(t('scanner.batchLimitReached'))
-      return
-    }
     const video = videoRef.current
     if (!ready || !video?.videoWidth) return
     const canvas = document.createElement('canvas')
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
     canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height)
+    // Remember where the guide frame sat, so the server can send a model just the card.
+    const container = containerRef.current?.getBoundingClientRect()
+    const guide = guideRef.current?.getBoundingClientRect()
+    const box = guideBoxInFrame(container, guide, video.videoWidth, video.videoHeight)
     canvas.toBlob(blob => {
       if (!blob) {
         toast.error(t('scanner.cameraCaptureFailed'))
         return
       }
-      const file = new File([blob], `scan-${Date.now()}.jpg`, { type: 'image/jpeg' })
+      const file = new File([blob], guideFileName(`scan-${Date.now()}.jpg`, box), { type: 'image/jpeg' })
       onCapture(file)
       setFlash(true)
       setTimeout(() => setFlash(false), 120)
@@ -109,10 +112,10 @@ export default function BatchCameraCapture({
   }
 
   return (
-    <div className="absolute inset-0 flex flex-col bg-black text-white" data-testid="scan-camera">
+    <div ref={containerRef} className="absolute inset-0 flex flex-col bg-black text-white" data-testid="scan-camera">
       <video ref={videoRef} playsInline muted autoPlay className="absolute inset-0 h-full w-full object-cover" />
       <div className="pointer-events-none absolute inset-0 grid place-items-center">
-        <div className="relative w-[70%] max-w-[360px] shadow-[0_0_0_100vmax_rgba(0,0,0,0.55)]" style={{ aspectRatio: '63 / 88' }}>
+        <div ref={guideRef} className="relative w-[70%] max-w-[360px] shadow-[0_0_0_100vmax_rgba(0,0,0,0.55)]" style={{ aspectRatio: '63 / 88' }}>
           {GUIDE_CORNERS.map(corner => (
             <span key={corner} className={`absolute h-8 w-8 border-yellow ${corner}`} />
           ))}
@@ -139,6 +142,7 @@ export default function BatchCameraCapture({
           type="button"
           onClick={onOpenInbox}
           aria-label={t('scanner.queueTitle')}
+          data-tour="scan-queue"
           className="glass ios-press flex h-11 items-center gap-2 rounded-full px-4 text-subhead font-semibold"
         >
           <Inbox size={18} aria-hidden="true" />
@@ -169,6 +173,7 @@ export default function BatchCameraCapture({
           disabled={!ready || atLimit}
           aria-label={t('scanner.takePhoto')}
           data-testid="scan-shutter"
+          data-tour="shutter"
           className="ios-press grid h-[82px] w-[82px] place-items-center justify-self-center rounded-full border-4 border-white disabled:opacity-40"
         >
           <PokeBall size={70} gloss />
@@ -184,7 +189,7 @@ export default function BatchCameraCapture({
             {lastPreview && <img src={lastPreview} alt="" className="h-full w-full object-cover" />}
           </span>
           <span className="tabular-nums">{count > 0 ? t('scanner.caught').replace('{n}', String(count)) : ''}</span>
-          <span className="tabular-nums text-text-secondary">{count}/{max}</span>
+          {Number.isFinite(max) && <span className="tabular-nums text-text-secondary">{count}/{max}</span>}
         </button>
       </div>
     </div>

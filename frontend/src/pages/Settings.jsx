@@ -43,7 +43,10 @@ import { settingsSection, visibleSettingsSections } from '../navigation/navConfi
 import { readSplashEnabled, writeSplashEnabled } from '../components/splash/launch'
 import { readShowDaily, writeShowDaily } from '../progress/daily'
 import SplashCacheSection from '../components/splash/SplashCacheSection'
+import ScannerLabSection from '../components/settings/ScannerLabSection'
 import { ServerPicturesSection } from '../components/settings/OfflineCardDbSection'
+import { requestTour } from '../welcome/tourControl'
+import { resetTourDone } from '../welcome/tourStorage'
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -579,6 +582,7 @@ export default function Settings() {
   const [wishlistVisibility, setWishlistVisibility] = useState('private')
   const [profileDirty, setProfileDirty] = useState(false)
   const [publicFeatureSaving, setPublicFeatureSaving] = useState(false)
+  const [socialSaving, setSocialSaving] = useState(false)
 
   const { data: profileData } = useQuery({
     queryKey: ['profile'],
@@ -744,6 +748,18 @@ export default function Settings() {
       toast.error(t('settings.saveFailed'))
     } finally {
       setPublicFeatureSaving(false)
+    }
+  }
+
+  const handleSocialToggle = async (enabled) => {
+    setSocialSaving(true)
+    try {
+      await updateSettings({ social_features_enabled: enabled ? 'true' : 'false' })
+      toast.success(t('settings.saved'))
+    } catch {
+      toast.error(t('settings.saveFailed'))
+    } finally {
+      setSocialSaving(false)
     }
   }
 
@@ -1269,6 +1285,26 @@ export default function Settings() {
             </div>}
           </section>}
 
+          {/* ── SOCIAL (milestone D: swap offers, activity feed, weekly challenge) ── */}
+          {activeSection === 'account' && multiUser && user?.role === 'admin' && <section className="space-y-1">
+            <SectionHeader title={t('settings.sectionSocial')} />
+            <SettingsCard>
+              <SettingsRow
+                label={t('settings.socialGlobal')}
+                description={settings.social_features_enabled === 'true'
+                  ? t('settings.socialGlobalEnabledDesc')
+                  : t('settings.socialGlobalDisabledDesc')}
+              >
+                <Toggle
+                  value={settings.social_features_enabled === 'true'}
+                  onChange={handleSocialToggle}
+                  label={t('settings.socialGlobal')}
+                  disabled={socialSaving}
+                />
+              </SettingsRow>
+            </SettingsCard>
+          </section>}
+
           {/* ── 2. THEME ── */}
           {activeSection === 'appearance' && <section className="space-y-1">
             <SectionHeader title={t('settings.sectionTheme')} />
@@ -1468,6 +1504,15 @@ export default function Settings() {
                 </SettingsRow>
               )}
               {scanDiagnosticsRow}
+              {user?.role === 'admin' && (
+                <SettingsRow label={t('settings.pictureFirst')} description={t('settings.pictureFirstDesc')}>
+                  <Toggle
+                    value={settings.scan_picture_first === 'true'}
+                    label={t('settings.pictureFirst')}
+                    onChange={val => handleAdminBooleanSettingToggle('scan_picture_first', val)}
+                  />
+                </SettingsRow>
+              )}
             </SettingsCard>
           </section>}
 
@@ -1475,7 +1520,35 @@ export default function Settings() {
           
 
           {/* ── 8. ÜBER DIE APP ── */}
-          {activeSection === 'about' && <section className="space-y-1">
+          {activeSection === 'about' && <div className="space-y-6">
+            <ListSection header={t('welcome.sectionHeader')} className="!mx-0">
+              <ListRow
+                title={t('welcome.versionHistory')}
+                subtitle={t('welcome.versionHistoryDesc')}
+                to="/settings/about/versions"
+                testId="settings-version-history"
+              />
+              {/* The hands-on tour (docs/WELCOME_DESIGN.md §3.1): multi-user mode only. Clears the completion, then starts it. */}
+              {multiUser && (
+                <ListRow
+                  title={t('tour.settingsRow')}
+                  subtitle={t('tour.settingsRowDetail')}
+                  chevron
+                  testId="settings-show-tour"
+                  onClick={async () => {
+                    try {
+                      await resetTourDone(user, updateCurrentUser)
+                    } catch {
+                      toast.error(t('common.error'))
+                      return
+                    }
+                    navigate('/')
+                    requestTour()
+                  }}
+                />
+              )}
+            </ListSection>
+            <section className="space-y-1">
             <SectionHeader title={t('settings.sectionAbout')} />
             <SettingsCard>
               <SettingsRow label={t('settings.app')} description="Pokemon TCG Collection">
@@ -1527,7 +1600,8 @@ export default function Settings() {
                 {t('settings.madeWith')} <a href="https://romerg.de/" target="_blank" rel="noreferrer" className="text-brand-red hover:opacity-80 transition-opacity font-semibold">Gilles Romer</a>
               </p>
             </div>
-          </section>}
+          </section>
+          </div>}
         </>
       )}
 
@@ -1766,6 +1840,8 @@ export default function Settings() {
           <ServerPicturesSection />
 
           {user?.role === 'admin' && <SplashCacheSection t={t} />}
+
+          {user?.role === 'admin' && <ScannerLabSection />}
 
           {user?.role === 'admin' && (
             <section className="space-y-1">

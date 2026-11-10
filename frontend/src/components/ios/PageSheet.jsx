@@ -35,7 +35,8 @@ function HeaderButton({ spec, fallbackLabel, strong, onDefault }) {
  *
  * leading / trailing: a React node, or { label, onPress, disabled }. Without `leading` the sheet
  * shows Cancel, which closes it. With `isDirty`, Cancel, the swipe and the backdrop first ask
- * "Discard changes?" in an action sheet. `container` defaults to document.body (§6.1).
+ * "Discard changes?" in an action sheet. `opaque` swaps the glass for a solid card; `bottomInset` lifts the
+ * sheet above the keyboard. `container` defaults to document.body (§6.1).
  */
 export default function PageSheet({
   isOpen,
@@ -44,6 +45,8 @@ export default function PageSheet({
   leading,
   trailing,
   isDirty = false,
+  opaque = false,
+  bottomInset = 0,
   footer,
   container,
   children,
@@ -95,7 +98,13 @@ export default function PageSheet({
         aria-label={title ? undefined : t('common.dialog')}
         tabIndex={-1}
         onKeyDown={onDialogKeyDown}
-        style={{ zIndex: 'var(--z-sheet)' }}
+        style={{
+          zIndex: 'var(--z-sheet)',
+          // `opaque`: a solid card instead of the glass, so nothing behind the sheet shows through.
+          ...(opaque ? { background: 'var(--color-card)', WebkitBackdropFilter: 'none', backdropFilter: 'none' } : null),
+          // `bottomInset`: the on-screen keyboard's height, so a footer (a composer) stays above it.
+          ...(bottomInset > 0 ? { bottom: bottomInset, maxHeight: `calc(92dvh - ${bottomInset}px)` } : null),
+        }}
         className={clsx(
           'ios-sheet-in glass fixed inset-x-0 bottom-0 mx-auto flex w-full max-w-[640px] flex-col outline-none',
           'max-h-92dvh rounded-t-[16px]',

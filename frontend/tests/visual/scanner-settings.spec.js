@@ -201,12 +201,12 @@ async function scannerActionsAreUnobstructed(page, scanner) {
   }, [await start.elementHandle(), await page.$('[data-testid="tab-bar"]')])
 }
 
-test('batch controls follow the verified multi-image capability without overflowing', async ({ page }) => {
+test('batch controls never offer composite controls, even with verified multi-image capability', async ({ page }) => {
   await installApi(page)
   const scanner = await stageScannerBatch(page)
 
-  await expect(scanner.getByRole('button', { name: 'Scan all individually' })).toBeVisible()
-  await expect(scanner.getByRole('button', { name: 'Scan individually' })).toHaveCount(2)
+  await expect(scanner.getByRole('button', { name: 'Scan all individually' })).toHaveCount(0)
+  await expect(scanner.getByRole('button', { name: 'Scan individually' })).toHaveCount(0)
   expect(await scanner.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
   expect(await scannerActionsAreUnobstructed(page, scanner)).toBe(true)
 })

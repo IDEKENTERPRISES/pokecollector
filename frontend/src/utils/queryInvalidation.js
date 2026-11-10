@@ -11,6 +11,8 @@ export function invalidateCardState(queryClient, { setId } = {}) {
   queryClient.invalidateQueries({ queryKey: ['printing-detail-tags'] })
   queryClient.invalidateQueries({ queryKey: ['wishlist'] })
   queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+  // A swap offer's "card missing" warning follows the giver's collection, so a stale one must not outlive a change.
+  queryClient.invalidateQueries({ queryKey: ['swaps'] })
   queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] === 'card-search' })
   queryClient.invalidateQueries({ predicate: (query) => query.queryKey[0] === 'pokedex' })
   if (setId) {

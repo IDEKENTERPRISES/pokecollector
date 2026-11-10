@@ -37,7 +37,7 @@ export default function UpdateBanner() {
         role="status"
         aria-live="polite"
         data-testid="update-overlay"
-        className="fixed inset-0 z-[70] flex flex-col items-center justify-center bg-bg px-6 text-center text-text-primary"
+        data-tour-allow className="fixed inset-0 z-[70] flex flex-col items-center justify-center bg-bg px-6 text-center text-text-primary"
       >
         <PokeBallLoader size={48} />
         <h1 className="mt-5 text-xl font-semibold">{t('pwa.updatingTitle')}</h1>
@@ -56,7 +56,7 @@ export default function UpdateBanner() {
     <div
       role="status"
       data-testid="update-banner"
-      className="fixed inset-x-0 top-0 z-[60] flex justify-center px-4"
+      data-tour-allow className="fixed inset-x-0 top-0 z-[60] flex justify-center px-4"
       style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
     >
       <div
