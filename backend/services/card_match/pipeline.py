@@ -468,13 +468,20 @@ class CardMatcher:
             return other_result, other_name, True, "text"
         return result, name_read, False, "default"
 
+    def _finder_options(self, whole_frame: bool = False) -> dict:
+        """Keyword arguments for ``detect_card``: none with ``corners`` off (the version 7 finder). A whole frame (the review
+        or full photo) is never judged as a guide crop."""
+        if not self.corners:
+            return {}
+        return {"check": True, "guide": False} if whole_frame else {"check": True, "whole": self.wholepic}
+
     def _find_card(self, photo_rgb: np.ndarray, full_photo, review_photo=None) -> tuple[object, str | None]:
         """(detection, fallback). When no card is found on the recognition image, the stored whole review photo is tried
         first (the card may be cut by the guide crop, and only the whole frame still holds it; an array, or a function that returns one), then the full photo (the
         sharper guide crop: the same framing as the recognition image, so it only helps an upload without one); failing
         that, the plain guide-frame crop is used, because the trainer lined the card up with the guide. ``fallback`` is
         None for a normal find, ``review_photo``, ``full_photo`` or ``guide_crop`` otherwise."""
-        detection = detect_module.detect_card(photo_rgb, check=self.corners, whole=self.wholepic)
+        detection = detect_module.detect_card(photo_rgb, **self._finder_options())
         if detection.found:
             return detection, None
         for name, picture in (("review_photo", review_photo), ("full_photo", full_photo)):
@@ -482,7 +489,7 @@ class CardMatcher:
                 picture = picture()
             if picture is None:
                 continue
-            other = detect_module.detect_card(picture, check=self.corners, guide=False)  # a whole frame, never a guide crop
+            other = detect_module.detect_card(picture, **self._finder_options(whole_frame=True))
             if other.found:
                 other.corners_space = name  # these corners are in that photo, not in ``photo_rgb``
                 return other, name
@@ -497,7 +504,7 @@ class CardMatcher:
         if fallback in ("full_photo", "review_photo"):
             return (detection.hires if detection.hires is not None else detection.card), fallback
         if full_photo is not None and detection.found:
-            other = detect_module.detect_card(full_photo, check=self.corners, guide=False)
+            other = detect_module.detect_card(full_photo, **self._finder_options(whole_frame=True))
             if other.found and _same_card(other.card, upright):
                 return (other.hires if other.hires is not None else other.card), "full_photo"
         if detection.hires is not None:
