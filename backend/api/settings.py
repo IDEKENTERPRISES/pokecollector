@@ -37,9 +37,22 @@ from services.scan_trace import (
     SCAN_DIAGNOSTICS_SETTING_KEY,
     delete_user_traces,
     diagnostics_default_on,
+    diagnostics_locked,
     trace_available,
     trace_deletion_available,
+    trace_keep_days,
+    trace_required,
 )
+
+DIAGNOSTICS_LOCKED_DETAIL = (
+    "On this server the card photo from each scan is kept for testing and improving card recognition, "
+    "so this cannot be switched off or deleted here. Ask the person who runs the server."
+)
+
+
+def _refuse_locked_diagnostics(db: Session, current_user: User) -> None:
+    if diagnostics_locked(db, current_user.id):
+        raise HTTPException(status_code=403, detail=DIAGNOSTICS_LOCKED_DETAIL)
 
 from services.scan_providers import (
     DEFAULT_OPENAI_BASE_URL,
@@ -290,8 +303,9 @@ def _get_user_settings(db: Session, user_id: int) -> dict:
     else:
         result.pop(PICTURE_FIRST_SETTING_KEY, None)
 
-    if diagnostics_default_on() and trace_available():
-        # A test server collects from everyone who hasn't switched diagnostics off.
+    if (diagnostics_default_on() or trace_required()) and trace_available():
+        # A test server collects from everyone who hasn't switched diagnostics off; a required server
+        # (prod) does too, admins included, until an admin switches their own off.
         result.setdefault(SCAN_DIAGNOSTICS_SETTING_KEY, "true")
     for key, value in DEFAULT_SETTINGS.items():
         result.setdefault(key, value)
@@ -313,6 +327,14 @@ def _get_user_settings(db: Session, user_id: int) -> dict:
             result["scanner_managed_by_admin"] = "true"
     elif not gemini_enabled():
         result[SCANNER_GEMINI_FALLBACK_SETTING_KEY] = "false"
+    required = trace_required()
+    locked = diagnostics_locked(db, user_id)
+    if locked:
+        result[SCAN_DIAGNOSTICS_SETTING_KEY] = "true"
+    result["scan_diagnostics_locked"] = "true" if locked else "false"
+    # Admins are told too, so their text can say the server collects from everyone.
+    result["scan_diagnostics_required"] = "true" if required else "false"
+    result["scan_diagnostics_keep_days"] = str(trace_keep_days() or "") if required else ""
     result["scan_diagnostics_available"] = "true" if trace_available() else "false"
     result["scan_diagnostics_deletion_available"] = (
         "true" if trace_deletion_available() else "false"
@@ -993,6 +1015,8 @@ def update_settings(
 ):
     for scanner_key in data:
         _refuse_scanner_key_for_user(scanner_key, current_user)
+    if SCAN_DIAGNOSTICS_SETTING_KEY in data:
+        _refuse_locked_diagnostics(db, current_user)
     if MANAGED_SCANNER_KEYS.intersection(data):
         raise HTTPException(
             status_code=409,
@@ -1048,8 +1072,10 @@ def download_debug_log(current_user: User = Depends(get_current_user)):
 
 @router.delete("/scan-diagnostics")
 def delete_scan_diagnostics(
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _refuse_locked_diagnostics(db, current_user)
     try:
         deleted = delete_user_traces(current_user.id)
     except OSError as exc:
@@ -1164,6 +1190,8 @@ def set_setting(
             detail="Use the atomic scanner configuration endpoint for scanner settings.",
         )
     _refuse_dedicated_setting(key)
+    if key == SCAN_DIAGNOSTICS_SETTING_KEY:
+        _refuse_locked_diagnostics(db, current_user)
     value = _coerce_setting_value(key, body.get("value", ""))
     if key in ADMIN_ONLY_KEYS:
         if current_user.role != "admin":

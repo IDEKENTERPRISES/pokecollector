@@ -413,6 +413,38 @@ def update_user(
     return {"id": user.id, "username": user.username, "role": user.role, "is_active": user.is_active, "avatar_id": user.avatar_id}
 
 
+@router.delete("/users/{user_id}/scan-diagnostics")
+def delete_user_scan_diagnostics(
+    user_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Admin only: delete one trainer's stored scanner diagnostics (for example on a friend's request)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    from services.audit import record_audit
+    from services.scan_trace import delete_user_traces
+
+    try:
+        deleted = delete_user_traces(user_id)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Stored scanner diagnostics could not be deleted.") from exc
+    record_audit(
+        db,
+        "scan_diagnostics.deleted",
+        request=request,
+        actor=current_user,
+        target_type="user",
+        target_id=user_id,
+        details={"target": user.username, "scans": deleted["traces"], "photos": deleted["images"]},
+    )
+    return {"deleted": deleted}
+
+
 @router.delete("/users/{user_id}")
 def delete_user(
     user_id: int,

@@ -88,6 +88,7 @@ export const getUsers = () => api.get('/auth/users').then(r => r.data)
 export const createUser = (data) => api.post('/auth/users', data).then(r => r.data)
 export const updateUser = (id, data) => api.put(`/auth/users/${id}`, data).then(r => r.data)
 export const deleteUser = (id) => api.delete(`/auth/users/${id}`).then(r => r.data)
+export const deleteUserScanDiagnostics = (id) => api.delete(`/auth/users/${id}/scan-diagnostics`).then(r => r.data)
 export const changePassword = (data) => api.put('/auth/me/password', data).then(r => r.data)
 // Ends this device's server-side session so its token stops working at once.
 export const logoutSession = () => api.post('/auth/logout', null, {
