@@ -17,6 +17,13 @@ at that step, and the time the step used. It is what decides which steps can be 
 the finder cannot find is no longer skipped: it is read from the plain guide-frame crop (what the live matcher falls back
 to) and reported as its own group, ``guide_crop``, which is left out of ``all`` so that figure stays comparable.
 
+Version 7 adds two things. A paired reading test for the newer scans (those with a sharper stored card): each one is read from
+three sources, the sharper card (today), the 630 x 880 card flattened from the recognition image (what every scan was read from
+before the sharper crop) and the sharper card shrunk to 630 x 880 with ``cv2.INTER_AREA``; the paired table says, scan by scan,
+whether the number (and the name) came out right on both, on one only, or on neither. And "Never right" is split by cause
+(no text, text but nothing number-shaped, a different number) with up to ten examples each, plus a bucket for the right number
+with a different total than the catalogue prints.
+
 Everything here is read-only; the report lands next to the other benchmark reports.
 """
 
@@ -91,12 +98,12 @@ def new_steps() -> dict:
     return {"scans": 0, "number": {}, "name": {}, "never_number": 0, "never_name": 0}
 
 
-def add_steps(acc: dict, strips: list[dict], kind: str, is_right: Callable[[dict], bool], flipped: bool | None = None) -> None:
+def add_steps(acc: dict, strips: list[dict], kind: str, is_right: Callable[[dict], bool], flipped: bool | None = None) -> bool:
     """Count one scan's reading ladder into ``acc[kind]`` (``number`` or ``name``): for each step that ran, one more run
     and its time; for the first step whose result (``strip["after"]``) was right, one more "first right". A scan that
     never got it right counts under ``never_<kind>``. ``flipped``: only the steps of the reading that was kept."""
     first = None
-    for strip in strips:
+    for strip in strips:  # (returns whether any step had it right)
         after = strip.get("after")
         if after is None or (flipped is not None and bool(strip.get("flipped")) != bool(flipped)):
             continue
@@ -109,6 +116,7 @@ def add_steps(acc: dict, strips: list[dict], kind: str, is_right: Callable[[dict
             row["first_right"] += 1
     if first is None:
         acc["never_" + kind] += 1
+    return first is not None
 
 
 def summarise_steps(acc: dict) -> dict:
@@ -121,6 +129,118 @@ def summarise_steps(acc: dict) -> dict:
                          "total_seconds": round(row["ms"] / 1000, 2)})
         out[kind] = rows
     return out
+
+
+# ── Why a number was never right ─────────────────────────────────────────────
+
+NEVER_BUCKETS = {
+    "no_text": "No text read anywhere in the bottom area",
+    "no_number_shape": "Text read, but nothing shaped like a number",
+    "wrong_number": "A number read that is not the confirmed card’s",
+    "total_differs": "The right number, but a different total than the catalogue prints",
+}
+MAX_EXAMPLES = 10
+
+
+def number_bucket(lines: list[str], number: str | None, total: str | None, truth: dict, *, ever_right: bool) -> str | None:
+    """Where a scan's number reading went wrong, or None when it did not. ``ever_right``: some step of the ladder had the
+    right number. A scan that never had it is "no_text", "no_number_shape" or "wrong_number"; a scan whose final number is
+    right but whose total differs from the catalogue's printed total is "total_differs"."""
+    from .benchmark import _numbers_equal, _totals_equal
+
+    text = [line for line in lines if line and not line.startswith("[hp]")]
+    right = bool(number and _numbers_equal(number, truth.get("number")))
+    if right and total and truth.get("printed_total") and not _totals_equal(total, truth.get("printed_total")):
+        return "total_differs"
+    if right or ever_right:
+        return None
+    if not text:
+        return "no_text"
+    if not number:
+        return "no_number_shape"
+    return "wrong_number"
+
+
+def new_never() -> dict:
+    return {"scans": 0, "buckets": {key: {"n": 0, "examples": []} for key in NEVER_BUCKETS}, "sets": {}}
+
+
+def add_never(acc: dict, bucket: str | None, *, truth: dict, result, name: str | None, trace: str) -> None:
+    """Count one scan into a group's split (and into its per-set counts, so "different cards" can be told from "different pictures")."""
+    acc["scans"] += 1
+    abbreviation = str(truth.get("set_abbreviation") or truth.get("set") or "?")
+    row = acc["sets"].setdefault(abbreviation, [0, 0])
+    row[0] += 1
+    if bucket is None:
+        return
+    row[1] += 1
+    entry = acc["buckets"][bucket]
+    entry["n"] += 1
+    if len(entry["examples"]) < MAX_EXAMPLES:
+        entry["examples"].append({
+            "trace": trace, "name": truth.get("name"), "set": abbreviation,
+            "truth": {"number": truth.get("number"), "total": truth.get("printed_total")},
+            "read": {"number": result.number_local, "total": result.number_total, "name": name},
+            "lines": [line for line in result.lines if line and not line.startswith("[hp]")][:10],
+        })
+
+
+def summarise_never(acc: dict) -> dict:
+    sets = sorted(acc["sets"].items(), key=lambda item: (-item[1][1], -item[1][0]))[:8]
+    return {"scans": acc["scans"],
+            "buckets": [{"key": key, "label": NEVER_BUCKETS[key], **acc["buckets"][key]} for key in NEVER_BUCKETS],
+            "sets": [{"set": name, "scans": counts[0], "wrong": counts[1]} for name, counts in sets]}
+
+
+# ── The paired reading test ──────────────────────────────────────────────────
+
+SOURCE_NAMES = {"sharp": "The sharper card (today)", "recognition": "The 630 x 880 card from the recognition image (before the sharper crop)",
+                "shrunk": "The sharper card shrunk to 630 x 880"}
+
+
+def new_pairs() -> dict:
+    def empty() -> dict:
+        return {"both": 0, "only_first": 0, "only_second": 0, "neither": 0}
+
+    return {"scans": 0, "no_old_card": 0, "tests": {
+        "sharp_vs_recognition": {"first": "sharp", "second": "recognition", "number": empty(), "name": empty()},
+        "sharp_vs_shrunk": {"first": "sharp", "second": "shrunk", "number": empty(), "name": empty()},
+    }}
+
+
+def pair_cell(first: bool, second: bool) -> str:
+    return "both" if first and second else "only_first" if first else "only_second" if second else "neither"
+
+
+def add_pair(pairs: dict, rights: dict[str, dict]) -> None:
+    """Count one scan's readings into the paired tables. ``rights`` maps a source to what was right on it (``score_read``'s
+    dict); a source that could not be read (no card found in the recognition image) is missing and that pair is skipped."""
+    pairs["scans"] += 1
+    if "recognition" not in rights:
+        pairs["no_old_card"] += 1
+    for test in pairs["tests"].values():
+        first, second = rights.get(test["first"]), rights.get(test["second"])
+        if first is None or second is None:
+            continue
+        for kind in ("number", "name"):
+            test[kind][pair_cell(first[kind], second[kind])] += 1
+
+
+def paired_pictures(card, trace_path: Path, data: dict) -> dict:
+    """The two other sources of the paired test: the 630 x 880 card flattened from the recognition image (None when the finder
+    cannot find the card there), and the sharper card shrunk to 630 x 880 with INTER_AREA."""
+    import cv2
+
+    from . import detect
+    from .images import decode_rgb
+
+    recognition = None
+    try:
+        found = detect.detect_card(decode_rgb((trace_path.parent / data["image_file"]).read_bytes(), max_side=1024))
+        recognition = found.card if found.found else None
+    except Exception:
+        logger.exception("OCR check: could not flatten the recognition image of %s", trace_path.name)
+    return {"recognition": recognition, "shrunk": cv2.resize(card, (detect.CARD_W, detect.CARD_H), interpolation=cv2.INTER_AREA)}
 
 
 def new_bucket() -> dict:
@@ -213,6 +333,8 @@ def run_ocr_check(
     variants = ocr_module.VARIANTS
     buckets: dict[str, dict] = {}
     steps: dict[str, dict] = {}
+    never: dict[str, dict] = {}
+    pairs = new_pairs()
     failures: list[dict] = []
     skipped = 0
 
@@ -242,14 +364,18 @@ def run_ocr_check(
         rights: dict[str, dict] = {}
         for mode in modes:
             result, name, seconds, name_strips = read_both(reader, card, mode)
+            if mode == "detect":
+                detect_read = (result, name, seconds)
             for res in ((resolution, "all") if resolution != "guide_crop" else (resolution,)):
                 rights[mode] = score_read(bucket_for(res, mode), truth=truth, name=name, result=result, seconds=seconds)
                 if mode == "detect":
                     acc = steps.setdefault(res, new_steps())
                     acc["scans"] += 1
-                    add_steps(acc, result.strips, "number", lambda after: bool(after.get("number") and _numbers_equal(after["number"], truth.get("number"))),
-                              flipped=result.flipped)
+                    ever_right = add_steps(acc, result.strips, "number", lambda after: bool(after.get("number") and _numbers_equal(after["number"], truth.get("number"))),
+                                           flipped=result.flipped)
                     add_steps(acc, name_strips, "name", lambda after: names_match(after.get("name"), truth.get("name")))
+                    add_never(never.setdefault(res, new_never()), number_bucket(result.lines, result.number_local, result.number_total, truth, ever_right=ever_right),
+                              truth=truth, result=result, name=name, trace=path.name)
             if mode == "detect" and not (rights[mode]["name"] and rights[mode]["number"]) and len(failures) < MAX_FAILURES:
                 failures.append({
                     "trace": path.name, "resolution": resolution, "height": int(card.shape[0]),
@@ -257,6 +383,16 @@ def run_ocr_check(
                     "read": {"name": name, "number": result.number_local, "total": result.number_total, "confidence": result.number_confidence},
                     "right": rights[mode], "lines": result.lines[:8],
                 })
+        if resolution == "full":  # the newer scans: the same scan read from the other two sources (the paired test)
+            sources = {"sharp": rights["detect"]}
+            read, read_name, read_seconds = detect_read
+            score_read(bucket_for("full", "source:sharp"), truth=truth, name=read_name, result=read, seconds=read_seconds)
+            for source, picture in paired_pictures(card, path, data).items():
+                if picture is None:
+                    continue
+                result, name, seconds, _strips = read_both(reader, picture, "detect")
+                sources[source] = score_read(bucket_for("full", f"source:{source}"), truth=truth, name=name, result=result, seconds=seconds)
+            add_pair(pairs, sources)
         for variant in variants:
             got = read_variant(reader, card, variant)
             if got is None:
@@ -273,6 +409,10 @@ def run_ocr_check(
         "modes": {"fixed": "version 4's fixed strips", "detect": "fast strips, then bottom band under preprocessing variants, then the whole card",
                   "variant:<name>": "one read of the bottom band and the name band under one preprocessing variant"},
         "steps": {res: summarise_steps(acc) for res, acc in sorted(steps.items())},
+        "never_right": {res: summarise_never(acc) for res, acc in sorted(never.items())},
+        "never_right_note": "Why the number was never right, per group, with up to ten examples each (text only: the lines read and the confirmed number and total).",
+        "paired": pairs, "source_names": SOURCE_NAMES,
+        "paired_note": "The newer scans read from three sources. Each cell counts scans: right on both, only on the first source, only on the second, or on neither.",
         "steps_note": "Per reading step of the full ladder, in order: scans that first had the right number (name) at that step, and the time it used.",
         "failures": failures,
         "duration_seconds": round(time.monotonic() - started, 1),

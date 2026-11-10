@@ -298,7 +298,7 @@ def fallback_summary(results: list[dict]) -> dict:
     A fallback card is only ever decided when a number was read from it and the picture agrees."""
     return {
         "scans": sum(1 for r in results if r.get("fallback")),
-        "by_kind": {kind: _group_row([r for r in results if r.get("fallback") == kind]) for kind in ("full_photo", "guide_crop")},
+        "by_kind": {kind: _group_row([r for r in results if r.get("fallback") == kind]) for kind in ("review_photo", "full_photo", "guide_crop")},
         "found_on_photo": _group_row([r for r in results if not r.get("fallback")]),
     }
 
@@ -417,6 +417,35 @@ def load_stored_card(trace_path: Path, data: dict):
         return None
 
 
+def review_photo_loader(session_factory, data: dict):
+    """A function that reads the scan's whole stored review photo (the 2048 px one) for the card finder, or None when the trace
+    does not say which scan it is. The photo is read only when the card is not found on the recognition image. Read-only; the
+    photo stays on the server (a scan older than the retention period has none, and the finder then goes to the guide frame)."""
+    item_id = data.get("item_id")
+    if not item_id or session_factory is None:
+        return None
+
+    def load():
+        from models import ScanJobItem
+        from services import scan_storage
+        from .images import decode_rgb
+
+        db = session_factory()
+        try:
+            row = db.get(ScanJobItem, item_id)
+            path = row.image_path if row is not None else None
+        finally:
+            db.close()
+        if not path:
+            return None
+        try:
+            return decode_rgb(scan_storage.read_review_photo(path), max_side=2048)
+        except Exception:
+            return None
+
+    return load
+
+
 def run_labelled(
     session_factory, matcher, *, trace_dir: Path, progress: Callable[[dict], None] | None = None,
     should_stop: Callable[[], bool] | None = None, collector=None,
@@ -459,7 +488,8 @@ def run_labelled(
             continue
         stored = load_stored_card(path, data)
         resolution = ocr_check.resolution_of(stored)
-        outcome = matcher.match(photo, flat_card=stored)
+        review = review_photo_loader(session_factory, data)
+        outcome = matcher.match(photo, flat_card=stored, review_photo=review) if review is not None else matcher.match(photo, flat_card=stored)
         if collector is not None:
             try:
                 collector.add(trace=path.name, photo=photo, outcome=outcome, truth_id=truth_id,

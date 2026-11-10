@@ -29,6 +29,7 @@ from services.scan_storage import (
     downscale_for_recognition,
     read_capture_info,
     read_recognition_image,
+    read_review_photo,
     read_text_photo,
     resolve_scan_path,
 )
@@ -589,6 +590,19 @@ def _full_photo_for_item(db: Session, item_id: int | None) -> bytes | None:
         return None
 
 
+def _review_reader_for_item(db: Session, item_id: int | None):
+    """A function that reads the whole stored review photo of a scan item (None without one); the card finder uses it only
+    when it cannot find the card in the guide-frame picture."""
+    if item_id is None:
+        return None
+    try:
+        row = db.get(ScanJobItem, item_id)
+        path = row.image_path if row is not None else None
+    except Exception:
+        return None
+    return (lambda: read_review_photo(path)) if path else None
+
+
 def _capture_info_for_item(db: Session, item_id: int | None) -> dict | None:
     """The camera frame and guide-crop sizes kept with the photo (None for an upload without a guide box)."""
     if item_id is None:
@@ -716,7 +730,8 @@ async def default_scan_processor(
     if picture_first.enabled(db):
         picture_earlier = _earlier_picture_for_item(db, item_id)
         picture_run = await picture_first.run_matcher(
-            image_bytes, _full_photo_for_item(db, item_id), _capture_info_for_item(db, item_id)
+            image_bytes, _full_photo_for_item(db, item_id), _capture_info_for_item(db, item_id),
+            _review_reader_for_item(db, item_id),
         )
         if picture_run is not None:
             early = await _picture_first_early_result(

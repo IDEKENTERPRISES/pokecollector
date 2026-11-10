@@ -50,8 +50,8 @@ class WinnerAndDefaultTests(unittest.TestCase):
             self.assertEqual(variants.active_label(data_dir), "names+art")
 
     def test_the_default_uses_artwork_and_extra_views_and_stays_safe_without_the_indexes(self):
-        self.assertEqual(variants.DEFAULT_LABEL, "names+number+text+art+tta")
-        self.assertEqual(MATCHER_VERSION, "6")
+        self.assertEqual(variants.DEFAULT_LABEL, "names+number+text+art+tta+fastread")
+        self.assertEqual(MATCHER_VERSION, "7")
         options = variants.parse(variants.DEFAULT_LABEL)
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(variants.missing_indexes(options, Path(tmp)), [variants.ART_INDEX])
@@ -63,9 +63,9 @@ class WinnerAndDefaultTests(unittest.TestCase):
         label = "names+number+text+art+tta+fastread"
         self.assertTrue(variants.parse(label).fastread)
         self.assertEqual(variants.parse(label).label, label)
-        self.assertFalse(variants.parse(variants.DEFAULT_LABEL).fastread)
+        self.assertTrue(variants.parse(variants.DEFAULT_LABEL).fastread)  # version 7: measured as accurate and 144 ms faster
         self.assertIn(label, variants.COMPARE_LABELS)
-        self.assertLess(variants.COMPARE_LABELS.index("names+number+text+art+tta"), variants.COMPARE_LABELS.index(label))
+        self.assertNotIn("names+number+text+art+tta", variants.COMPARE_LABELS)  # its fastread twin replaced it
         self.assertEqual(variants.needed_indexes(variants.parse(label)), [variants.ART_INDEX])
         self.assertLessEqual(len(variants.SYNTHETIC_COMPARE_LABELS) * variants.SYNTHETIC_COMPARE_COUNT, 600)
 
