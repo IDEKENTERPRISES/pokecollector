@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Crown, RefreshCw, Download, Upload, Plus, Pencil, Trash2, User, UserCheck, UserX, Zap, Copy } from 'lucide-react'
+import { Crown, RefreshCw, Download, Upload, Plus, Pencil, Trash2, User, UserCheck, UserX, Zap, Copy, Eraser } from 'lucide-react'
 import clsx from 'clsx'
 import {
   getSyncStatus, triggerSync, triggerPriceSync, triggerAllPriceSync, rescheduleFullSync, reschedulePriceSync,
   downloadBackup, restoreBackup, getRestoreStatus, exportCSV,
   getSetting, setSetting, getTelegramStatus, saveSettings, setAuthMode,
-  getUsers, createUser, updateUser, deleteUser, changePassword, changeAvatar, changeUsername,
+  getUsers, createUser, updateUser, deleteUser, deleteUserScanDiagnostics, changePassword, changeAvatar, changeUsername,
   getContributors, getSupporters, getCustomMatches, downloadDebugLog, logoutOtherDevices,
   getProfile, updateProfile, deleteScanDiagnostics, getScannerConfiguration,
   deleteAllCollectionCardPhotos,
@@ -1068,21 +1068,31 @@ export default function Settings() {
   const scanDiagnosticsDeletionAvailable = settings.scan_diagnostics_deletion_available === 'true'
   // The user's own diagnostics consent and data: in the Scanner section, or under Appearance next to
   // the card photo rows when an administrator manages the scanner and there is no Scanner section.
+  // On a server that requires diagnostics, a trainer who is not an admin sees the switch on and locked.
+  const scanDiagnosticsLocked = settings.scan_diagnostics_locked === 'true'
+  const keepDays = parseInt(settings.scan_diagnostics_keep_days, 10) || 0
+  const lockedDescription = !keepDays
+    ? t('settings.scanDiagnosticsLockedDescForever')
+    : t('settings.scanDiagnosticsLockedDesc').replace('{period}', keepDays >= 60
+      ? t('settings.scanDiagnosticsPeriodMonths').replace('{count}', String(Math.round(keepDays / 30.4375)))
+      : t('settings.scanDiagnosticsPeriodDays').replace('{count}', String(keepDays)))
   const scanDiagnosticsRow = (
     <SettingsRow
       label={t('settings.scanDiagnostics')}
-      description={scanDiagnosticsAvailable
-        ? t('settings.scanDiagnosticsDesc')
-        : t('settings.scanDiagnosticsUnavailable')}
+      description={scanDiagnosticsLocked
+        ? lockedDescription
+        : scanDiagnosticsAvailable
+          ? t('settings.scanDiagnosticsDesc')
+          : t('settings.scanDiagnosticsUnavailable')}
     >
       <div className="flex items-center gap-2">
         <Toggle
           value={scanDiagnosticsEnabled}
           label={t('settings.scanDiagnostics')}
           onChange={handleScanDiagnosticsToggle}
-          disabled={!scanDiagnosticsAvailable || scanDiagnosticsSaving}
+          disabled={!scanDiagnosticsAvailable || scanDiagnosticsSaving || scanDiagnosticsLocked}
         />
-        <button
+        {!scanDiagnosticsLocked && <button
           type="button"
           onClick={handleDeleteScanDiagnostics}
           disabled={!scanDiagnosticsDeletionAvailable || scanDiagnosticsDeleting}
@@ -1092,7 +1102,7 @@ export default function Settings() {
           {scanDiagnosticsDeleting
             ? t('settings.scanDiagnosticsDeleting')
             : t('settings.scanDiagnosticsDelete')}
-        </button>
+        </button>}
       </div>
     </SettingsRow>
   )
@@ -2082,6 +2092,12 @@ function UsersTab({ t, queryClient }) {
     onError: (e) => toast.error(e.response?.data?.detail || t('common.error')),
   })
 
+  const diagnosticsMut = useMutation({
+    mutationFn: (id) => deleteUserScanDiagnostics(id),
+    onSuccess: () => toast.success(t('settings.scanDiagnosticsDeleted')),
+    onError: (e) => toast.error(e.response?.data?.detail || t('settings.scanDiagnosticsDeleteFailed')),
+  })
+
   const openCreate = () => {
     setEditingUser(null)
     setFormUsername('')
@@ -2132,6 +2148,20 @@ function UsersTab({ t, queryClient }) {
                   >
                     {u.is_active ? <UserCheck size={15} /> : <UserX size={15} />}
                   </button>
+                  <button
+                    onClick={async () => {
+                      const confirmed = await confirmDialog({
+                        title: t('settings.scanDiagnosticsDelete'),
+                        message: t('settings.users.deleteDiagnosticsConfirm').replace('{name}', u.username),
+                        confirmLabel: t('common.delete'),
+                        destructive: true,
+                      })
+                      if (confirmed) diagnosticsMut.mutate(u.id)
+                    }}
+                    aria-label={t('settings.users.deleteDiagnostics')}
+                    title={t('settings.users.deleteDiagnostics')}
+                    className="grid h-11 w-9 place-items-center text-text-secondary"
+                  ><Eraser size={15} /></button>
                   <button onClick={() => openEdit(u)} aria-label={t('common.edit')} className="grid h-11 w-9 place-items-center text-text-secondary"><Pencil size={15} /></button>
                   {u.id !== currentUser?.id && (
                     <button onClick={async () => {

@@ -28,6 +28,10 @@ services:
       SCAN_TRACE_DIR: /app/data/scan-traces
       # On this test server diagnostics are on for every trainer who hasn't switched them off. Prod does not set it.
       SCAN_TRACE_DEFAULT_ON: "1"
+      # Merged after the prod file, so these switch prod's rules off here: each trainer can switch diagnostics off
+      # and nothing expires.
+      SCAN_TRACE_REQUIRED: "0"
+      SCAN_TRACE_KEEP_DAYS: ""
       # Scanner picture matcher prototype (docs/CARD_MATCH.md): build the index and run the benchmark
       # once after a deploy (overnight), and keep the index current after each card sync. Prod sets neither.
       SCAN_MATCHER_AUTORUN: "1"

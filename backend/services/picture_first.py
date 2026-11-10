@@ -263,14 +263,16 @@ def earlier_picture(recognized) -> dict | None:
 # ── Trace ────────────────────────────────────────────────────────────────────
 
 def record_in_trace(trace, user_id: int, job_id, item_id, run: PictureRun, meta: dict, selected: str | None = None) -> None:
-    """Trace entry for the path taken, plus the shadow-mode record when that is on (so shadow keeps working)."""
+    """Trace entry for the path taken, plus the matcher's own record and its flat card.
+
+    Stored whenever the trainer's diagnostics are on, whether or not shadow mode is (the matcher has already
+    run for this scan, so nothing runs twice) and a scan can be re-read later exactly as a shadow-mode scan can."""
     try:
         trace.record_picture_match(meta)
         if selected is not None:
             trace.record_decision("picture_match", selected)
-        from services.card_match import config
 
-        if trace.enabled and config.shadow_enabled() and job_id and item_id:
+        if trace.enabled and job_id and item_id:
             from services import scan_trace
             from services.card_match import shadow
 

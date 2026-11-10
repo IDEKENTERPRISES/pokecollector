@@ -3,7 +3,9 @@
 Tracing is available only when ``SCAN_TRACE_DIR`` is configured and is enabled
 separately by each user. One JSON file is written per scan attempt with the
 sanitized source image alongside it. Files remain until that user explicitly
-deletes them (or their account is deleted).
+deletes them (or their account is deleted), or until the optional retention
+period (``SCAN_TRACE_KEEP_DAYS``) passes. With ``SCAN_TRACE_REQUIRED`` on, tracing
+is on for every trainer who is not an admin and only an admin can delete theirs.
 """
 
 from __future__ import annotations
@@ -20,11 +22,13 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from models import UserSetting
+from models import User, UserSetting
 
 logger = logging.getLogger(__name__)
 
 SCAN_DIAGNOSTICS_SETTING_KEY = "scan_diagnostics_enabled"
+SCAN_TRACE_REQUIRED_ENV = "SCAN_TRACE_REQUIRED"
+SCAN_TRACE_KEEP_DAYS_ENV = "SCAN_TRACE_KEEP_DAYS"
 SCAN_TRACE_STORAGE_ENV = "SCAN_TRACE_STORAGE_DIR"
 SCAN_TRACE_DEFAULT_ON_ENV = "SCAN_TRACE_DEFAULT_ON"
 
@@ -108,12 +112,50 @@ def trace_deletion_available() -> bool:
 
 def diagnostics_default_on() -> bool:
     """A test server can collect diagnostics from everyone unless they switch it off (SCAN_TRACE_DEFAULT_ON)."""
-    return (os.environ.get(SCAN_TRACE_DEFAULT_ON_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}
+    return _env_flag(SCAN_TRACE_DEFAULT_ON_ENV)
+
+
+def _env_flag(name: str) -> bool:
+    return (os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def trace_required() -> bool:
+    """A server (prod) can collect diagnostics from every trainer who is not an admin (SCAN_TRACE_REQUIRED).
+
+    Only in effect while tracing itself is available (``SCAN_TRACE_DIR`` set and writable)."""
+    return _env_flag(SCAN_TRACE_REQUIRED_ENV) and trace_available()
+
+
+def trace_keep_days() -> int | None:
+    """How many days diagnostics are kept (SCAN_TRACE_KEEP_DAYS); None means forever (empty, 0 or not a number)."""
+    raw = (os.environ.get(SCAN_TRACE_KEEP_DAYS_ENV) or "").strip()
+    try:
+        days = int(raw)
+    except ValueError:
+        return None
+    return days if days > 0 else None
+
+
+def _is_admin_user(db, user_id: int) -> bool:
+    row = db.query(User.role).filter(User.id == int(user_id)).first()
+    return row is not None and row.role == "admin"
+
+
+def diagnostics_locked(db, user_id: int) -> bool:
+    """True when this trainer cannot switch diagnostics off or delete them: required mode, and not an admin."""
+    return trace_required() and not _is_admin_user(db, user_id)
 
 
 def user_trace_enabled(db, user_id: int) -> bool:
     if not trace_available():
         return False
+    if diagnostics_locked(db, user_id):
+        # A stored "off" or an old revocation marker must not silently stop collection. The marker is only ever
+        # written when an account is deleted, so for an account that exists it is a leftover (a reused id) and
+        # is cleared here, the first time that trainer scans on a required server.
+        if _is_revoked(int(user_id)):
+            clear_user_trace_revocation(int(user_id))
+        return True
     row = (
         db.query(UserSetting.value)
         .filter(
@@ -799,6 +841,67 @@ def delete_user_traces(user_id: int) -> dict[str, int]:
         logger.exception("Failed to delete scan diagnostics for user %s", user_id)
         raise
     return deleted
+
+
+_DAY_DIR = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_USER_DIR = re.compile(r"^user-\d+$")
+
+
+def purge_old_traces(keep_days: int | None = None, *, today: datetime.date | None = None) -> dict[str, int]:
+    """Delete diagnostics older than ``keep_days`` (default SCAN_TRACE_KEEP_DAYS; none set = keep everything).
+
+    Works only inside the trace roots, on ``user-N/<YYYY-MM-DD>/`` day folders older than the cutoff (traces and
+    their photos) and on the matcher's records and flat cards in ``user-N/shadow/`` whose file is older than the
+    cutoff, then removes day and shadow folders left empty. Safe to run twice. Returns counts only."""
+    days = trace_keep_days() if keep_days is None else (keep_days if keep_days > 0 else None)
+    removed = {"scans": 0, "shadow_files": 0}
+    if days is None:
+        return removed
+    today = today or datetime.datetime.now(datetime.timezone.utc).date()
+    cutoff_date = today - datetime.timedelta(days=days)
+    cutoff_ts = datetime.datetime.combine(cutoff_date, datetime.time.min, tzinfo=datetime.timezone.utc).timestamp()
+    seen: set[Path] = set()
+    for root in _cleanup_roots():
+        try:
+            resolved_root = root.resolve()
+            if resolved_root in seen or not root.is_dir() or root.is_symlink():
+                continue
+            seen.add(resolved_root)
+            user_dirs = [p for p in root.iterdir() if _USER_DIR.match(p.name) and p.is_dir() and not p.is_symlink()]
+        except OSError:
+            logger.exception("Could not read the scan diagnostics folder for cleanup")
+            continue
+        for user_dir in user_dirs:
+            try:
+                children = list(user_dir.iterdir())
+            except OSError:
+                continue
+            for child in children:
+                if child.is_symlink() or not child.is_dir():
+                    continue
+                try:
+                    if _DAY_DIR.match(child.name):
+                        if datetime.date.fromisoformat(child.name) >= cutoff_date:
+                            continue
+                        removed["scans"] += sum(1 for f in child.glob("*.json") if f.is_file())
+                        shutil.rmtree(child)
+                    elif child.name == SHADOW_DIR:
+                        with _TRACE_LOCK:
+                            for f in list(child.iterdir()):
+                                if f.is_file() and not f.is_symlink() and f.stat().st_mtime < cutoff_ts:
+                                    f.unlink(missing_ok=True)
+                                    if not f.name.startswith("."):
+                                        removed["shadow_files"] += 1
+                            if not any(child.iterdir()):
+                                child.rmdir()
+                except (OSError, ValueError):
+                    logger.exception("Could not clean up old scan diagnostics in %s", child.name)
+    if removed["scans"] or removed["shadow_files"]:
+        logger.info(
+            "Scan diagnostics cleanup removed %s scan(s) and %s matcher file(s) older than %s days",
+            removed["scans"], removed["shadow_files"], days,
+        )
+    return removed
 
 
 def revoke_user_traces(user_id: int) -> dict[str, int]:
