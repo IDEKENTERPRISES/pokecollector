@@ -68,7 +68,7 @@ function List({ t }) {
   return (
     <div className="flex flex-col gap-3" data-testid="version-history">
       {draft && <ComingNext draft={draft} t={t} />}
-      {draft && TestWhatsNew && <Suspense fallback={null}><TestWhatsNew /></Suspense>}
+      {isNonprod() && TestWhatsNew && <Suspense fallback={null}><TestWhatsNew /></Suspense>}
       <div className="overflow-hidden rounded-xl bg-card">
         {releases().map((release) => <ReleaseRow key={release.id} release={release} running={release.id === running} t={t} />)}
       </div>

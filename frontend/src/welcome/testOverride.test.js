@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { planWhatsNew } from './releases'
+import { planWhatsNew, releases } from './releases'
 import { takeTestOverride, testChoices, testKey, writeTestOverride } from './testOverride'
 
 const memory = () => {
@@ -9,18 +9,17 @@ const memory = () => {
 
 describe('the nonprod "Test What\'s new" override', () => {
   it('offers every past release but the running one, then "before the first release"', () => {
+    const names = releases().map((r) => r.name)
     const choices = testChoices()
-    expect(choices.map((c) => c.name)).toEqual(['Squirtle', 'Charmander', 'Bulbasaur', 'Bulbasaur'])
-    expect(choices.map((c) => !!c.before)).toEqual([false, false, false, true])
+    expect(choices.map((c) => c.name)).toEqual([...names.slice(1), names.at(-1)])
+    expect(choices.map((c) => !!c.before)).toEqual([...names.slice(1).map(() => false), true])
   })
 
   it('each choice opens the sheet with exactly the newer releases', () => {
     const missed = (choice) => planWhatsNew({ serverSeen: choice.seen, localSeen: choice.seen }).missed.map((r) => r.name)
-    const [squirtle, charmander, bulbasaur, before] = testChoices()
-    expect(missed(squirtle)).toEqual(['Chikorita'])
-    expect(missed(charmander)).toEqual(['Chikorita', 'Squirtle'])
-    expect(missed(bulbasaur)).toEqual(['Chikorita', 'Squirtle', 'Charmander'])
-    expect(missed(before)).toEqual(['Chikorita', 'Squirtle', 'Charmander', 'Bulbasaur'])
+    const names = releases().map((r) => r.name)
+    // Choice i is "as if I last had release i + 1" (the last one: a build before the first release).
+    testChoices().forEach((choice, i) => expect(missed(choice)).toEqual(names.slice(0, i + 1)))
   })
 
   it('is read once and cleared', () => {
