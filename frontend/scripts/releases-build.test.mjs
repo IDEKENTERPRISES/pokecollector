@@ -9,14 +9,13 @@ import { readReleaseId, releaseChannel, releasesPlugin, releasesSource } from '.
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const file = join(root, 'src', 'welcome', 'releases.json')
 const toPosix = (p) => p.split(String.fromCharCode(92)).join('/')
-const text = readFileSync(file, 'utf-8')
-
-test('the release file has a draft to strip', () => {
-  assert.ok(JSON.parse(text).next, 'releases.json should carry a `next` draft on nonprod')
-})
+const real = readFileSync(file, 'utf-8')
+// The real file may or may not carry a draft (it is dropped at each promotion); these tests bring their own.
+const DRAFT = { name: 'Draftmon', summary: 'A draft', highlights: [], details: { new: [], better: [], fixed: [] }, underTheHood: [] }
+const text = JSON.stringify({ next: DRAFT, releases: JSON.parse(real).releases })
 
 test('the release id is the first entry', () => {
-  assert.equal(readReleaseId(root), JSON.parse(text).releases[0].id)
+  assert.equal(readReleaseId(root), JSON.parse(real).releases[0].id)
 })
 
 test('only a nonprod build keeps the draft', () => {
@@ -29,11 +28,11 @@ test('only a nonprod build keeps the draft', () => {
   assert.deepEqual(stripped.releases, JSON.parse(text).releases)
 })
 
-test('a deploy-style build leaves `next` (and the Cyndaquil draft) out of the bundle', () => {
+test('a deploy-style build leaves `next` (and the draft) out of the bundle', () => {
   const plugin = releasesPlugin({ channel: 'production', command: 'build' })
   const out = plugin.transform(text, toPosix(file) + '?import')
   assert.ok(out)
-  assert.doesNotMatch(out.code, /Cyndaquil/)
+  assert.doesNotMatch(out.code, /Draftmon/)
   assert.equal(JSON.parse(out.code).releases.length, JSON.parse(text).releases.length)
   // Other files and the dev server are left alone.
   assert.equal(plugin.transform('{}', join(root, 'package.json')), null)
@@ -45,9 +44,10 @@ test('a built production bundle holds none of the nonprod test tools code (their
   // Only meaningful for a production build; a nonprod build (VITE_RELEASE_CHANNEL=nonprod) keeps them on purpose.
   if (releaseChannel() === 'nonprod') return
   const files = readdirSync(join(root, 'dist', 'assets')).filter(name => name.endsWith('.js'))
+  const draftName = JSON.parse(real).next?.name
   for (const name of files) {
     const code = readFileSync(join(root, 'dist', 'assets', name), 'utf-8')
     assert.doesNotMatch(code, /pc\.whatsNew\.test\./, name)
-    assert.doesNotMatch(code, /Cyndaquil/, name)
+    if (draftName) assert.doesNotMatch(code, new RegExp(draftName), name)
   }
 })

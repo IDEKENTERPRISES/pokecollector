@@ -19,8 +19,8 @@ describe('the release file (docs/WELCOME_DESIGN.md §5.5)', () => {
     ...(release.underTheHood ?? []),
   ]
 
-  it('has the four past releases, newest first', () => {
-    expect(entries.map((r) => r.name)).toEqual(['Chikorita', 'Squirtle', 'Charmander', 'Bulbasaur'])
+  it('keeps the first five releases, newest first', () => {
+    expect(entries.map((r) => r.name).slice(-5)).toEqual(['Cyndaquil', 'Chikorita', 'Squirtle', 'Charmander', 'Bulbasaur'])
   })
 
   it('has unique ids, descending, and descending dates', () => {
@@ -59,12 +59,14 @@ describe('the release file (docs/WELCOME_DESIGN.md §5.5)', () => {
 
   it('keeps Under the hood to five items and leaves Wrapped out of Chikorita', () => {
     for (const r of all) expect((r.underTheHood ?? []).length).toBeLessThanOrEqual(5)
-    expect(texts(entries[0]).join(' ')).not.toMatch(/Wrapped/)
+    expect(texts(entries.find((r) => r.name === 'Chikorita')).join(' ')).not.toMatch(/Wrapped/)
   })
 
-  it('names the draft after the next starter', () => {
-    expect(data.next.name).toBe('Cyndaquil')
-    expect(nextRelease().name).toBe('Cyndaquil')
+  it('has a draft only under a name no release has used', () => {
+    expect(nextRelease()).toBe(data.next ?? null)
+    if (data.next) expect(entries.map((r) => r.name)).not.toContain(data.next.name)
+    expect(nextRelease({ releases: [], next: { name: 'Totodile' } }).name).toBe('Totodile')
+    expect(nextRelease({ releases: [] })).toBeNull()
   })
 })
 

@@ -303,7 +303,7 @@ All in `frontend/src/welcome/`.
 | The iPhone redesign | **Charmander** | 20–23 Oct | major |
 | Badges, the daily loop and binder pockets | **Squirtle** | 29 Oct | major |
 | Goals and the weekly recap | **Chikorita** | 30 Oct | major |
-| Milestone D (social) | **Cyndaquil** | draft, "Coming next" | major |
+| Swaps, the feed and the weekly challenge, the tour, What's new and the card-by-card scan review | **Cyndaquil** | 10 Nov | major |
 
 Between Chikorita and Cyndaquil, a small fix release would be **Bayleef**, then **Meganium**, then "Meganium · 4 Nov".
 

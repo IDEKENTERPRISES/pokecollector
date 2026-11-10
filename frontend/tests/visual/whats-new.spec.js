@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from '@playwright/test'
@@ -15,7 +15,12 @@ const OUT = join(here, '..', '..', 'test-results', 'whats-new-fidelity')
 const ASH = { id: 1, username: 'Ash', role: 'admin', is_active: true, must_change_password: false, avatar_id: null }
 const NOW = new Date('2026-11-04T10:00:00Z')
 
-// Seen ids that stand for "the account is one release behind" and so on, against the real release file.
+// The spec runs against a pinned copy of the release file (Chikorita newest, Cyndaquil as the draft), so a new
+// release entry or a reworded draft does not change what these tests see. The real file's rules are checked by
+// src/welcome/releases.test.js.
+const PINNED_RELEASES = JSON.parse(readFileSync(join(here, 'fixtures', 'whats-new-releases.json'), 'utf-8'))
+
+// Seen ids that stand for "the account is one release behind" and so on, against the pinned release file.
 const BEHIND_ONE = '2026-10-29' // saw Squirtle, missed Chikorita
 const BEHIND_THREE = '2026-10-19' // saw Bulbasaur, missed Charmander, Squirtle, Chikorita
 
@@ -39,7 +44,7 @@ function manyReleases() {
  * Signs Ash in and mocks the API. `seen` is the account's whats_new_seen; `channel` pretends to be a
  * nonprod build; `releaseFile` swaps the bundled release file; `gate` holds /api/auth/me until released.
  */
-async function install(page, { seen = null, multiUser = true, channel, releaseFile, gate, puts = [], failPut = false } = {}) {
+async function install(page, { seen = null, multiUser = true, channel, releaseFile = PINNED_RELEASES, gate, puts = [], failPut = false } = {}) {
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.clock.setFixedTime(NOW)
   await page.addInitScript(({ account, nonprod }) => {

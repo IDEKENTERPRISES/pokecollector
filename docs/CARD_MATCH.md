@@ -246,7 +246,18 @@ On disk (`CARD_MATCH_DIR`, default `/app/data/card-match`; mounted in `docker-co
 | `CARD_MATCH_SIM_MIN_WITH_RULES`, `CARD_MATCH_SIM_MIN_PICTURE_ONLY`, `CARD_MATCH_LEAD_MIN_PICTURE_ONLY` | 0.55 / 0.80 / 0.06 | decision thresholds |
 | `CARD_MATCH_SIM_MIN_NAME_PICTURE`, `CARD_MATCH_LEAD_MIN_NAME_PICTURE` | 0.80 / 0.03 | picture-only decision when the printed name agrees too |
 
-Prod sets none of the automatic flags. An admin can still press the buttons on prod, but prod has no `card-match` volume, so results would not survive a container re-create.
+### Running it on prod
+
+Nonprod stays the place where option sets are measured and compared. Prod runs one pinned set and never the autorun or shadow mode.
+
+- `docker-compose.portainer.yml` mounts `/home/rage/Documents/docker/pokelocal/data/card-match` (create the folder once), so the indexes survive a redeploy.
+- It pins `CARD_MATCH_OPTIONS` to the set nonprod's real-photo comparison kept (`names+number+text+art+tta+numberonce` on 9 November 2026: 63.8% decided with 1 wrong of 176 on 276 real photos, 1,544 ms at the 95th percentile). Prod has no confirmed scans of its own to compare on, so without the pin it would run the plain default. To promote a better set, change that line; `docker-compose.nonprod.yml` sets the variable to empty so nonprod keeps using its own comparison's pick.
+- `SCAN_MATCHER_INDEX_AFTER_SYNC` and `SCAN_PICTURE_FIRST` are passed through from the stack's environment and are empty (off) unless set there.
+- Nothing changes for a scan until an admin does both of these, in this order:
+  1. Settings › Data & sync › Scanner lab: **Update index**, then **Update artwork only (DINOv2-small) index**, and wait until both show every English card. With the artwork index missing, `variants.usable` drops `art`, and that weaker set made 3 wrong decisions on the same photos instead of 1.
+  2. Settings › Scanner › **Picture match first**, on. Off again takes effect on the next scan.
+- **English cards only.** The index holds English printings, and a picture decision (and an unsure scan sent to the inbox) is always recorded as English (`picture_first.decided_result`). A German card has the same artwork, number and total as its English printing, so it would be decided as the English card with the language pre-filled as English. Leave the switch off on a server where trainers scan other languages until that is handled.
+- Scanner diagnostics stay off by default on prod, so Scanner lab's real-photo reports are empty there. The 7-day "Picture match first" counts still work, because they come from the scans themselves.
 
 Limits: one index build or benchmark at a time (a second request gets `started: false`); jobs run in a thread at `nice 10` where the OS allows it; ONNX Runtime gets 3 intra-op threads and OpenCV 3.
 
