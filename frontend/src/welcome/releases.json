@@ -1,14 +1,20 @@
 {
   "next": {
     "name": "Cyndaquil",
-    "summary": "Swaps, an activity feed and a weekly challenge for everyone on your server",
+    "summary": "Card-by-card scan review, a tour of the app, and swaps, a feed and a weekly challenge",
     "highlights": [
-      { "icon": "repeat", "title": "Swap cards with friends", "text": "Offer a swap, check the fair-trade meter, and tap Swapped when you meet." },
-      { "icon": "flame", "title": "An activity feed", "text": "See friends' new sets, big pulls and badges, and react with one tap." },
-      { "icon": "trophy", "title": "A weekly challenge", "text": "One goal for every trainer each week, with a podium." }
+      { "icon": "camera", "title": "Review scans one card at a time", "text": "Add a card and go straight to the next, with no limit on how many photos you take." },
+      { "icon": "smartphone", "title": "A tour of the app", "text": "A hands-on tour shows new trainers around. Replay it any time from Settings › About." },
+      { "icon": "repeat", "title": "Swaps, a feed and a weekly challenge", "text": "Swap with friends, cheer their pulls and chase one goal a week, once your server turns them on." }
     ],
     "details": {
       "new": [
+        "Review all: go through your scans one card at a time. Add to collection moves straight to the next card.",
+        "Scan as many cards as you like in one go. The 50-photo limit is gone.",
+        "If none of the matches is right, tap None of these and search for the card yourself.",
+        "Tap your photo or the matched card in the review to see it full screen.",
+        "A hands-on tour for new trainers, and a Take the tour card on Home for everyone else.",
+        "What's new: after an update, a short summary of what changed. The full version history is in Settings › About.",
         "Swap offers: offer some of your cards for some of a friend's spare cards, from the Trades page.",
         "An Offers tab on Trades shows the offers waiting for you, with a number on the Trades tile on your Profile and a card on Home.",
         "A fair-trade meter shows how even a swap is before you send it or answer it.",
@@ -21,11 +27,15 @@
         "The challenge shows on Home under your daily quests and as a Challenge tab on the leaderboard.",
         "Swaps, the feed and the weekly challenge appear once the person who runs your server turns them on."
       ],
-      "better": [],
+      "better": [
+        "When the scanner is switched off, your scans say Waiting for the scanner and are recognised as soon as it is back.",
+        "The leaderboard opens at the top, with its tabs in view."
+      ],
       "fixed": []
     },
     "underTheHood": [
-      "Swaps, the feed and the challenge have an on/off switch for the whole server."
+      "Swaps, the feed and the challenge have an on/off switch for the whole server.",
+      "A problem with one trainer's account no longer holds up background updates for everyone else."
     ]
   },
   "releases": [

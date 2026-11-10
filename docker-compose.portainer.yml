@@ -14,6 +14,15 @@ services:
   backend:
     networks:
       - pokelocal_internal
+    environment:
+      # Picture matcher (docs/CARD_MATCH.md, "Running it on prod"). None of this changes a scan until an admin
+      # builds the picture indexes in Scanner lab and switches "Picture match first" on in Settings > Scanner.
+      # The option set is the one nonprod's real-photo comparison kept. Promote a better one by changing it here.
+      CARD_MATCH_OPTIONS: ${CARD_MATCH_OPTIONS:-names+number+text+art+tta+numberonce}
+      # Set to 1 in the stack's environment to add new card pictures to the index after each card sync.
+      SCAN_MATCHER_INDEX_AFTER_SYNC: ${SCAN_MATCHER_INDEX_AFTER_SYNC:-}
+      # Default for the admin switch "Picture match first". Unset means off.
+      SCAN_PICTURE_FIRST: ${SCAN_PICTURE_FIRST:-}
     # Same container paths as the base file, so these replace its ./data/... mounts.
     volumes:
       - /home/rage/Documents/docker/pokelocal/backups:/app/backups
@@ -21,6 +30,8 @@ services:
       - /home/rage/Documents/docker/pokelocal/data/pokedex-images:/app/data/pokedex-images
       - /home/rage/Documents/docker/pokelocal/data/scan-uploads:/app/data/scan-uploads
       - /home/rage/Documents/docker/pokelocal/data/scan-traces:/app/data/scan-traces
+      # The picture indexes and Scanner lab reports, so they survive a redeploy.
+      - /home/rage/Documents/docker/pokelocal/data/card-match:/app/data/card-match
     ports: !reset []
 
   frontend:

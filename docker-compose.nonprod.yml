@@ -33,6 +33,9 @@ services:
       SCAN_MATCHER_AUTORUN: "1"
       SCAN_MATCHER_INDEX_AFTER_SYNC: "1"
       CARD_MATCH_DIR: /app/data/card-match
+      # Empty on purpose: this stack is where option sets are compared, so the comparison's own pick
+      # (chosen.json) is used here, not the set docker-compose.portainer.yml pins for prod.
+      CARD_MATCH_OPTIONS: ""
       # Shadow mode (docs/CARD_MATCH.md): run the matcher on every stored scan photo once, in the background,
       # and record what it would have decided in the scan trace. Nothing changes for trainers. Prod does not set it.
       SCAN_MATCHER_SHADOW: "1"
