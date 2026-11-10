@@ -29,6 +29,7 @@ TAGS = {
     "decided_wrong": "Decided wrong",
     "fallback": "Card not found: read by fallback",
     "not_found": "Card not found or corners off",
+    "corners_off": "Corners off",
     "generic": "Generic card (Basic Energy, common Trainer)",
     "glare": "Sleeve or top-loader glare",
     "holo": "Holo or full art",
@@ -37,7 +38,7 @@ TAGS = {
     "reprint_art": "Same artwork in another set",
     "other": "No clear cause",
 }
-PRIORITY = ("decided_wrong", "fallback", "not_found", "upside_down", "generic", "reprint_art", "glare", "dark_or_blur", "holo")
+PRIORITY = ("decided_wrong", "fallback", "not_found", "corners_off", "upside_down", "generic", "reprint_art", "glare", "dark_or_blur", "holo")
 HOLO_WORDS = ("holo", "illustration", "ultra", "secret", "full art", "rainbow", "hyper", "special", "amazing", "radiant", "shiny", "vmax", "vstar")
 BASIC_ENERGY = {"grass", "fire", "water", "lightning", "psychic", "fighting", "darkness", "metal", "fairy"}
 GLARE_FRACTION = 0.04  # of the flat card's pixels that are blown out to near white
@@ -70,7 +71,8 @@ def is_holo(truth: dict) -> bool:
     return any(word in rarity for word in HOLO_WORDS)
 
 
-def tag_miss(*, found: bool, rotated: bool | None, truth: dict, others: list[dict], stats: dict | None, fallback: str | None = None) -> list[str]:
+def tag_miss(*, found: bool, rotated: bool | None, truth: dict, others: list[dict], stats: dict | None, fallback: str | None = None,
+             corners: dict | None = None) -> list[str]:
     """Likely causes of a miss. ``others`` are the matcher's other picks (dicts with a ``name``); ``stats`` are
     the flat card's measurements (``card_stats``) or None when the card was not found. ``rotated`` is a
     measurement (``CardMatcher.card_rotation``: the confirmed card's own picture is clearly closer to the
@@ -81,6 +83,8 @@ def tag_miss(*, found: bool, rotated: bool | None, truth: dict, others: list[dic
         tags.append("fallback")
     if not found:
         tags.append("not_found")
+    if corners and corners.get("spoiled"):  # measured: the plain guide crop is clearly closer to the confirmed card than the finder's quad
+        tags.append("corners_off")
     if rotated:
         tags.append("upside_down")
     if is_generic(truth):
@@ -193,7 +197,7 @@ class MissCollector:
         self.scans = 0
         self.fallback_scans = 0  # scans (misses or not) whose card was not found on the recognition image
 
-    def add(self, *, trace: str, photo, outcome, truth_id: str, label: str = "", confirmation: str | None = None, matcher=None) -> None:
+    def add(self, *, trace: str, photo, outcome, truth_id: str, label: str = "", confirmation: str | None = None, matcher=None, corners: dict | None = None) -> None:
         """Record one scan if it is a miss (the right card is not the first pick). ``matcher`` measures whether
         the card is really turned (against the confirmed card's own picture)."""
         from . import detect
@@ -219,9 +223,13 @@ class MissCollector:
                 rotation = matcher.card_rotation(card.card, truth_id)
             except Exception:
                 logger.exception("Card-match: could not measure the rotation for %s", trace)
+        from . import corners_check
+
+        corners_note = corners_check.miss_note(corners)
         tags = tag_miss(
             found=bool(outcome.detection.get("found")), rotated=bool(rotation and rotation["rotated"]), truth=truth,
             others=outcome.matches, stats=card_stats(card.card) if card.found else None, fallback=fallback,
+            corners=corners_note,
         )
         if wrong:
             tags = ["decided_wrong"] + [tag for tag in tags if tag != "other"]
@@ -259,7 +267,8 @@ class MissCollector:
                 "hp": outcome.ocr.get("hp"), "lines": (outcome.ocr.get("lines") or [])[:6], "name_lines": (outcome.ocr.get("name_lines") or [])[:4],
                 "strips": outcome.ocr.get("strips") or [],  # every region read: box, preprocessing, text and confidence per line
             },
-            "detection": {k: outcome.detection.get(k) for k in ("found", "confidence", "method", "fallback")},
+            "detection": {k: outcome.detection.get(k) for k in ("found", "confidence", "method", "fallback", "rejected")},
+            "corners": corners_note,
             "fallback": fallback,
             "rotation": rotation, "orientation": outcome.ocr.get("orientation"), "text_input": outcome.ocr.get("text_input"),
             "stats": card_stats(card.card) if card.found else None,

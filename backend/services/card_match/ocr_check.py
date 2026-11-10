@@ -17,12 +17,10 @@ at that step, and the time the step used. It is what decides which steps can be 
 the finder cannot find is no longer skipped: it is read from the plain guide-frame crop (what the live matcher falls back
 to) and reported as its own group, ``guide_crop``, which is left out of ``all`` so that figure stays comparable.
 
-Version 7 adds two things. A paired reading test for the newer scans (those with a sharper stored card): each one is read from
-three sources, the sharper card (today), the 630 x 880 card flattened from the recognition image (what every scan was read from
-before the sharper crop) and the sharper card shrunk to 630 x 880 with ``cv2.INTER_AREA``; the paired table says, scan by scan,
-whether the number (and the name) came out right on both, on one only, or on neither. And "Never right" is split by cause
-(no text, text but nothing number-shaped, a different number) with up to ten examples each, plus a bucket for the right number
-with a different total than the catalogue prints.
+Version 7 split "Never right" by cause (no text, text but nothing number-shaped, a different number) with up to ten
+examples each, plus a bucket for the right number with a different total than the catalogue prints. (It also read the newer
+scans from three sources, the sharper card, the old-size card and the sharper card shrunk, to find out whether the sharper
+photo cost numbers. It did not: 59.0%, 56.7% and 60.0%. Version 8 removed that paired test.)
 
 Everything here is read-only; the report lands next to the other benchmark reports.
 """
@@ -192,57 +190,6 @@ def summarise_never(acc: dict) -> dict:
             "sets": [{"set": name, "scans": counts[0], "wrong": counts[1]} for name, counts in sets]}
 
 
-# ── The paired reading test ──────────────────────────────────────────────────
-
-SOURCE_NAMES = {"sharp": "The sharper card (today)", "recognition": "The 630 x 880 card from the recognition image (before the sharper crop)",
-                "shrunk": "The sharper card shrunk to 630 x 880"}
-
-
-def new_pairs() -> dict:
-    def empty() -> dict:
-        return {"both": 0, "only_first": 0, "only_second": 0, "neither": 0}
-
-    return {"scans": 0, "no_old_card": 0, "tests": {
-        "sharp_vs_recognition": {"first": "sharp", "second": "recognition", "number": empty(), "name": empty()},
-        "sharp_vs_shrunk": {"first": "sharp", "second": "shrunk", "number": empty(), "name": empty()},
-    }}
-
-
-def pair_cell(first: bool, second: bool) -> str:
-    return "both" if first and second else "only_first" if first else "only_second" if second else "neither"
-
-
-def add_pair(pairs: dict, rights: dict[str, dict]) -> None:
-    """Count one scan's readings into the paired tables. ``rights`` maps a source to what was right on it (``score_read``'s
-    dict); a source that could not be read (no card found in the recognition image) is missing and that pair is skipped."""
-    pairs["scans"] += 1
-    if "recognition" not in rights:
-        pairs["no_old_card"] += 1
-    for test in pairs["tests"].values():
-        first, second = rights.get(test["first"]), rights.get(test["second"])
-        if first is None or second is None:
-            continue
-        for kind in ("number", "name"):
-            test[kind][pair_cell(first[kind], second[kind])] += 1
-
-
-def paired_pictures(card, trace_path: Path, data: dict) -> dict:
-    """The two other sources of the paired test: the 630 x 880 card flattened from the recognition image (None when the finder
-    cannot find the card there), and the sharper card shrunk to 630 x 880 with INTER_AREA."""
-    import cv2
-
-    from . import detect
-    from .images import decode_rgb
-
-    recognition = None
-    try:
-        found = detect.detect_card(decode_rgb((trace_path.parent / data["image_file"]).read_bytes(), max_side=1024))
-        recognition = found.card if found.found else None
-    except Exception:
-        logger.exception("OCR check: could not flatten the recognition image of %s", trace_path.name)
-    return {"recognition": recognition, "shrunk": cv2.resize(card, (detect.CARD_W, detect.CARD_H), interpolation=cv2.INTER_AREA)}
-
-
 def new_bucket() -> dict:
     return {"n": 0, "name": 0, "number": 0, "total": 0, "set_code": 0, "seconds": []}
 
@@ -334,7 +281,6 @@ def run_ocr_check(
     buckets: dict[str, dict] = {}
     steps: dict[str, dict] = {}
     never: dict[str, dict] = {}
-    pairs = new_pairs()
     failures: list[dict] = []
     skipped = 0
 
@@ -383,16 +329,6 @@ def run_ocr_check(
                     "read": {"name": name, "number": result.number_local, "total": result.number_total, "confidence": result.number_confidence},
                     "right": rights[mode], "lines": result.lines[:8],
                 })
-        if resolution == "full":  # the newer scans: the same scan read from the other two sources (the paired test)
-            sources = {"sharp": rights["detect"]}
-            read, read_name, read_seconds = detect_read
-            score_read(bucket_for("full", "source:sharp"), truth=truth, name=read_name, result=read, seconds=read_seconds)
-            for source, picture in paired_pictures(card, path, data).items():
-                if picture is None:
-                    continue
-                result, name, seconds, _strips = read_both(reader, picture, "detect")
-                sources[source] = score_read(bucket_for("full", f"source:{source}"), truth=truth, name=name, result=result, seconds=seconds)
-            add_pair(pairs, sources)
         for variant in variants:
             got = read_variant(reader, card, variant)
             if got is None:
@@ -411,8 +347,6 @@ def run_ocr_check(
         "steps": {res: summarise_steps(acc) for res, acc in sorted(steps.items())},
         "never_right": {res: summarise_never(acc) for res, acc in sorted(never.items())},
         "never_right_note": "Why the number was never right, per group, with up to ten examples each (text only: the lines read and the confirmed number and total).",
-        "paired": pairs, "source_names": SOURCE_NAMES,
-        "paired_note": "The newer scans read from three sources. Each cell counts scans: right on both, only on the first source, only on the second, or on neither.",
         "steps_note": "Per reading step of the full ladder, in order: scans that first had the right number (name) at that step, and the time it used.",
         "failures": failures,
         "duration_seconds": round(time.monotonic() - started, 1),
