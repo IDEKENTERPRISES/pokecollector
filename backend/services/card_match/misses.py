@@ -26,6 +26,7 @@ from .pipeline import ORIENT_MARGIN
 logger = logging.getLogger(__name__)
 
 TAGS = {
+    "decided_wrong": "Decided wrong",
     "fallback": "Card not found: read by fallback",
     "not_found": "Card not found or corners off",
     "generic": "Generic card (Basic Energy, common Trainer)",
@@ -36,7 +37,7 @@ TAGS = {
     "reprint_art": "Same artwork in another set",
     "other": "No clear cause",
 }
-PRIORITY = ("fallback", "not_found", "upside_down", "generic", "reprint_art", "glare", "dark_or_blur", "holo")
+PRIORITY = ("decided_wrong", "fallback", "not_found", "upside_down", "generic", "reprint_art", "glare", "dark_or_blur", "holo")
 HOLO_WORDS = ("holo", "illustration", "ultra", "secret", "full art", "rainbow", "hyper", "special", "amazing", "radiant", "shiny", "vmax", "vstar")
 BASIC_ENERGY = {"grass", "fire", "water", "lightning", "psychic", "fighting", "darkness", "metal", "fairy"}
 GLARE_FRACTION = 0.04  # of the flat card's pixels that are blown out to near white
@@ -201,13 +202,15 @@ class MissCollector:
         if outcome.detection.get("fallback"):
             self.fallback_scans += 1
         rank = next((m["rank"] for m in outcome.matches if m["card_id"] == truth_id), None)
-        if rank == 1 or len(self.items) >= MAX_ITEMS:
+        decision = outcome.decision
+        wrong = bool(decision and decision["card_id"] != truth_id)  # decided, and not the confirmed card: kept even when ranked first
+        if (rank == 1 and not wrong) or (len(self.items) >= MAX_ITEMS and not wrong):
             return
         fallback = outcome.detection.get("fallback")
         # The card the matcher embedded (a fallback card may come from the full photo); else find it again.
         card = detect.Detection(card=outcome.card, found=bool(outcome.detection.get("found")), confidence=0.0, method="") \
             if getattr(outcome, "card", None) is not None else detect.detect_card(photo)
-        loaded = self.loader([truth_id] + [m["card_id"] for m in outcome.matches[:3]])
+        loaded = self.loader([truth_id] + [m["card_id"] for m in outcome.matches[:3]] + ([decision["card_id"]] if wrong else []))
         truth = {"card_id": truth_id, **(loaded.get(truth_id) or {})}
         top3 = outcome.matches[:3]
         rotation = None
@@ -220,26 +223,31 @@ class MissCollector:
             found=bool(outcome.detection.get("found")), rotated=bool(rotation and rotation["rotated"]), truth=truth,
             others=outcome.matches, stats=card_stats(card.card) if card.found else None, fallback=fallback,
         )
+        if wrong:
+            tags = ["decided_wrong"] + [tag for tag in tags if tag != "other"]
         key = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in Path(trace).stem)[:80] or f"scan{self.scans}"
         self.run_dir.mkdir(parents=True, exist_ok=True)
         corners = outcome.detection.get("corners") or []
-        if outcome.detection.get("corners_space") == "full_photo":
+        if outcome.detection.get("corners_space") in ("full_photo", "review_photo"):
             corners = []  # found in the full photo: its corners do not fit this recognition image
         (self.run_dir / f"{key}-photo.jpg").write_bytes(photo_thumb(photo, corners))
         (self.run_dir / f"{key}-card.jpg").write_bytes(card_thumb(card.card))
         (self.run_dir / f"{key}-photo-full.jpg").write_bytes(photo_thumb(photo, corners, side=FULL_PHOTO_SIDE, quality=FULL_QUALITY))
         read_card = outcome.text_card if getattr(outcome, "text_card", None) is not None else card.card
         (self.run_dir / f"{key}-card-full.jpg").write_bytes(card_full(read_card))
-        decision = outcome.decision
         self.items.append({
-            "key": key, "trace": trace, "kind": "not_in_top20" if rank is None else "not_top1", "rank": rank,
+            "key": key, "trace": trace, "kind": "not_in_top20" if rank is None else "not_top1" if rank != 1 else "decided_wrong", "rank": rank,
+            "mechanism": decision["mechanism"] if decision else None,
+            "decided_card": self._decided_card(outcome, decision, loaded) if wrong else None,
             "tags": tags, "primary": primary_tag(tags),
             "confirmation": confirmation,  # manual_search / manual_no_result: no scanner offered the card
-            "decided": decision is not None, "decided_wrong": bool(decision and decision["card_id"] != truth_id),
+            "decided": decision is not None, "decided_wrong": wrong,
             "unsure_reason": outcome.unsure_reason,
             "truth": {
                 "tcg_card_id": truth.get("tcg_card_id"), "name": truth.get("name"), "number": truth.get("number"),
                 "set": truth.get("set"), "rarity": truth.get("rarity"), "image": truth.get("images_small"), "image_large": truth.get("images_large"),
+                "printed_total": truth.get("printed_total"),
+                "similarity": next((m.get("similarity") for m in outcome.matches if m["card_id"] == truth_id), None),
             },
             "top3": [
                 {"tcg_card_id": m["tcg_card_id"], "name": m.get("name"), "number": m.get("number"), "set": m.get("set"),
@@ -257,10 +265,21 @@ class MissCollector:
             "stats": card_stats(card.card) if card.found else None,
         })
 
+    @staticmethod
+    def _decided_card(outcome, decision: dict, loaded: dict) -> dict:
+        """The card the matcher decided on, with its own number, total and picture similarity, for the "Decided wrong" list."""
+        row = next((m for m in outcome.matches if m["card_id"] == decision["card_id"]), {})
+        return {
+            "tcg_card_id": decision.get("tcg_card_id"), "name": row.get("name"), "number": row.get("number"), "set": row.get("set"),
+            "printed_total": row.get("printed_total"), "similarity": decision.get("similarity"), "rank": row.get("rank"), "lead": decision.get("lead"),
+            "image": (loaded.get(decision["card_id"]) or {}).get("images_small"),
+        }
+
     def finish(self, label: str = "") -> dict:
         report = {
             "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(), "matcher_version": MATCHER_VERSION,
-            "options": label, "scans": self.scans, "misses": len(self.items),
+            "options": label, "scans": self.scans, "misses": sum(1 for item in self.items if item["kind"] != "decided_wrong"),
+            "decided_wrong": sum(1 for item in self.items if item.get("decided_wrong")),
             "fallback_scans": self.fallback_scans, "fallback_misses": sum(1 for item in self.items if item.get("fallback")),
             "tags": {tag: TAGS.get(tag, tag) for tag in TAGS}, "counts": count_tags(self.items),
             "primary_counts": {tag: sum(1 for item in self.items if item["primary"] == tag) for tag in TAGS if any(item["primary"] == tag for item in self.items)},
@@ -351,7 +370,7 @@ def page(tag: str | None = None, offset: int = 0, limit: int = PAGE_SIZE, data_d
         window.append({**slim, "photo": _inline(run_dir / f"{item['key']}-photo.jpg"), "card": _inline(run_dir / f"{item['key']}-card.jpg")})
     return {
         "available": True, "created_at": report["created_at"], "matcher_version": report["matcher_version"], "options": report.get("options"),
-        "scans": report["scans"], "misses": report["misses"], "tags": report["tags"], "counts": report["counts"],
+        "scans": report["scans"], "misses": report["misses"], "decided_wrong": report.get("decided_wrong", 0), "tags": report["tags"], "counts": report["counts"],
         "primary_counts": report.get("primary_counts", {}),
         "fallback_scans": report.get("fallback_scans"), "fallback_misses": report.get("fallback_misses"), "orientation_check": report.get("orientation_check"), "filter": tag, "offset": offset, "total": len(items), "items": window,
     }

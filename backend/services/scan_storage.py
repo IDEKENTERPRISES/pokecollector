@@ -323,6 +323,12 @@ def read_text_photo(relative_path: str) -> bytes:
     return path.read_bytes()
 
 
+def read_review_photo(relative_path: str) -> bytes:
+    """The whole stored review photo (up to 2048 px), never the sharper guide crop: the card finder looks here when it cannot
+    find the card in the guide-frame picture, because only the whole frame can still hold a card the guide crop cut."""
+    return resolve_scan_path(relative_path).read_bytes()
+
+
 def read_capture_info(relative_path: str) -> dict | None:
     """``{"frame": [w, h], "crop": [w, h]}`` as the camera delivered it, or None when no crop was kept."""
     try:

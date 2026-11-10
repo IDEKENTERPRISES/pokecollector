@@ -9,7 +9,9 @@ Options (all measured side by side by the labelled benchmark, "Compare options" 
   - ``art``: a second picture index of the artwork window only, averaged with the whole-card one;
   - ``base``: a second index from the bigger DINOv2-base model, averaged with the first;
   - ``numberonce``: a read number moves a printing up the ranking once instead of twice;
-  - ``fastread``: read the text with a shorter ladder (no black-and-white or glare-removal steps) and a lower budget.
+  - ``fastread``: read the text with a shorter ladder (no black-and-white or glare-removal steps) and a lower budget;
+  - ``tworeads`` (version 7): a sharper (taller than 880 px) card that gave no complete number is read again, on the card
+    shrunk to 880 px, by the first number steps, inside the same time budget.
 A label is the options joined by ``+``: ``baseline`` (none), ``names``, ``names+number``, ``names+number+text+tta`` ...
 
 The label in use comes from ``CARD_MATCH_OPTIONS``, else from ``chosen.json`` (written when a comparison
@@ -32,13 +34,16 @@ logger = logging.getLogger(__name__)
 
 BASE_MODEL = "dinov2-base"
 ART_INDEX = f"{DEFAULT_MODEL}-art"  # the artwork-window index of the default model
-DEFAULT_LABEL = "names+number+text+art+tta"  # v6 (was names+number+text); an unbuilt artwork index is left out, see ``usable``
+DEFAULT_LABEL = "names+number+text+art+tta+fastread"  # v7 (v6: without fastread, same accuracy 144 ms slower); an unbuilt artwork index is left out, see ``usable``
 # The labels the comparison runs, cheapest first.
 # The lookup lanes come one at a time right after ``names`` so each one's gain shows as its own row.
+# Version 7 drops "...art+tta" and "...art+tta+numberonce": the same rows with fastread measured the same accuracy
+# and are faster, so a plainer-first pick could only ever choose the slower twin.
 COMPARE_LABELS = (
     "baseline", "names", "names+number", "names+number+text", "names+number+text+tta", "names+number+text+art",
-    "names+number+text+art+reprint", "names+number+text+art+tta", "names+number+text+art+tta+fastread",
-    "names+number+text+art+tta+numberonce", "names+number+text+base", "names+number+text+art+base",
+    "names+number+text+art+reprint", "names+number+text+art+tta+fastread",
+    "names+number+text+art+tta+fastread+numberonce", "names+number+text+art+tta+fastread+numberonce+tworeads",
+    "names+number+text+base", "names+number+text+art+base",
 )
 # The synthetic comparison chooses nothing, so it runs a short list on fewer photos
 # (version 5: 10 rows x 400 photos took 89 minutes).
@@ -46,7 +51,7 @@ SYNTHETIC_COMPARE_LABELS = (
     "baseline", "names+number+text", "names+number+text+art+tta", "names+number+text+art+tta+fastread",
 )
 SYNTHETIC_COMPARE_COUNT = 100
-ORDER = ("names", "number", "text", "art", "reprint", "base", "tta", "numberonce", "fastread")
+ORDER = ("names", "number", "text", "art", "reprint", "base", "tta", "fastread", "numberonce", "tworeads")
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,7 @@ class Options:
     base: bool = False
     numberonce: bool = False  # a read number moves a printing up once, not twice (name search's and the number lookup's)
     fastread: bool = False  # read the text with a shorter ladder (no black-and-white or glare-removal steps) and a lower time budget
+    tworeads: bool = False  # a sharper card with no complete number is read again on the card shrunk to 880 px (same time budget)
 
     @property
     def label(self) -> str:
@@ -180,7 +186,7 @@ def _build_matcher(options: Options, session_factory, *, data_dir: Path | None =
     lookup = lookup_module.get_lookup_index(session_factory, index) if (options.number or options.text) else None
     return pipeline.CardMatcher(
         index, embed.get_embedder(DEFAULT_MODEL), pipeline.db_candidate_loader(session_factory), ocr_reader or get_reader(),
-        read_hp=read_hp, extra_signals=signals, tta=options.tta, names=names, label=options.label, fastread=options.fastread, number_once=options.numberonce,
+        read_hp=read_hp, extra_signals=signals, tta=options.tta, names=names, label=options.label, fastread=options.fastread, number_once=options.numberonce, tworeads=options.tworeads,
         lookup=lookup, use_number=options.number, use_text=options.text, reprint=options.reprint,
     )
 

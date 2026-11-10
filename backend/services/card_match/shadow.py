@@ -83,6 +83,13 @@ def _read_full_photo(relative_path: str) -> bytes:
     return scan_storage.read_text_photo(relative_path)
 
 
+def _read_review_photo(relative_path: str) -> bytes:
+    """The whole stored review photo, for the card finder when it cannot find the card in the guide-frame picture."""
+    from services import scan_storage
+
+    return scan_storage.read_review_photo(relative_path)
+
+
 def _capture_info(relative_path: str) -> dict | None:
     from services import scan_storage
 
@@ -172,6 +179,7 @@ class ShadowRunner:
         matcher_factory: Callable[[], tuple] = default_matcher,
         photo_reader: Callable[[str], bytes] = _read_stored_photo,
         full_photo_reader: Callable[[str], bytes] = _read_full_photo,
+        review_photo_reader: Callable[[str], bytes] = _read_review_photo,
         consent_check: Callable[[int], bool] = _trainer_consents,
         busy_check: Callable[[], bool] | None = None,
         low_priority: bool = True,
@@ -179,6 +187,7 @@ class ShadowRunner:
         self._matcher_factory = matcher_factory
         self._photo_reader = photo_reader
         self._full_photo_reader = full_photo_reader
+        self._review_photo_reader = review_photo_reader
         self._consent_check = consent_check
         self._busy_check = busy_check
         self._low_priority = low_priority
@@ -301,7 +310,10 @@ class ShadowRunner:
         except Exception:
             full_photo = None
         try:
-            result = matcher.match(photo, full_photo=full_photo) if full_photo is not None else matcher.match(photo)
+            from services import picture_first
+
+            extra = {"review_photo": picture_first._lazy_photo(lambda: self._review_photo_reader(image_path))}
+            result = matcher.match(photo, full_photo=full_photo, **extra) if full_photo is not None else matcher.match(photo, **extra)
         except Exception as exc:
             logger.warning("Shadow match failed: %s", exc)
             self._skip(user_id, job_id, item_id, "match_failed")

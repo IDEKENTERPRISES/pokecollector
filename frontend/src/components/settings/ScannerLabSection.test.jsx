@@ -311,3 +311,79 @@ describe('Scanner lab matcher version 6 views', () => {
     expect(html).toContain('faster reading')
   })
 })
+
+describe('Scanner lab version 7', () => {
+  const pairs = {
+    scans: 105, no_old_card: 3,
+    tests: {
+      sharp_vs_recognition: { first: 'sharp', second: 'recognition', number: { both: 40, only_first: 5, only_second: 20, neither: 37 }, name: { both: 90, only_first: 4, only_second: 2, neither: 6 } },
+      sharp_vs_shrunk: { first: 'sharp', second: 'shrunk', number: { both: 50, only_first: 4, only_second: 12, neither: 39 }, name: { both: 91, only_first: 3, only_second: 3, neither: 8 } },
+    },
+  }
+  const never = {
+    full: {
+      scans: 105, sets: [{ set: 'PBL', scans: 20, wrong: 15 }],
+      buckets: [
+        { key: 'no_text', label: 'No text read anywhere in the bottom area', n: 1, examples: [{ trace: 't1', name: 'Mon', set: 'PBL', truth: { number: '018', total: '091' }, read: { number: null, total: null }, lines: [] }] },
+        { key: 'no_number_shape', label: 'Text read, but nothing shaped like a number', n: 2, examples: [{ trace: 't2', name: 'Mew', set: 'CRI', truth: { number: '007', total: '100' }, read: { number: null, total: null }, lines: ['SVI EN', 'Illus. A'] }] },
+        { key: 'wrong_number', label: 'A number read that is not the confirmed card’s', n: 0, examples: [] },
+        { key: 'total_differs', label: 'The right number, but a different total than the catalogue prints', n: 0, examples: [] },
+      ],
+    },
+  }
+
+  it('shows the paired reading table for the number and the name, and why the number was never right', () => {
+    const html = renderToStaticMarkup(
+      <OcrCheckView report={{ traces: 105, skipped: 0, by_resolution: { full: { 'source:sharp': { n: 105, name_pct: 90.5, number_pct: 59, total_pct: 52.4, set_code_pct: 6.7 }, 'source:shrunk': { n: 105, name_pct: 88, number_pct: 70, total_pct: 65, set_code_pct: 8 } } }, paired: pairs, never_right: never }} />,
+    )
+    expect(html).toContain('Read from: The sharper card (today)')
+    expect(html).toContain('Read from: The sharper card shrunk to 630 × 880')
+    expect(html).toContain('Newer scans read three ways (105 scans)')
+    expect(html).toContain('Right on both')
+    expect(html).toContain('Only the first')
+    expect(html).toContain('3 had no card found')
+    expect(html).toContain('Text read, but nothing shaped like a number: <span class="tabular-nums">2</span>')
+    expect(html).toContain('confirmed 007/100 · read no number · text: SVI EN | Illus. A')
+    expect(html).toContain('PBL 15 of 20')
+  })
+
+  it('opens the decided-wrong list from the picture-first figure and puts that filter first in Misses', () => {
+    const picture = { enabled: true, counts: { days: 30, decided: 10, ollama: 2, inbox: 0, picked_different: 1, decided_confirmed: 9, error_pct: 11.1 } }
+    const html = renderToStaticMarkup(<PictureFirstView data={picture} onOpenDecidedWrong={() => {}} />)
+    expect(html).toContain('scanner-lab-pf-different-open')
+    expect(renderToStaticMarkup(<PictureFirstView data={picture} />)).not.toContain('scanner-lab-pf-different-open')
+    const wrong = {
+      key: 'w', kind: 'decided_wrong', rank: 1, tags: ['decided_wrong', 'holo'], decided_wrong: true, mechanism: 'number_and_picture',
+      truth: { name: 'Mon', number: '7', printed_total: 91, set: 'Set A', similarity: 0.9, tcg_card_id: 'a-7' },
+      decided_card: { tcg_card_id: 'b-7', name: 'Mon', number: '7', printed_total: 91, set: 'Set B', similarity: 0.83, rank: 2, lead: 0.07 },
+      top3: [], ocr: { name: 'Mon', number: '7', total: '91', lines: [] }, photo: null, card: null,
+    }
+    const view = renderToStaticMarkup(
+      <MissesView
+        data={{ available: true, created_at: '2026-11-10T01:00:00+00:00', scans: 276, misses: 16, decided_wrong: 1, options: 'x', total: 1, offset: 0, tags: { decided_wrong: 'Decided wrong', holo: 'Holo' }, counts: { decided_wrong: 1, holo: 1 }, items: [wrong] }}
+        tag="decided_wrong" onTag={() => {}} onMore={() => {}}
+      />,
+    )
+    expect(view.indexOf('Decided wrong (1)')).toBeLessThan(view.indexOf('All (16)'))
+    expect(view).toContain('the number fit several printings and the picture picked one')
+    expect(view).toContain('Decided: Mon · Set B · #7/91 · picture 0.83 · ranked 2')
+    expect(view).toContain('Confirmed: Mon · Set A · #7/91 · picture 0.9 · ranked 1')
+    expect(view).toContain('Read: number 7/91')
+  })
+
+  it('shows the zero count of decided wrong scans and the new fallback row', () => {
+    const view = renderToStaticMarkup(
+      <MissesView data={{ available: true, created_at: '2026-11-10T01:00:00+00:00', scans: 5, misses: 0, decided_wrong: 0, total: 0, offset: 0, tags: { decided_wrong: 'Decided wrong' }, counts: {}, items: [] }} tag={null} onTag={() => {}} onMore={() => {}} />,
+    )
+    expect(view).toContain('Decided wrong (0)')
+    const fallback = { scans: 4, by_kind: { review_photo: { n: 2, top1: 100, top20: 100, decided: 50, decided_right: 100 }, full_photo: null, guide_crop: { n: 2, top1: 50, top20: 100, decided: 0, decided_right: null } }, found_on_photo: null }
+    expect(renderToStaticMarkup(<Report report={{ ...report, kind: 'labelled', fallback }} title="Real scans" />)).toContain('Found on the whole review photo')
+  })
+
+  it('names the second-read option', () => {
+    const html = renderToStaticMarkup(
+      <CompareTable report={{ kind: 'compare-labelled', n: 139, created_at: '2026-11-06T01:00:00+00:00', duration_seconds: 100, winner: null, rows: [{ label: 'names+fastread+tworeads', status: 'skipped', missing_indexes: ['x'] }] }} title="Compare" />,
+    )
+    expect(html).toContain('second read at 880 px')
+  })
+})

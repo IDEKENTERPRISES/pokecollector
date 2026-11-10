@@ -289,7 +289,7 @@ class CardMatcher:
         self, index: CardIndex, embedder, candidate_loader: CandidateLoader, ocr_reader=None, *, read_hp: bool = False,
         extra_signals=(), tta: bool = False, names=None, label: str = "baseline",
         lookup=None, use_number: bool = False, use_text: bool = False, reprint: bool = False, fastread: bool = False,
-        number_once: bool = False,
+        number_once: bool = False, tworeads: bool = False,
     ) -> None:
         self.index = index
         self.embedder = embedder
@@ -305,6 +305,7 @@ class CardMatcher:
         self.use_text = bool(lookup is not None and use_text)
         self.number_once = number_once  # a read number is worth one boost in the ranking, not two (see ``merge_candidates``)
         self.fastread = fastread  # a shorter reading ladder and a lower time budget (ocr.FAST_BUDGET_SECONDS)
+        self.tworeads = tworeads  # a sharper card with no complete number is read again on the card shrunk to 880 px
         self.reprint = reprint  # break ties between reprints by the artwork-only similarity
         self._row_maps: dict[int, np.ndarray] = {}
 
@@ -379,18 +380,22 @@ class CardMatcher:
             name_found = 1
         return ocr_module.completeness(result), name_found
 
-    def _read_text(self, card: np.ndarray, picture_flipped: bool, *, use_names: bool):
+    def _read_text(self, card: np.ndarray, picture_flipped: bool, *, use_names: bool, light: bool = False):
         """Read the number strips (and the name line) the right way up.
 
         When the picture search is sure the card is turned (``picture_flipped``), read it turned. Otherwise
         read upright first and turn the card only when that gave nothing usable and the turned card gives
         something better: a number, or a name that is in the catalogue. Returns
-        ``(ocr result, name read or None, flipped, how)`` with ``how`` = picture | text | default."""
+        ``(ocr result, name read or None, flipped, how)`` with ``how`` = picture | text | default.
 
-        fast = {"fast": True} if self.fastread else {}  # only passed when on, so a reader without the option still works
+        ``light`` (a card found only by the guide frame): the short ladder and the lower budget, and the card is read in
+        one orientation only, so this read takes no longer than a normal one (it used to run the whole ladder both ways up)."""
+
+        fast = {"fast": True} if (self.fastread or light) else {}  # only passed when on, so a reader without the option still works
+        number_extra = {**fast, **({"two_reads": True} if self.tworeads and not light else {})}
 
         def attempt(flipped: bool):
-            result = self.ocr_reader.read(card, read_hp=self.read_hp, flipped=flipped, **fast)
+            result = self.ocr_reader.read(card, read_hp=self.read_hp, flipped=flipped, **number_extra)
             name_read = self.ocr_reader.read_name(card, flipped=flipped, **fast) if use_names else None
             return result, name_read
 
@@ -398,25 +403,31 @@ class CardMatcher:
             result, name_read = attempt(True)
             return result, name_read, True, "picture"
         result, name_read = attempt(False)
-        if any(self._text_usable(result, name_read)):
+        if light or any(self._text_usable(result, name_read)):
             return result, name_read, False, "default"
         other_result, other_name = attempt(True)
         if self._text_usable(other_result, other_name) > self._text_usable(result, name_read):
             return other_result, other_name, True, "text"
         return result, name_read, False, "default"
 
-    def _find_card(self, photo_rgb: np.ndarray, full_photo) -> tuple[object, str | None]:
-        """(detection, fallback). When no card is found on the recognition image the full photo is tried (the card may
-        be cut by the guide crop); failing that, the plain guide-frame crop is used, because the trainer lined the card
-        up with the guide. ``fallback`` is None for a normal find, ``full_photo`` or ``guide_crop`` otherwise."""
+    def _find_card(self, photo_rgb: np.ndarray, full_photo, review_photo=None) -> tuple[object, str | None]:
+        """(detection, fallback). When no card is found on the recognition image, the stored whole review photo is tried
+        first (the card may be cut by the guide crop, and only the whole frame still holds it; an array, or a function that returns one), then the full photo (the
+        sharper guide crop: the same framing as the recognition image, so it only helps an upload without one); failing
+        that, the plain guide-frame crop is used, because the trainer lined the card up with the guide. ``fallback`` is
+        None for a normal find, ``review_photo``, ``full_photo`` or ``guide_crop`` otherwise."""
         detection = detect_module.detect_card(photo_rgb)
         if detection.found:
             return detection, None
-        if full_photo is not None:
-            other = detect_module.detect_card(full_photo)
+        for name, picture in (("review_photo", review_photo), ("full_photo", full_photo)):
+            if callable(picture):  # decoded only now, when the card was not found: most scans never need it
+                picture = picture()
+            if picture is None:
+                continue
+            other = detect_module.detect_card(picture)
             if other.found:
-                other.corners_space = "full_photo"  # these corners are in the full photo, not in ``photo_rgb``
-                return other, "full_photo"
+                other.corners_space = name  # these corners are in that photo, not in ``photo_rgb``
+                return other, name
         return detection, "guide_crop"
 
     def _text_card(self, detection, upright: np.ndarray, full_photo, flat_card, fallback: str | None = None) -> tuple[np.ndarray, str]:
@@ -425,8 +436,8 @@ class CardMatcher:
         flattened at the detected corners, or this photo's own detail; the matcher's 630x880 card is the last resort."""
         if flat_card is not None:
             return flat_card, "stored_card"
-        if fallback == "full_photo":
-            return (detection.hires if detection.hires is not None else detection.card), "full_photo"
+        if fallback in ("full_photo", "review_photo"):
+            return (detection.hires if detection.hires is not None else detection.card), fallback
         if full_photo is not None and detection.found:
             other = detect_module.detect_card(full_photo)
             if other.found and _same_card(other.card, upright):
@@ -435,14 +446,15 @@ class CardMatcher:
             return detection.hires, "photo"
         return upright, "crop"
 
-    def match(self, photo_rgb: np.ndarray, *, top_k: int = TOP_K, use_ocr: bool = True, full_photo=None, flat_card=None) -> MatchResult:
+    def match(self, photo_rgb: np.ndarray, *, top_k: int = TOP_K, use_ocr: bool = True, full_photo=None, flat_card=None, review_photo=None) -> MatchResult:
         """``photo_rgb`` is what the card is found and embedded from (the recognition image). ``full_photo`` (the
-        stored full-resolution photo) or ``flat_card`` (a stored high-resolution flat card) only sharpen the text
+        stored full-resolution photo), ``review_photo`` (the whole stored review photo, tried when the card is not found
+        on ``photo_rgb``) or ``flat_card`` (a stored high-resolution flat card) only sharpen the text
         reading; without either the text is read from ``photo_rgb`` itself."""
         config.apply_thread_caps()
         timings: dict[str, float] = {}
         t0 = _timer()
-        detection, fallback = self._find_card(photo_rgb, full_photo)
+        detection, fallback = self._find_card(photo_rgb, full_photo, review_photo)
         timings["detect"] = (_timer() - t0) * 1000
 
         t0 = _timer()
@@ -469,7 +481,7 @@ class CardMatcher:
             t0 = _timer()
             text_card, text_source = self._text_card(detection, upright, full_photo, flat_card, fallback)
             can_read_names = self.names is not None and hasattr(self.ocr_reader, "read_name")
-            ocr_result, name_read, flipped, how = self._read_text(text_card, picture_flipped, use_names=can_read_names)
+            ocr_result, name_read, flipped, how = self._read_text(text_card, picture_flipped, use_names=can_read_names, light=fallback == "guide_crop")
             timings["ocr"] = (_timer() - t0) * 1000
             if flipped != picture_flipped:  # the text turned the card: the extra views follow the card's real orientation
                 t0 = _timer()
@@ -578,9 +590,9 @@ class CardMatcher:
         return MatchResult(
             status="decided" if decision else "unsure", decision=decision, unsure_reason=None if decision else reason,
             matches=matches,
-            detection={"found": detection.found and fallback != "full_photo", "confidence": detection.confidence, "method": detection.method,
+            detection={"found": detection.found and fallback not in ("full_photo", "review_photo"), "confidence": detection.confidence, "method": detection.method,
                        "corners": [[round(x, 1), round(y, 1)] for x, y in detection.corners],
-                       # Not found on the recognition image: "full_photo" (found there, which does not count as a find) or
+                       # Not found on the recognition image: "review_photo" or "full_photo" (found there, which does not count as a find) or
                        # "guide_crop" (the plain guide-frame crop); None for a normal find. See ``decide``.
                        "fallback": fallback, "corners_space": getattr(detection, "corners_space", "photo")},
             ocr=ocr_info, timings_ms={key: round(value, 1) for key, value in timings.items()}, text_card=text_card, card=upright,

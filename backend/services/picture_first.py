@@ -97,7 +97,20 @@ class PictureRun:
         return self.result.status == "decided" and bool(self.result.decision)
 
 
-def _run_blocking(image_bytes: bytes, deadline: float, full_bytes: bytes | None = None, capture: dict | None = None):
+def _lazy_photo(reader):
+    """A function that reads and decodes the whole review photo when the card finder asks for it (None when it is unreadable)."""
+    from services.card_match.images import decode_rgb
+
+    def load():
+        try:
+            return decode_rgb(reader(), max_side=MATCH_IMAGE_MAX_SIDE)
+        except Exception:
+            return None
+
+    return load
+
+
+def _run_blocking(image_bytes: bytes, deadline: float, full_bytes: bytes | None = None, capture: dict | None = None, review_reader=None):
     from services.card_match.images import decode_rgb
 
     if time.monotonic() >= deadline:
@@ -114,7 +127,8 @@ def _run_blocking(image_bytes: bytes, deadline: float, full_bytes: bytes | None 
         except Exception:
             full_photo = None
     started = time.perf_counter()
-    result = matcher.match(photo, full_photo=full_photo) if full_photo is not None else matcher.match(photo)
+    extra = {"review_photo": _lazy_photo(review_reader)} if review_reader is not None else {}  # only passed when there is one
+    result = matcher.match(photo, full_photo=full_photo, **extra) if full_photo is not None else matcher.match(photo, **extra)
     elapsed = (time.perf_counter() - started) * 1000
     info = {"bytes": len(image_bytes), "width": int(photo.shape[1]), "height": int(photo.shape[0])}
     from services.card_match import shadow
@@ -123,15 +137,16 @@ def _run_blocking(image_bytes: bytes, deadline: float, full_bytes: bytes | None 
     return PictureRun(result=result, elapsed_ms=round(elapsed, 1), matcher=matcher, input_info=info)
 
 
-async def run_matcher(image_bytes: bytes, full_bytes: bytes | None = None, capture: dict | None = None) -> PictureRun | None:
+async def run_matcher(image_bytes: bytes, full_bytes: bytes | None = None, capture: dict | None = None, review_reader=None) -> PictureRun | None:
     """Run the matcher on one recognition image (``full_bytes``: the sharpest stored picture of the card, for
-    reading the text; ``capture``: the camera frame and crop sizes, only recorded). ``None`` when it is not
+    reading the text; ``review_reader``: a function that returns the whole review photo's bytes, used only when the card is
+    not found; ``capture``: the camera frame and crop sizes, only recorded). ``None`` when it is not
     ready, failed or took too long."""
     limit = timeout_seconds()
     deadline = time.monotonic() + limit
     loop = asyncio.get_running_loop()
     try:
-        return await asyncio.wait_for(loop.run_in_executor(_executor, _run_blocking, image_bytes, deadline, full_bytes, capture), timeout=limit)
+        return await asyncio.wait_for(loop.run_in_executor(_executor, _run_blocking, image_bytes, deadline, full_bytes, capture, review_reader), timeout=limit)
     except asyncio.TimeoutError:
         logger.warning("Picture match took longer than %.1f s; using the scanner path", limit)
     except Exception as exc:
