@@ -282,3 +282,99 @@ class SharpGuideCropTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(DEPS_AVAILABLE, "backend dependencies are not installed")
+class MultiPicturePhotoTests(unittest.TestCase):
+    """iPhone photos that carry a second picture (HDR gain map, depth map) are read as their primary photo."""
+
+    @staticmethod
+    def _mpo(size=(800, 1100), exif=False, primary="#d92828"):
+        primary_image = Image.new("RGB", size, primary)
+        second = Image.new("RGB", (200, 275), "#0000ff")
+        output = io.BytesIO()
+        kwargs = {}
+        if exif:
+            metadata = Image.Exif()
+            metadata[274] = 6
+            metadata[270] = "private scan metadata"
+            kwargs["exif"] = metadata
+        primary_image.save(output, format="MPO", save_all=True, append_images=[second], **kwargs)
+        return output.getvalue()
+
+    def test_fixture_really_is_mpo(self):
+        with Image.open(io.BytesIO(self._mpo())) as image:
+            self.assertEqual(image.format, "MPO")
+            self.assertEqual(image.n_frames, 2)
+
+    def test_two_picture_jpeg_is_accepted_as_single_frame_primary(self):
+        result = sanitize_image_bytes(self._mpo())
+        with Image.open(io.BytesIO(result.data)) as image:
+            self.assertEqual(image.format, "JPEG")
+            self.assertEqual(getattr(image, "n_frames", 1), 1)
+            self.assertEqual(image.size, (800, 1100))
+            self.assertEqual(len(image.getexif()), 0)
+            red, _green, blue = image.convert("RGB").getpixel((400, 550))
+            self.assertGreater(red, 150)
+            self.assertLess(blue, 100)
+
+    def test_exif_orientation_of_primary_frame_is_applied_and_stripped(self):
+        result = sanitize_image_bytes(self._mpo(size=(800, 1100), exif=True))
+        with Image.open(io.BytesIO(result.data)) as image:
+            self.assertEqual(image.size, (1100, 800))
+            self.assertEqual(len(image.getexif()), 0)
+        self.assertNotIn(b"private scan metadata", result.data)
+
+    def test_sharp_crop_still_works_for_two_picture_jpeg(self):
+        result = sanitize_image_bytes(self._mpo(), (0.1, 0.1, 0.5, 0.5))
+        self.assertIsNotNone(result.sharp_crop)
+        self.assertEqual(result.frame_size, (800, 1100))
+        self.assertEqual(result.crop_size, (400, 550))
+
+    def test_animated_gif_and_webp_are_still_refused(self):
+        frames = [Image.new("RGB", (64, 64), "red"), Image.new("RGB", (64, 64), "blue")]
+        for image_format in ("GIF", "WEBP"):
+            output = io.BytesIO()
+            frames[0].save(output, format=image_format, save_all=True, append_images=frames[1:])
+            with self.assertRaises(ScanUploadError):
+                sanitize_image_bytes(output.getvalue())
+        output = io.BytesIO()
+        frames[0].save(output, format="WEBP", save_all=True, append_images=frames[1:])
+        with self.assertRaisesRegex(ScanUploadError, "Animated"):
+            sanitize_image_bytes(output.getvalue())
+
+    def test_still_heic_with_extra_top_level_image_uses_primary(self):
+        if not scan_storage.HEIC_AVAILABLE:
+            self.skipTest("pillow-heif is not installed")
+        output = io.BytesIO()
+        Image.new("RGB", (64, 48), "red").save(
+            output, format="HEIF", save_all=True, append_images=[Image.new("RGB", (32, 24), "blue")]
+        )
+        result = sanitize_image_bytes(output.getvalue())
+        with Image.open(io.BytesIO(result.data)) as image:
+            self.assertEqual(image.size, (64, 48))
+
+    def test_unsupported_format_logs_and_gets_plain_message(self):
+        output = io.BytesIO()
+        Image.new("RGB", (32, 32), "red").save(output, format="PPM")
+        with self.assertLogs("services.scan_storage", level="WARNING") as logs:
+            with self.assertRaisesRegex(ScanUploadError, "Only JPEG, PNG, WebP, and HEIC"):
+                sanitize_image_bytes(output.getvalue())
+        line = logs.output[0]
+        self.assertIn("format=PPM", line)
+        self.assertIn("n_frames=1", line)
+        self.assertIn(f"size_bytes={len(output.getvalue())}", line)
+
+    def test_known_unreadable_still_format_is_named(self):
+        output = io.BytesIO()
+        Image.new("RGB", (32, 32), "red").save(output, format="TIFF")
+        with self.assertLogs("services.scan_storage", level="WARNING"):
+            with self.assertRaisesRegex(ScanUploadError, "RAW or TIFF"):
+                sanitize_image_bytes(output.getvalue())
+
+    def test_single_card_path_accepts_two_picture_jpeg(self):
+        # POST /recognize reads its upload through sanitize_image_bytes (api.recognize cannot be imported on
+        # Windows because of fcntl, so this checks the wiring in the source and runs the shared function).
+        source = (Path(__file__).resolve().parent.parent / "api" / "recognize.py").read_text(encoding="utf-8")
+        self.assertIn("sanitized = sanitize_image_bytes(raw_image)", source)
+        self.assertEqual(sanitize_image_bytes(self._mpo()).content_type, "image/jpeg")
