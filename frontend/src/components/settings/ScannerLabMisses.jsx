@@ -191,6 +191,13 @@ function MissItem({ item, labels, onOpen }) {
         {item.ocr?.hp ? `, HP ${item.ocr.hp}` : ''}
         {(item.ocr?.lines || []).length > 0 ? ` · text: ${item.ocr.lines.join(' | ')}` : ''}
       </p>
+      {item.corners && (
+        <p className="text-[11px] text-text-secondary" data-testid="scanner-lab-miss-corners">
+          Corners measured against the confirmed card: finder’s quad {item.corners.quad ?? 'none'}, guide frame {item.corners.guide}, whole picture {item.corners.whole}
+          {item.corners.coverage != null ? ` · the quad covers ${Math.round(item.corners.coverage * 100)}% of the picture, shape error ${item.corners.ratio_error}, corners ${item.corners.angle_deviation}° off square` : ''}
+          {item.corners.refused ? ` · this version’s finder refuses it (${item.corners.refused.replace(/_/g, ' ')})` : ''}
+        </p>
+      )}
       {item.rotation && (
         <p className="text-[11px] text-text-secondary" data-testid="scanner-lab-miss-rotation">
           Measured against the confirmed card: {item.rotation.rotated ? 'turned 180°' : 'upright'} (upright {item.rotation.upright}, turned {item.rotation.turned})
