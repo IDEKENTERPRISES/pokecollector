@@ -1,4 +1,4 @@
-"""Matcher version 7: the paired reading test and the never-right buckets (OCR check), ``tworeads``, the step table's real
+"""Matcher version 7 (the paired reading test and ``tworeads`` were removed in version 8): the never-right buckets (OCR check), the step table's real
 time, the find order with the whole review photo, the light guide-frame read, and the decided-wrong list."""
 import os
 import sys
@@ -28,63 +28,7 @@ skip = unittest.skipUnless(DEPS_AVAILABLE, "backend dependencies are not install
 
 
 @skip
-class OptionAndVersionTests(unittest.TestCase):
-    def test_version_default_and_the_new_option(self):
-        self.assertEqual(MATCHER_VERSION, "7")
-        self.assertEqual(variants.DEFAULT_LABEL, "names+number+text+art+tta+fastread")
-        self.assertFalse(variants.parse(variants.DEFAULT_LABEL).tworeads)  # off by default
-        label = "names+number+text+art+tta+fastread+numberonce+tworeads"
-        self.assertTrue(variants.parse(label).tworeads)
-        self.assertEqual(variants.parse(label).label, label)
-
-    def test_the_comparison_has_the_two_new_rows_and_at_most_twelve(self):
-        labels = variants.COMPARE_LABELS
-        self.assertLessEqual(len(labels), 12)
-        self.assertEqual(len(set(labels)), len(labels))
-        self.assertIn("names+number+text+art+tta+fastread+numberonce", labels)
-        self.assertIn("names+number+text+art+tta+fastread+numberonce+tworeads", labels)
-        for label in labels:
-            self.assertEqual(variants.parse(label).label, label)  # every row is spelled the way the options print
-
-
-@skip
-class PairedAndNeverRightTests(unittest.TestCase):
-    def rights(self, sharp, old, shrunk):
-        out = {"sharp": {"number": sharp[0], "name": sharp[1]}, "shrunk": {"number": shrunk[0], "name": shrunk[1]}}
-        if old is not None:
-            out["recognition"] = {"number": old[0], "name": old[1]}
-        return out
-
-    def test_the_paired_table_counts_both_only_the_first_only_the_second_and_neither(self):
-        pairs = ocr_check.new_pairs()
-        ocr_check.add_pair(pairs, self.rights((True, True), (True, False), (True, True)))
-        ocr_check.add_pair(pairs, self.rights((True, True), (False, True), (False, False)))
-        ocr_check.add_pair(pairs, self.rights((False, False), (True, True), (False, True)))
-        ocr_check.add_pair(pairs, self.rights((False, False), (False, False), (False, False)))
-        ocr_check.add_pair(pairs, self.rights((True, True), None, (True, True)))  # no card found in the recognition image
-        self.assertEqual(pairs["scans"], 5)
-        self.assertEqual(pairs["no_old_card"], 1)
-        old = pairs["tests"]["sharp_vs_recognition"]
-        self.assertEqual(old["number"], {"both": 1, "only_first": 1, "only_second": 1, "neither": 1})
-        self.assertEqual(old["name"], {"both": 1, "only_first": 1, "only_second": 1, "neither": 1})
-        shrunk = pairs["tests"]["sharp_vs_shrunk"]  # all five scans have a shrunk reading
-        self.assertEqual(sum(shrunk["number"].values()), 5)
-        self.assertEqual(shrunk["number"]["both"], 2)
-
-    def test_the_three_sources_are_the_sharp_card_the_old_size_card_and_the_shrunk_card(self):
-        import cv2
-
-        card = np.random.default_rng(1).integers(0, 255, (1389, 995, 3), dtype=np.uint8)
-        with patch.object(detect, "detect_card", return_value=detect.Detection(card=np.zeros((880, 630, 3), np.uint8), found=True, confidence=0.9, method="contour")), \
-                patch("services.card_match.images.decode_rgb", return_value=np.zeros((10, 10, 3), np.uint8)), \
-                patch("pathlib.Path.read_bytes", return_value=b"x"):
-            from pathlib import Path
-
-            got = ocr_check.paired_pictures(card, Path("/x/trace.json"), {"image_file": "trace.jpg"})
-        self.assertEqual(got["recognition"].shape, (880, 630, 3))
-        self.assertEqual(got["shrunk"].shape, (880, 630, 3))
-        self.assertTrue(np.array_equal(got["shrunk"], cv2.resize(card, (630, 880), interpolation=cv2.INTER_AREA)))
-
+class NeverRightTests(unittest.TestCase):
     def test_never_right_is_split_by_what_was_read(self):
         truth = {"number": "018", "printed_total": "091"}
         bucket = ocr_check.number_bucket
@@ -118,74 +62,6 @@ class PairedAndNeverRightTests(unittest.TestCase):
         strips = [{"label": "a", "variant": "plain", "after": {"number": "1"}}]
         self.assertFalse(ocr_check.add_steps(acc, strips, "number", lambda after: after["number"] == "2"))
         self.assertTrue(ocr_check.add_steps(acc, strips, "number", lambda after: after["number"] == "1"))
-
-
-@skip
-class TwoReadsTests(unittest.TestCase):
-    tall = np.full((1389, 995, 3), 180, np.uint8)
-
-    def test_a_tall_card_with_no_complete_number_is_read_again_on_the_880_px_card(self):
-        # fast ladder: 2 strips, band, 2 wide strips, local-contrast band = 6 reads, then the tall bottom band (empty), then 3 reads at 880 px
-        reader = reader_with([[]] * 6 + [[], [], [("SVI EN 018/091", 0.9, 0, 20)]])
-        with patch.object(ocr, "FAST_BUDGET_SECONDS", 60.0):
-            result = reader.read(self.tall, read_hp=False, flipped=False, fast=True, two_reads=True)
-        self.assertEqual((result.number_local, result.number_total), ("018", "091"))
-        second = [strip for strip in result.strips if strip.get("shrunk")]
-        self.assertEqual([strip["label"] for strip in second], ["number-left-tight-880", "number-right-tight-880", "bottom-band-880"])
-        self.assertEqual(second[-1]["after"], {"number": "018", "total": "091"})
-
-    def test_off_a_short_card_or_a_complete_number_it_does_nothing(self):
-        script = [[]] * 6 + [[("SVI EN 018/091", 0.9, 0, 20)]] * 4
-        off = reader_with(list(script)).read(self.tall, read_hp=False, flipped=False, fast=True)
-        self.assertFalse([s for s in off.strips if s.get("shrunk")])
-        short = reader_with(list(script)).read(np.full((880, 630, 3), 180, np.uint8), read_hp=False, flipped=False, fast=True, two_reads=True)
-        self.assertFalse([s for s in short.strips if s.get("shrunk")])
-        done = reader_with([[("SVI EN 018/091", 0.95, 0, 20)]]).read(self.tall, read_hp=False, flipped=False, fast=True, two_reads=True)
-        self.assertEqual([s["label"] for s in done.strips], ["number-left-tight"])
-
-    def test_it_starts_no_step_after_the_time_budget_of_the_first_pass(self):
-        reader = reader_with([[]] * 20)
-        with patch.object(ocr, "FAST_BUDGET_SECONDS", 0.0):
-            result = reader.read(self.tall, read_hp=False, flipped=False, fast=True, two_reads=True)
-        self.assertFalse([s for s in result.strips if s.get("shrunk")])
-
-    def test_the_second_look_is_merged_with_the_first_reading(self):
-        reader = reader_with([[("018/091", 0.9, 0, 20)]])
-        first = ocr.OcrResult(number_local="018", number_total=None, number_confidence=0.5)  # a number but no total
-        record: list[dict] = []
-        import time
-
-        best, lines, reads = reader._second_look(self.tall, first, record, False, time.monotonic(), 60.0)
-        self.assertEqual((best.number_local, best.number_total), ("018", "091"))
-        self.assertEqual(reads, 1)
-        self.assertEqual(record[0]["label"], "number-left-tight-880")
-
-    def test_the_strip_view_redraws_a_shrunk_region_from_the_shrunk_card(self):
-        strip = {"label": "bottom-band-880", "box": ocr.BOTTOM_BAND, "variant": "plain", "zoom": 3.0, "shrunk": True}
-        plain = {**strip, "shrunk": False}
-        self.assertLess(ocr.render_strip(self.tall, strip).shape[0], ocr.render_strip(self.tall, plain).shape[0])
-
-    def test_the_matcher_passes_it_to_the_number_read_only_and_only_when_on(self):
-        seen = []
-
-        class Reader:
-            def read(self, card, read_hp=False, flipped=None, **kwargs):
-                seen.append(("read", kwargs))
-                return ocr.OcrResult(number_local="1", number_total="2")
-
-            def read_name(self, card, flipped=False, **kwargs):
-                seen.append(("name", kwargs))
-                return types.SimpleNamespace(name="Mon", hp=None, raw=[], strips=[])
-
-        card = np.zeros((880, 630, 3), np.uint8)
-        for on in (False, True):
-            seen.clear()
-            matcher = pipeline.CardMatcher.__new__(pipeline.CardMatcher)
-            matcher.ocr_reader, matcher.read_hp, matcher.fastread, matcher.tworeads, matcher.names = Reader(), False, True, on, None
-            matcher._text_usable = lambda *a: (1, 1)
-            matcher._read_text(card, False, use_names=True)
-            self.assertEqual(dict(seen)["read"], {"fast": True, **({"two_reads": True} if on else {})})
-            self.assertEqual(dict(seen)["name"], {"fast": True})
 
 
 @skip
@@ -224,7 +100,7 @@ class FindOrderTests(unittest.TestCase):
         seen = []
         loaded = []
 
-        def fake_detect(picture):
+        def fake_detect(picture, **kwargs):
             name = "photo" if picture is photo else "review" if picture is review_photo else "full" if picture is full_photo else "other"
             seen.append(name)
             found = {"photo": recognition_found, "review": bool(review), "full": bool(full)}.get(name, False)
@@ -274,7 +150,7 @@ class FindOrderTests(unittest.TestCase):
                 return ocr.OcrResult()  # nothing usable: a normal card would now be tried turned as well
 
         matcher = pipeline.CardMatcher.__new__(pipeline.CardMatcher)
-        matcher.ocr_reader, matcher.read_hp, matcher.fastread, matcher.tworeads, matcher.names = Reader(), False, False, True, None
+        matcher.ocr_reader, matcher.read_hp, matcher.fastread, matcher.names = Reader(), False, False, None
         card = np.zeros((880, 630, 3), np.uint8)
         matcher._read_text(card, False, use_names=False, light=True)
         self.assertEqual(calls, [(False, {"fast": True})])

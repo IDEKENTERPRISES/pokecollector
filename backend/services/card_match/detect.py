@@ -27,6 +27,22 @@ MIN_CARD_AREA_FRACTION = 0.12  # of the photo
 MIN_CONFIDENCE = 0.45
 FALLBACK_CONFIDENCE = 0.2
 
+# Version 8: a finder that distrusts itself. Every constant below comes from geometry, not from the real photos.
+# The recognition image is the photo cropped to the camera's guide box, so it is itself card-shaped (63:88). A picture
+# counts as a guide crop when its sides are within this fraction of that shape.
+GUIDE_PICTURE_TOLERANCE = 0.03  # a 3:4 phone photo (0.75) is 4.7% off and is not one
+# In a guide crop a well-aimed card fills most of the picture (the guide is drawn the card's size). A card at 45% of the
+# frame is already a poor aim, and the parts of a card that show up as a "card" on their own (the artwork window is about
+# 40% of the card, a lower corner is less) stay under it. Shapes below it are not taken for the card.
+GUIDE_MIN_COVERAGE = 0.45
+# A quad has to be close to a rectangle: its area against the convex outline it came from (1 = the same) and the
+# widest an inner angle may stray from 90 degrees (perspective bends the angles of a flat card by up to about 25).
+MIN_RECTANGULARITY = 0.80
+MAX_ANGLE_DEVIATION = 35.0
+# A quad wider than tall by more than this, in a picture that is taller than wide: the guide is portrait and a card held
+# sideways could only fill about half of it, the size of the artwork window, which has the same 88:63 look turned.
+SIDEWAYS_RATIO = 1.1
+
 
 # The artwork window of a flattened card (fractions of the picture): the same place on every normal card,
 # and the one part that stays identical across reprints of a name, so it is embedded on its own as well.
@@ -59,6 +75,7 @@ class Detection:
     method: str  # "contour" | "guide_crop"
     corners: list[tuple[float, float]] = field(default_factory=list)  # in the original photo, tl,tr,br,bl
     hires: np.ndarray | None = None  # the same card flattened at the photo's own detail (up to HIRES_W x HIRES_H); None when no sharper than ``card``
+    rejected: dict | None = None  # a quad the finder saw and refused as implausible: why, and its measurements (see ``quad_measures``)
 
 
 def guide_rect(width: int, height: int) -> tuple[float, float, float, float]:
@@ -119,6 +136,59 @@ def _quad_score(quad: np.ndarray, contour_area: float, quad_area: float, image_a
     return float(score)
 
 
+def is_guide_picture(photo_rgb: np.ndarray) -> bool:
+    """The picture is card-shaped, as the guide crop is: taller than wide, and its short side over its long side is
+    within ``GUIDE_PICTURE_TOLERANCE`` of 63:88."""
+    h, w = photo_rgb.shape[:2]
+    return h > w and abs(w / h - CARD_RATIO) / CARD_RATIO <= GUIDE_PICTURE_TOLERANCE
+
+
+def _angle_deviation(quad: np.ndarray) -> float:
+    """The widest an inner angle of the quad strays from 90 degrees."""
+    worst = 0.0
+    for i in range(4):
+        a, b, c = quad[i - 1], quad[i], quad[(i + 1) % 4]
+        u, v = a - b, c - b
+        denom = float(np.linalg.norm(u) * np.linalg.norm(v))
+        if denom <= 0:
+            return 90.0
+        angle = float(np.degrees(np.arccos(np.clip(float(u @ v) / denom, -1.0, 1.0))))
+        worst = max(worst, abs(angle - 90.0))
+    return worst
+
+
+def quad_measures(quad: np.ndarray, hull_area: float, image_area: float) -> dict:
+    """Plain measurements of a candidate quad: the share of the picture it covers, how far its shape is from 63:88,
+    how close it is to a rectangle (area against its convex outline, widest angle off 90), and how wide against tall."""
+    top, right, bottom, left = _side_lengths(quad)
+    width, height = (top + bottom) / 2, (left + right) / 2
+    area = float(cv2.contourArea(quad.astype(np.float32)))
+    ratio = min(width, height) / max(width, height) if max(width, height) > 0 else 0.0
+    return {
+        "coverage": round(area / image_area, 3) if image_area else 0.0,
+        "ratio_error": round(abs(ratio - CARD_RATIO) / CARD_RATIO, 3),
+        "rectangularity": round(min(area, hull_area) / max(area, hull_area), 3) if area > 0 and hull_area > 0 else 0.0,
+        "angle_deviation": round(_angle_deviation(quad), 1),
+        "wide_over_tall": round(width / height, 3) if height > 0 else 0.0,
+    }
+
+
+def plausibility_problem(measures: dict, guide_input: bool) -> str | None:
+    """Why a quad is not a card, or None. Anything card-shaped may be a card in a full photo; in a guide crop
+    (``guide_input``) the card has to fill most of the picture, upright, and look like a rectangle."""
+    if measures["rectangularity"] < MIN_RECTANGULARITY:
+        return "not_rectangular"
+    if measures["angle_deviation"] > MAX_ANGLE_DEVIATION:
+        return "bad_angles"
+    if not guide_input:
+        return None
+    if measures["wide_over_tall"] > SIDEWAYS_RATIO:
+        return "sideways"
+    if measures["coverage"] < GUIDE_MIN_COVERAGE:
+        return "too_small"
+    return None
+
+
 def _edge_maps(small_bgr: np.ndarray) -> list[np.ndarray]:
     gray = cv2.cvtColor(small_bgr, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -138,7 +208,11 @@ def _edge_maps(small_bgr: np.ndarray) -> list[np.ndarray]:
     return [canny, mask]
 
 
-def _find_quad(small_bgr: np.ndarray, guide: tuple) -> tuple[np.ndarray, float] | None:
+def _find_quad(small_bgr: np.ndarray, guide: tuple, *, check: bool = False, guide_input: bool = False,
+               rejections: list | None = None) -> tuple[np.ndarray, float] | None:
+    """The best card-like quad. ``check`` judges every candidate with ``plausibility_problem`` (``guide_input``: the picture
+    is a guide crop); a candidate that fails is left out and, when ``rejections`` is a list, recorded in it with its
+    reason, score and measurements."""
     h, w = small_bgr.shape[:2]
     image_area = float(h * w)
     best: tuple[np.ndarray, float] | None = None
@@ -161,6 +235,13 @@ def _find_quad(small_bgr: np.ndarray, guide: tuple) -> tuple[np.ndarray, float] 
             ordered = order_corners(quad)
             quad_area = float(cv2.contourArea(ordered))
             score = _quad_score(ordered, float(cv2.contourArea(hull)), quad_area, image_area, guide)
+            if score is not None and check:
+                measures = quad_measures(ordered, float(cv2.contourArea(hull)), image_area)
+                problem = plausibility_problem(measures, guide_input)
+                if problem:
+                    if rejections is not None:
+                        rejections.append({"reason": problem, **measures, "score": round(score, 3), "corners": ordered.tolist()})
+                    continue
             if score is not None and (best is None or score > best[1]):
                 best = (ordered, score)
     return best
@@ -195,15 +276,39 @@ def guide_crop(photo_rgb: np.ndarray) -> np.ndarray:
     return cv2.resize(crop, (CARD_W, CARD_H), interpolation=cv2.INTER_AREA)
 
 
-def detect_card(photo_rgb: np.ndarray) -> Detection:
-    """Find and flatten the card in an RGB photo; fall back to the guide crop."""
+def whole_picture(photo_rgb: np.ndarray) -> np.ndarray:
+    """The whole picture as the card (a card that fills a guide crop, edges at or past the border)."""
+    return cv2.resize(photo_rgb, (CARD_W, CARD_H), interpolation=cv2.INTER_AREA)
+
+
+def _sharper_copy(photo_rgb: np.ndarray, rect: tuple[float, float, float, float]) -> np.ndarray | None:
+    """The same region as a fallback card, at the photo's own detail (capped like ``hires_size``); None when no sharper."""
+    h, w = photo_rgb.shape[:2]
+    x0, y0, x1, y1 = (int(round(v)) for v in rect)
+    crop = photo_rgb[max(0, y0):min(h, y1), max(0, x0):min(w, x1)]
+    if crop.size == 0 or crop.shape[0] < 1.1 * CARD_H:
+        return None
+    height = int(min(HIRES_H, crop.shape[0]))
+    return cv2.resize(crop, (int(round(height * CARD_RATIO)), height), interpolation=cv2.INTER_AREA)
+
+
+def detect_card(photo_rgb: np.ndarray, *, check: bool = False, whole: bool = False, guide: bool | None = None) -> Detection:
+    """Find and flatten the card in an RGB photo; fall back to the guide crop.
+
+    ``check`` (version 8): every candidate quad is judged for plausibility; in a card-shaped picture (a guide crop) the
+    card has to fill most of it. When nothing plausible is left the fallback is used and ``Detection.rejected`` says why
+    the best refused quad was refused. ``whole``: that fallback is the whole picture instead of the centre guide crop (a
+    card that fills the crop has its edges at the picture border; the centre 70% would cut them off). ``guide``: whether
+    the picture is a guide crop; None = judge by its shape (``is_guide_picture``)."""
     config.apply_thread_caps()
     h, w = photo_rgb.shape[:2]
     scale = min(1.0, DETECT_MAX_SIDE / max(h, w))
     small = cv2.resize(photo_rgb, (max(1, round(w * scale)), max(1, round(h * scale))), interpolation=cv2.INTER_AREA) if scale < 1 else photo_rgb
     small_bgr = cv2.cvtColor(small, cv2.COLOR_RGB2BGR)
-    guide = guide_rect(small.shape[1], small.shape[0])
-    found = _find_quad(small_bgr, guide)
+    guide_box = guide_rect(small.shape[1], small.shape[0])
+    guide_input = check and (is_guide_picture(photo_rgb) if guide is None else guide)
+    rejections: list[dict] = []
+    found = _find_quad(small_bgr, guide_box, check=check, guide_input=guide_input, rejections=rejections)
     if found is not None and found[1] >= MIN_CONFIDENCE:
         quad = found[0] / scale  # back to full-resolution coordinates
         size = hires_size(quad)
@@ -211,4 +316,12 @@ def detect_card(photo_rgb: np.ndarray) -> Detection:
             card=warp_card(photo_rgb, quad), found=True, confidence=round(found[1], 3), method="contour",
             corners=[(float(x), float(y)) for x, y in quad], hires=warp_card(photo_rgb, quad, size) if size else None,
         )
-    return Detection(card=guide_crop(photo_rgb), found=False, confidence=FALLBACK_CONFIDENCE, method="guide_crop")
+    rejected = None
+    if rejections:
+        best = max(rejections, key=lambda item: item["score"])
+        rejected = {**best, "corners": [[round(x / scale, 1), round(y / scale, 1)] for x, y in best["corners"]], "guide_picture": guide_input}
+    if whole and guide_input:
+        return Detection(card=whole_picture(photo_rgb), found=False, confidence=FALLBACK_CONFIDENCE, method="whole_picture",
+                         hires=_sharper_copy(photo_rgb, (0, 0, w, h)), rejected=rejected)
+    return Detection(card=guide_crop(photo_rgb), found=False, confidence=FALLBACK_CONFIDENCE, method="guide_crop",
+                     hires=_sharper_copy(photo_rgb, guide_rect(w, h)) if rejected else None, rejected=rejected)

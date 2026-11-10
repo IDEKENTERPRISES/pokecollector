@@ -328,27 +328,12 @@ BUDGET_SECONDS = 1.2  # no further region is read once one card's reading has ta
 ACCEPT_CONFIDENCE = 0.85  # a complete number this sure needs no second view
 
 
-TWO_READ_STEPS = 3  # tworeads: the two tight strips and the plain bottom band, the first steps of NUMBER_LADDER
-
-
-def shrink_card(card: np.ndarray) -> np.ndarray:
-    """A card taller than REFERENCE_HEIGHT shrunk to that height (INTER_AREA), the size every scan was read at before the sharper crop."""
-    import cv2
-
-    h, w = card.shape[:2]
-    if h <= REFERENCE_HEIGHT:
-        return card
-    return cv2.resize(card, (max(1, round(w * REFERENCE_HEIGHT / h)), REFERENCE_HEIGHT), interpolation=cv2.INTER_AREA)
-
-
 def render_strip(card: np.ndarray, strip: dict) -> np.ndarray:
     """The exact picture the recogniser got for one recorded region (for the lab's strip view)."""
     import cv2
 
     if strip.get("flipped"):
         card = np.ascontiguousarray(card[::-1, ::-1])
-    if strip.get("shrunk"):  # ``tworeads``: this region was read on the card shrunk to REFERENCE_HEIGHT
-        card = shrink_card(card)
     h, w = card.shape[:2]
     x0, y0, x1, y1 = strip["box"]
     crop = card[int(y0 * h):max(int(y1 * h), int(y0 * h) + 1), int(x0 * w):max(int(x1 * w), int(x0 * w) + 1)]
@@ -493,7 +478,7 @@ class OcrReader:
 
     # -- the number -----------------------------------------------------------
 
-    def _read_card(self, card: np.ndarray, fast: bool = False, two_reads: bool = False) -> OcrResult:
+    def _read_card(self, card: np.ndarray, fast: bool = False) -> OcrResult:
         flipped = bool(getattr(self, "_turned", False))  # set by ``read``: which way up this card is being read
         record: list[dict] = []
         started = time.monotonic()
@@ -521,10 +506,6 @@ class OcrReader:
                 best.number_confidence = confidence
             # What the number ladder had after this step (the OCR check's "what each step rescues" table).
             record[-1]["after"] = {"number": best.number_local, "total": best.number_total}
-        if two_reads and self.mode != "fixed" and card.shape[0] > REFERENCE_HEIGHT and (best is None or completeness(best) < 2):
-            best, extra_lines, extra_reads = self._second_look(card, best, record, flipped, started, budget)
-            lines += extra_lines
-            reads += extra_reads
         if (best is None or completeness(best) < 2) and self.mode != "fixed" and time.monotonic() - started <= budget * 1.5:
             bottom = self._expanded(card, record, flipped, "bottom")
             lines += bottom
@@ -538,37 +519,7 @@ class OcrReader:
         result.strips = record
         return result
 
-    def _second_look(self, card: np.ndarray, best: OcrResult | None, record: list[dict], flipped: bool, started: float, budget: float):
-        """``tworeads``: a tall (sharper) card gave no complete number, so the first number steps run again on the card
-        shrunk to REFERENCE_HEIGHT, the size a smoothed scan used to be read at. Same clock as the first pass (no step starts
-        after ``budget``), and the result is merged with the first reading by ``better_read``.
-        Returns (best, lines read, regions read)."""
-        small = shrink_card(card)
-        lines: list[Line] = []
-        small_lines: list[Line] = []
-        reads = 0
-        for label, box, variant, zoom, low in NUMBER_LADDER[:TWO_READ_STEPS]:
-            if best is not None and completeness(best) == 2 and (best.number_confidence or 0.0) >= ACCEPT_CONFIDENCE:
-                break
-            if time.monotonic() - started > budget:
-                break
-            got = self._scan(small, f"{label}-880", box, variant, zoom, low, record, flipped)
-            if got is None:
-                continue
-            record[-1]["shrunk"] = True
-            reads += 1
-            lines += got
-            if "band" in label:
-                reading, confidence = pick_number_lines(got)
-            else:
-                small_lines += got
-                reading, confidence = pick_number_lines(small_lines)
-            reading.number_confidence = confidence
-            best = better_read(best, reading)
-            record[-1]["after"] = {"number": best.number_local, "total": best.number_total}
-        return best, lines, reads
-
-    def read(self, card: np.ndarray, *, read_hp: bool = True, flipped: bool | None = None, fast: bool = False, two_reads: bool = False) -> OcrResult:
+    def read(self, card: np.ndarray, *, read_hp: bool = True, flipped: bool | None = None, fast: bool = False) -> OcrResult:
         """``flipped`` True/False: the picture search already says which way up the card is, so read only that
         way. None: unknown, so try upright first and the turned card when no complete number came out."""
         started = time.monotonic()
@@ -576,12 +527,11 @@ class OcrReader:
         if turned:
             card = np.ascontiguousarray(card[::-1, ::-1])
         self._turned = turned
-        extra = {"two_reads": True} if two_reads else {}  # only passed when on
-        result = self._read_card(card, fast, **extra)
+        result = self._read_card(card, fast)
         if flipped is None and not is_complete(result):
             other = np.ascontiguousarray(card[::-1, ::-1])
             self._turned = not turned
-            retry = self._read_card(other, fast, **extra)
+            retry = self._read_card(other, fast)
             if completeness(retry) > completeness(result):
                 result, card, turned = retry, other, not turned
             else:

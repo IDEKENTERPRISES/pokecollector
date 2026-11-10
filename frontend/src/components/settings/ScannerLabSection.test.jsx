@@ -313,13 +313,6 @@ describe('Scanner lab matcher version 6 views', () => {
 })
 
 describe('Scanner lab version 7', () => {
-  const pairs = {
-    scans: 105, no_old_card: 3,
-    tests: {
-      sharp_vs_recognition: { first: 'sharp', second: 'recognition', number: { both: 40, only_first: 5, only_second: 20, neither: 37 }, name: { both: 90, only_first: 4, only_second: 2, neither: 6 } },
-      sharp_vs_shrunk: { first: 'sharp', second: 'shrunk', number: { both: 50, only_first: 4, only_second: 12, neither: 39 }, name: { both: 91, only_first: 3, only_second: 3, neither: 8 } },
-    },
-  }
   const never = {
     full: {
       scans: 105, sets: [{ set: 'PBL', scans: 20, wrong: 15 }],
@@ -332,16 +325,10 @@ describe('Scanner lab version 7', () => {
     },
   }
 
-  it('shows the paired reading table for the number and the name, and why the number was never right', () => {
+  it('shows why the number was never right', () => {
     const html = renderToStaticMarkup(
-      <OcrCheckView report={{ traces: 105, skipped: 0, by_resolution: { full: { 'source:sharp': { n: 105, name_pct: 90.5, number_pct: 59, total_pct: 52.4, set_code_pct: 6.7 }, 'source:shrunk': { n: 105, name_pct: 88, number_pct: 70, total_pct: 65, set_code_pct: 8 } } }, paired: pairs, never_right: never }} />,
+      <OcrCheckView report={{ traces: 105, skipped: 0, by_resolution: { full: { 'source:sharp': { n: 105, name_pct: 90.5, number_pct: 59, total_pct: 52.4, set_code_pct: 6.7 }, 'source:shrunk': { n: 105, name_pct: 88, number_pct: 70, total_pct: 65, set_code_pct: 8 } } }, never_right: never }} />,
     )
-    expect(html).toContain('Read from: The sharper card (today)')
-    expect(html).toContain('Read from: The sharper card shrunk to 630 × 880')
-    expect(html).toContain('Newer scans read three ways (105 scans)')
-    expect(html).toContain('Right on both')
-    expect(html).toContain('Only the first')
-    expect(html).toContain('3 had no card found')
     expect(html).toContain('Text read, but nothing shaped like a number: <span class="tabular-nums">2</span>')
     expect(html).toContain('confirmed 007/100 · read no number · text: SVI EN | Illus. A')
     expect(html).toContain('PBL 15 of 20')
@@ -380,10 +367,31 @@ describe('Scanner lab version 7', () => {
     expect(renderToStaticMarkup(<Report report={{ ...report, kind: 'labelled', fallback }} title="Real scans" />)).toContain('Found on the whole review photo')
   })
 
-  it('names the second-read option', () => {
+  it('names the finder options', () => {
     const html = renderToStaticMarkup(
-      <CompareTable report={{ kind: 'compare-labelled', n: 139, created_at: '2026-11-06T01:00:00+00:00', duration_seconds: 100, winner: null, rows: [{ label: 'names+fastread+tworeads', status: 'skipped', missing_indexes: ['x'] }] }} title="Compare" />,
+      <CompareTable report={{ kind: 'compare-labelled', n: 139, created_at: '2026-11-06T01:00:00+00:00', duration_seconds: 100, winner: null, rows: [{ label: 'names+fastread+corners+wholepic', status: 'skipped', missing_indexes: ['x'] }] }} title="Compare" />,
     )
-    expect(html).toContain('second read at 880 px')
+    expect(html).toContain('self-doubting card finder')
+    expect(html).toContain('whole picture when corners are refused')
+  })
+
+  it('shows the corners check in plain words, and the measurements on a Corners off miss', () => {
+    const group = { scans: 276, no_quad: 15, spoiled: 40, whole_better: 22, spoiled_no_number: 25, no_number_all: 90, refused_now: 38, refused_among_spoiled: 35, coverage: { min: 0.2, median: 0.4, max: 0.5 }, ratio_error: { min: 0, median: 0.02, max: 0.1 }, angle_deviation: { min: 0, median: 3, max: 20 }, coverage_of_the_rest: { min: 0.5, median: 0.8, max: 0.95 }, mean_gain: 0.12 }
+    const corners = { margin: 0.05, all: group, tuning: { ...group, scans: 139, spoiled: 10 }, new: { ...group, scans: 137, spoiled: 30 }, sets: [{ set: 'Black Bolt', scans: 64, spoiled: 20, spoiled_no_number: 15 }], refused_reasons: { too_small: 30, sideways: 8 } }
+    const html = renderToStaticMarkup(<Report report={{ ...report, kind: 'labelled', corners_check: corners }} title="Real scans" />)
+    expect(html).toContain('Did the card finder spoil the scan? (276 scans)')
+    expect(html).toContain('the guide frame was closer by at least 0.05')
+    expect(html).toContain('Black Bolt 20 of 64')
+    expect(html).toContain('30 too small a part of the picture')
+    expect(renderToStaticMarkup(<Report report={{ ...report, kind: 'labelled', corners_check: null }} title="Real scans" />)).not.toContain('spoil the scan')
+    const item = {
+      key: 'c', kind: 'not_top1', rank: 3, tags: ['corners_off'], truth: { name: 'Slowpoke', number: '29', set: 'Pitch Black', tcg_card_id: 'x-29' }, top3: [],
+      ocr: { lines: [] }, photo: null, card: null, corners: { quad: 0.41, guide: 0.77, whole: 0.8, coverage: 0.4, ratio_error: 0.01, angle_deviation: 2, refused: 'too_small' },
+    }
+    const view = renderToStaticMarkup(<MissesView data={{ available: true, created_at: '2026-11-10T01:00:00+00:00', scans: 5, misses: 1, total: 1, offset: 0, tags: { corners_off: 'Corners off' }, counts: { corners_off: 1 }, items: [item] }} tag={null} onTag={() => {}} onMore={() => {}} />)
+    expect(view).toContain('Corners off')
+    expect(view).toContain('finder’s quad 0.41, guide frame 0.77, whole picture 0.8')
+    expect(view).toContain('covers 40% of the picture')
+    expect(view).toContain('refuses it (too small)')
   })
 })

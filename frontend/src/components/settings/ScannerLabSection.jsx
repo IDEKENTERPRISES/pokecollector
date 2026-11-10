@@ -93,6 +93,8 @@ const REASON_NAMES = {
   no_number_and_picture_not_clear: 'No number read and the picture is not clear enough',
   number_lookup_conflicts_with_name: 'The number and the name point at different cards',
   card_not_found_no_number_read: 'Card not found and no number read from it',
+  total_contradicts_read: 'The set total read is not the total this card prints',
+  closer_printing_of_same_name: 'Another printing of the same name is clearly closer in the picture',
   no_picture_matches: 'No picture matches',
 }
 
@@ -143,6 +145,58 @@ export function FallbackGroups({ data }) {
   )
 }
 
+const REFUSED_NAMES = { too_small: 'too small a part of the picture', sideways: 'turned on its side', not_rectangular: 'not rectangular', bad_angles: 'corners far from square' }
+const spread = value => (value ? `${value.min} to ${value.max}, typically ${value.median}` : '–')
+
+/** The corners check (real scans only): how many scans the card finder spoils, measured against the confirmed card's own picture. */
+export function CornersCheck({ data }) {
+  if (!data || !data.all?.scans) return null
+  const rows = [['all', 'All scans'], ['tuning', 'Used for tuning'], ['new', 'New scans, not used for tuning']].filter(([key]) => data[key]?.scans)
+  const g = data.all
+  return (
+    <div className="space-y-1" data-testid="scanner-lab-corners">
+      <h4 className="text-footnote font-semibold">Did the card finder spoil the scan? ({number(g.scans)} scans)</h4>
+      <p className="text-footnote text-text-secondary">
+        For each scan, the card the finder cut out and the plain guide frame were each compared with the confirmed card’s own picture. “Spoiled” means the guide frame was closer by at least {data.margin} (on a 0 to 1 scale), so the finder reported a card and made the picture worse.
+      </p>
+      <table className="w-full text-footnote">
+        <thead>
+          <tr className="text-left text-text-secondary">
+            <th className="pr-2 font-normal">Scans</th><th className="pr-2 font-normal">Measured</th><th className="pr-2 font-normal">Spoiled</th>
+            <th className="pr-2 font-normal">… no number read</th><th className="font-normal">Whole picture closer</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([key, label]) => (
+            <tr key={key} className="tabular-nums">
+              <td className="pr-2">{label}</td><td className="pr-2">{number(data[key].scans)}</td><td className="pr-2">{number(data[key].spoiled)}</td>
+              <td className="pr-2">{number(data[key].spoiled_no_number)}</td><td>{number(data[key].whole_better)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {g.spoiled > 0 && (
+        <p className="text-footnote text-text-secondary" data-testid="scanner-lab-corners-shape">
+          The spoiled quads cover {spread(g.coverage)} of the picture (the others: {spread(g.coverage_of_the_rest)}); shape error against a card {spread(g.ratio_error)}; widest corner angle off square {spread(g.angle_deviation)}°.
+          Where the guide frame wins it is closer by {g.mean_gain} on average. This version’s finder refuses {number(g.refused_among_spoiled)} of the {number(g.spoiled)}.
+        </p>
+      )}
+      {g.no_quad > 0 && <p className="text-footnote text-text-secondary">{number(g.no_quad)} scans had no card found at all and are not in these counts.</p>}
+      {data.sets?.some(item => item.spoiled) && (
+        <p className="text-footnote text-text-secondary" data-testid="scanner-lab-corners-sets">
+          By set: {data.sets.filter(item => item.spoiled).map(item => `${item.set} ${item.spoiled} of ${item.scans}`).join(' · ')}
+        </p>
+      )}
+      {Object.keys(data.refused_reasons || {}).length > 0 && (
+        <p className="text-footnote text-text-secondary">
+          Quads this finder refused: {Object.entries(data.refused_reasons).map(([key, n]) => `${n} ${REFUSED_NAMES[key] || key}`).join(' · ')}.
+        </p>
+      )}
+      <p className="text-footnote text-text-secondary">These scans are tagged “Corners off” in Misses, with the measurements.</p>
+    </div>
+  )
+}
+
 export function Report({ report, title }) {
   const m = report.metrics
   const timings = report.timings_ms || {}
@@ -169,6 +223,7 @@ export function Report({ report, title }) {
       {report.kind === 'labelled' && <BatchGroups groups={report.by_scan_time} />}
       {report.kind === 'labelled' && <UndecidedReasons data={report.undecided_first_right} />}
       {report.kind === 'labelled' && <FallbackGroups data={report.fallback} />}
+      {report.kind === 'labelled' && <CornersCheck data={report.corners_check} />}
       {report.groups && Object.keys(report.groups).length > 0 && (
         <table className="w-full text-footnote">
           <thead>
@@ -219,7 +274,7 @@ export function Report({ report, title }) {
   )
 }
 
-const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', tworeads: 'second read at 880 px' }
+const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused' }
 const describeOptions = label => (label === 'baseline' ? OPTION_NAMES.baseline : label.split('+').map(word => OPTION_NAMES[word] || word).join(' + '))
 
 /** The option sets side by side on the same photos: pick the row with the best top 20 and decided rate with 0 wrong. */
@@ -264,11 +319,6 @@ export function CompareTable({ report, title }) {
 
 const OCR_MODE_NAMES = { fixed: 'Fixed strips (old way)', detect: 'Find and read (new way)' }
 const OCR_VARIANT_NAMES = { plain: 'as photographed', sharp: 'sharpened', clahe: 'local contrast', binary: 'black and white', deglare: 'glare removed' }
-const SOURCE_NAMES = {
-  sharp: 'The sharper card (today)',
-  recognition: 'The 630 × 880 card from the recognition image (before the sharper crop)',
-  shrunk: 'The sharper card shrunk to 630 × 880',
-}
 const RESOLUTION_NAMES = { 1024: 'Older scans: 1024 px crop', full: 'Newer scans: full resolution', guide_crop: 'Card not found: read from the guide frame', all: 'All scans' }
 
 function OcrRows({ rows }) {
@@ -284,7 +334,7 @@ function OcrRows({ rows }) {
         <tbody>
           {rows.map(([key, row]) => (
             <tr key={key} className="tabular-nums">
-              <td className="pr-2">{key.startsWith('variant:') ? `Band: ${OCR_VARIANT_NAMES[key.slice(8)] || key.slice(8)}` : key.startsWith('source:') ? `Read from: ${SOURCE_NAMES[key.slice(7)] || key.slice(7)}` : OCR_MODE_NAMES[key] || key}</td>
+              <td className="pr-2">{key.startsWith('variant:') ? `Band: ${OCR_VARIANT_NAMES[key.slice(8)] || key.slice(8)}` : OCR_MODE_NAMES[key] || key}</td>
               <td className="pr-2">{percent(row.name_pct)}</td><td className="pr-2">{percent(row.number_pct)}</td>
               <td className="pr-2">{percent(row.total_pct)}</td><td className="pr-2">{percent(row.set_code_pct)}</td>
               <td>{row.seconds_p95 != null ? `${number(Math.round(row.seconds_p95 * 1000))} ms` : '–'}</td>
@@ -297,8 +347,6 @@ function OcrRows({ rows }) {
 }
 
 const STEP_LABELS = {
-  'number-left-tight-880': 'Number: left corner strip, card shrunk to 880 px', 'number-right-tight-880': 'Number: right corner strip, card shrunk to 880 px',
-  'bottom-band-880': 'Number: whole bottom band, card shrunk to 880 px',
   'number-left-tight': 'Number: left corner strip', 'number-right-tight': 'Number: right corner strip', 'bottom-band': 'Number: whole bottom band',
   'number-left-wide': 'Number: left wide strip', 'number-right-wide': 'Number: right wide strip', 'bottom-wide': 'Number: tall band at the bottom',
   'name-line': 'Name: top strip', 'name-band': 'Name: name band', 'top-wide': 'Name: tall band at the top',
@@ -345,48 +393,6 @@ export function OcrSteps({ steps }) {
           <h5 className="text-footnote font-semibold">{RESOLUTION_NAMES[resolution] || resolution} ({number(group.scans)} scans)</h5>
           <StepRows rows={group.number} kind="number" never={group.never_number} scans={group.scans} />
           <StepRows rows={group.name} kind="name" never={group.never_name} scans={group.scans} />
-        </div>
-      ))}
-    </div>
-  )
-}
-
-const PAIR_COLUMNS = [['both', 'Right on both'], ['only_first', 'Only the first'], ['only_second', 'Only the second'], ['neither', 'Neither']]
-const PAIR_TESTS = [
-  ['sharp_vs_recognition', 'The sharper card, against the 630 × 880 card from the recognition image'],
-  ['sharp_vs_shrunk', 'The sharper card, against the same card shrunk to 630 × 880'],
-]
-
-/** The paired reading test: the same newer scans read from three sources, counted scan by scan. */
-export function PairedReading({ paired }) {
-  if (!paired || !paired.scans) return null
-  return (
-    <div className="space-y-2" data-testid="scanner-lab-paired">
-      <h4 className="text-footnote font-semibold">Newer scans read three ways ({number(paired.scans)} scans)</h4>
-      <p className="text-footnote text-text-secondary">
-        Each newer scan was read from the sharper card, from the 630 × 880 card flattened from the recognition image (what every scan was read from before the sharper crop),
-        and from the sharper card shrunk to 630 × 880. “First” is the sharper card; “second” is the other one. If the shrunk card reads better than the sharper one, it is the detail, not the cards, that costs numbers.
-        {paired.no_old_card ? ` ${number(paired.no_old_card)} had no card found in the recognition image, so they are left out of the first pair.` : ''}
-      </p>
-      {PAIR_TESTS.map(([key, label]) => (
-        <div key={key} className="overflow-x-auto" data-testid={`scanner-lab-paired-${key}`}>
-          <table className="w-full text-footnote">
-            <caption className="pb-1 text-left text-text-secondary">{label}</caption>
-            <thead>
-              <tr className="text-left text-text-secondary">
-                <th className="pr-2 font-normal">Right on</th>
-                {PAIR_COLUMNS.map(([id, text]) => <th key={id} className="pr-2 font-normal">{text}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {[['number', 'Number'], ['name', 'Name']].map(([kind, kindLabel]) => (
-                <tr key={kind} className="tabular-nums">
-                  <td className="pr-2">{kindLabel}</td>
-                  {PAIR_COLUMNS.map(([id]) => <td key={id} className="pr-2">{number(paired.tests?.[key]?.[kind]?.[id])}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       ))}
     </div>
@@ -451,7 +457,6 @@ export function OcrCheckView({ report }) {
           </div>
         )
       })}
-      <PairedReading paired={report.paired} />
       <NeverRight data={report.never_right} />
       <OcrSteps steps={report.steps} />
       {(report.failures || []).length > 0 && (

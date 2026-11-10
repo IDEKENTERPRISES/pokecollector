@@ -70,6 +70,14 @@ LOOKUP_RANK_MAX_TOTAL = int(_env_float("CARD_MATCH_LOOKUP_RANK_MAX_TOTAL", 30))
 TEXT_AGREES, TEXT_MAX_CARDS = 0.85, 3
 # Reprints (same name, near-identical pictures): the printing whose artwork-only similarity is clearly highest.
 REPRINT_ART_LEAD = _env_float("CARD_MATCH_REPRINT_ART_LEAD", 0.04)
+# Version 8, two holes behind a wrong decision (Darumaka read as 023/086 and decided as Black & White #23/114).
+# 1) A printing chosen because it carries the read number must not print a total that contradicts a total that was read
+#    ("086" read, 114 printed). Totals are compared as numbers, so "086" and 86 agree.
+# 2) The number lane (several printings carry the number, the picture breaks the tie) and the rules lane must not decide a
+#    printing when another printing of the SAME NAME is closer in the picture by more than this. A reprint with the same
+#    artwork scores within about 0.03 of the card itself (REPRINT_ART_LEAD is 0.04), so 0.10 is more than twice the
+#    reprint noise; the Darumaka case was 0.1512 (0.7928 against 0.6416), well over it.
+SAME_NAME_PICTURE_MARGIN = _env_float("CARD_MATCH_SAME_NAME_PICTURE_MARGIN", 0.10)
 # Which way up the card is. The camera guide is portrait and trainers hold cards upright, so upright is the
 # default. The picture search may say "turned" only when the turned view beats the upright one by this much
 # (a card in the index scores far higher in its own orientation; a card that is not there, or a holo with
@@ -178,8 +186,38 @@ def _reprint_choice(candidates: list[dict]) -> dict | None:
     return {"candidate": winner, "mechanism": "reprint_art_lead", "lead": round(lead, 4)}
 
 
+def _total_contradiction(card_info: dict, card: dict) -> bool:
+    """A total was read, the card prints one, and they are different numbers ("086" against 114)."""
+    from api import recognize as rules
+
+    return rules._printed_total_signal(card_info.get("number_total"), card.get("printed_total")) == 2
+
+
+def _closer_same_name(chosen: dict, candidates: list[dict]) -> dict | None:
+    """Another printing of the chosen card's name whose picture is closer by more than ``SAME_NAME_PICTURE_MARGIN``."""
+    from . import names
+
+    key = names.name_key(chosen.get("name") or "")
+    if not key:
+        return None
+    rivals = [c for c in candidates if c is not chosen and names.name_key(c.get("name") or "") == key
+              and c["_similarity"] - chosen["_similarity"] > SAME_NAME_PICTURE_MARGIN]
+    return max(rivals, key=lambda c: c["_similarity"]) if rivals else None
+
+
 def decide(card_info: dict, candidates: list[dict], *, reprint: bool = False, fallback: bool = False,
            number_read: bool = True) -> tuple[dict | None, str | None]:
+    """The lanes of ``_decide_lanes``, then one check that holds for every lane: a card whose printed total contradicts a
+    total that was read is never decided (the number lanes check it for the printing they choose; the picture-only lanes
+    had no number to compare, but a read total alone can still rule a printing out)."""
+    chosen, reason = _decide_lanes(card_info, candidates, reprint=reprint, fallback=fallback, number_read=number_read)
+    if chosen is not None and _total_contradiction(card_info, chosen["candidate"]):
+        return None, "total_contradicts_read"
+    return chosen, reason
+
+
+def _decide_lanes(card_info: dict, candidates: list[dict], *, reprint: bool = False, fallback: bool = False,
+                  number_read: bool = True) -> tuple[dict | None, str | None]:
     """(chosen candidate + mechanism, or None + reason) from OCR'd identifiers and picture scores.
 
     Each candidate carries ``_similarity``, ``_rank`` (1 = closest picture) and ``_lead`` for the top one.
@@ -205,6 +243,10 @@ def decide(card_info: dict, candidates: list[dict], *, reprint: bool = False, fa
             near = chosen["_rank"] <= RANK_MAX_WITH_RULES or (chosen.get("_name_score", 0.0) >= 0.9 and chosen["_rank"] <= RANK_MAX_WITH_NAME)
             if chosen.get("_lookup") and _name_conflict(chosen):
                 return None, "number_lookup_conflicts_with_name"  # picture, number and name must agree
+            if _total_contradiction(card_info, chosen):
+                return None, "total_contradicts_read"
+            if _closer_same_name(chosen, candidates) is not None:
+                return None, "closer_printing_of_same_name"
             if chosen["_similarity"] >= SIM_MIN_WITH_RULES and (near or _lookup_near(chosen)):
                 return {"candidate": chosen, "mechanism": mechanism, "lead": round(lead, 4)}, None
             return None, "rules_choice_not_close_in_picture"
@@ -217,7 +259,12 @@ def decide(card_info: dict, candidates: list[dict], *, reprint: bool = False, fa
             number_hits.sort(key=lambda card: card["_rank"])
             gap = number_hits[0]["_similarity"] - number_hits[1]["_similarity"]
             if gap >= LEAD_MIN_PICTURE_ONLY and number_hits[0]["_similarity"] >= SIM_MIN_WITH_RULES:
-                return {"candidate": number_hits[0], "mechanism": "number_and_picture", "lead": round(gap, 4)}, None
+                pick = number_hits[0]
+                if _total_contradiction(card_info, pick):
+                    return None, "total_contradicts_read"
+                if _closer_same_name(pick, candidates) is not None:
+                    return None, "closer_printing_of_same_name"
+                return {"candidate": pick, "mechanism": "number_and_picture", "lead": round(gap, 4)}, None
         if reprint and not fallback and (found := _reprint_choice(candidates)):
             return found, None
         return None, "number_matches_several_printings"
@@ -289,7 +336,7 @@ class CardMatcher:
         self, index: CardIndex, embedder, candidate_loader: CandidateLoader, ocr_reader=None, *, read_hp: bool = False,
         extra_signals=(), tta: bool = False, names=None, label: str = "baseline",
         lookup=None, use_number: bool = False, use_text: bool = False, reprint: bool = False, fastread: bool = False,
-        number_once: bool = False, tworeads: bool = False,
+        number_once: bool = False, corners: bool = False, wholepic: bool = False, trustrejected: bool = False,
     ) -> None:
         self.index = index
         self.embedder = embedder
@@ -305,7 +352,9 @@ class CardMatcher:
         self.use_text = bool(lookup is not None and use_text)
         self.number_once = number_once  # a read number is worth one boost in the ranking, not two (see ``merge_candidates``)
         self.fastread = fastread  # a shorter reading ladder and a lower time budget (ocr.FAST_BUDGET_SECONDS)
-        self.tworeads = tworeads  # a sharper card with no complete number is read again on the card shrunk to 880 px
+        self.corners = corners  # version 8: the card finder judges every quad for plausibility (detect.plausibility_problem)
+        self.wholepic = wholepic  # a refused quad: the whole picture is the card, not the centre guide crop
+        self.trustrejected = trustrejected  # a refused quad with the guide crop used is decided by the normal rules, not the strict fallback ones
         self.reprint = reprint  # break ties between reprints by the artwork-only similarity
         self._row_maps: dict[int, np.ndarray] = {}
 
@@ -362,6 +411,16 @@ class CardMatcher:
         return {"upright": round(upright_sim, 4), "turned": round(turned_sim, 4), "margin": round(margin, 4),
                 "rotated": margin >= ORIENT_MARGIN and turned_sim >= ROTATED_MIN_SIMILARITY}
 
+    def card_similarities(self, cards: list[np.ndarray], card_id: str) -> list[float] | None:
+        """Measured: how close each flat card is to the confirmed card's own catalogue picture, the better of the card as it
+        is and turned 180 degrees (one batch). None when the confirmed card is not in the index. For the corners check."""
+        row = self.index.row_of.get(card_id)
+        if row is None or not cards:
+            return None
+        views = [view for card in cards for view in (card, np.ascontiguousarray(card[::-1, ::-1]))]
+        sims = self.embedder.embed(views) @ self.index.vectors[row]
+        return [float(max(sims[2 * i], sims[2 * i + 1])) for i in range(len(cards))]
+
     def _top_hits(self, scores: np.ndarray, top_k: int):
         count = len(scores)
         k = min(top_k, count)
@@ -392,10 +451,9 @@ class CardMatcher:
         one orientation only, so this read takes no longer than a normal one (it used to run the whole ladder both ways up)."""
 
         fast = {"fast": True} if (self.fastread or light) else {}  # only passed when on, so a reader without the option still works
-        number_extra = {**fast, **({"two_reads": True} if self.tworeads and not light else {})}
 
         def attempt(flipped: bool):
-            result = self.ocr_reader.read(card, read_hp=self.read_hp, flipped=flipped, **number_extra)
+            result = self.ocr_reader.read(card, read_hp=self.read_hp, flipped=flipped, **fast)
             name_read = self.ocr_reader.read_name(card, flipped=flipped, **fast) if use_names else None
             return result, name_read
 
@@ -410,13 +468,20 @@ class CardMatcher:
             return other_result, other_name, True, "text"
         return result, name_read, False, "default"
 
+    def _finder_options(self, whole_frame: bool = False) -> dict:
+        """Keyword arguments for ``detect_card``: none with ``corners`` off (the version 7 finder). A whole frame (the review
+        or full photo) is never judged as a guide crop."""
+        if not self.corners:
+            return {}
+        return {"check": True, "guide": False} if whole_frame else {"check": True, "whole": self.wholepic}
+
     def _find_card(self, photo_rgb: np.ndarray, full_photo, review_photo=None) -> tuple[object, str | None]:
         """(detection, fallback). When no card is found on the recognition image, the stored whole review photo is tried
         first (the card may be cut by the guide crop, and only the whole frame still holds it; an array, or a function that returns one), then the full photo (the
         sharper guide crop: the same framing as the recognition image, so it only helps an upload without one); failing
         that, the plain guide-frame crop is used, because the trainer lined the card up with the guide. ``fallback`` is
         None for a normal find, ``review_photo``, ``full_photo`` or ``guide_crop`` otherwise."""
-        detection = detect_module.detect_card(photo_rgb)
+        detection = detect_module.detect_card(photo_rgb, **self._finder_options())
         if detection.found:
             return detection, None
         for name, picture in (("review_photo", review_photo), ("full_photo", full_photo)):
@@ -424,7 +489,7 @@ class CardMatcher:
                 picture = picture()
             if picture is None:
                 continue
-            other = detect_module.detect_card(picture)
+            other = detect_module.detect_card(picture, **self._finder_options(whole_frame=True))
             if other.found:
                 other.corners_space = name  # these corners are in that photo, not in ``photo_rgb``
                 return other, name
@@ -434,16 +499,16 @@ class CardMatcher:
         """The flat card the text is read from, and where it came from. Text is small, so it is read from the
         sharpest picture there is: a stored high-resolution card (a trace), or the full-resolution photo
         flattened at the detected corners, or this photo's own detail; the matcher's 630x880 card is the last resort."""
-        if flat_card is not None:
-            return flat_card, "stored_card"
+        if flat_card is not None and not (self.corners and getattr(detection, "rejected", None)):
+            return flat_card, "stored_card"  # (a stored card was flattened at the scan's own corners: with refused corners it is not trusted)
         if fallback in ("full_photo", "review_photo"):
             return (detection.hires if detection.hires is not None else detection.card), fallback
         if full_photo is not None and detection.found:
-            other = detect_module.detect_card(full_photo)
+            other = detect_module.detect_card(full_photo, **self._finder_options(whole_frame=True))
             if other.found and _same_card(other.card, upright):
                 return (other.hires if other.hires is not None else other.card), "full_photo"
         if detection.hires is not None:
-            return detection.hires, "photo"
+            return detection.hires, "photo" if detection.found else "guide_crop_sharp"
         return upright, "crop"
 
     def match(self, photo_rgb: np.ndarray, *, top_k: int = TOP_K, use_ocr: bool = True, full_photo=None, flat_card=None, review_photo=None) -> MatchResult:
@@ -559,7 +624,10 @@ class CardMatcher:
         corrected = correct_number(card_info, candidates, ocr_result.lines if ocr_result else [])
         if corrected:
             ocr_info["corrected"] = corrected
-        chosen, reason = decide(card_info, candidates, reprint=self.reprint, fallback=fallback is not None,
+        # ``trustrejected`` (an option the comparison measures): a guide crop used because the finder REFUSED its quad is judged
+        # like a found card; a scan where the finder saw nothing card-like at all keeps the strict rule.
+        trusted = bool(self.trustrejected and fallback == "guide_crop" and getattr(detection, "rejected", None))
+        chosen, reason = decide(card_info, candidates, reprint=self.reprint, fallback=fallback is not None and not trusted,
                                 number_read=bool(ocr_result and ocr_result.number_local and not looked_up))
         timings["decide"] = (_timer() - t0) * 1000
         timings["total"] = sum(timings.values())
@@ -594,7 +662,9 @@ class CardMatcher:
                        "corners": [[round(x, 1), round(y, 1)] for x, y in detection.corners],
                        # Not found on the recognition image: "review_photo" or "full_photo" (found there, which does not count as a find) or
                        # "guide_crop" (the plain guide-frame crop); None for a normal find. See ``decide``.
-                       "fallback": fallback, "corners_space": getattr(detection, "corners_space", "photo")},
+                       "fallback": fallback, "corners_space": getattr(detection, "corners_space", "photo"),
+                       # A quad the finder saw and refused (version 8): why, and its measurements; None when it refused nothing.
+                       "rejected": getattr(detection, "rejected", None)},
             ocr=ocr_info, timings_ms={key: round(value, 1) for key, value in timings.items()}, text_card=text_card, card=upright,
         )
 
