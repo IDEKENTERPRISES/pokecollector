@@ -72,12 +72,17 @@ class RequiredModeTests(RequiredBase):
         self.assertTrue(user_trace_enabled(self.db, self.friend.id))
         self.assertFalse(scan_trace._is_revoked(self.friend.id))  # cleared, so saving works again
 
-    def test_admin_keeps_their_own_switch(self):
-        self.assertFalse(user_trace_enabled(self.db, self.admin.id))
+    def test_admin_is_on_by_default_and_keeps_their_own_switch(self):
+        self.assertTrue(user_trace_enabled(self.db, self.admin.id))  # no stored row: on
+        seen = _get_user_settings(self.db, self.admin.id)
+        self.assertEqual(seen[SCAN_DIAGNOSTICS_SETTING_KEY], "true")
+        self.assertEqual(seen["scan_diagnostics_locked"], "false")
+        self.assertEqual(seen["scan_diagnostics_required"], "true")
+        update_settings({SCAN_DIAGNOSTICS_SETTING_KEY: False}, db=self.db, current_user=self.admin)
+        self.assertFalse(user_trace_enabled(self.db, self.admin.id))  # a stored "false" wins
+        self.assertEqual(_get_user_settings(self.db, self.admin.id)[SCAN_DIAGNOSTICS_SETTING_KEY], "false")
         update_settings({SCAN_DIAGNOSTICS_SETTING_KEY: True}, db=self.db, current_user=self.admin)
         self.assertTrue(user_trace_enabled(self.db, self.admin.id))
-        update_settings({SCAN_DIAGNOSTICS_SETTING_KEY: False}, db=self.db, current_user=self.admin)
-        self.assertFalse(user_trace_enabled(self.db, self.admin.id))
 
     def test_read_tells_a_trainer_it_is_locked_and_on(self):
         self.off(self.friend)
@@ -141,9 +146,14 @@ class RequiredOffTests(RequiredBase):
         self.assertFalse(user_trace_enabled(self.db, self.friend.id))
         seen = _get_user_settings(self.db, self.friend.id)
         self.assertEqual(seen["scan_diagnostics_locked"], "false")
+        self.assertEqual(seen["scan_diagnostics_required"], "false")
         folder = self.store_scan(self.friend, "2026-11-01")
         delete_scan_diagnostics(db=self.db, current_user=self.friend)
         self.assertFalse(folder.exists())
+
+    def test_admin_with_no_stored_choice_is_still_off(self):
+        self.assertFalse(user_trace_enabled(self.db, self.admin.id))
+        self.assertEqual(_get_user_settings(self.db, self.admin.id)[SCAN_DIAGNOSTICS_SETTING_KEY], "false")
 
     def test_an_old_revocation_still_stops_collection(self):
         scan_trace.revoke_user_traces(self.friend.id)

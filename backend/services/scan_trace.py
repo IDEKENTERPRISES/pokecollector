@@ -165,7 +165,8 @@ def user_trace_enabled(db, user_id: int) -> bool:
         .first()
     )
     if row is None:
-        return diagnostics_default_on()
+        # An admin on a required server is on too until they choose otherwise (a stored "false" still wins).
+        return diagnostics_default_on() or trace_required()
     return str(row.value).lower() == "true"
 
 

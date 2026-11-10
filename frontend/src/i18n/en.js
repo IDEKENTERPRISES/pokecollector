@@ -1624,6 +1624,8 @@ const en = {
     scanDiagnosticsUnavailable: 'New diagnostics collection is not enabled on this installation. You can still delete previously stored data.',
     scanDiagnosticsLockedDesc: 'Always on for this server. We keep the card photo from each scan, what the scanner answered and the card you confirmed. They stay on this server only, only the person who runs it can see them, and they are used to test and improve card recognition. They are deleted after {period}.',
     scanDiagnosticsLockedDescForever: 'Always on for this server. We keep the card photo from each scan, what the scanner answered and the card you confirmed. They stay on this server only, only the person who runs it can see them, and they are used to test and improve card recognition. Ask them if you want yours deleted.',
+    scanDiagnosticsAdminRequiredDesc: 'On for every trainer on this server. We keep the card photo from each scan, what the scanner answered and the card they confirmed, for {period}. This switch only affects your own scans. You can delete the data of any trainer in Settings › Users.',
+    scanDiagnosticsAdminRequiredDescForever: 'On for every trainer on this server. We keep the card photo from each scan, what the scanner answered and the card they confirmed. This switch only affects your own scans. You can delete the data of any trainer in Settings › Users.',
     scanDiagnosticsPeriodMonths: '{count} months',
     scanDiagnosticsPeriodDays: '{count} days',
     scanDiagnosticsDelete: 'Delete data',

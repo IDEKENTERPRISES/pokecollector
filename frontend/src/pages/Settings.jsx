@@ -1071,17 +1071,24 @@ export default function Settings() {
   // On a server that requires diagnostics, a trainer who is not an admin sees the switch on and locked.
   const scanDiagnosticsLocked = settings.scan_diagnostics_locked === 'true'
   const keepDays = parseInt(settings.scan_diagnostics_keep_days, 10) || 0
+  const period = keepDays >= 60
+    ? t('settings.scanDiagnosticsPeriodMonths').replace('{count}', String(Math.round(keepDays / 30.4375)))
+    : t('settings.scanDiagnosticsPeriodDays').replace('{count}', String(keepDays))
   const lockedDescription = !keepDays
     ? t('settings.scanDiagnosticsLockedDescForever')
-    : t('settings.scanDiagnosticsLockedDesc').replace('{period}', keepDays >= 60
-      ? t('settings.scanDiagnosticsPeriodMonths').replace('{count}', String(Math.round(keepDays / 30.4375)))
-      : t('settings.scanDiagnosticsPeriodDays').replace('{count}', String(keepDays)))
+    : t('settings.scanDiagnosticsLockedDesc').replace('{period}', period)
+  const scanDiagnosticsRequired = settings.scan_diagnostics_required === 'true'
+  const adminRequiredDescription = keepDays
+    ? t('settings.scanDiagnosticsAdminRequiredDesc').replace('{period}', period)
+    : t('settings.scanDiagnosticsAdminRequiredDescForever')
   const scanDiagnosticsRow = (
     <SettingsRow
       label={t('settings.scanDiagnostics')}
       description={scanDiagnosticsLocked
         ? lockedDescription
-        : scanDiagnosticsAvailable
+        : scanDiagnosticsRequired && scanDiagnosticsAvailable
+          ? adminRequiredDescription
+          : scanDiagnosticsAvailable
           ? t('settings.scanDiagnosticsDesc')
           : t('settings.scanDiagnosticsUnavailable')}
     >

@@ -41,6 +41,7 @@ from services.scan_trace import (
     trace_available,
     trace_deletion_available,
     trace_keep_days,
+    trace_required,
 )
 
 DIAGNOSTICS_LOCKED_DETAIL = (
@@ -302,8 +303,9 @@ def _get_user_settings(db: Session, user_id: int) -> dict:
     else:
         result.pop(PICTURE_FIRST_SETTING_KEY, None)
 
-    if diagnostics_default_on() and trace_available():
-        # A test server collects from everyone who hasn't switched diagnostics off.
+    if (diagnostics_default_on() or trace_required()) and trace_available():
+        # A test server collects from everyone who hasn't switched diagnostics off; a required server
+        # (prod) does too, admins included, until an admin switches their own off.
         result.setdefault(SCAN_DIAGNOSTICS_SETTING_KEY, "true")
     for key, value in DEFAULT_SETTINGS.items():
         result.setdefault(key, value)
@@ -325,12 +327,14 @@ def _get_user_settings(db: Session, user_id: int) -> dict:
             result["scanner_managed_by_admin"] = "true"
     elif not gemini_enabled():
         result[SCANNER_GEMINI_FALLBACK_SETTING_KEY] = "false"
-    if diagnostics_locked(db, user_id):
+    required = trace_required()
+    locked = diagnostics_locked(db, user_id)
+    if locked:
         result[SCAN_DIAGNOSTICS_SETTING_KEY] = "true"
-        result["scan_diagnostics_locked"] = "true"
-        result["scan_diagnostics_keep_days"] = str(trace_keep_days() or "")
-    else:
-        result["scan_diagnostics_locked"] = "false"
+    result["scan_diagnostics_locked"] = "true" if locked else "false"
+    # Admins are told too, so their text can say the server collects from everyone.
+    result["scan_diagnostics_required"] = "true" if required else "false"
+    result["scan_diagnostics_keep_days"] = str(trace_keep_days() or "") if required else ""
     result["scan_diagnostics_available"] = "true" if trace_available() else "false"
     result["scan_diagnostics_deletion_available"] = (
         "true" if trace_deletion_available() else "false"
