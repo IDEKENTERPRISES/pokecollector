@@ -403,26 +403,31 @@ def run_ocr_check(
     started = time.monotonic()
     report_progress = progress or (lambda _state: None)
     loader = db_candidate_loader(session_factory)
+    from services import trace_sources
+
     traces = labelled_traces(trace_dir)
     if not traces:
         return None
     modes = ("fixed", "detect")
     variants = ocr_module.VARIANTS
-    buckets: dict[str, dict] = {}
-    steps: dict[str, dict] = {}
-    never: dict[str, dict] = {}
-    capture: dict[str, dict] = {}
-    whole_counts: dict[str, dict] = {}
+    # One set of tallies per group: the owner's own scans ("local", reported as before) and each read-only source's scans
+    # for tuning and held back, which are reported beside them and never mixed in.
+    tallies: dict[str, dict] = {}
     failures: list[dict] = []
     skipped = 0
-
-    def bucket_for(resolution: str, key: str) -> dict:
-        return buckets.setdefault(resolution, {}).setdefault(key, new_bucket())
+    group_info = trainers_by_group(traces)
 
     for position, (data, path) in enumerate(traces, start=1):
         if should_stop and should_stop():
             break
         report_progress({"phase": "ocr-check", "done": position - 1, "total": len(traces)})
+        group = trace_sources.group_of(data)
+        tally = tallies.setdefault(group, {"buckets": {}, "steps": {}, "never": {}, "capture": {}, "whole": {}})
+        buckets, steps, never, capture, whole_counts = tally["buckets"], tally["steps"], tally["never"], tally["capture"], tally["whole"]
+
+        def bucket_for(resolution: str, key: str, _buckets=buckets) -> dict:
+            return _buckets.setdefault(resolution, {}).setdefault(key, new_bucket())
+
         truth_id = f"{data['ground_truth']}_en"
         truth = (loader([truth_id]) or {}).get(truth_id)
         if truth is None:
@@ -469,7 +474,7 @@ def run_ocr_check(
                               truth=truth, result=result, name=name, trace=path.name)
             if mode == "detect" and not (rights[mode]["name"] and rights[mode]["number"]) and len(failures) < MAX_FAILURES:
                 failures.append({
-                    "trace": path.name, "resolution": resolution, "height": int(card.shape[0]),
+                    "group": group, "trace": path.name, "resolution": resolution, "height": int(card.shape[0]),
                     "truth": {"name": truth.get("name"), "number": truth.get("number"), "total": truth.get("printed_total"), "set": truth.get("set_abbreviation")},
                     "read": {"name": name, "number": result.number_local, "total": result.number_total, "confidence": result.number_confidence},
                     "right": rights[mode], "lines": result.lines[:8],
@@ -481,22 +486,34 @@ def run_ocr_check(
             result, name, seconds = got
             for res in ((resolution, "all") if resolution != "guide_crop" else (resolution,)):
                 score_read(bucket_for(res, f"variant:{variant}"), truth=truth, name=name, result=result, seconds=seconds)
+    def view(tally: dict) -> dict:
+        return {
+            "by_resolution": {res: {key: summarise(bucket) for key, bucket in rows.items()} for res, rows in sorted(tally["buckets"].items())},
+            "steps": {res: summarise_steps(acc) for res, acc in sorted(tally["steps"].items())},
+            "never_right": {res: summarise_never(acc) for res, acc in sorted(tally["never"].items())},
+            "capture": {res: summarise_capture(acc) for res, acc in sorted(tally["capture"].items())},
+            "wholeread": {res: counts for res, counts in sorted(tally["whole"].items())},
+        }
+
+    local = view(tallies.get(trace_sources.GROUP_LOCAL, {"buckets": {}, "steps": {}, "never": {}, "capture": {}, "whole": {}}))
     report = {
         "kind": "ocr-check", "matcher_version": MATCHER_VERSION, "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "traces": len(traces), "skipped": skipped,
-        "by_resolution": {
-            res: {key: summarise(bucket) for key, bucket in rows.items()} for res, rows in sorted(buckets.items())
-        },
+        "by_resolution": local["by_resolution"],
         "modes": {"fixed": "version 4's fixed strips", "detect": "fast strips, then bottom band under preprocessing variants, then the whole card",
                   "variant:<name>": "one read of the bottom band and the name band under one preprocessing variant"},
-        "steps": {res: summarise_steps(acc) for res, acc in sorted(steps.items())},
-        "never_right": {res: summarise_never(acc) for res, acc in sorted(never.items())},
+        "steps": local["steps"],
+        "never_right": local["never_right"],
         "never_right_note": "Why the number was never right, per group, with up to ten examples each (text only: the lines read and the confirmed number and total).",
         "steps_note": "Per reading step of the full ladder, in order: scans that first had the right number (name) at that step, and the time it used.",
-        "capture": {res: summarise_capture(acc) for res, acc in sorted(capture.items())},
+        "capture": local["capture"],
         "capture_note": "Typical (median) sharpness, brightness and blown-out share of the flat card that was read, where the number was read right and where it was not, per group and per set.",
-        "wholeread": {res: counts for res, counts in sorted(whole_counts.items())},
+        "wholeread": local["wholeread"],
         "wholeread_note": "Version 9: scans whose number the normal read did not complete and that were read once more from the whole picture (the first steps only), and how many of those it completed. The 'wholeread' row beside 'detect' is the number read after it.",
+        # Scans read from a read-only source (prod), apart from the owner's own: the top-level tables above are the owner's scans only.
+        "groups": {group: {**group_info.get(group, {}), **view(tally)} for group, tally in sorted(tallies.items()) if group != trace_sources.GROUP_LOCAL},
+        "group_info": group_info,
+        "groups_note": "Scans from a read-only source are shown in their own groups. 'held back' scans are measured here and used for nothing that chooses or tunes.",
         "failures": failures,
         "duration_seconds": round(time.monotonic() - started, 1),
     }

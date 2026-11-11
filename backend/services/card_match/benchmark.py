@@ -201,9 +201,10 @@ def _finish_report(kind: str, started: float, index: CardIndex, matcher, results
                 "decided_right": pct(sum(1 for r in dec if r["decided_right"]), len(dec)),
                 "decided_wrong": sum(1 for r in dec if not r["decided_right"]),
             }
-    by_scan_time = batch_groups(results) if kind == "labelled" else None
-    undecided_right = undecided_first_right(results) if kind == "labelled" else None
-    fallback_group = fallback_summary(results) if kind == "labelled" else None
+    own = [r for r in results if r.get("group", "local") == "local"]  # today's groups stay the owner's own scans
+    by_scan_time = batch_groups(own) if kind == "labelled" else None
+    undecided_right = undecided_first_right(own) if kind == "labelled" else None
+    fallback_group = fallback_summary(own) if kind == "labelled" else None
     timings = timing_summary([r["timings_ms"] for r in results])
     sweep = picture_only_sweep(results)
     peak = peak_rss_mb()
@@ -421,7 +422,11 @@ def review_photo_loader(session_factory, data: dict):
     """A function that reads the scan's whole stored review photo (the 2048 px one) for the card finder, or None when the trace
     does not say which scan it is. The photo is read only when the card is not found on the recognition image. Read-only; the
     photo stays on the server (a scan older than the retention period has none, and the finder then goes to the guide frame)."""
+    from services import trace_sources
+
     item_id = data.get("item_id")
+    if trace_sources.source_of(data) != trace_sources.LOCAL:
+        return None  # another stack's scan: its item id means nothing in this database (it would fetch an unrelated scan)
     if not item_id or session_factory is None:
         return None
 
@@ -446,6 +451,22 @@ def review_photo_loader(session_factory, data: dict):
     return load
 
 
+def trace_relpath(path: Path) -> str:
+    """Where a trace is under its root (``user-N/<day>/<file>``), so the Misses view can tell later whether it still exists."""
+    return f"{path.parent.parent.name}/{path.parent.name}/{path.name}"
+
+
+def group_rows(results: list[dict]) -> dict:
+    """``_group_row`` per group of real scans (``trace_sources.group_of``), with the group's name and how many trainers (a count)."""
+    from services import trace_sources
+
+    rows = {}
+    for group in sorted({r.get("group", "local") for r in results}):
+        members = [r for r in results if r.get("group", "local") == group]
+        rows[group] = {**(_group_row(members) or {}), "label": trace_sources.group_label(group), "trainers": len({r.get("user") for r in members})}
+    return rows
+
+
 def corners_module_summary(rows: list[dict]) -> dict | None:
     from . import corners_check as corners_module
 
@@ -454,12 +475,15 @@ def corners_module_summary(rows: list[dict]) -> dict | None:
 
 def run_labelled(
     session_factory, matcher, *, trace_dir: Path, progress: Callable[[dict], None] | None = None,
-    should_stop: Callable[[], bool] | None = None, collector=None, corners_check: bool | None = None,
+    should_stop: Callable[[], bool] | None = None, collector=None, corners_check: bool | None = None, held_back: str = "separate",
 ) -> dict | None:
     """The diagnostics traces with a confirmed answer, through the pipeline, next to today's Ollama path.
     Returns None when there are no usable traces. A ``misses.MissCollector`` gets every scan to keep the misses.
     ``corners_check`` (default: on when there is a collector, i.e. the one real-scan benchmark, never in the option comparison):
-    version 8's corners check, see ``corners_check.py``; it adds about half a second a scan."""
+    version 8's corners check, see ``corners_check.py``; it adds about half a second a scan.
+    Scans from a read-only source (prod) are in groups of their own (``by_group``); ``held_back``: ``separate`` (default: the
+    held-back ones are measured and reported in their group but are not in the headline numbers), ``skip`` (not run at all:
+    the option comparison, which chooses) or ``only`` (only those: the headline is the held-back scans)."""
     from .images import decode_rgb
 
     started = time.monotonic()
@@ -470,9 +494,14 @@ def run_labelled(
 
     from services import scan_trace
 
+    from services import trace_sources
+
     traces = ocr_check.labelled_traces(trace_dir)  # one trace per scan (a scan with several attempts counts once)
     eligible, not_english = [], 0
     for data, path in traces:
+        held = trace_sources.is_held_back(data)
+        if (held and held_back == "skip") or (not held and held_back == "only"):
+            continue
         if f"{data['ground_truth']}_en" in indexed:
             eligible.append((data, path))
         else:
@@ -500,8 +529,10 @@ def run_labelled(
         resolution = ocr_check.resolution_of(stored)
         review = review_photo_loader(session_factory, data)
         outcome = matcher.match(photo, flat_card=stored, review_photo=review) if review is not None else matcher.match(photo, flat_card=stored)
+        group = trace_sources.group_of(data)
+        is_local = group == trace_sources.GROUP_LOCAL
         corner_row = None
-        if do_corners:
+        if do_corners and is_local:
             try:
                 from . import corners_check as corners_module
 
@@ -514,10 +545,11 @@ def run_labelled(
                     corner_rows.append(corner_row)
             except Exception:  # a measurement only: it must never stop the benchmark
                 logger.exception("Card-match: could not measure the corners for %s", path.name)
-        if collector is not None:
+        if collector is not None and not trace_sources.is_held_back(data):  # held-back scans feed nothing that tunes, the Misses view included
             try:
                 collector.add(trace=path.name, photo=photo, outcome=outcome, truth_id=truth_id,
-                              confirmation=(data.get("confirmation") or {}).get("source"), matcher=matcher, corners=corner_row)
+                              confirmation=(data.get("confirmation") or {}).get("source"), matcher=matcher, corners=corner_row,
+                              source=trace_sources.source_of(data), trace_rel=trace_relpath(path))
             except Exception:  # the misses view must never stop the benchmark
                 logger.exception("Card-match: could not record a miss for %s", path.name)
         rank = next((m["rank"] for m in outcome.matches if m["card_id"] == truth_id), None)
@@ -525,13 +557,15 @@ def run_labelled(
         number_local = outcome.ocr.get("number_local")
         truth_number = next((m["number"] for m in outcome.matches if m["card_id"] == truth_id), None)
         results.append({
-            "card_id": truth_id, "trace": path.name, "tags": [], "found": outcome.detection["found"], "rank": rank,
+            "card_id": truth_id, "trace": path.name, "group": group, "user": (trace_sources.source_of(data), data.get("user_id")), "tags": [], "found": outcome.detection["found"], "rank": rank,
             "resolution": resolution, "batch": scan_batch(data), "fallback": outcome.detection.get("fallback"),
             "number_exact": bool(number_local and truth_number and _numbers_equal(number_local, truth_number)),
             "decided": decision is not None, "decided_right": bool(decision and decision["card_id"] == truth_id),
             "mechanism": decision["mechanism"] if decision else None, "unsure_reason": outcome.unsure_reason,
             "top_match": outcome.matches[0]["card_id"] if outcome.matches else None, "timings_ms": outcome.timings_ms,
         })
+        if not is_local:
+            continue  # the Ollama comparison below is about the owner's own scans, as before
         # Ollama's own pick, and only on scans where Ollama ran: "Picture match first" stores its own decision in the same
         # field, which used to be counted as Ollama deciding (and as agreeing with the matcher).
         selected = scan_trace.ollama_selected(data)
@@ -561,8 +595,15 @@ def run_labelled(
             ollama["decided"] += 1
             ollama["decided_right"] += 1 if selected == data["ground_truth"] else 0
         ollama["top1"] += 1 if data.get("ground_truth_rank") == 1 else 0
+    all_results = results
+    results = [r for r in all_results if held_back == "only" or not r["group"].endswith("_held_back")]  # the headline: what tuning may see
     extra = {
         "labelled": {"scans_with_answer": len(traces), "traces_with_answer": len(traces), "english_in_index": len(eligible), "not_english_or_not_indexed": not_english},
+        # Each group apart (the owner's own scans, each read-only source's scans for tuning and held back), with how many trainers.
+        "by_group": group_rows(all_results),
+        "held_back_note": ("The held-back scans are measured in their own group and are not in the headline numbers." if held_back == "separate"
+                           else "Only the held-back scans were run." if held_back == "only" else "The held-back scans were left out of this run."),
+        "how_confirmed_by_source": {root.label: shadow_module.how_confirmed(root.path) for root in trace_sources.usable_roots(trace_dir)},
         # How each confirmed card was chosen; a card found by manual search was offered by no scanner, so it is
         # a miss for the matcher and for Ollama in the numbers above (it is a trace with an answer, rank None).
         "how_confirmed": shadow_module.how_confirmed(trace_dir),
@@ -647,7 +688,8 @@ def run_compare(
             (progress or (lambda _s: None))({**state, "compare": _label, "compare_step": _position, "compare_total": len(labels)})
 
         if kind == "labelled":
-            report = run_labelled(session_factory, matcher, trace_dir=trace_dir, progress=step_progress, should_stop=should_stop)
+            # The held-back scans (a read-only source's, see ``trace_sources``) are left out: this run chooses.
+            report = run_labelled(session_factory, matcher, trace_dir=trace_dir, progress=step_progress, should_stop=should_stop, held_back="skip")
         else:
             report = run_synthetic(session_factory, matcher, count=count, data_dir=data_dir, progress=step_progress, should_stop=should_stop)
         if report is None:
@@ -656,12 +698,27 @@ def run_compare(
         rows.append(compare_row(label, report))
     winner = pick_winner(rows)
     first = next(iter(reports.values()), None)
+    held_back_row, groups = None, None
+    if kind == "labelled":
+        from . import ocr_check
+
+        groups = ocr_check.trainers_by_group(ocr_check.labelled_traces(trace_dir))
+        if winner and not (should_stop and should_stop()) and any(group.endswith("_held_back") for group in groups):
+            # Measured once, on the chosen option set only; nothing is picked from it.
+            options = variants.parse(winner["label"])
+            matcher = variants.build_matcher(options, session_factory, data_dir=data_dir, ocr_reader=ocr_reader)
+            held = run_labelled(session_factory, matcher, trace_dir=trace_dir, progress=progress, should_stop=should_stop, held_back="only")
+            held_back_row = compare_row(winner["label"], held) if held else None
     return {
         "kind": f"compare-{kind}", "matcher_version": MATCHER_VERSION, "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "duration_seconds": round(time.monotonic() - started, 1), "rows": rows, "winner": winner["label"] if winner else None,
         "n": rows[0].get("n") if rows and rows[0]["status"] == "ok" else None,
         "metrics": {"n": rows[0].get("n") if rows and rows[0]["status"] == "ok" else 0},
         "host": first.get("host") if first else None,
+        "groups": groups,
+        "held_back": held_back_row,
+        "held_back_note": ("The rows above are computed on the scans that are not held back (your own and the read-only source's scans for tuning); "
+                           "the held-back scans were left out of the pick. The held-back row is the chosen option set measured on them." if groups and any(g.endswith("_held_back") for g in groups) else None),
     }
 
 
@@ -693,11 +750,16 @@ def latest_reports(data_dir: Path | None = None) -> dict[str, dict]:
     return out
 
 
-def count_labelled_traces(trace_dir: Path | None) -> int:
+def count_labelled_traces(trace_dir: Path | None, *, source: str | None = None) -> int:
     """Confirmed scans: one per scan, grouped as ``run_labelled`` and the OCR check group them (a scan with several
-    attempts, each with its own trace file, counts once)."""
-    if trace_dir is None or not trace_dir.is_dir():
-        return 0
+    attempts, each with its own trace file, counts once). Includes the read-only sources (prod's scans) unless
+    ``source`` names one (``local`` for the owner's own)."""
     from . import ocr_check
+    from services import trace_sources
 
-    return len(ocr_check.labelled_traces(trace_dir))
+    if trace_dir is not None and not trace_dir.is_dir():
+        trace_dir = None
+    traces = ocr_check.labelled_traces(trace_dir)
+    if source is not None:
+        traces = [item for item in traces if trace_sources.source_of(item[0]) == source]
+    return len(traces)

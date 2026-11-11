@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from api.auth import get_current_user
 from database import get_db
 from models import Card, User
-from services import scan_trace
+from services import scan_trace, trace_sources
 from services.card_match import MATCHER_VERSION, benchmark, config, embed, index as index_module, jobs as jobs_module, misses as misses_module, shadow as shadow_module, variants
 from services.card_match.model_specs import DEFAULT_MODEL, MODEL_SPECS
 
@@ -58,8 +58,26 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
         "job": jobs_module.jobs.status(),
         "reports": benchmark.latest_reports(),
         "labelled_traces": benchmark.count_labelled_traces(trace_dir),
+        "labelled_traces_local": benchmark.count_labelled_traces(trace_dir, source=trace_sources.LOCAL),
+        "trace_sources": _trace_sources(),
         "thresholds": benchmark.thresholds(),
     }
+
+
+_SOURCE_STATUS_TTL_SECONDS = 30
+_source_status_cache: dict = {"at": 0.0, "key": None, "value": []}
+
+
+def _trace_sources() -> list[dict]:
+    """One line per read-only source (prod's scans): readable or not and why, how many scans, how many confirmed, the newest date.
+    Read-only, and cached for a moment because it reads every trace once."""
+    roots = trace_sources.readonly_roots()
+    key = [(root.label, str(root.path)) for root in roots]
+    now = time.monotonic()
+    cache = _source_status_cache
+    if cache["key"] != key or now - cache["at"] > _SOURCE_STATUS_TTL_SECONDS:
+        cache.update(at=now, key=key, value=[trace_sources.source_status(root) for root in roots])
+    return cache["value"]
 
 
 def _misses_summary() -> dict | None:
