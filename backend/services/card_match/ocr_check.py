@@ -77,19 +77,58 @@ def resolution_of(card) -> str:
     return "1024"
 
 
-def labelled_traces(trace_dir: Path) -> list[tuple[dict, Path]]:
-    """The traces with a confirmed answer and a stored photo, one per scan (as the labelled benchmark takes them)."""
+def _trace_files(root: Path) -> list[Path]:
+    try:
+        return sorted(root.glob("user-*/*/*.json"))
+    except OSError:  # a root that cannot be listed (no permission, gone) has no traces
+        return []
+
+
+def labelled_traces(trace_dir: Path | None, extra_roots: list | None = None) -> list[tuple[dict, Path]]:
+    """The traces with a confirmed answer and a stored photo, one per scan (as the labelled benchmark takes them).
+
+    ``trace_dir`` is the local root. ``extra_roots`` (``trace_sources.ReadOnlyRoot`` entries; default: the ones in
+    ``SCAN_TRACE_READONLY_DIRS``, ``[]`` for none) are read only: their traces carry ``data["_source"]`` (the label) and
+    ``data["_held_back"]`` in memory, and are told apart from local ones in the de-duplication key, because their user,
+    job and item ids mean nothing here. Anything unreadable in a read-only root is skipped."""
+    from services import trace_sources
+
+    if extra_roots is None:
+        extra_roots = trace_sources.usable_roots(trace_dir)
     traces: dict[tuple, tuple[dict, Path]] = {}
-    for path in sorted(trace_dir.glob("user-*/*/*.json")):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        image_name = data.get("image_file")
-        if not data.get("ground_truth") or not image_name or not (path.parent / image_name).is_file():
-            continue
-        traces[(data.get("user_id"), data.get("job_id"), data.get("item_id"), path.name if data.get("job_id") is None else "")] = (data, path)
+    sources = ([(trace_sources.LOCAL, trace_dir)] if trace_dir is not None else []) + [(root.label, root.path) for root in extra_roots]
+    for label, root in sources:
+        local = label == trace_sources.LOCAL
+        for path in _trace_files(root):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            image_name = data.get("image_file")
+            try:
+                if not data.get("ground_truth") or not image_name or (not local and Path(str(image_name)).name != image_name)                         or not (path.parent / image_name).is_file():
+                    continue
+            except OSError:
+                continue
+            if not local:
+                data[trace_sources.SOURCE_KEY] = label
+                data[trace_sources.HELD_BACK_KEY] = trace_sources.hold_back(label, data, path)
+            traces[(label, data.get("user_id"), data.get("job_id"), data.get("item_id"), path.name if data.get("job_id") is None else "")] = (data, path)
     return list(traces.values())
+
+
+def trainers_by_group(traces: list[tuple[dict, Path]]) -> dict[str, dict]:
+    """Per group (``trace_sources.group_of``): how many scans and from how many trainers (a count only, no ids)."""
+    from services import trace_sources
+
+    seen: dict[str, tuple[int, set]] = {}
+    for data, _path in traces:
+        count, users = seen.setdefault(trace_sources.group_of(data), (0, set()))
+        users.add((trace_sources.source_of(data), data.get("user_id")))
+        seen[trace_sources.group_of(data)] = (count + 1, users)
+    return {group: {"label": trace_sources.group_label(group), "scans": count, "trainers": len(users)} for group, (count, users) in sorted(seen.items())}
 
 
 # ── What each reading step rescues ───────────────────────────────────────────
