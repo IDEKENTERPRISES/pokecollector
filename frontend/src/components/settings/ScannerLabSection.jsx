@@ -86,6 +86,54 @@ export function BatchGroups({ groups }) {
   )
 }
 
+const trainerCount = n => `${number(n)} ${n === 1 ? 'trainer' : 'trainers'}`
+
+/** One line per read-only source (prod's stored scans): readable or not, and why in plain words, how many scans, how many confirmed, the newest date. */
+export function TraceSources({ sources }) {
+  if (!sources?.length) return null
+  return (
+    <div className="space-y-0.5" data-testid="scanner-lab-trace-sources">
+      {sources.map(source => (
+        <p key={source.label} className="text-footnote" data-testid={`scanner-lab-source-${source.label}`}>
+          <span className="text-text-secondary">Scans from {source.label}: </span>
+          {source.readable
+            ? `readable · ${number(source.scans)} scans, ${number(source.confirmed)} confirmed${source.newest ? `, newest from ${source.newest}` : ''}`
+            : `not readable: ${source.reason || 'unknown reason'}`}
+        </p>
+      ))}
+    </div>
+  )
+}
+
+/** Scans from a read-only source (prod), apart from your own: the ones tuning may use and the held-back ones, with how many trainers they come from. */
+export function SourceGroups({ groups, note }) {
+  const rows = Object.entries(groups || {}).filter(([name]) => name !== 'local')
+  if (!rows.length) return null
+  return (
+    <div data-testid="scanner-lab-source-groups">
+      <h4 className="text-footnote font-semibold">Scans from prod</h4>
+      <table className="w-full text-footnote">
+        <thead>
+          <tr className="text-left text-text-secondary">
+            <th className="pr-2 font-normal">Group</th><th className="pr-2 font-normal">Scans</th><th className="pr-2 font-normal">Trainers</th>
+            <th className="pr-2 font-normal">Top 1</th><th className="pr-2 font-normal">Top 20</th><th className="pr-2 font-normal">Decided</th><th className="font-normal">Right</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([name, g]) => (
+            <tr key={name} className="tabular-nums" data-testid={`scanner-lab-group-${name}`}>
+              <td className="pr-2">{g.label || name}</td><td className="pr-2">{g.n}</td><td className="pr-2">{g.trainers}</td>
+              <td className="pr-2">{percent(g.top1)}</td><td className="pr-2">{percent(g.top20)}</td><td className="pr-2">{percent(g.decided)}</td>
+              <td>{percent(g.decided_right)}{g.decided_wrong ? ` (${g.decided_wrong} wrong)` : ''}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {note && <p className="text-footnote text-text-secondary">{note}</p>}
+    </div>
+  )
+}
+
 const REASON_NAMES = {
   rules_choice_not_close_in_picture: 'The number says one card, but its picture is not close enough',
   number_matches_several_printings: 'The number fits several printings and the picture cannot split them',
@@ -236,6 +284,7 @@ export function Report({ report, title }) {
         <Row label="Of those, right" value={`${percent(m.decided_right_pct)} (${number(m.decided_wrong)} wrong)`} />
       </div>
       {report.kind === 'labelled' && <BatchGroups groups={report.by_scan_time} />}
+      {report.kind === 'labelled' && <SourceGroups groups={report.by_group} note={report.held_back_note} />}
       {report.kind === 'labelled' && <UndecidedReasons data={report.undecided_first_right} />}
       {report.kind === 'labelled' && <FallbackGroups data={report.fallback} />}
       {report.kind === 'labelled' && <CornersCheck data={report.corners_check} />}
@@ -303,6 +352,12 @@ export function CompareTable({ report, title }) {
           {report.winner ? ` · kept: ${describeOptions(report.winner)}` : ''}
         </p>
       </div>
+      {report.held_back_note && <p className="text-footnote text-text-secondary" data-testid="scanner-lab-held-back-note">{report.held_back_note}</p>}
+      {report.groups && Object.keys(report.groups).some(name => name !== 'local') && (
+        <p className="text-footnote text-text-secondary">
+          {Object.entries(report.groups).map(([name, g]) => `${g.label || name}: ${number(g.scans)} scans, ${trainerCount(g.trainers)}`).join(' · ')}
+        </p>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-footnote">
           <thead>
@@ -325,6 +380,13 @@ export function CompareTable({ report, title }) {
                 )}
               </tr>
             ))}
+            {report.held_back && report.held_back.status === 'ok' && (
+              <tr className="tabular-nums text-text-secondary" data-testid="scanner-lab-held-back-row">
+                <td className="pr-2">Held back, with {describeOptions(report.held_back.label)} ({number(report.held_back.n)} scans)</td>
+                <td className="pr-2">{percent(report.held_back.top1)}</td><td className="pr-2">{percent(report.held_back.top20)}</td><td className="pr-2">{percent(report.held_back.number_exact)}</td>
+                <td className="pr-2">{percent(report.held_back.decided)}</td><td className="pr-2">{number(report.held_back.decided_wrong)}</td><td>{report.held_back.p95_ms != null ? `${number(report.held_back.p95_ms)} ms` : '–'}</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -519,6 +581,19 @@ export function OcrCheckView({ report }) {
       <NeverRight data={report.never_right} capture={report.capture} />
       <WholeReadSummary data={report.wholeread} />
       <OcrSteps steps={report.steps} />
+      {Object.entries(report.groups || {}).map(([name, group]) => {
+        const rows = Object.entries(group.by_resolution?.all || {})
+        const info = report.group_info?.[name]
+        return (
+          <div key={name} data-testid={`scanner-lab-ocr-group-${name}`}>
+            <h4 className="text-footnote font-semibold">
+              {group.label || info?.label || name} ({number(info?.scans ?? group.scans)} scans, {trainerCount(info?.trainers ?? group.trainers)})
+            </h4>
+            {rows.length > 0 && <OcrRows rows={rows} />}
+          </div>
+        )
+      })}
+      {report.groups && Object.keys(report.groups).length > 0 && <p className="text-footnote text-text-secondary">{report.groups_note}</p>}
       {(report.failures || []).length > 0 && (
         <details>
           <summary className="cursor-pointer text-footnote text-text-secondary">First {report.failures.length} scans where the name or the number was not read</summary>
@@ -749,6 +824,7 @@ export default function ScannerLabSection() {
           <Row label="Index built" value={index.built ? `${index.built_at?.slice(0, 16).replace('T', ' ')} UTC · ${duration(index.build_seconds) || 'in steps'}` : 'not yet'} />
           <Row label="Threads" value={`${data.threads}${data.autorun ? ' · runs by itself after a deploy' : ''}`} />
           <Row testId="scanner-lab-options" label="Matching options in use" value={describeOptions(data.options?.active || 'baseline')} />
+          <TraceSources sources={data.trace_sources} />
           {extras.map(([name, extra]) => (
             <Row key={name} label={`Index: ${extra.label}`} value={extra.built ? `${number(extra.count)} pictures` : 'not built'} />
           ))}

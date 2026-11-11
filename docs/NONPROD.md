@@ -64,6 +64,17 @@
 
 With `SCAN_TRACE_REQUIRED` on (prod only) the switch is locked on for non-admins and only an admin can delete a trainer's data (Settings › Users › eraser icon).
 
+## Reading prod's scans in Scanner lab
+
+Scanner lab (Settings › Data & sync) can measure the picture matcher on the scans prod keeps from every trainer, without copying anything. `docker-compose.nonprod.yml` mounts prod's `scan-traces` folder (`/home/rage/Documents/docker/pokelocal/data/scan-traces`) into the nonprod backend **read-only** at `/app/data/scan-traces-prod` and sets `SCAN_TRACE_READONLY_DIRS=prod=/app/data/scan-traces-prod`. Nonprod never writes to or deletes from it. Photos stay on the server; the lab shows counts and numbers, never a trainer's name. About 30% of prod's scans are held back from tuning (details and the full rules in `docs/CARD_MATCH.md`, "Prod's scans in nonprod's Scanner lab").
+
+What to check after a nonprod redeploy:
+
+1. The host folder `/home/rage/Documents/docker/pokelocal/data/scan-traces` must exist **before** the redeploy. If it does not, Docker creates it as root, and nonprod then cannot read it. (It exists once prod has run with `SCAN_TRACE_DIR`; it can stay empty until trainers scan.)
+2. Scanner lab shows a line "Scans from prod". "readable, N scans, M confirmed, newest from DATE" is the good case. "not readable" says why: the folder is not there, or no permission. Prod's folder is created by prod's backend with mode 0700; nonprod runs the same image and therefore the same user, so it should be readable, but this has not been verified. If it says no permission, tell Claude: the fix is on the host (the folder's owner or mode), not in the app.
+3. After the next real-photo run, the report lists "From prod: for tuning" and "From prod: held back" next to the owner's own scans, each with how many trainers. The held-back group is for judging only.
+4. Do not move or recreate prod's folder while nonprod runs. A scan an admin deletes on prod (or the 12-month clean-up removes) disappears from the lab at the next run.
+
 ## Scanner waiting state
 
 When the scanner endpoint does not answer (for example the machine running the model is off) scans show **Waiting for the scanner** instead of a retry countdown. They do not use up retries, and the backend checks the endpoint about once a minute and releases every waiting scan as soon as it answers. **Try now** on a waiting scan checks at once. While scans wait, their 14-day expiry is held at least two days ahead, so nothing unrecognised is deleted.

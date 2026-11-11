@@ -119,11 +119,19 @@ def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=Non
     index = get_index(model, data_dir)
     if index is None or len(index) == 0:
         raise RuntimeError("The picture index is empty: build it first")
+    from services import trace_sources
+
     trace_dir = scan_trace.trace_root() or scan_trace.trace_storage_root()
+    # Real scans can come from the local folder, from a read-only source (prod's, SCAN_TRACE_READONLY_DIRS), or both.
+    has_traces = bool(trace_dir) or bool(trace_sources.readonly_roots())
+    try:  # pictures made from scans that were deleted at their source go at the start of every run
+        misses.purge_vanished(data_dir)
+    except Exception:
+        logger.exception("Card-match: could not clear the pictures of deleted scans")
     if kind == "ocr-check":
         from . import ocr_check
 
-        if not trace_dir:
+        if not has_traces:
             raise RuntimeError("No diagnostics traces with a confirmed answer yet")
         report = ocr_check.run_ocr_check(factory, get_reader(), trace_dir=trace_dir, progress=jobs._progress, should_stop=jobs._stop.is_set)
         if report is None:
@@ -132,7 +140,7 @@ def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=Non
         return {"report": path.name, "kind": kind, "n": report["traces"], "duration_seconds": report["duration_seconds"]}
     if kind.startswith("compare-"):
         base_kind = kind.split("-", 1)[1]
-        if base_kind == "labelled" and not trace_dir:
+        if base_kind == "labelled" and not has_traces:
             raise RuntimeError("No diagnostics traces with a confirmed answer for English cards yet")
         # The synthetic comparison chooses nothing (only real photos do), so it runs a short list on fewer photos.
         synthetic = base_kind == "synthetic"
@@ -160,7 +168,7 @@ def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=Non
         collector = misses.MissCollector(matcher.candidate_loader, data_dir)
         report = (
             benchmark.run_labelled(factory, matcher, trace_dir=trace_dir, progress=jobs._progress, should_stop=jobs._stop.is_set, collector=collector)
-            if trace_dir else None
+            if has_traces else None
         )
         if report is None:
             raise RuntimeError("No diagnostics traces with a confirmed answer for English cards yet")

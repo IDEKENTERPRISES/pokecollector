@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { CompareTable, HowConfirmedView, OcrCheckView, PictureFirstView, Report, ShadowView } from './ScannerLabSection'
+import { CompareTable, HowConfirmedView, OcrCheckView, PictureFirstView, Report, ShadowView, SourceGroups, TraceSources } from './ScannerLabSection'
 import { MissesView, StripRow } from './ScannerLabMisses'
 
 const report = {
@@ -427,5 +427,43 @@ describe('Scanner lab version 9', () => {
     )
     expect(html).toContain('second read of the whole picture')
     expect(html).toContain('whole picture as a third view')
+  })
+})
+
+describe('Scans from prod', () => {
+  it('says in plain words whether prod is readable, and what it holds', () => {
+    const ok = renderToStaticMarkup(<TraceSources sources={[{ label: 'prod', readable: true, reason: null, scans: 120, confirmed: 80, newest: '2026-11-12' }]} />)
+    expect(ok).toContain('readable')
+    expect(ok).toContain('120 scans, 80 confirmed')
+    expect(ok).toContain('newest from 2026-11-12')
+    const bad = renderToStaticMarkup(<TraceSources sources={[{ label: 'prod', readable: false, reason: 'no permission to read it', scans: 0, confirmed: 0, newest: null }]} />)
+    expect(bad).toContain('not readable: no permission to read it')
+    expect(renderToStaticMarkup(<TraceSources sources={[]} />)).toBe('')
+  })
+
+  it('shows the tuning and the held-back group apart, with trainer counts and no names', () => {
+    const groups = {
+      local: { n: 5, label: 'From this server' },
+      prod_tuning: { n: 70, trainers: 4, label: 'From prod: for tuning', top1: 80, top20: 90, decided: 60, decided_right: 98, decided_wrong: 1 },
+      prod_held_back: { n: 30, trainers: 3, label: 'From prod: held back', top1: 70, top20: 85, decided: 50, decided_right: 97, decided_wrong: 1 },
+    }
+    const html = renderToStaticMarkup(<SourceGroups groups={groups} note="Held-back scans are left out." />)
+    expect(html).toContain('From prod: for tuning')
+    expect(html).toContain('From prod: held back')
+    expect(html).toContain('Held-back scans are left out.')
+    expect(renderToStaticMarkup(<SourceGroups groups={{ local: groups.local }} />)).toBe('')
+  })
+
+  it('adds a held-back row under the option comparison', () => {
+    const rows = [{ label: 'baseline', status: 'ok', n: 10, top1: 80, top5: 90, top20: 95, number_exact: 70, decided: 60, decided_right: 99, decided_wrong: 0, p95_ms: 200 }]
+    const html = renderToStaticMarkup(
+      <CompareTable
+        title="Option comparison"
+        report={{ kind: 'compare-labelled', n: 10, rows, winner: 'baseline', held_back: { ...rows[0], n: 5 }, held_back_note: 'Held back scans were left out of the pick.', groups: { prod_held_back: { label: 'From prod: held back', scans: 5, trainers: 2 } } }}
+      />,
+    )
+    expect(html).toContain('scanner-lab-held-back-row')
+    expect(html).toContain('Held back scans were left out of the pick.')
+    expect(html).toContain('2 trainers')
   })
 })
