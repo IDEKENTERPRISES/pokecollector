@@ -281,6 +281,14 @@ def whole_picture(photo_rgb: np.ndarray) -> np.ndarray:
     return cv2.resize(photo_rgb, (CARD_W, CARD_H), interpolation=cv2.INTER_AREA)
 
 
+def whole_detection(photo_rgb: np.ndarray) -> Detection:
+    """The whole picture treated as the card, with its sharper copy (version 9: the second number read and the third picture
+    view of a guide picture). No finder runs; nothing is judged."""
+    h, w = photo_rgb.shape[:2]
+    return Detection(card=whole_picture(photo_rgb), found=False, confidence=FALLBACK_CONFIDENCE, method="whole_picture",
+                     hires=_sharper_copy(photo_rgb, (0, 0, w, h)))
+
+
 def _sharper_copy(photo_rgb: np.ndarray, rect: tuple[float, float, float, float]) -> np.ndarray | None:
     """The same region as a fallback card, at the photo's own detail (capped like ``hires_size``); None when no sharper."""
     h, w = photo_rgb.shape[:2]

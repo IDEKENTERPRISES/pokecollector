@@ -239,6 +239,17 @@ def better_read(old: OcrResult | None, new: OcrResult) -> OcrResult:
     return winner
 
 
+def merge_reads(old: OcrResult, new: OcrResult, source: str | None = None) -> OcrResult:
+    """``old`` and a second reading of the same scan (version 9) as one: the more useful number by ``better_read``, every
+    line and region read kept (the regions of ``new`` are tagged ``source`` so the lab can tell where they were read)."""
+    strips = list(old.strips) + [{**strip, "source": source} if source else dict(strip) for strip in new.strips]
+    lines = list(old.lines) + list(new.lines)
+    seconds, attempts, hp, flipped = old.seconds + new.seconds, old.attempts + new.attempts, old.hp or new.hp, old.flipped
+    merged = better_read(old, new)
+    merged.strips, merged.lines, merged.seconds, merged.attempts, merged.hp, merged.flipped = strips, lines, seconds, attempts, hp, flipped
+    return merged
+
+
 # ── Preprocessing (pure) ─────────────────────────────────────────────────────
 
 VARIANTS = ("plain", "sharp", "clahe", "binary", "deglare")
@@ -321,6 +332,7 @@ NAME_LADDER = (
 SLOW_VARIANTS = ("binary", "deglare")
 NUMBER_LADDER_FAST = tuple(step for step in NUMBER_LADDER if step[2] not in SLOW_VARIANTS)
 NAME_LADDER_FAST = tuple(step for step in NAME_LADDER if step[2] not in SLOW_VARIANTS)
+QUICK_STEPS = 3  # version 9, the second read of the whole picture: left strip, right strip, plain bottom band
 FAST_BUDGET_SECONDS = 0.9
 EXPANDED = {"top": (0.0, 0.0, 1.0, 0.24), "bottom": (0.0, 0.72, 1.0, 1.0)}  # the last-resort bands
 WHOLE_SIDE = 960  # the longest side the detector looks at in one read
@@ -478,12 +490,17 @@ class OcrReader:
 
     # -- the number -----------------------------------------------------------
 
-    def _read_card(self, card: np.ndarray, fast: bool = False) -> OcrResult:
+    def _read_card(self, card: np.ndarray, fast: bool = False, stage: str = "all", budget: float | None = None) -> OcrResult:
+        """``stage`` (version 9, for the whole-picture second read): see ``read``."""
         flipped = bool(getattr(self, "_turned", False))  # set by ``read``: which way up this card is being read
         record: list[dict] = []
         started = time.monotonic()
-        budget = FAST_BUDGET_SECONDS if fast else BUDGET_SECONDS
+        budget = budget if budget is not None else (FAST_BUDGET_SECONDS if fast else BUDGET_SECONDS)
         ladder = LEGACY_LADDER if self.mode == "fixed" else (NUMBER_LADDER_FAST if fast else NUMBER_LADDER)
+        if stage == "quick":
+            ladder = NUMBER_LADDER_FAST[:QUICK_STEPS]
+        elif stage == "last":
+            ladder = ()
         lines: list[Line] = []
         best: OcrResult | None = None
         reads = 0
@@ -506,7 +523,7 @@ class OcrReader:
                 best.number_confidence = confidence
             # What the number ladder had after this step (the OCR check's "what each step rescues" table).
             record[-1]["after"] = {"number": best.number_local, "total": best.number_total}
-        if (best is None or completeness(best) < 2) and self.mode != "fixed" and time.monotonic() - started <= budget * 1.5:
+        if (best is None or completeness(best) < 2) and self.mode != "fixed" and stage in ("all", "last") and time.monotonic() - started <= budget * 1.5:
             bottom = self._expanded(card, record, flipped, "bottom")
             lines += bottom
             reading, confidence = pick_number_lines(bottom)
@@ -519,19 +536,25 @@ class OcrReader:
         result.strips = record
         return result
 
-    def read(self, card: np.ndarray, *, read_hp: bool = True, flipped: bool | None = None, fast: bool = False) -> OcrResult:
+    def read(self, card: np.ndarray, *, read_hp: bool = True, flipped: bool | None = None, fast: bool = False,
+             stage: str = "all", budget: float | None = None) -> OcrResult:
         """``flipped`` True/False: the picture search already says which way up the card is, so read only that
-        way. None: unknown, so try upright first and the turned card when no complete number came out."""
+        way. None: unknown, so try upright first and the turned card when no complete number came out.
+
+        ``stage`` (version 9): ``all`` is the whole ladder and the last-resort band; ``first`` the ladder without the last-resort
+        band; ``quick`` only the first ``QUICK_STEPS`` steps (the two tight strips and the plain bottom band), inside ``budget``
+        seconds; ``last`` the last-resort band alone. The matcher's whole-picture second read uses them to spend the time the
+        last-resort band used to take on a second look at the whole picture first."""
         started = time.monotonic()
         turned = bool(flipped)
         if turned:
             card = np.ascontiguousarray(card[::-1, ::-1])
         self._turned = turned
-        result = self._read_card(card, fast)
+        result = self._read_card(card, fast, stage, budget)
         if flipped is None and not is_complete(result):
             other = np.ascontiguousarray(card[::-1, ::-1])
             self._turned = not turned
-            retry = self._read_card(other, fast)
+            retry = self._read_card(other, fast, stage, budget)
             if completeness(retry) > completeness(result):
                 result, card, turned = retry, other, not turned
             else:
