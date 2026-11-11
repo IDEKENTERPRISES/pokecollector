@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -35,7 +36,21 @@ MAX_IMAGE_PIXELS = 50_000_000
 MAX_IMAGE_EDGE = 2048
 JPEG_QUALITY = 90
 SCAN_RETENTION_DAYS = 14
-ALLOWED_IMAGE_FORMATS = frozenset({"JPEG", "PNG", "WEBP", "HEIF", "HEIC"})
+# MPO is how Pillow names an iPhone JPEG that also holds a second picture (HDR gain map or Portrait depth map):
+# it is a normal JPEG whose first frame is the photo, so it is read as one.
+ALLOWED_IMAGE_FORMATS = frozenset({"JPEG", "MPO", "PNG", "WEBP", "HEIF", "HEIC"})
+# Formats whose extra frames are not an animation: only the first (primary) picture is ever used.
+PRIMARY_FRAME_ONLY_FORMATS = frozenset({"JPEG", "MPO", "HEIF", "HEIC"})
+# Still-photo formats the server cannot read, named so the trainer knows what to do.
+UNREADABLE_STILL_FORMATS = {
+    "TIFF": "RAW or TIFF photos cannot be used. Take a normal photo, or pick a JPEG or HEIC photo.",
+    "AVIF": "AVIF photos cannot be used. Pick a JPEG, PNG, WebP or HEIC photo.",
+    "GIF": "GIF images cannot be used as scan photos. Pick a JPEG, PNG, WebP or HEIC photo.",
+    "BMP": "BMP photos cannot be used. Pick a JPEG, PNG, WebP or HEIC photo.",
+}
+UNSUPPORTED_FORMAT_MESSAGE = "Only JPEG, PNG, WebP, and HEIC scan photos are supported."
+
+logger = logging.getLogger(__name__)
 
 
 # What a model is sent: about 1024 px on the long side, not the 2048 px review
@@ -129,14 +144,22 @@ def sanitize_image_bytes(
             with Image.open(io.BytesIO(raw)) as source:
                 image_format = str(source.format or "").upper()
                 if image_format not in ALLOWED_IMAGE_FORMATS:
-                    raise ScanUploadError("Only JPEG, PNG, WebP, and HEIC scan photos are supported.")
+                    # Never the file name or contents: only what is needed to tell what kind of file it was.
+                    logger.warning(
+                        "Scan photo refused: format=%s n_frames=%s size_bytes=%d",
+                        image_format or "unknown",
+                        getattr(source, "n_frames", 1),
+                        len(raw),
+                    )
+                    raise ScanUploadError(UNREADABLE_STILL_FORMATS.get(image_format, UNSUPPORTED_FORMAT_MESSAGE))
                 if image_format in {"HEIF", "HEIC"} and not HEIC_AVAILABLE:
                     raise ScanUploadError("HEIC support is unavailable on this server.")
-                if getattr(source, "n_frames", 1) != 1:
+                if image_format not in PRIMARY_FRAME_ONLY_FORMATS and getattr(source, "n_frames", 1) != 1:
                     raise ScanUploadError("Animated images cannot be used as scan photos.")
                 width, height = source.size
                 if width <= 0 or height <= 0 or width * height > MAX_IMAGE_PIXELS:
                     raise ScanUploadError("The scan photo has unsupported dimensions.")
+                # Multi-picture JPEGs and HEICs: the primary picture is frame 0, which is what is open and decoded.
                 source.load()
                 oriented = ImageOps.exif_transpose(source)
                 if oriented.mode in {"RGBA", "LA"} or (
@@ -321,6 +344,12 @@ def read_text_photo(relative_path: str) -> bytes:
         except OSError:
             pass
     return path.read_bytes()
+
+
+def read_review_photo(relative_path: str) -> bytes:
+    """The whole stored review photo (up to 2048 px), never the sharper guide crop: the card finder looks here when it cannot
+    find the card in the guide-frame picture, because only the whole frame can still hold a card the guide crop cut."""
+    return resolve_scan_path(relative_path).read_bytes()
 
 
 def read_capture_info(relative_path: str) -> dict | None:

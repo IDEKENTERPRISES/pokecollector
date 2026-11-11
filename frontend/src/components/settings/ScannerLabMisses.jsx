@@ -128,6 +128,34 @@ export function MissViewer({ item, onClose }) {
   )
 }
 
+const MECHANISM_NAMES = {
+  number_and_picture: 'the number fit several printings and the picture picked one',
+  picture_lead: 'the picture alone, with a clear lead',
+  picture_lead_strong: 'the picture alone, a very clear one, with a number that fit nothing',
+  name_and_picture: 'the name and the picture',
+  text_and_picture: 'the card text and the picture',
+  reprint_art_lead: 'the artwork picked between reprints',
+}
+
+/** A decided-wrong scan in plain words: how it was decided, what was read, and both cards with their picture similarity. */
+export function DecidedWrong({ item }) {
+  const truth = item.truth || {}
+  const decided = item.decided_card || {}
+  const read = item.ocr || {}
+  const describe = (card, extra) => `${card.name || card.tcg_card_id} · ${card.set ? `${card.set} · ` : ''}#${card.number}${card.printed_total ? `/${card.printed_total}` : ''}${extra}`
+  return (
+    <div className="space-y-0.5 rounded-md bg-red-500/10 px-2 py-1.5 text-footnote" data-testid="scanner-lab-decided-wrong">
+      <p>
+        <span className="font-semibold text-red-500">Decided wrong</span> by {MECHANISM_NAMES[item.mechanism] || (item.mechanism || 'unknown').replace(/_/g, ' ')}
+        {decided.lead != null ? ` (lead ${decided.lead})` : ''}.
+      </p>
+      <p>Read: number {read.number ? `${read.number}${read.total ? `/${read.total}` : ''}` : '–'}, name “{read.name || '–'}”.</p>
+      <p>Decided: {describe(decided, ` · picture ${decided.similarity ?? '–'}${decided.rank ? ` · ranked ${decided.rank}` : ''}`)}</p>
+      <p>Confirmed: {describe(truth, ` · picture ${truth.similarity ?? 'not in the top 20'}${item.rank ? ` · ranked ${item.rank}` : ''}`)}</p>
+    </div>
+  )
+}
+
 function MissItem({ item, labels, onOpen }) {
   const truth = item.truth || {}
   return (
@@ -135,12 +163,13 @@ function MissItem({ item, labels, onOpen }) {
       <div className="flex flex-wrap items-center gap-1.5 text-footnote">
         <span className="font-semibold">{truth.name || truth.tcg_card_id}</span>
         <span className="text-text-secondary">{truth.set ? `${truth.set} · ` : ''}#{truth.number}</span>
-        <span className="text-text-secondary">· {item.kind === 'not_in_top20' ? 'not in the top 20' : `ranked ${item.rank}`}</span>
+        <span className="text-text-secondary">· {item.kind === 'not_in_top20' ? 'not in the top 20' : `ranked ${item.rank}`}{truth.printed_total ? ` · total ${truth.printed_total}` : ''}</span>
         {item.confirmation?.startsWith('manual_') && <span className="text-text-secondary" data-testid="miss-manual">· found by search</span>}
         {item.decided_wrong && <span className="font-semibold text-red-500">· decided wrong</span>}
       </div>
+      {item.decided_card && <DecidedWrong item={item} />}
       <div className="flex flex-wrap gap-1.5">
-        {item.tags.map(tag => (
+        {item.tags.filter(tag => tag !== 'decided_wrong').map(tag => (
           <span key={tag} className="rounded-full bg-accent/15 px-2 py-0.5 text-[11px] text-tint">{labels[tag] || tag}</span>
         ))}
       </div>
@@ -162,6 +191,13 @@ function MissItem({ item, labels, onOpen }) {
         {item.ocr?.hp ? `, HP ${item.ocr.hp}` : ''}
         {(item.ocr?.lines || []).length > 0 ? ` · text: ${item.ocr.lines.join(' | ')}` : ''}
       </p>
+      {item.corners && (
+        <p className="text-[11px] text-text-secondary" data-testid="scanner-lab-miss-corners">
+          Corners measured against the confirmed card: finder’s quad {item.corners.quad ?? 'none'}, guide frame {item.corners.guide}, whole picture {item.corners.whole}
+          {item.corners.coverage != null ? ` · the quad covers ${Math.round(item.corners.coverage * 100)}% of the picture, shape error ${item.corners.ratio_error}, corners ${item.corners.angle_deviation}° off square` : ''}
+          {item.corners.refused ? ` · this version’s finder refuses it (${item.corners.refused.replace(/_/g, ' ')})` : ''}
+        </p>
+      )}
       {item.rotation && (
         <p className="text-[11px] text-text-secondary" data-testid="scanner-lab-miss-rotation">
           Measured against the confirmed card: {item.rotation.rotated ? 'turned 180°' : 'upright'} (upright {item.rotation.upright}, turned {item.rotation.turned})
@@ -183,7 +219,7 @@ export function MissesView({ data, tag, onTag, onMore }) {
       <div>
         <h3 className="text-subheadline font-semibold">Misses</h3>
         <p className="text-footnote text-text-secondary">
-          {data.misses} of {data.scans} confirmed real scans where the right card was not the first pick
+          {data.misses} of {data.scans} confirmed real scans where the right card was not the first pick{data.decided_wrong != null ? `, and ${data.decided_wrong} decided on a card that was not the confirmed one` : ''}
           {data.options ? ` (options: ${data.options})` : ''} · {data.created_at?.slice(0, 16).replace('T', ' ')} UTC. A scan can have several likely causes.
         </p>
       </div>
@@ -195,8 +231,11 @@ export function MissesView({ data, tag, onTag, onMore }) {
         </p>
       )}
       <div className="flex flex-wrap gap-1.5" data-testid="scanner-lab-miss-counts">
+        <button type="button" className={`${chip} ${tag === 'decided_wrong' ? 'bg-red-500/25 font-semibold text-red-500' : 'bg-fill'}`} onClick={() => onTag('decided_wrong')} data-testid="scanner-lab-miss-decided-wrong">
+          Decided wrong ({data.decided_wrong ?? counts.decided_wrong ?? 0})
+        </button>
         <button type="button" className={`${chip} ${!tag ? 'bg-accent/30 font-semibold text-tint' : 'bg-fill'}`} onClick={() => onTag(null)}>All ({data.misses})</button>
-        {Object.entries(labels).filter(([key]) => counts[key]).map(([key, label]) => (
+        {Object.entries(labels).filter(([key]) => key !== 'decided_wrong' && counts[key]).map(([key, label]) => (
           <button key={key} type="button" className={`${chip} ${tag === key ? 'bg-accent/30 font-semibold text-tint' : 'bg-fill'}`} onClick={() => onTag(key)}>
             {label} ({counts[key]})
           </button>
@@ -217,8 +256,10 @@ export function MissesView({ data, tag, onTag, onMore }) {
 }
 
 /** Loads the misses of the last real-photo run, a page at a time. Admin only (the endpoint refuses others). */
-export default function Misses({ version = null }) {
-  const [tag, setTag] = useState(null)
+export default function Misses({ version = null, tag: givenTag, onTagChange }) {
+  const [ownTag, setOwnTag] = useState(null)
+  const tag = givenTag !== undefined ? givenTag : ownTag // the page can hold the filter, so a figure elsewhere can open "Decided wrong"
+  const setTag = next => (onTagChange ? onTagChange(next) : setOwnTag(next))
   const [limit, setLimit] = useState(PAGE)
   const { data } = useQuery({
     // ``version`` is the time of the latest run (from the status): a newer run reloads the list instead of showing the old one

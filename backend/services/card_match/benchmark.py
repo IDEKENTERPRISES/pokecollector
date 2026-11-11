@@ -237,7 +237,7 @@ def _finish_report(kind: str, started: float, index: CardIndex, matcher, results
         "host": {"cpu_count": os.cpu_count(), "threads": config.threads(), "platform": platform.platform(), "python": platform.python_version()},
         "memory": {"rss_before_mb": round(rss_before, 1) if rss_before is not None else None,
                    "peak_rss_mb": round(peak, 1) if peak is not None else None, "extra_mb": extra_ram},
-        "metrics": metrics, "groups": groups, "by_scan_time": by_scan_time, "undecided_first_right": undecided_right, "fallback": fallback_group, "picture_only_sweep": sweep, "timings_ms": timings, "pass_bar": bar,
+        "metrics": metrics, "groups": groups, "by_scan_time": by_scan_time, "undecided_first_right": undecided_right, "fallback": fallback_group, "corners_check": None, "picture_only_sweep": sweep, "timings_ms": timings, "pass_bar": bar,
         "thresholds": thresholds(),
         "failures": [r for r in results if (r["rank"] != 1 or (r["decided"] and not r["decided_right"]))][:25],
         **extra,
@@ -298,7 +298,7 @@ def fallback_summary(results: list[dict]) -> dict:
     A fallback card is only ever decided when a number was read from it and the picture agrees."""
     return {
         "scans": sum(1 for r in results if r.get("fallback")),
-        "by_kind": {kind: _group_row([r for r in results if r.get("fallback") == kind]) for kind in ("full_photo", "guide_crop")},
+        "by_kind": {kind: _group_row([r for r in results if r.get("fallback") == kind]) for kind in ("review_photo", "full_photo", "guide_crop")},
         "found_on_photo": _group_row([r for r in results if not r.get("fallback")]),
     }
 
@@ -417,12 +417,49 @@ def load_stored_card(trace_path: Path, data: dict):
         return None
 
 
+def review_photo_loader(session_factory, data: dict):
+    """A function that reads the scan's whole stored review photo (the 2048 px one) for the card finder, or None when the trace
+    does not say which scan it is. The photo is read only when the card is not found on the recognition image. Read-only; the
+    photo stays on the server (a scan older than the retention period has none, and the finder then goes to the guide frame)."""
+    item_id = data.get("item_id")
+    if not item_id or session_factory is None:
+        return None
+
+    def load():
+        from models import ScanJobItem
+        from services import scan_storage
+        from .images import decode_rgb
+
+        db = session_factory()
+        try:
+            row = db.get(ScanJobItem, item_id)
+            path = row.image_path if row is not None else None
+        finally:
+            db.close()
+        if not path:
+            return None
+        try:
+            return decode_rgb(scan_storage.read_review_photo(path), max_side=2048)
+        except Exception:
+            return None
+
+    return load
+
+
+def corners_module_summary(rows: list[dict]) -> dict | None:
+    from . import corners_check as corners_module
+
+    return corners_module.summarise(rows) if rows else None
+
+
 def run_labelled(
     session_factory, matcher, *, trace_dir: Path, progress: Callable[[dict], None] | None = None,
-    should_stop: Callable[[], bool] | None = None, collector=None,
+    should_stop: Callable[[], bool] | None = None, collector=None, corners_check: bool | None = None,
 ) -> dict | None:
     """The diagnostics traces with a confirmed answer, through the pipeline, next to today's Ollama path.
-    Returns None when there are no usable traces. A ``misses.MissCollector`` gets every scan to keep the misses."""
+    Returns None when there are no usable traces. A ``misses.MissCollector`` gets every scan to keep the misses.
+    ``corners_check`` (default: on when there is a collector, i.e. the one real-scan benchmark, never in the option comparison):
+    version 8's corners check, see ``corners_check.py``; it adds about half a second a scan."""
     from .images import decode_rgb
 
     started = time.monotonic()
@@ -443,6 +480,8 @@ def run_labelled(
     if not eligible:
         return None
     rss_before = rss_mb()
+    do_corners = collector is not None if corners_check is None else corners_check
+    corner_rows: list[dict] = []
     results: list[dict] = []
     ollama = {"n": 0, "not_run": 0, "decided": 0, "decided_right": 0, "in_candidates": 0, "top1": 0}
     rerun_pairs: list[tuple] = []  # (confirmed card, matcher now, Ollama path then): the matcher re-run on the photo
@@ -459,11 +498,26 @@ def run_labelled(
             continue
         stored = load_stored_card(path, data)
         resolution = ocr_check.resolution_of(stored)
-        outcome = matcher.match(photo, flat_card=stored)
+        review = review_photo_loader(session_factory, data)
+        outcome = matcher.match(photo, flat_card=stored, review_photo=review) if review is not None else matcher.match(photo, flat_card=stored)
+        corner_row = None
+        if do_corners:
+            try:
+                from . import corners_check as corners_module
+
+                truth_set = ((matcher.candidate_loader([truth_id]) or {}).get(truth_id) or {}).get("set")
+                corner_row = corners_module.measure(
+                    matcher, photo, truth_id, number_read=bool(outcome.ocr.get("number_local")), refused=outcome.detection.get("rejected"),
+                    batch=scan_batch(data), set_name=truth_set,
+                )
+                if corner_row:
+                    corner_rows.append(corner_row)
+            except Exception:  # a measurement only: it must never stop the benchmark
+                logger.exception("Card-match: could not measure the corners for %s", path.name)
         if collector is not None:
             try:
                 collector.add(trace=path.name, photo=photo, outcome=outcome, truth_id=truth_id,
-                              confirmation=(data.get("confirmation") or {}).get("source"), matcher=matcher)
+                              confirmation=(data.get("confirmation") or {}).get("source"), matcher=matcher, corners=corner_row)
             except Exception:  # the misses view must never stop the benchmark
                 logger.exception("Card-match: could not record a miss for %s", path.name)
         rank = next((m["rank"] for m in outcome.matches if m["card_id"] == truth_id), None)
@@ -519,6 +573,7 @@ def run_labelled(
         },
         # The two paths on the same confirmed photos, side by side. "rerun" is the matcher run again just
         # now; "recorded" is what it answered at scan time in shadow mode (only the traces that have it).
+        "corners_check": corners_module_summary(corner_rows) if do_corners else None,
         "side_by_side": {
             "rerun": shadow_module.score_pairs(rerun_pairs),
             "recorded": shadow_module.score_pairs(recorded_pairs) if recorded_pairs else None,

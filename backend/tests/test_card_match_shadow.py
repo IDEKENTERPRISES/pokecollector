@@ -173,7 +173,7 @@ class ShadowRunnerTests(ShadowTestBase):
         release = threading.Event()
 
         class Slow:
-            def match(self, photo):
+            def match(self, photo, **kwargs):
                 release.wait(5)
                 raise RuntimeError("boom")
 
@@ -195,7 +195,7 @@ class ShadowRunnerTests(ShadowTestBase):
         real = self.matcher()
 
         class Counting:
-            def match(self, photo):
+            def match(self, photo, **kwargs):
                 active.append(1)
                 peak.append(len(active))
                 time.sleep(0.05)

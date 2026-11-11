@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FlaskConical, GitCompare, Hammer } from 'lucide-react'
 import api from '../../api/client'
@@ -92,6 +93,8 @@ const REASON_NAMES = {
   no_number_and_picture_not_clear: 'No number read and the picture is not clear enough',
   number_lookup_conflicts_with_name: 'The number and the name point at different cards',
   card_not_found_no_number_read: 'Card not found and no number read from it',
+  total_contradicts_read: 'The set total read is not the total this card prints',
+  closer_printing_of_same_name: 'Another printing of the same name is clearly closer in the picture',
   no_picture_matches: 'No picture matches',
 }
 
@@ -120,7 +123,7 @@ export function UndecidedReasons({ data }) {
 /** Scans where the card was not found on the photo the matcher looks at (the fallbacks). */
 export function FallbackGroups({ data }) {
   if (!data) return null
-  const kinds = [['full_photo', 'Found on the full photo'], ['guide_crop', 'Read from the guide frame']]
+  const kinds = [['review_photo', 'Found on the whole review photo'], ['full_photo', 'Found on the full photo'], ['guide_crop', 'Read from the guide frame']]
   return (
     <div data-testid="scanner-lab-fallback">
       <h4 className="text-footnote font-semibold">When the card was not found ({number(data.scans)} scans)</h4>
@@ -136,8 +139,60 @@ export function FallbackGroups({ data }) {
         <p className="text-footnote text-text-secondary">The card was found on every scan.</p>
       )}
       <p className="text-footnote text-text-secondary">
-        These scans are listed under “Card not found: read by fallback” in Misses. A card found this way is only decided when a number was read from it and the picture agrees.
+        These scans are listed under “Card not found: read by fallback” in Misses. The whole review photo is tried first, then the full photo, then the guide frame (read once, with the short reading steps). A card found by any of these is only decided when a number was read from it and the picture agrees.
       </p>
+    </div>
+  )
+}
+
+const REFUSED_NAMES = { too_small: 'too small a part of the picture', sideways: 'turned on its side', not_rectangular: 'not rectangular', bad_angles: 'corners far from square' }
+const spread = value => (value ? `${value.min} to ${value.max}, typically ${value.median}` : '–')
+
+/** The corners check (real scans only): how many scans the card finder spoils, measured against the confirmed card's own picture. */
+export function CornersCheck({ data }) {
+  if (!data || !data.all?.scans) return null
+  const rows = [['all', 'All scans'], ['tuning', 'Used for tuning'], ['new', 'New scans, not used for tuning']].filter(([key]) => data[key]?.scans)
+  const g = data.all
+  return (
+    <div className="space-y-1" data-testid="scanner-lab-corners">
+      <h4 className="text-footnote font-semibold">Did the card finder spoil the scan? ({number(g.scans)} scans)</h4>
+      <p className="text-footnote text-text-secondary">
+        For each scan, the card the finder cut out and the plain guide frame were each compared with the confirmed card’s own picture. “Spoiled” means the guide frame was closer by at least {data.margin} (on a 0 to 1 scale), so the finder reported a card and made the picture worse.
+      </p>
+      <table className="w-full text-footnote">
+        <thead>
+          <tr className="text-left text-text-secondary">
+            <th className="pr-2 font-normal">Scans</th><th className="pr-2 font-normal">Measured</th><th className="pr-2 font-normal">Spoiled</th>
+            <th className="pr-2 font-normal">… no number read</th><th className="font-normal">Whole picture closer</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([key, label]) => (
+            <tr key={key} className="tabular-nums">
+              <td className="pr-2">{label}</td><td className="pr-2">{number(data[key].scans)}</td><td className="pr-2">{number(data[key].spoiled)}</td>
+              <td className="pr-2">{number(data[key].spoiled_no_number)}</td><td>{number(data[key].whole_better)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {g.spoiled > 0 && (
+        <p className="text-footnote text-text-secondary" data-testid="scanner-lab-corners-shape">
+          The spoiled quads cover {spread(g.coverage)} of the picture (the others: {spread(g.coverage_of_the_rest)}); shape error against a card {spread(g.ratio_error)}; widest corner angle off square {spread(g.angle_deviation)}°.
+          Where the guide frame wins it is closer by {g.mean_gain} on average. This version’s finder refuses {number(g.refused_among_spoiled)} of the {number(g.spoiled)}.
+        </p>
+      )}
+      {g.no_quad > 0 && <p className="text-footnote text-text-secondary">{number(g.no_quad)} scans had no card found at all and are not in these counts.</p>}
+      {data.sets?.some(item => item.spoiled) && (
+        <p className="text-footnote text-text-secondary" data-testid="scanner-lab-corners-sets">
+          By set: {data.sets.filter(item => item.spoiled).map(item => `${item.set} ${item.spoiled} of ${item.scans}`).join(' · ')}
+        </p>
+      )}
+      {Object.keys(data.refused_reasons || {}).length > 0 && (
+        <p className="text-footnote text-text-secondary">
+          Quads this finder refused: {Object.entries(data.refused_reasons).map(([key, n]) => `${n} ${REFUSED_NAMES[key] || key}`).join(' · ')}.
+        </p>
+      )}
+      <p className="text-footnote text-text-secondary">These scans are tagged “Corners off” in Misses, with the measurements.</p>
     </div>
   )
 }
@@ -168,6 +223,7 @@ export function Report({ report, title }) {
       {report.kind === 'labelled' && <BatchGroups groups={report.by_scan_time} />}
       {report.kind === 'labelled' && <UndecidedReasons data={report.undecided_first_right} />}
       {report.kind === 'labelled' && <FallbackGroups data={report.fallback} />}
+      {report.kind === 'labelled' && <CornersCheck data={report.corners_check} />}
       {report.groups && Object.keys(report.groups).length > 0 && (
         <table className="w-full text-footnote">
           <thead>
@@ -218,7 +274,7 @@ export function Report({ report, title }) {
   )
 }
 
-const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading' }
+const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused' }
 const describeOptions = label => (label === 'baseline' ? OPTION_NAMES.baseline : label.split('+').map(word => OPTION_NAMES[word] || word).join(' + '))
 
 /** The option sets side by side on the same photos: pick the row with the best top 20 and decided rate with 0 wrong. */
@@ -343,6 +399,43 @@ export function OcrSteps({ steps }) {
   )
 }
 
+/** Why the number was never right, per group: counts per cause and up to ten examples each, as text. */
+export function NeverRight({ data }) {
+  const groups = Object.entries(data || {}).filter(([, group]) => group.scans)
+  if (groups.length === 0) return null
+  return (
+    <div className="space-y-2" data-testid="scanner-lab-never-right">
+      <h4 className="text-footnote font-semibold">Why the number was not read right</h4>
+      <p className="text-footnote text-text-secondary">
+        Per group of scans. “Never right” is split by what was read in the bottom area. The last cause counts scans whose number came out right but with another set total than the catalogue prints.
+        The sets show whether the misses sit in a few new sets (a catalogue question) or are spread over all of them (a reading question).
+      </p>
+      {groups.map(([resolution, group]) => (
+        <div key={resolution} className="space-y-1" data-testid={`scanner-lab-never-right-${resolution}`}>
+          <h5 className="text-footnote font-semibold">{RESOLUTION_NAMES[resolution] || resolution} ({number(group.scans)} scans)</h5>
+          {group.buckets.map(bucket => (
+            <details key={bucket.key}>
+              <summary className="cursor-pointer text-footnote">{bucket.label}: <span className="tabular-nums">{number(bucket.n)}</span></summary>
+              <ul className="space-y-1 pt-1 text-[11px] text-text-secondary">
+                {bucket.examples.map(item => (
+                  <li key={item.trace} className="break-words">
+                    {item.name} ({item.set}) · confirmed {item.truth.number}{item.truth.total ? `/${item.truth.total}` : ''} · read {item.read.number ? `${item.read.number}${item.read.total ? `/${item.read.total}` : ''}` : 'no number'}
+                    {item.lines?.length ? ` · text: ${item.lines.join(' | ')}` : ' · no text'}
+                  </li>
+                ))}
+                {bucket.examples.length === 0 && <li>None.</li>}
+              </ul>
+            </details>
+          ))}
+          {group.sets?.length > 0 && (
+            <p className="text-[11px] text-text-secondary">Sets with the most wrong: {group.sets.map(item => `${item.set} ${item.wrong} of ${item.scans}`).join(' · ')}</p>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /** The OCR check: the text reader alone on the confirmed real photos, split by the resolution it read from. */
 export function OcrCheckView({ report }) {
   const groups = Object.entries(report.by_resolution || {})
@@ -364,6 +457,7 @@ export function OcrCheckView({ report }) {
           </div>
         )
       })}
+      <NeverRight data={report.never_right} />
       <OcrSteps steps={report.steps} />
       {(report.failures || []).length > 0 && (
         <details>
@@ -404,7 +498,7 @@ function SideBySide({ data }) {
   )
 }
 
-export function PictureFirstView({ data }) {
+export function PictureFirstView({ data, onOpenDecidedWrong }) {
   const counts = data.counts
   return (
     <div className="space-y-1 border-t border-separator px-4 py-3" data-testid="scanner-lab-picture-first">
@@ -420,8 +514,19 @@ export function PictureFirstView({ data }) {
       <Row
         testId="scanner-lab-pf-different"
         label="Trainer picked a different card than the picture decided"
-        value={`${number(counts.picked_different)} of ${number(counts.decided_confirmed)} confirmed${counts.error_pct != null ? ` (${counts.error_pct}%)` : ''}`}
+        value={
+          onOpenDecidedWrong ? (
+            <button type="button" className="ios-press text-tint underline" onClick={onOpenDecidedWrong} data-testid="scanner-lab-pf-different-open">
+              {`${number(counts.picked_different)} of ${number(counts.decided_confirmed)} confirmed${counts.error_pct != null ? ` (${counts.error_pct}%)` : ''}`}
+            </button>
+          ) : (
+            `${number(counts.picked_different)} of ${number(counts.decided_confirmed)} confirmed${counts.error_pct != null ? ` (${counts.error_pct}%)` : ''}`
+          )
+        }
       />
+      {onOpenDecidedWrong && (
+        <p className="text-footnote text-text-secondary">Tap the figure to see the scans the matcher decided wrong when it was run again on the confirmed photos (Misses › Decided wrong).</p>
+      )}
     </div>
   )
 }
@@ -541,6 +646,11 @@ export default function ScannerLabSection() {
     refetchInterval: 60000,
     retry: false,
   })
+  const [missTag, setMissTag] = useState(null)
+  const openDecidedWrong = () => {
+    setMissTag('decided_wrong')
+    setTimeout(() => document.querySelector('[data-testid="scanner-lab-misses"]')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }), 0)
+  }
   const refresh = () => queryClient.invalidateQueries({ queryKey: QUERY_KEY })
   const buildIndex = useMutation({ mutationFn: () => api.post('/card-match/index').then(r => r.data), onSuccess: refresh })
   const benchmark = useMutation({ mutationFn: kind => api.post('/card-match/benchmark', { kind }).then(r => r.data), onSuccess: refresh })
@@ -614,7 +724,7 @@ export default function ScannerLabSection() {
             )}
           </div>
         </div>
-        {pictureFirst.data?.counts && <PictureFirstView data={pictureFirst.data} />}
+        {pictureFirst.data?.counts && <PictureFirstView data={pictureFirst.data} onOpenDecidedWrong={data.misses ? openDecidedWrong : undefined} />}
         {shadow.data?.report && (shadow.data.enabled || shadow.data.report.compared > 0) && <ShadowView data={shadow.data} />}
         <HowConfirmedView data={shadow.data?.report?.how_confirmed} />
         {data.reports?.synthetic && <Report report={data.reports.synthetic} title="Latest benchmark: synthetic photos" />}
@@ -622,7 +732,7 @@ export default function ScannerLabSection() {
         {data.reports?.['ocr-check'] && <OcrCheckView report={data.reports['ocr-check']} />}
         {data.reports?.['compare-labelled'] && <CompareTable report={data.reports['compare-labelled']} title="Option comparison: real scans" />}
         {data.reports?.['compare-synthetic'] && <CompareTable report={data.reports['compare-synthetic']} title="Option comparison: synthetic photos" />}
-        {data.misses && <Misses version={data.misses.created_at} />}
+        {data.misses && <Misses version={data.misses.created_at} tag={missTag} onTagChange={setMissTag} />}
         {!data.reports?.synthetic && !data.reports?.labelled && (
           <p className="border-t border-separator px-4 py-3 text-footnote text-text-secondary">No benchmark has run yet.</p>
         )}

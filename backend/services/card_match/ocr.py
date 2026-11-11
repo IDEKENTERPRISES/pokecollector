@@ -420,8 +420,10 @@ class OcrReader:
             scratch: list[dict] = []
             lines = self._scan(card, f"{which}-wide", EXPANDED[which], "clahe", 2.0, True, scratch, flipped) or []
             self._whole[key] = (lines, scratch[0])
-        lines, entry = self._whole[key]
-        record.append({**entry, "ms": 0.0, "cached": True})  # a copy: the step table marks it on this read only
+            record.append(dict(scratch[0]))  # the first read keeps its real time
+        else:
+            record.append({**self._whole[key][1], "ms": 0.0, "cached": True})  # later reads of the same card and side: from the cache
+        lines = self._whole[key][0]
         return lines
 
     def _strip_items(self, card: np.ndarray, box: tuple[float, float, float, float], *, zoom: float = 2.0, sharpen: bool = False) -> list[tuple[str, float]]:
