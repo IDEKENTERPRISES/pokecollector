@@ -379,11 +379,14 @@ describe('Scanner lab version 7', () => {
     const group = { scans: 276, no_quad: 15, spoiled: 40, whole_better: 22, spoiled_no_number: 25, no_number_all: 90, refused_now: 38, refused_among_spoiled: 35, coverage: { min: 0.2, median: 0.4, max: 0.5 }, ratio_error: { min: 0, median: 0.02, max: 0.1 }, angle_deviation: { min: 0, median: 3, max: 20 }, coverage_of_the_rest: { min: 0.5, median: 0.8, max: 0.95 }, mean_gain: 0.12 }
     const corners = { margin: 0.05, all: group, tuning: { ...group, scans: 139, spoiled: 10 }, new: { ...group, scans: 137, spoiled: 30 }, sets: [{ set: 'Black Bolt', scans: 64, spoiled: 20, spoiled_no_number: 15 }], refused_reasons: { too_small: 30, sideways: 8 } }
     const html = renderToStaticMarkup(<Report report={{ ...report, kind: 'labelled', corners_check: corners }} title="Real scans" />)
-    expect(html).toContain('Did the card finder spoil the scan? (276 scans)')
+    expect(html).toContain('Which cut-out is closer to the catalogue picture? (276 scans)')
+    expect(html).not.toContain('spoil')
     expect(html).toContain('the guide frame was closer by at least 0.05')
+    expect(html).toContain('In that group the number was not read in 63% of the scans (25 of 40); across all 261 scans with a card found it was not read in 34% (90).')
+    expect(html).toContain('That is higher than for all scans.')
     expect(html).toContain('Black Bolt 20 of 64')
     expect(html).toContain('30 too small a part of the picture')
-    expect(renderToStaticMarkup(<Report report={{ ...report, kind: 'labelled', corners_check: null }} title="Real scans" />)).not.toContain('spoil the scan')
+    expect(renderToStaticMarkup(<Report report={{ ...report, kind: 'labelled', corners_check: null }} title="Real scans" />)).not.toContain('Which cut-out is closer')
     const item = {
       key: 'c', kind: 'not_top1', rank: 3, tags: ['corners_off'], truth: { name: 'Slowpoke', number: '29', set: 'Pitch Black', tcg_card_id: 'x-29' }, top3: [],
       ocr: { lines: [] }, photo: null, card: null, corners: { quad: 0.41, guide: 0.77, whole: 0.8, coverage: 0.4, ratio_error: 0.01, angle_deviation: 2, refused: 'too_small' },
@@ -393,5 +396,36 @@ describe('Scanner lab version 7', () => {
     expect(view).toContain('finder’s quad 0.41, guide frame 0.77, whole picture 0.8')
     expect(view).toContain('covers 40% of the picture')
     expect(view).toContain('refuses it (too small)')
+  })
+})
+
+describe('Scanner lab version 9', () => {
+  it('says the corners group does not predict missed numbers when the rates match', () => {
+    const group = { scans: 276, no_quad: 15, spoiled: 117, whole_better: 48, spoiled_no_number: 41, no_number_all: 91, refused_now: 0, refused_among_spoiled: 0, coverage: null, ratio_error: null, angle_deviation: null, coverage_of_the_rest: null, mean_gain: 0.1 }
+    const html = renderToStaticMarkup(<Report report={{ ...report, kind: 'labelled', corners_check: { margin: 0.05, all: group, sets: [], refused_reasons: {} } }} title="Real scans" />)
+    expect(html).toContain('In that group the number was not read in 35% of the scans (41 of 117)')
+    expect(html).toContain('about the same, so this group does not predict a missed number')
+  })
+
+  it('shows sharpness per set where the number was read and where it was not, in plain words', () => {
+    const block = (set, readSharp, missedSharp) => ({
+      set, scans: 66, read: { n: 32, sharpness: readSharp, brightness: 120, blown_pct: 0.4 }, missed: { n: 34, sharpness: missedSharp, brightness: 90, blown_pct: 0.2 },
+      missed_low_light_or_blur_pct: 70, read_low_light_or_blur_pct: 12,
+    })
+    const capture = { full: { ...block(undefined, 60, 25), scans: 105, sets: [block('Black Bolt', 41, 18)], thresholds: { brightness: 85, sharpness: 30 } } }
+    const never = { full: { scans: 105, sets: [], buckets: [] } }
+    const html = renderToStaticMarkup(<OcrCheckView report={{ traces: 105, skipped: 0, by_resolution: {}, never_right: never, capture, wholeread: { full: { tried: 40, rescued: 12 } } }} />)
+    expect(html).toContain('Black Bolt: typical sharpness 41 where the number was read (32 scans), 18 where it was not (34)')
+    expect(html).toContain('70% of its 34 misses are low light or blur')
+    expect(html).toContain('brightness under 85 or sharpness under 30')
+    expect(html).toContain('tried on 40 scans, completed the number on 12')
+  })
+
+  it('names the new options', () => {
+    const html = renderToStaticMarkup(
+      <CompareTable report={{ kind: 'compare-labelled', n: 139, created_at: '2026-11-06T01:00:00+00:00', duration_seconds: 100, winner: null, rows: [{ label: 'names+corners+wholepic+wholeread+wholeview', status: 'skipped', missing_indexes: ['x'] }] }} title="Compare" />,
+    )
+    expect(html).toContain('second read of the whole picture')
+    expect(html).toContain('whole picture as a third view')
   })
 })

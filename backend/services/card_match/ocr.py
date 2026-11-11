@@ -239,10 +239,11 @@ def better_read(old: OcrResult | None, new: OcrResult) -> OcrResult:
     return winner
 
 
-def merge_reads(old: OcrResult, new: OcrResult, source: str | None = None) -> OcrResult:
+def merge_reads(old: OcrResult, new: OcrResult, source: str | None = None, prefix: str = "") -> OcrResult:
     """``old`` and a second reading of the same scan (version 9) as one: the more useful number by ``better_read``, every
-    line and region read kept (the regions of ``new`` are tagged ``source`` so the lab can tell where they were read)."""
-    strips = list(old.strips) + [{**strip, "source": source} if source else dict(strip) for strip in new.strips]
+    line and region read kept (the regions of ``new`` are tagged ``source`` and their labels start with ``prefix``, so the lab and
+    the step table can tell where they were read)."""
+    strips = list(old.strips) + [{**strip, "source": source, "label": f"{prefix}{strip.get('label')}"} if source else dict(strip) for strip in new.strips]
     lines = list(old.lines) + list(new.lines)
     seconds, attempts, hp, flipped = old.seconds + new.seconds, old.attempts + new.attempts, old.hp or new.hp, old.flipped
     merged = better_read(old, new)
@@ -550,11 +551,12 @@ class OcrReader:
         if turned:
             card = np.ascontiguousarray(card[::-1, ::-1])
         self._turned = turned
-        result = self._read_card(card, fast, stage, budget)
+        staged = {} if (stage == "all" and budget is None) else {"stage": stage, "budget": budget}  # (the plain call stays as it was for readers that override ``_read_card``)
+        result = self._read_card(card, fast, **staged)
         if flipped is None and not is_complete(result):
             other = np.ascontiguousarray(card[::-1, ::-1])
             self._turned = not turned
-            retry = self._read_card(other, fast, stage, budget)
+            retry = self._read_card(other, fast, **staged)
             if completeness(retry) > completeness(result):
                 result, card, turned = retry, other, not turned
             else:

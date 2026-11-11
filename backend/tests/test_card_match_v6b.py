@@ -133,7 +133,7 @@ class NumberOnceTests(unittest.TestCase):
         return [card_id for card_id, _s in ordered]
 
     def test_the_option_is_a_comparison_row_after_the_set_it_changes(self):
-        label = "names+number+text+art+tta+fastread+numberonce"
+        label = "names+number+text+art+tta+fastread+numberonce+corners+wholepic"  # version 9: asked on top of the measured best set
         self.assertTrue(variants.parse(label).numberonce)
         self.assertEqual(variants.parse(label).label, label)
         self.assertIn(label, variants.COMPARE_LABELS)

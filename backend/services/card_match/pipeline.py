@@ -526,10 +526,7 @@ class CardMatcher:
             whole = detect_module.whole_detection(photo_rgb)
             picture = whole.hires if whole.hires is not None else whole.card
             second = self.ocr_reader.read(picture, read_hp=False, flipped=flipped, stage="quick", budget=min(WHOLEREAD_MAX_SECONDS, left), **extra)
-            result = ocr_module.merge_reads(first, second, "whole_picture")
-            for strip in result.strips:
-                if strip.get("source") == "whole_picture":
-                    strip["label"] = f"whole-{strip.get('label')}"
+            result = ocr_module.merge_reads(first, second, "whole_picture", "whole-")
             info["tried"] = True
             spent += float(getattr(second, "seconds", 0.0) or 0.0)
         else:

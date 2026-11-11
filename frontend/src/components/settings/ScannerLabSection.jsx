@@ -148,21 +148,36 @@ export function FallbackGroups({ data }) {
 const REFUSED_NAMES = { too_small: 'too small a part of the picture', sideways: 'turned on its side', not_rectangular: 'not rectangular', bad_angles: 'corners far from square' }
 const spread = value => (value ? `${value.min} to ${value.max}, typically ${value.median}` : '–')
 
-/** The corners check (real scans only): how many scans the card finder spoils, measured against the confirmed card's own picture. */
+const pct = (part, whole) => (whole ? Math.round((100 * part) / whole) : null)
+
+/** The corners check (real scans only): which cut-out is closer to the confirmed card’s own catalogue picture, the finder’s or the plain guide frame. */
 export function CornersCheck({ data }) {
   if (!data || !data.all?.scans) return null
   const rows = [['all', 'All scans'], ['tuning', 'Used for tuning'], ['new', 'New scans, not used for tuning']].filter(([key]) => data[key]?.scans)
   const g = data.all
   return (
     <div className="space-y-1" data-testid="scanner-lab-corners">
-      <h4 className="text-footnote font-semibold">Did the card finder spoil the scan? ({number(g.scans)} scans)</h4>
+      <h4 className="text-footnote font-semibold">Which cut-out is closer to the catalogue picture? ({number(g.scans)} scans)</h4>
       <p className="text-footnote text-text-secondary">
-        For each scan, the card the finder cut out and the plain guide frame were each compared with the confirmed card’s own picture. “Spoiled” means the guide frame was closer by at least {data.margin} (on a 0 to 1 scale), so the finder reported a card and made the picture worse.
+        For each scan, the card the finder cut out and the plain guide frame were each compared with the confirmed card’s own catalogue picture. “Guide frame closer” counts scans where the guide frame was closer by at least {data.margin} (on a 0 to 1 scale).
+        It only says which cut-out looks more like the catalogue picture: those finder cut-outs look like normal ones, and it is not a count of broken scans. Read it as a ranking signal.
       </p>
+      {(() => {
+        const withCard = g.scans - g.no_quad
+        const inGroup = pct(g.spoiled_no_number, g.spoiled)
+        const overall = pct(g.no_number_all, withCard)
+        if (inGroup == null || overall == null) return null
+        return (
+          <p className="text-footnote text-text-secondary" data-testid="scanner-lab-corners-number-rate">
+            In that group the number was not read in {inGroup}% of the scans ({number(g.spoiled_no_number)} of {number(g.spoiled)}); across all {number(withCard)} scans with a card found it was not read in {overall}% ({number(g.no_number_all)}).
+            {Math.abs(inGroup - overall) <= 5 ? ' That is about the same, so this group does not predict a missed number.' : inGroup > overall ? ' That is higher than for all scans.' : ' That is lower than for all scans.'}
+          </p>
+        )
+      })()}
       <table className="w-full text-footnote">
         <thead>
           <tr className="text-left text-text-secondary">
-            <th className="pr-2 font-normal">Scans</th><th className="pr-2 font-normal">Measured</th><th className="pr-2 font-normal">Spoiled</th>
+            <th className="pr-2 font-normal">Scans</th><th className="pr-2 font-normal">Measured</th><th className="pr-2 font-normal">Guide frame closer</th>
             <th className="pr-2 font-normal">… no number read</th><th className="font-normal">Whole picture closer</th>
           </tr>
         </thead>
@@ -177,14 +192,14 @@ export function CornersCheck({ data }) {
       </table>
       {g.spoiled > 0 && (
         <p className="text-footnote text-text-secondary" data-testid="scanner-lab-corners-shape">
-          The spoiled quads cover {spread(g.coverage)} of the picture (the others: {spread(g.coverage_of_the_rest)}); shape error against a card {spread(g.ratio_error)}; widest corner angle off square {spread(g.angle_deviation)}°.
-          Where the guide frame wins it is closer by {g.mean_gain} on average. This version’s finder refuses {number(g.refused_among_spoiled)} of the {number(g.spoiled)}.
+          In those scans the finder’s cut-out covers {spread(g.coverage)} of the picture (the others: {spread(g.coverage_of_the_rest)}); shape error against a card {spread(g.ratio_error)}; widest corner angle off square {spread(g.angle_deviation)}°.
+          Where the guide frame is closer it is closer by {g.mean_gain} on average. This version’s finder refuses {number(g.refused_among_spoiled)} of the {number(g.spoiled)}.
         </p>
       )}
       {g.no_quad > 0 && <p className="text-footnote text-text-secondary">{number(g.no_quad)} scans had no card found at all and are not in these counts.</p>}
       {data.sets?.some(item => item.spoiled) && (
         <p className="text-footnote text-text-secondary" data-testid="scanner-lab-corners-sets">
-          By set: {data.sets.filter(item => item.spoiled).map(item => `${item.set} ${item.spoiled} of ${item.scans}`).join(' · ')}
+          Guide frame closer, by set: {data.sets.filter(item => item.spoiled).map(item => `${item.set} ${item.spoiled} of ${item.scans}`).join(' · ')}
         </p>
       )}
       {Object.keys(data.refused_reasons || {}).length > 0 && (
@@ -274,7 +289,7 @@ export function Report({ report, title }) {
   )
 }
 
-const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused' }
+const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused', wholeread: 'second read of the whole picture', wholeview: 'whole picture as a third view' }
 const describeOptions = label => (label === 'baseline' ? OPTION_NAMES.baseline : label.split('+').map(word => OPTION_NAMES[word] || word).join(' + '))
 
 /** The option sets side by side on the same photos: pick the row with the best top 20 and decided rate with 0 wrong. */
@@ -317,7 +332,7 @@ export function CompareTable({ report, title }) {
   )
 }
 
-const OCR_MODE_NAMES = { fixed: 'Fixed strips (old way)', detect: 'Find and read (new way)' }
+const OCR_MODE_NAMES = { fixed: 'Fixed strips (old way)', detect: 'Find and read (new way)', wholeread: 'Find and read, then the whole picture' }
 const OCR_VARIANT_NAMES = { plain: 'as photographed', sharp: 'sharpened', clahe: 'local contrast', binary: 'black and white', deglare: 'glare removed' }
 const RESOLUTION_NAMES = { 1024: 'Older scans: 1024 px crop', full: 'Newer scans: full resolution', guide_crop: 'Card not found: read from the guide frame', all: 'All scans' }
 
@@ -347,7 +362,7 @@ function OcrRows({ rows }) {
 }
 
 const STEP_LABELS = {
-  'number-left-tight': 'Number: left corner strip', 'number-right-tight': 'Number: right corner strip', 'bottom-band': 'Number: whole bottom band',
+  'whole-number-left-tight': 'Whole picture: left corner strip', 'whole-number-right-tight': 'Whole picture: right corner strip', 'whole-bottom-band': 'Whole picture: bottom band', 'number-left-tight': 'Number: left corner strip', 'number-right-tight': 'Number: right corner strip', 'bottom-band': 'Number: whole bottom band',
   'number-left-wide': 'Number: left wide strip', 'number-right-wide': 'Number: right wide strip', 'bottom-wide': 'Number: tall band at the bottom',
   'name-line': 'Name: top strip', 'name-band': 'Name: name band', 'top-wide': 'Name: tall band at the top',
 }
@@ -399,8 +414,40 @@ export function OcrSteps({ steps }) {
   )
 }
 
+const sayNumber = value => (value == null ? '–' : value)
+
+/** Version 9: how sharp, bright and glared the flat cards were, where the number was read and where it was not, so "photographed worse" can be told from "printed differently". */
+export function CaptureQuality({ data }) {
+  if (!data || !data.scans) return null
+  const t = data.thresholds || { brightness: 85, sharpness: 30 }
+  const line = block => `typical sharpness ${sayNumber(block.read.sharpness)} where the number was read (${number(block.read.n)} scans), ${sayNumber(block.missed.sharpness)} where it was not (${number(block.missed.n)}); typical brightness ${sayNumber(block.read.brightness)} against ${sayNumber(block.missed.brightness)} (out of 255); blown-out share ${sayNumber(block.read.blown_pct)}% against ${sayNumber(block.missed.blown_pct)}%`
+  return (
+    <div className="space-y-1" data-testid="scanner-lab-capture">
+      <h5 className="text-footnote font-semibold">How well the scans were photographed</h5>
+      <p className="text-[11px] text-text-secondary">All scans: {line(data)}.</p>
+      {data.missed.n > 0 && (
+        <p className="text-[11px] text-text-secondary">
+          {sayNumber(data.missed_low_light_or_blur_pct)}% of the scans where the number was not read are low light or blur (brightness under {t.brightness} or sharpness under {t.sharpness}), against {sayNumber(data.read_low_light_or_blur_pct)}% of the scans where it was read.
+        </p>
+      )}
+      {data.sets?.length > 0 && (
+        <ul className="space-y-1 text-[11px] text-text-secondary">
+          {data.sets.map(item => (
+            <li key={item.set} className="break-words" data-testid="scanner-lab-capture-set">
+              {item.set}: {line(item)}.{item.missed.n > 0 ? ` ${sayNumber(item.missed_low_light_or_blur_pct)}% of its ${number(item.missed.n)} misses are low light or blur.` : ''}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-[11px] text-text-secondary">
+        If a set’s misses are much less sharp or darker than its reads, it was photographed worse. If they look the same as its reads, the number is missed for another reason, for example the set prints its number differently.
+      </p>
+    </div>
+  )
+}
+
 /** Why the number was never right, per group: counts per cause and up to ten examples each, as text. */
-export function NeverRight({ data }) {
+export function NeverRight({ data, capture }) {
   const groups = Object.entries(data || {}).filter(([, group]) => group.scans)
   if (groups.length === 0) return null
   return (
@@ -430,9 +477,21 @@ export function NeverRight({ data }) {
           {group.sets?.length > 0 && (
             <p className="text-[11px] text-text-secondary">Sets with the most wrong: {group.sets.map(item => `${item.set} ${item.wrong} of ${item.scans}`).join(' · ')}</p>
           )}
+          <CaptureQuality data={capture?.[resolution]} />
         </div>
       ))}
     </div>
+  )
+}
+
+/** Version 9: how many scans the whole-picture second read was tried on and how many it completed. */
+export function WholeReadSummary({ data }) {
+  const rows = Object.entries(data || {}).filter(([, counts]) => counts.tried > 0)
+  if (rows.length === 0) return null
+  return (
+    <p className="text-footnote text-text-secondary" data-testid="scanner-lab-wholeread">
+      Whole-picture second read (the “wholeread” row, and “whole-…” steps in the table below): {rows.map(([group, counts]) => `${RESOLUTION_NAMES[group] || group}: tried on ${counts.tried} scans, completed the number on ${counts.rescued}`).join(' · ')}.
+    </p>
   )
 }
 
@@ -457,7 +516,8 @@ export function OcrCheckView({ report }) {
           </div>
         )
       })}
-      <NeverRight data={report.never_right} />
+      <NeverRight data={report.never_right} capture={report.capture} />
+      <WholeReadSummary data={report.wholeread} />
       <OcrSteps steps={report.steps} />
       {(report.failures || []).length > 0 && (
         <details>

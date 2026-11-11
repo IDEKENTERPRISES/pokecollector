@@ -1,4 +1,6 @@
-"""The "corners check" of the real-scan benchmark: how many confirmed scans the card finder spoils.
+"""The "corners check" of the real-scan benchmark: for each confirmed scan, which cut-out is closer to the catalogue picture, the finder's
+quad or the plain guide frame. (Version 9 renamed what the lab shows: the count of scans where the guide frame wins is a ranking signal,
+not a count of broken corners; those scans missed the number as often as all scans did.)
 
 For a confirmed scan the index already holds the confirmed card's own picture. This embeds three flat cards made from the
 same photo, the one from the finder's quad (the version 7 finder, no plausibility check, so the number does not depend on the
@@ -64,6 +66,10 @@ def group_summary(rows: list[dict]) -> dict:
         "whole_better": sum(1 for r in with_quad if r["whole"] - r["quad"] >= CLEAR_MARGIN),
         "spoiled_no_number": sum(1 for r in bad if not r["number_read"]),
         "no_number_all": sum(1 for r in with_quad if not r["number_read"]),
+        # Version 9: how often the number was missed in the "closer" group against all scans with a quad (it is the same, about 35%:
+        # the group does not predict number misses).
+        "spoiled_no_number_pct": round(100 * sum(1 for r in bad if not r["number_read"]) / len(bad), 1) if bad else None,
+        "no_number_all_pct": round(100 * sum(1 for r in with_quad if not r["number_read"]) / len(with_quad), 1) if with_quad else None,
         "refused_now": sum(1 for r in rows if r.get("refused")),
         "refused_among_spoiled": sum(1 for r in bad if r.get("refused")),
         "coverage": _spread([r["coverage"] for r in bad]), "ratio_error": _spread([r["ratio_error"] for r in bad]),
