@@ -32,6 +32,9 @@ services:
       # and nothing expires.
       SCAN_TRACE_REQUIRED: "0"
       SCAN_TRACE_KEEP_DAYS: ""
+      # Scanner lab also reads prod's stored scans, through the read-only mount below (docs/NONPROD.md): label=path.
+      # Nothing is copied, and nothing here can write to or delete from that folder. Prod does not set it.
+      SCAN_TRACE_READONLY_DIRS: "prod=/app/data/scan-traces-prod"
       # Scanner picture matcher prototype (docs/CARD_MATCH.md): build the index and run the benchmark
       # once after a deploy (overnight), and keep the index current after each card sync. Prod sets neither.
       SCAN_MATCHER_AUTORUN: "1"
@@ -53,6 +56,9 @@ services:
       - /home/rage/Documents/docker/pokelocal-nonprod/data/pokedex-images:/app/data/pokedex-images
       - /home/rage/Documents/docker/pokelocal-nonprod/data/scan-uploads:/app/data/scan-uploads
       - /home/rage/Documents/docker/pokelocal-nonprod/data/scan-traces:/app/data/scan-traces
+      # Prod's scan diagnostics, read-only (the :ro is what makes it so). The folder must already exist on the host:
+      # Docker would otherwise create it as root. Its files are prod's: never write here.
+      - /home/rage/Documents/docker/pokelocal/data/scan-traces:/app/data/scan-traces-prod:ro
       - /home/rage/Documents/docker/pokelocal-nonprod/data/card-match:/app/data/card-match
 
   frontend:
