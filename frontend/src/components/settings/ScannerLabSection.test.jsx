@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { CompareTable, HowConfirmedView, OcrCheckView, PictureFirstView, Report, ShadowView, SourceGroups, TraceSources } from './ScannerLabSection'
-import { MissesView, StripRow } from './ScannerLabMisses'
+import { CompareTable, WrongList, HowConfirmedView, OcrCheckView, PictureFirstView, Report, ShadowView, SourceGroups, TraceSources } from './ScannerLabSection'
+import { DecidedWrong, MissesView, StripRow } from './ScannerLabMisses'
 
 const report = {
   kind: 'synthetic',
@@ -423,10 +423,10 @@ describe('Scanner lab version 9', () => {
 
   it('names the new options', () => {
     const html = renderToStaticMarkup(
-      <CompareTable report={{ kind: 'compare-labelled', n: 139, created_at: '2026-11-06T01:00:00+00:00', duration_seconds: 100, winner: null, rows: [{ label: 'names+corners+wholepic+wholeread+wholeview', status: 'skipped', missing_indexes: ['x'] }] }} title="Compare" />,
+      <CompareTable report={{ kind: 'compare-labelled', n: 139, created_at: '2026-11-06T01:00:00+00:00', duration_seconds: 100, winner: null, rows: [{ label: 'names+corners+wholepic+wholeread+wholestrict', status: 'skipped', missing_indexes: ['x'] }] }} title="Compare" />,
     )
     expect(html).toContain('second read of the whole picture')
-    expect(html).toContain('whole picture as a third view')
+    expect(html).toContain('stricter rules for a number read only from the whole picture')
   })
 })
 
@@ -465,5 +465,37 @@ describe('Scans from prod', () => {
     expect(html).toContain('scanner-lab-held-back-row')
     expect(html).toContain('Held back scans were left out of the pick.')
     expect(html).toContain('2 trainers')
+  })
+})
+
+describe('Wrong decisions of a comparison row', () => {
+  const item = {
+    key: 'k1', mechanism: 'number_and_picture', rank: 3, reasons: ['number_and_picture', 'number_from_whole_picture', 'total_not_read'],
+    decided_card: { tcg_card_id: 'a-1', name: 'Comfey', number: '077', printed_total: 128, set: 'Set A', similarity: 0.7, rank: 1, lead: 0.1 },
+    truth: { name: 'Kommo-o', number: '143', printed_total: 128, set: 'Set A', similarity: 0.44 },
+    ocr: { number: '077', total: '128', name: null, number_source: 'whole_picture', number_confidence: 0.9 },
+  }
+
+  it('shows where the number came from and what stood behind the decision', () => {
+    const html = renderToStaticMarkup(<DecidedWrong item={item} />)
+    expect(html).toContain('only the second read of the whole picture')
+    expect(html).toContain('90% confidence')
+    expect(html).toContain('number from the whole picture only')
+    expect(html).toContain('total not read')
+  })
+
+  it('lists the scans of a row, and says so plainly when the details were not kept', () => {
+    const row = { label: 'names+wholeread', status: 'ok', decided_wrong: 1, wrong_scans: [item] }
+    expect(renderToStaticMarkup(<WrongList row={row} />)).toContain('Comfey')
+    expect(renderToStaticMarkup(<WrongList row={{ ...row, wrong_scans: undefined }} />)).toContain('did not keep the details')
+  })
+
+  it('makes only a non-zero Wrong figure a button', () => {
+    const rows = [
+      { label: 'baseline', status: 'ok', top1: 1, top20: 1, number_exact: 1, decided: 1, decided_wrong: 0, p95_ms: 1 },
+      { label: 'names', status: 'ok', top1: 1, top20: 1, number_exact: 1, decided: 1, decided_wrong: 2, p95_ms: 1, wrong_scans: [item] },
+    ]
+    const html = renderToStaticMarkup(<CompareTable title="t" report={{ kind: 'compare-labelled', n: 1, rows, winner: null }} />)
+    expect(html.match(/scanner-lab-row-wrong-open/g)).toHaveLength(1)
   })
 })

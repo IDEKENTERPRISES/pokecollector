@@ -49,6 +49,10 @@ _LANG_CODES = {"EN", "DE", "FR", "IT", "ES", "PT", "JP", "KO", "NL", "PL", "RU",
 _DIGITISE = str.maketrans({"O": "0", "o": "0", "D": "0", "Q": "0", "I": "1", "l": "1", "|": "1", "S": "5", "B": "8", "Z": "2"})
 
 
+SOURCE_FINDER_CARD = "finder_card"
+SOURCE_WHOLE_PICTURE = "whole_picture"  # the same word ``merge_reads`` tags the second reading's regions with
+
+
 @dataclass
 class OcrResult:
     number_local: str | None = None  # "018", "TG06", "SWSH062"
@@ -61,6 +65,7 @@ class OcrResult:
     number_confidence: float | None = None  # mean recogniser confidence of the line(s) the number came from
     strips: list[dict] = field(default_factory=list)  # every region read: label, box, variant, zoom, and each line's text and confidence
     attempts: int = 0  # how many regions were read for the number
+    number_source: str | None = None  # version 10: where the number in use was read: "finder_card" (the card the finder cut out) or "whole_picture" (only the second read)
 
     def as_card_info(self, set_codes: set[str] | None = None) -> dict:
         """The dict `api.recognize` rules read. ``set_code`` is a token that equals a known set code."""
@@ -247,6 +252,10 @@ def merge_reads(old: OcrResult, new: OcrResult, source: str | None = None, prefi
     lines = list(old.lines) + list(new.lines)
     seconds, attempts, hp, flipped = old.seconds + new.seconds, old.attempts + new.attempts, old.hp or new.hp, old.flipped
     merged = better_read(old, new)
+    if merged is new and new.number_local:  # the number in use is the second reading's: say where it was read (no source: the finder's card again)
+        merged.number_source = source or SOURCE_FINDER_CARD
+    elif merged.number_local and not merged.number_source:
+        merged.number_source = SOURCE_FINDER_CARD
     merged.strips, merged.lines, merged.seconds, merged.attempts, merged.hp, merged.flipped = strips, lines, seconds, attempts, hp, flipped
     return merged
 

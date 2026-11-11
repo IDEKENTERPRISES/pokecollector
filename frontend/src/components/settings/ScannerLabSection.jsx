@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FlaskConical, GitCompare, Hammer } from 'lucide-react'
 import api from '../../api/client'
-import Misses from './ScannerLabMisses'
+import Misses, { DecidedWrong } from './ScannerLabMisses'
 
 const QUERY_KEY = ['card-match-status']
 const SHADOW_KEY = ['card-match-shadow']
@@ -338,11 +338,29 @@ export function Report({ report, title }) {
   )
 }
 
-const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused', wholeread: 'second read of the whole picture', wholeview: 'whole picture as a third view' }
+const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused', wholeread: 'second read of the whole picture', wholestrict: 'stricter rules for a number read only from the whole picture' }
 const describeOptions = label => (label === 'baseline' ? OPTION_NAMES.baseline : label.split('+').map(word => OPTION_NAMES[word] || word).join(' + '))
+
+/** The scans one comparison row decided wrong, in the same plain wording as Misses > Decided wrong (text only: no pictures are kept for these). */
+export function WrongList({ row }) {
+  const items = row.wrong_scans || []
+  return (
+    <div className="space-y-1.5 rounded-md bg-fill px-2 py-2" data-testid="scanner-lab-row-wrong">
+      <p className="text-footnote font-semibold">Decided wrong with {describeOptions(row.label)}</p>
+      {items.length === 0 ? (
+        <p className="text-footnote text-text-secondary">{row.decided_wrong ? 'This run did not keep the details of its wrong decisions (it ran before they were kept).' : 'Nothing was decided wrong.'}</p>
+      ) : (
+        items.map((item, position) => <DecidedWrong key={`${item.key}-${position}`} item={item} />)
+      )}
+      {items.length > 0 && items.length < row.decided_wrong && <p className="text-footnote text-text-secondary">Showing the first {items.length} of {row.decided_wrong}.</p>}
+    </div>
+  )
+}
 
 /** The option sets side by side on the same photos: pick the row with the best top 20 and decided rate with 0 wrong. */
 export function CompareTable({ report, title }) {
+  const [openWrong, setOpenWrong] = useState(null)
+  const opened = report.rows.find(row => row.label === openWrong)
   return (
     <div className="space-y-2 border-t border-separator px-4 py-3" data-testid={`scanner-lab-${report.kind}`}>
       <div>
@@ -373,7 +391,15 @@ export function CompareTable({ report, title }) {
                 {row.status === 'ok' ? (
                   <>
                     <td className="pr-2">{percent(row.top1)}</td><td className="pr-2">{percent(row.top20)}</td><td className="pr-2">{percent(row.number_exact)}</td>
-                    <td className="pr-2">{percent(row.decided)}</td><td className="pr-2">{number(row.decided_wrong)}</td><td>{row.p95_ms != null ? `${number(row.p95_ms)} ms` : '–'}</td>
+                    <td className="pr-2">{percent(row.decided)}</td>
+                    <td className="pr-2">
+                      {row.decided_wrong > 0 ? (
+                        <button type="button" className="ios-press text-tint underline" aria-expanded={openWrong === row.label} onClick={() => setOpenWrong(openWrong === row.label ? null : row.label)} data-testid="scanner-lab-row-wrong-open">
+                          {number(row.decided_wrong)}
+                        </button>
+                      ) : number(row.decided_wrong)}
+                    </td>
+                    <td>{row.p95_ms != null ? `${number(row.p95_ms)} ms` : '–'}</td>
                   </>
                 ) : (
                   <td colSpan={6} className="text-text-secondary">needs the {(row.missing_indexes || []).join(', ')} index</td>
@@ -390,6 +416,7 @@ export function CompareTable({ report, title }) {
           </tbody>
         </table>
       </div>
+      {opened && <WrongList row={opened} />}
     </div>
   )
 }

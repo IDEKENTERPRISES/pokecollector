@@ -18,8 +18,10 @@ Options (all measured side by side by the labelled benchmark, "Compare options" 
     decided by the normal rules, not the strict "number read and picture agrees" fallback ones;
   - ``wholeread`` (version 9): a guide picture whose number the normal read did not complete is read once more from the whole
     picture treated as the card (the first steps only, inside the same time budget), merged with the first reading;
-  - ``wholeview`` (version 9): for the same guide pictures the whole picture is one more view in the picture scores, each card
-    keeping its best view.
+  - ``wholestrict`` (version 10, needs ``wholeread``): a number that came only from the whole-picture second read may decide only
+    under stricter rules (``pipeline.whole_number_problem``): the set total was read and fits, the card is the picture's first or
+    second pick with a higher similarity, no known name contradicts it, and the number line was read with high confidence.
+    (``wholeview``, version 9, was removed in version 10: it added almost nothing and cost time.)
 A label is the options joined by ``+``: ``baseline`` (none), ``names``, ``names+number``, ``names+number+text+tta`` ...
 
 The label in use comes from ``CARD_MATCH_OPTIONS``, else from ``chosen.json`` (written when a comparison
@@ -43,19 +45,17 @@ logger = logging.getLogger(__name__)
 BASE_MODEL = "dinov2-base"
 ART_INDEX = f"{DEFAULT_MODEL}-art"  # the artwork-window index of the default model
 BEST_V8 = "names+number+text+art+tta+fastread+corners+wholepic"
-DEFAULT_LABEL = BEST_V8  # v9: the set the server measured best with version 8 (66.3% decided, 0 wrong, p95 1,404 ms); an unbuilt artwork index is left out, see ``usable``
+IN_USE = "names+number+text+art+tta+fastread+numberonce+corners+wholepic"  # picked on the server with version 9: 67.4% decided, 0 wrong, p95 1,431 ms
+DEFAULT_LABEL = IN_USE  # an unbuilt artwork index is left out, see ``usable``
 # The labels the comparison runs, cheapest first.
 # The lookup lanes come one at a time right after ``names`` so each one's gain shows as its own row.
-# Version 9 has twelve rows or fewer: it adds the measured best (``BEST_V8``) with ``numberonce`` (not yet measured together with
-# corners and wholepic) and with each new option and with both, so it drops the rows that can no longer be picked or have
-# answered their question: "names+number+text+art+reprint" (never chosen, no gain in any run), "names+number+text+art+base"
-# (never chosen, and the slowest row), "...art+tta+fastread+numberonce" (no corners: 62.3% against 60.9%, both measured; the
-# numberonce question is now asked on top of the best set) and "...corners+trustrejected" (61.2%, no real gain).
+# Version 10 has ten rows: the steps up to the set in use (``IN_USE``), the one in use, and on top of it ``wholeread`` and
+# ``wholeread+wholestrict``. It drops the three ``wholeview`` rows (no gain, slower) and ``BEST_V8`` without ``numberonce``
+# (measured against the set in use with version 9: 66.3% decided against 67.4%, both 0 wrong).
 COMPARE_LABELS = (
     "baseline", "names", "names+number", "names+number+text", "names+number+text+art",
-    "names+number+text+art+tta+fastread", "names+number+text+art+tta+fastread+corners", BEST_V8,
-    BEST_V8.replace("fastread+corners", "fastread+numberonce+corners"), BEST_V8 + "+wholeread", BEST_V8 + "+wholeview",
-    BEST_V8 + "+wholeread+wholeview",
+    "names+number+text+art+tta+fastread", "names+number+text+art+tta+fastread+corners", IN_USE,
+    IN_USE + "+wholeread", IN_USE + "+wholeread+wholestrict",
 )
 # The synthetic comparison chooses nothing, so it runs a short list on fewer photos
 # (version 5: 10 rows x 400 photos took 89 minutes).
@@ -63,7 +63,7 @@ SYNTHETIC_COMPARE_LABELS = (
     "baseline", "names+number+text", "names+number+text+art+tta", "names+number+text+art+tta+fastread",
 )
 SYNTHETIC_COMPARE_COUNT = 100
-ORDER = ("names", "number", "text", "art", "reprint", "base", "tta", "fastread", "numberonce", "corners", "wholepic", "trustrejected", "wholeread", "wholeview")
+ORDER = ("names", "number", "text", "art", "reprint", "base", "tta", "fastread", "numberonce", "corners", "wholepic", "trustrejected", "wholeread", "wholestrict")
 
 
 @dataclass(frozen=True)
@@ -81,7 +81,7 @@ class Options:
     wholepic: bool = False  # a refused quad: the whole picture is the card, not the centre guide crop (needs corners)
     trustrejected: bool = False  # a refused quad: the guide-crop card is decided by the normal rules (needs corners)
     wholeread: bool = False  # version 9: a guide picture without a complete number is read once more from the whole picture
-    wholeview: bool = False  # version 9: the whole picture is one more view of a guide picture in the picture scores
+    wholestrict: bool = False  # version 10: a number read only from the whole picture decides only under stricter rules (needs wholeread)
 
     @property
     def label(self) -> str:
@@ -94,6 +94,8 @@ def parse(label: str | None) -> Options:
     words = {word.strip().lower() for word in str(label or "").replace(",", "+").split("+")}
     if "reprint" in words:
         words.add("art")  # the tie-break reads the artwork-only similarity
+    if "wholestrict" in words:
+        words.add("wholeread")  # it judges the number the second read produced
     if "wholepic" in words or "trustrejected" in words:
         words.add("corners")  # both act on a quad the finder refused
     return Options(**{name: name in words for name in ORDER})
@@ -206,7 +208,7 @@ def _build_matcher(options: Options, session_factory, *, data_dir: Path | None =
         index, embed.get_embedder(DEFAULT_MODEL), pipeline.db_candidate_loader(session_factory), ocr_reader or get_reader(),
         read_hp=read_hp, extra_signals=signals, tta=options.tta, names=names, label=options.label, fastread=options.fastread, number_once=options.numberonce,
         corners=options.corners, wholepic=options.wholepic, trustrejected=options.trustrejected,
-        wholeread=options.wholeread, wholeview=options.wholeview,
+        wholeread=options.wholeread, wholestrict=options.wholestrict,
         lookup=lookup, use_number=options.number, use_text=options.text, reprint=options.reprint,
     )
 

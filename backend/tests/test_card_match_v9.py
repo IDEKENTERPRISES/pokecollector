@@ -30,28 +30,11 @@ BEST = "names+number+text+art+tta+fastread+corners+wholepic"
 
 @skip
 class OptionAndComparisonTests(unittest.TestCase):
-    def test_version_default_and_the_new_options(self):
-        self.assertEqual(MATCHER_VERSION, "9")
-        self.assertEqual(variants.DEFAULT_LABEL, BEST)
-        default = variants.parse(variants.DEFAULT_LABEL)
-        self.assertFalse(default.wholeread or default.wholeview)  # options the server must measure first
-        both = variants.parse(BEST + "+wholeview+wholeread")
-        self.assertTrue(both.wholeread and both.wholeview)
-        self.assertEqual(both.label, BEST + "+wholeread+wholeview")  # printed in the fixed order
-        self.assertEqual(variants.needed_indexes(both), [variants.ART_INDEX])
-
-    def test_the_comparison_rows(self):
-        labels = variants.COMPARE_LABELS
-        self.assertLessEqual(len(labels), 12)
-        self.assertEqual(len(set(labels)), len(labels))
-        for wanted in (BEST, "names+number+text+art+tta+fastread+numberonce+corners+wholepic", BEST + "+wholeread", BEST + "+wholeview", BEST + "+wholeread+wholeview"):
-            self.assertIn(wanted, labels)
-        for dropped in ("names+number+text+art+reprint", "names+number+text+art+base", "names+number+text+art+tta+fastread+numberonce",
-                        "names+number+text+art+tta+fastread+corners+trustrejected"):
-            self.assertNotIn(dropped, labels)
-            self.assertTrue(variants.parse(dropped).label)  # the option itself still parses; only the row went
-        for label in labels:
-            self.assertEqual(variants.parse(label).label, label)
+    def test_the_wholeread_option_and_its_label_order(self):
+        self.assertFalse(variants.parse(variants.DEFAULT_LABEL).wholeread)  # an option the server must measure first
+        self.assertEqual(variants.parse(BEST + "+wholeread").label, BEST + "+wholeread")
+        self.assertEqual(variants.needed_indexes(variants.parse(BEST + "+wholeread")), [variants.ART_INDEX])
+        self.assertNotIn("wholeview", variants.ORDER)  # removed in version 10
 
 
 class StageReader(ocr.OcrReader if DEPS_AVAILABLE else object):
@@ -209,53 +192,6 @@ class WholeReadMatcherTests(unittest.TestCase):
                 return ocr.OcrResult(number_local="4", number_total="5", seconds=0.0)
 
         self.assertEqual(self.run_match(Old()).ocr["number_local"], "4")
-
-
-@skip
-class WholeViewTests(unittest.TestCase):
-    class Index:
-        def best_scores(self, vectors):
-            return np.max(vectors, axis=0)
-
-    class Embedder:
-        def __init__(self):
-            self.seen = []
-
-        def embed(self, pictures):
-            self.seen.append(len(pictures))
-            return np.array([[float(np.mean(p)) / 255.0, 0.0, 0.0][:3] for p in pictures], dtype=np.float32).reshape(len(pictures), 3)
-
-    def matcher(self):
-        matcher = pipeline.CardMatcher.__new__(pipeline.CardMatcher)
-        matcher.tta = False
-        matcher.extra_signals = []
-        matcher.index = self.Index()
-        matcher.embedder = self.Embedder()
-        return matcher
-
-    def test_the_whole_picture_is_one_more_view_and_each_card_keeps_its_best(self):
-        matcher = self.matcher()
-        upright = np.full((880, 630, 3), 50, np.uint8)
-        whole = np.full((880, 630, 3), 200, np.uint8)
-        best = np.array([0.1, 0.0, 0.0], dtype=np.float32)
-        plain = matcher._picture_scores(best, upright, False)
-        self.assertTrue(np.array_equal(plain, best))
-        self.assertEqual(matcher.embedder.seen, [])  # no extra view, no extra embedding
-        with_whole = matcher._picture_scores(best, upright, False, None, whole)
-        self.assertEqual(matcher.embedder.seen, [1])
-        self.assertGreater(float(with_whole[0]), 0.7)  # the whole picture's view was the card's best
-        keep = matcher._picture_scores(np.array([0.99, 0.0, 0.0], dtype=np.float32), upright, False, None, whole)
-        self.assertAlmostEqual(float(keep[0]), 0.99, places=5)  # it never makes a card worse
-
-    def test_the_whole_view_follows_the_cards_orientation(self):
-        matcher = self.matcher()
-        upright = np.zeros((880, 630, 3), np.uint8)
-        whole = np.zeros((880, 630, 3), np.uint8)
-        whole[:100] = 255
-        seen = []
-        matcher.embedder.embed = lambda pictures: seen.append(pictures[0].copy()) or np.zeros((len(pictures), 3), np.float32)
-        matcher._picture_scores(np.zeros(3, np.float32), upright, True, None, whole)
-        self.assertEqual(float(seen[0][-1].mean()), 255.0)  # turned with the card: the bright band is now at the bottom
 
 
 @skip
