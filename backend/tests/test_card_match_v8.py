@@ -41,7 +41,7 @@ def coverage(detection, picture):
 class OptionAndVersionTests(unittest.TestCase):
     def test_version_default_and_options(self):
         self.assertGreaterEqual(int(MATCHER_VERSION), 8)
-        self.assertEqual(variants.DEFAULT_LABEL, "names+number+text+art+tta+fastread+corners+wholepic")  # version 9: the version 8 best, measured
+        self.assertEqual(variants.DEFAULT_LABEL, "names+number+text+art+tta+fastread+numberonce+corners+wholepic")  # version 10: the version 9 pick, measured
         self.assertTrue(variants.parse(variants.DEFAULT_LABEL).corners)
         self.assertTrue(variants.parse(variants.DEFAULT_LABEL).wholepic)
         self.assertFalse(variants.parse(variants.DEFAULT_LABEL).trustrejected)

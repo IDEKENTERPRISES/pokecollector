@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from . import MATCHER_VERSION, config, shadow as shadow_module
+from . import MATCHER_VERSION, config, misses as misses_module, shadow as shadow_module
 from .index import CardIndex, get_index, index_status, tcg_card_id
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,7 @@ BAR_EXTRA_RAM_MB = 1536
 HOLO_WORDS = ("holo", "illustration", "ultra", "secret", "full art", "rainbow", "hyper", "special", "amazing", "radiant", "shiny")
 STAGES = ("detect", "embed", "search", "ocr", "name", "decide", "total")
 HIRES_DELAY_SECONDS = 0.2
+MAX_WRONG_SCANS = 50  # per run: an option set that decides many wrong is not picked anyway
 
 
 def reports_dir(data_dir: Path | None = None) -> Path:
@@ -516,6 +517,7 @@ def run_labelled(
     rerun_pairs: list[tuple] = []  # (confirmed card, matcher now, Ollama path then): the matcher re-run on the photo
     recorded_pairs: list[tuple] = []  # same, with the matcher's answer recorded in shadow mode at scan time
     examples: list[dict] = []
+    wrong_scans: list[dict] = []  # the scans this run decided wrong (text only), for the comparison's per-row list
     for position, (data, path) in enumerate(eligible, start=1):
         if should_stop and should_stop():
             break
@@ -554,6 +556,13 @@ def run_labelled(
                 logger.exception("Card-match: could not record a miss for %s", path.name)
         rank = next((m["rank"] for m in outcome.matches if m["card_id"] == truth_id), None)
         decision = outcome.decision
+        if decision and decision["card_id"] != truth_id and not trace_sources.is_held_back(data) and len(wrong_scans) < MAX_WRONG_SCANS:
+            try:  # what Misses keeps for a wrong decision, as text; held-back scans feed nothing that tunes, so none is kept
+                wrong_scans.append(misses_module.wrong_record(
+                    trace=path.name, source=trace_sources.source_of(data), trace_rel=trace_relpath(path), outcome=outcome, truth_id=truth_id,
+                    loaded=matcher.candidate_loader([truth_id] + [m["card_id"] for m in outcome.matches[:3]] + [decision["card_id"]])))
+            except Exception:  # the list must never stop the benchmark
+                logger.exception("Card-match: could not record a wrong decision for %s", path.name)
         number_local = outcome.ocr.get("number_local")
         truth_number = next((m["number"] for m in outcome.matches if m["card_id"] == truth_id), None)
         results.append({
@@ -598,6 +607,7 @@ def run_labelled(
     all_results = results
     results = [r for r in all_results if held_back == "only" or not r["group"].endswith("_held_back")]  # the headline: what tuning may see
     extra = {
+        "wrong_scans": [] if held_back == "only" else wrong_scans,
         "labelled": {"scans_with_answer": len(traces), "traces_with_answer": len(traces), "english_in_index": len(eligible), "not_english_or_not_indexed": not_english},
         # Each group apart (the owner's own scans, each read-only source's scans for tuning and held back), with how many trainers.
         "by_group": group_rows(all_results),
@@ -641,6 +651,7 @@ def compare_row(label: str, report: dict | None, *, missing: list[str] | None = 
         "number_exact": m["number_exact_pct"], "decided": m["decided_pct"], "decided_right": m["decided_right_pct"],
         "decided_wrong": m["decided_wrong"], "median_ms": timings.get("median"), "p95_ms": timings.get("p95"),
         "extra_mb": report.get("memory", {}).get("extra_mb"),
+        "wrong_scans": list(report.get("wrong_scans") or []),  # version 10: each wrong decision of this row, as text (see ``misses.wrong_record``)
     }
 
 

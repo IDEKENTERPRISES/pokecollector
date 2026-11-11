@@ -186,6 +186,64 @@ def card_full(card_rgb) -> bytes:
     return _jpeg(card_rgb, FULL_QUALITY)
 
 
+def decided_card(outcome, decision: dict, loaded: dict) -> dict:
+    """The card the matcher decided on, with its own number, total and picture similarity, for the "Decided wrong" list."""
+    row = next((m for m in outcome.matches if m["card_id"] == decision["card_id"]), {})
+    return {
+        "tcg_card_id": decision.get("tcg_card_id"), "name": row.get("name"), "number": row.get("number"), "set": row.get("set"),
+        "printed_total": row.get("printed_total"), "similarity": decision.get("similarity"), "rank": row.get("rank"), "lead": decision.get("lead"),
+        "picture_rank": row.get("picture_rank"), "image": (loaded.get(decision["card_id"]) or {}).get("images_small"),
+    }
+
+
+def wrong_reasons(outcome, decision: dict) -> list[str]:
+    """Plain codes for what stood behind a wrong decision: the mechanism, where the number came from, and what was corrected or refused."""
+    ocr = outcome.ocr or {}
+    codes = [str(decision.get("mechanism"))]
+    if ocr.get("number_local"):
+        codes.append(f"number_from_{ocr.get('number_source') or 'finder_card'}")
+    if not ocr.get("number_total") and ocr.get("number_local"):
+        codes.append("total_not_read")
+    if ocr.get("corrected"):
+        codes.append("number_corrected")
+    if ocr.get("number_from_lookup"):
+        codes.append("number_from_lookup")
+    detection = outcome.detection or {}
+    if detection.get("fallback"):
+        codes.append(f"fallback_{detection['fallback']}")
+    if detection.get("rejected"):
+        codes.append("quad_refused")
+    if (ocr.get("wholeread") or {}).get("rescued"):
+        codes.append("wholeread_rescued")
+    return codes
+
+
+def wrong_record(*, trace: str, source: str, trace_rel: str | None, outcome, truth_id: str, loaded: dict) -> dict:
+    """What the Misses list keeps about a wrong decision, as text only (no pictures), for a comparison row's own list."""
+    decision = outcome.decision
+    truth = {"card_id": truth_id, **(loaded.get(truth_id) or {})}
+    top = next((m for m in outcome.matches if m["card_id"] == truth_id), None)
+    ocr = outcome.ocr or {}
+    return {
+        "key": "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in (Path(trace).stem if source == "local" else f"{source}-{Path(trace).stem}"))[:80],
+        "trace": trace, "source": source, "trace_rel": trace_rel, "kind": "decided_wrong", "rank": top["rank"] if top else None,
+        "mechanism": decision["mechanism"], "decided_card": decided_card(outcome, decision, loaded), "reasons": wrong_reasons(outcome, decision),
+        "truth": {
+            "tcg_card_id": truth.get("tcg_card_id"), "name": truth.get("name"), "number": truth.get("number"), "set": truth.get("set"),
+            "rarity": truth.get("rarity"), "image": truth.get("images_small"), "image_large": truth.get("images_large"),
+            "printed_total": truth.get("printed_total"), "similarity": top.get("similarity") if top else None,
+            "picture_rank": top.get("picture_rank") if top else None,
+        },
+        "top3": [{"tcg_card_id": m["tcg_card_id"], "name": m.get("name"), "number": m.get("number"), "set": m.get("set"),
+                  "similarity": m.get("similarity"), "picture_rank": m.get("picture_rank"), "image": (loaded.get(m["card_id"]) or {}).get("images_small")}
+                 for m in outcome.matches[:3]],
+        "ocr": {"number": ocr.get("number_local"), "total": ocr.get("number_total"), "name": ocr.get("name"), "hp": ocr.get("hp"),
+                "number_source": ocr.get("number_source"), "number_confidence": ocr.get("number_confidence"),
+                "lines": (ocr.get("lines") or [])[:6], "name_lines": (ocr.get("name_lines") or [])[:4]},
+        "detection": {k: (outcome.detection or {}).get(k) for k in ("found", "confidence", "method", "fallback", "rejected")},
+    }
+
+
 class MissCollector:
     """Collects the misses of one labelled run and writes them out at the end."""
 
@@ -265,8 +323,10 @@ class MissCollector:
                  "similarity": m.get("similarity"), "image": (loaded.get(m["card_id"]) or {}).get("images_small")}
                 for m in top3
             ],
+            "reasons": wrong_reasons(outcome, decision) if wrong else None,
             "ocr": {
                 "number": outcome.ocr.get("number_local"), "total": outcome.ocr.get("number_total"), "name": outcome.ocr.get("name"),
+                "number_source": outcome.ocr.get("number_source"), "number_confidence": outcome.ocr.get("number_confidence"),
                 "hp": outcome.ocr.get("hp"), "lines": (outcome.ocr.get("lines") or [])[:6], "name_lines": (outcome.ocr.get("name_lines") or [])[:4],
                 "strips": outcome.ocr.get("strips") or [],  # every region read: box, preprocessing, text and confidence per line
             },
@@ -279,13 +339,7 @@ class MissCollector:
 
     @staticmethod
     def _decided_card(outcome, decision: dict, loaded: dict) -> dict:
-        """The card the matcher decided on, with its own number, total and picture similarity, for the "Decided wrong" list."""
-        row = next((m for m in outcome.matches if m["card_id"] == decision["card_id"]), {})
-        return {
-            "tcg_card_id": decision.get("tcg_card_id"), "name": row.get("name"), "number": row.get("number"), "set": row.get("set"),
-            "printed_total": row.get("printed_total"), "similarity": decision.get("similarity"), "rank": row.get("rank"), "lead": decision.get("lead"),
-            "image": (loaded.get(decision["card_id"]) or {}).get("images_small"),
-        }
+        return decided_card(outcome, decision, loaded)
 
     def finish(self, label: str = "") -> dict:
         report = {
