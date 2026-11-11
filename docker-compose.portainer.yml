@@ -18,7 +18,7 @@ services:
       # Picture matcher (docs/CARD_MATCH.md, "Running it on prod"). None of this changes a scan until an admin
       # builds the picture indexes in Scanner lab and switches "Picture match first" on in Settings > Scanner.
       # The option set is the one nonprod's real-photo comparison kept. Promote a better one by changing it here.
-      CARD_MATCH_OPTIONS: ${CARD_MATCH_OPTIONS:-names+number+text+art+tta+numberonce}
+      CARD_MATCH_OPTIONS: ${CARD_MATCH_OPTIONS:-names+number+text+art+tta+fastread+corners+wholepic}
       # Set to 1 in the stack's environment to add new card pictures to the index after each card sync.
       SCAN_MATCHER_INDEX_AFTER_SYNC: ${SCAN_MATCHER_INDEX_AFTER_SYNC:-}
       # Default for the admin switch "Picture match first". Unset means off.
