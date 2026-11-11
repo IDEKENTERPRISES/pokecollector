@@ -15,7 +15,11 @@ Options (all measured side by side by the labelled benchmark, "Compare options" 
   - ``wholepic`` (version 8, needs ``corners``): a refused quad leaves the whole picture as the card instead of the centre
     guide crop, because a card that fills the guide crop has its edges at the picture border;
   - ``trustrejected`` (version 8, needs ``corners``): a card read from the guide crop because the finder REFUSED its quad is
-    decided by the normal rules, not the strict "number read and picture agrees" fallback ones.
+    decided by the normal rules, not the strict "number read and picture agrees" fallback ones;
+  - ``wholeread`` (version 9): a guide picture whose number the normal read did not complete is read once more from the whole
+    picture treated as the card (the first steps only, inside the same time budget), merged with the first reading;
+  - ``wholeview`` (version 9): for the same guide pictures the whole picture is one more view in the picture scores, each card
+    keeping its best view.
 A label is the options joined by ``+``: ``baseline`` (none), ``names``, ``names+number``, ``names+number+text+tta`` ...
 
 The label in use comes from ``CARD_MATCH_OPTIONS``, else from ``chosen.json`` (written when a comparison
@@ -38,18 +42,20 @@ logger = logging.getLogger(__name__)
 
 BASE_MODEL = "dinov2-base"
 ART_INDEX = f"{DEFAULT_MODEL}-art"  # the artwork-window index of the default model
-DEFAULT_LABEL = "names+number+text+art+tta+fastread+corners"  # v8: v7's set with the self-doubting finder (v6: without fastread, same accuracy 144 ms slower); an unbuilt artwork index is left out, see ``usable``
+BEST_V8 = "names+number+text+art+tta+fastread+corners+wholepic"
+DEFAULT_LABEL = BEST_V8  # v9: the set the server measured best with version 8 (66.3% decided, 0 wrong, p95 1,404 ms); an unbuilt artwork index is left out, see ``usable``
 # The labels the comparison runs, cheapest first.
 # The lookup lanes come one at a time right after ``names`` so each one's gain shows as its own row.
-# Version 7 dropped "...art+tta" and "...art+tta+numberonce" (the same rows with fastread measured the same accuracy and are
-# faster). Version 8 drops the ``tworeads`` row (it did not help), "names+number+text+tta" and "names+number+text+base" (the
-# art rows beside them carry the same question) to make room for the three finder rows; the list stays at 12.
+# Version 9 has twelve rows or fewer: it adds the measured best (``BEST_V8``) with ``numberonce`` (not yet measured together with
+# corners and wholepic) and with each new option and with both, so it drops the rows that can no longer be picked or have
+# answered their question: "names+number+text+art+reprint" (never chosen, no gain in any run), "names+number+text+art+base"
+# (never chosen, and the slowest row), "...art+tta+fastread+numberonce" (no corners: 62.3% against 60.9%, both measured; the
+# numberonce question is now asked on top of the best set) and "...corners+trustrejected" (61.2%, no real gain).
 COMPARE_LABELS = (
     "baseline", "names", "names+number", "names+number+text", "names+number+text+art",
-    "names+number+text+art+reprint", "names+number+text+art+tta+fastread",
-    "names+number+text+art+tta+fastread+numberonce", "names+number+text+art+tta+fastread+corners",
-    "names+number+text+art+tta+fastread+corners+wholepic", "names+number+text+art+tta+fastread+corners+trustrejected",
-    "names+number+text+art+base",
+    "names+number+text+art+tta+fastread", "names+number+text+art+tta+fastread+corners", BEST_V8,
+    BEST_V8.replace("fastread+corners", "fastread+numberonce+corners"), BEST_V8 + "+wholeread", BEST_V8 + "+wholeview",
+    BEST_V8 + "+wholeread+wholeview",
 )
 # The synthetic comparison chooses nothing, so it runs a short list on fewer photos
 # (version 5: 10 rows x 400 photos took 89 minutes).
@@ -57,7 +63,7 @@ SYNTHETIC_COMPARE_LABELS = (
     "baseline", "names+number+text", "names+number+text+art+tta", "names+number+text+art+tta+fastread",
 )
 SYNTHETIC_COMPARE_COUNT = 100
-ORDER = ("names", "number", "text", "art", "reprint", "base", "tta", "fastread", "numberonce", "corners", "wholepic", "trustrejected")
+ORDER = ("names", "number", "text", "art", "reprint", "base", "tta", "fastread", "numberonce", "corners", "wholepic", "trustrejected", "wholeread", "wholeview")
 
 
 @dataclass(frozen=True)
@@ -74,6 +80,8 @@ class Options:
     corners: bool = False  # the finder refuses implausible quads (shape, share of the picture); the guide crop is used instead
     wholepic: bool = False  # a refused quad: the whole picture is the card, not the centre guide crop (needs corners)
     trustrejected: bool = False  # a refused quad: the guide-crop card is decided by the normal rules (needs corners)
+    wholeread: bool = False  # version 9: a guide picture without a complete number is read once more from the whole picture
+    wholeview: bool = False  # version 9: the whole picture is one more view of a guide picture in the picture scores
 
     @property
     def label(self) -> str:
@@ -198,6 +206,7 @@ def _build_matcher(options: Options, session_factory, *, data_dir: Path | None =
         index, embed.get_embedder(DEFAULT_MODEL), pipeline.db_candidate_loader(session_factory), ocr_reader or get_reader(),
         read_hp=read_hp, extra_signals=signals, tta=options.tta, names=names, label=options.label, fastread=options.fastread, number_once=options.numberonce,
         corners=options.corners, wholepic=options.wholepic, trustrejected=options.trustrejected,
+        wholeread=options.wholeread, wholeview=options.wholeview,
         lookup=lookup, use_number=options.number, use_text=options.text, reprint=options.reprint,
     )
 

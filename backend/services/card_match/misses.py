@@ -354,7 +354,8 @@ def strip_views(key: str, data_dir: Path | None = None) -> list[dict] | None:
     for strip in (item.get("ocr") or {}).get("strips") or []:
         picture = None
         try:
-            picture = ocr_module.render_strip(card, strip)
+            if strip.get("source") != "whole_picture":  # (read from the whole picture, which is not stored with the miss: text only)
+                picture = ocr_module.render_strip(card, strip)
         except Exception:
             logger.exception("Card-match: could not draw a strip for %s", key)
         image = None

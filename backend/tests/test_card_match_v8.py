@@ -40,10 +40,10 @@ def coverage(detection, picture):
 @skip
 class OptionAndVersionTests(unittest.TestCase):
     def test_version_default_and_options(self):
-        self.assertEqual(MATCHER_VERSION, "8")
-        self.assertEqual(variants.DEFAULT_LABEL, "names+number+text+art+tta+fastread+corners")
+        self.assertGreaterEqual(int(MATCHER_VERSION), 8)
+        self.assertEqual(variants.DEFAULT_LABEL, "names+number+text+art+tta+fastread+corners+wholepic")  # version 9: the version 8 best, measured
         self.assertTrue(variants.parse(variants.DEFAULT_LABEL).corners)
-        self.assertFalse(variants.parse(variants.DEFAULT_LABEL).wholepic)
+        self.assertTrue(variants.parse(variants.DEFAULT_LABEL).wholepic)
         self.assertFalse(variants.parse(variants.DEFAULT_LABEL).trustrejected)
         self.assertTrue(variants.parse("names+wholepic").corners)  # both act on a refused quad
         self.assertTrue(variants.parse("names+trustrejected").corners)
@@ -54,7 +54,7 @@ class OptionAndVersionTests(unittest.TestCase):
         self.assertLessEqual(len(labels), 12)
         self.assertEqual(len(set(labels)), len(labels))
         self.assertFalse([label for label in labels if "tworeads" in label])
-        for word in ("corners", "corners+wholepic", "corners+trustrejected"):
+        for word in ("corners", "corners+wholepic"):  # version 9 dropped the trustrejected row (61.2%, no real gain); the option stays
             self.assertTrue(any(label.endswith("+" + word) for label in labels), word)
         self.assertIn(variants.DEFAULT_LABEL, labels)
         for label in labels:

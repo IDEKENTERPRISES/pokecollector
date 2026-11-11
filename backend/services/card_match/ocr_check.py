@@ -22,6 +22,12 @@ examples each, plus a bucket for the right number with a different total than th
 scans from three sources, the sharper card, the old-size card and the sharper card shrunk, to find out whether the sharper
 photo cost numbers. It did not: 59.0%, 56.7% and 60.0%. Version 8 removed that paired test.)
 
+Version 9 adds two things. The whole-picture second read (``wholeread``): for every scan whose normal read did not complete the
+number, the whole recognition picture treated as the card is read once more (the first steps only) and merged with the normal read,
+as a third row beside ``fixed`` and ``detect`` and as extra "whole-..." rows in the step table. And the capture quality: for every
+scan the sharpness, brightness and blown-out share of the flat card that was read, medians per group and per set, split by whether
+the number was read, so "photographed worse" can be told from "printed differently" (``summarise_capture``).
+
 Everything here is read-only; the report lands next to the other benchmark reports.
 """
 
@@ -190,6 +196,63 @@ def summarise_never(acc: dict) -> dict:
             "sets": [{"set": name, "scans": counts[0], "wrong": counts[1]} for name, counts in sets]}
 
 
+# ── Capture quality: were these sets photographed worse? ─────────────────────
+
+CAPTURE_MIN_SCANS = 5  # a set needs this many scans to be listed
+CAPTURE_MAX_SETS = 12
+
+
+def new_capture() -> dict:
+    return {"all": {"read": [], "missed": []}, "sets": {}}
+
+
+def add_capture(acc: dict, set_name: str | None, stats: dict | None, number_read: bool) -> None:
+    """One scan's flat-card measurements (``misses.card_stats``: sharpness, brightness, blown-out share), filed under whether the
+    number was read right, for the group and for the scan's set."""
+    if not stats:
+        return
+    key = "read" if number_read else "missed"
+    acc["all"][key].append(stats)
+    acc["sets"].setdefault(str(set_name or "?"), {"read": [], "missed": []})[key].append(stats)
+
+
+def _typical(rows: list[dict]) -> dict:
+    import statistics
+
+    def median(field: str, digits: int):
+        values = [row[field] for row in rows if row.get(field) is not None]
+        return round(statistics.median(values), digits) if values else None
+
+    return {"n": len(rows), "sharpness": median("sharpness", 1), "brightness": median("mean", 1), "blown_pct": (round(100 * m, 1) if (m := median("glare", 4)) is not None else None)}
+
+
+def _low_light_or_blur_pct(rows: list[dict]) -> float | None:
+    from . import misses
+
+    if not rows:
+        return None
+    low = sum(1 for row in rows if row.get("mean", 255) < misses.DARK_MEAN or row.get("sharpness", 1e9) < misses.BLUR_VARIANCE)
+    return round(100 * low / len(rows), 1)
+
+
+def _capture_block(parts: dict) -> dict:
+    return {"scans": len(parts["read"]) + len(parts["missed"]), "read": _typical(parts["read"]), "missed": _typical(parts["missed"]),
+            "missed_low_light_or_blur_pct": _low_light_or_blur_pct(parts["missed"]),
+            "read_low_light_or_blur_pct": _low_light_or_blur_pct(parts["read"])}
+
+
+def summarise_capture(acc: dict) -> dict:
+    """Typical (median) sharpness, brightness and blown-out share where the number was read and where it was not, for the group
+    and per set (sets with a miss first), with the share of the misses that fall under the Misses list's low-light-or-blur
+    thresholds (and the same share among the scans that were read, for comparison)."""
+    from . import misses
+
+    sets = [{"set": name, **_capture_block(parts)} for name, parts in acc["sets"].items() if len(parts["read"]) + len(parts["missed"]) >= CAPTURE_MIN_SCANS]
+    sets.sort(key=lambda item: (-item["missed"]["n"], -item["scans"], item["set"]))
+    return {**_capture_block(acc["all"]), "sets": sets[:CAPTURE_MAX_SETS],
+            "thresholds": {"brightness": misses.DARK_MEAN, "sharpness": misses.BLUR_VARIANCE}}
+
+
 def new_bucket() -> dict:
     return {"n": 0, "name": 0, "number": 0, "total": 0, "set_code": 0, "seconds": []}
 
@@ -240,6 +303,33 @@ def read_both(reader, card, mode: str):
         reader.mode = previous
 
 
+def whole_second_read(reader, photo, first):
+    """Version 9's whole-picture read, as the check can measure it: ``(merged reading, True)`` when ``photo`` (the recognition
+    picture) is a guide picture and ``first`` did not complete the number, else ``(first, False)``. The first steps only, in the
+    reading's own orientation, merged by ``better_read``; ``first`` is not changed."""
+    import dataclasses
+
+    from . import detect, pipeline
+
+    if ocr_module.is_complete(first):
+        return first, False
+    try:
+        photo = photo() if callable(photo) else photo
+    except Exception:
+        photo = None
+    if photo is None or not detect.is_guide_picture(photo):
+        return first, False
+    previous, reader.mode = reader.mode, "detect"
+    try:
+        whole = detect.whole_detection(photo)
+        picture = whole.hires if whole.hires is not None else whole.card
+        second = reader.read(picture, read_hp=False, flipped=first.flipped, fast=True, stage="quick", budget=pipeline.WHOLEREAD_MAX_SECONDS)
+    finally:
+        reader.mode = previous
+    copy = dataclasses.replace(first, tokens=list(first.tokens), lines=list(first.lines), strips=list(first.strips))
+    return ocr_module.merge_reads(copy, second, "whole_picture", "whole-"), True
+
+
 def read_variant(reader, card, variant: str):
     """One read of the bottom band and of the name band under one preprocessing variant (None: it changes nothing here)."""
     from . import names
@@ -266,6 +356,7 @@ def run_ocr_check(
 ) -> dict | None:
     """Read every confirmed real trace and report what was read right, by resolution. None without usable traces."""
     from . import detect
+    from . import misses as misses_module
     from .benchmark import _numbers_equal, load_stored_card
     from .images import decode_rgb
     from .pipeline import db_candidate_loader
@@ -281,6 +372,8 @@ def run_ocr_check(
     buckets: dict[str, dict] = {}
     steps: dict[str, dict] = {}
     never: dict[str, dict] = {}
+    capture: dict[str, dict] = {}
+    whole_counts: dict[str, dict] = {}
     failures: list[dict] = []
     skipped = 0
 
@@ -308,17 +401,30 @@ def run_ocr_check(
             skipped += 1
             continue
         rights: dict[str, dict] = {}
+        try:
+            stats = misses_module.card_stats(card)
+        except Exception:
+            stats = None
         for mode in modes:
             result, name, seconds, name_strips = read_both(reader, card, mode)
             if mode == "detect":
                 detect_read = (result, name, seconds)
+                # Version 9: the whole-picture read for a scan whose number is not complete; its steps join the table as "whole-..." rows.
+                whole = whole_second_read(reader, lambda: decode_rgb((path.parent / data["image_file"]).read_bytes(), max_side=1024), result)
             for res in ((resolution, "all") if resolution != "guide_crop" else (resolution,)):
                 rights[mode] = score_read(bucket_for(res, mode), truth=truth, name=name, result=result, seconds=seconds)
                 if mode == "detect":
+                    right_number = lambda after: bool(after.get("number") and _numbers_equal(after["number"], truth.get("number")))  # noqa: E731
                     acc = steps.setdefault(res, new_steps())
                     acc["scans"] += 1
-                    ever_right = add_steps(acc, result.strips, "number", lambda after: bool(after.get("number") and _numbers_equal(after["number"], truth.get("number"))),
-                                           flipped=result.flipped)
+                    merged, tried = whole
+                    ever_right = add_steps(new_steps(), result.strips, "number", right_number, flipped=result.flipped)  # "never right" stays the version 8 reading
+                    add_steps(acc, merged.strips, "number", right_number, flipped=result.flipped)
+                    counts = whole_counts.setdefault(res, {"tried": 0, "rescued": 0})
+                    counts["tried"] += 1 if tried else 0
+                    counts["rescued"] += 1 if tried and ocr_module.completeness(merged) > ocr_module.completeness(result) else 0
+                    score_read(bucket_for(res, "wholeread"), truth=truth, name=name, result=merged, seconds=seconds + (merged.seconds - result.seconds if tried else 0.0))
+                    add_capture(capture.setdefault(res, new_capture()), truth.get("set_abbreviation") or truth.get("set"), stats, rights[mode]["number"])
                     add_steps(acc, name_strips, "name", lambda after: names_match(after.get("name"), truth.get("name")))
                     add_never(never.setdefault(res, new_never()), number_bucket(result.lines, result.number_local, result.number_total, truth, ever_right=ever_right),
                               truth=truth, result=result, name=name, trace=path.name)
@@ -348,6 +454,10 @@ def run_ocr_check(
         "never_right": {res: summarise_never(acc) for res, acc in sorted(never.items())},
         "never_right_note": "Why the number was never right, per group, with up to ten examples each (text only: the lines read and the confirmed number and total).",
         "steps_note": "Per reading step of the full ladder, in order: scans that first had the right number (name) at that step, and the time it used.",
+        "capture": {res: summarise_capture(acc) for res, acc in sorted(capture.items())},
+        "capture_note": "Typical (median) sharpness, brightness and blown-out share of the flat card that was read, where the number was read right and where it was not, per group and per set.",
+        "wholeread": {res: counts for res, counts in sorted(whole_counts.items())},
+        "wholeread_note": "Version 9: scans whose number the normal read did not complete and that were read once more from the whole picture (the first steps only), and how many of those it completed. The 'wholeread' row beside 'detect' is the number read after it.",
         "failures": failures,
         "duration_seconds": round(time.monotonic() - started, 1),
     }

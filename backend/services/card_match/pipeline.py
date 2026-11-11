@@ -83,6 +83,13 @@ SAME_NAME_PICTURE_MARGIN = _env_float("CARD_MATCH_SAME_NAME_PICTURE_MARGIN", 0.1
 # (a card in the index scores far higher in its own orientation; a card that is not there, or a holo with
 # glare, scores about the same both ways and must not flip). Anything closer is settled by reading the text.
 ORIENT_MARGIN = _env_float("CARD_MATCH_ORIENT_MARGIN", 0.10)
+# Version 9, the whole-picture second read (``wholeread``). It must not make a scan slower than the reading ladder already may:
+# the number read of one scan is allowed ``WHOLEREAD_TOTAL`` x its own budget (the same 1.5 x that lets the last-resort band
+# start). When the second read applies, the last-resort band waits behind it: the second read spends at most
+# ``WHOLEREAD_MAX_SECONDS`` of what is left, and the band runs after it only if the total is still inside the allowance.
+WHOLEREAD_TOTAL = 1.5
+WHOLEREAD_MAX_SECONDS = 0.45
+WHOLEREAD_MIN_SECONDS = 0.15  # less than this is left: the second read is skipped (and says so)
 ROTATED_MIN_SIMILARITY = 0.45  # measuring a real rotation against the confirmed card: the turned view must also be this close
 
 
@@ -337,6 +344,7 @@ class CardMatcher:
         extra_signals=(), tta: bool = False, names=None, label: str = "baseline",
         lookup=None, use_number: bool = False, use_text: bool = False, reprint: bool = False, fastread: bool = False,
         number_once: bool = False, corners: bool = False, wholepic: bool = False, trustrejected: bool = False,
+        wholeread: bool = False, wholeview: bool = False,
     ) -> None:
         self.index = index
         self.embedder = embedder
@@ -355,6 +363,8 @@ class CardMatcher:
         self.corners = corners  # version 8: the card finder judges every quad for plausibility (detect.plausibility_problem)
         self.wholepic = wholepic  # a refused quad: the whole picture is the card, not the centre guide crop
         self.trustrejected = trustrejected  # a refused quad with the guide crop used is decided by the normal rules, not the strict fallback ones
+        self.wholeread = wholeread  # version 9: a guide picture whose number was not read from the finder's card is read once more from the whole picture
+        self.wholeview = wholeview  # version 9: the whole picture is one more view of a guide picture in the picture scores (each card keeps its best view)
         self.reprint = reprint  # break ties between reprints by the artwork-only similarity
         self._row_maps: dict[int, np.ndarray] = {}
 
@@ -376,12 +386,15 @@ class CardMatcher:
         raw = self.embedder.embed(views) @ self.index.vectors.T
         return raw.max(axis=0), float(raw[0].max()), float(raw[1].max())
 
-    def _picture_scores(self, best: np.ndarray, upright: np.ndarray, flipped: bool, art_out: dict | None = None) -> np.ndarray:
+    def _picture_scores(self, best: np.ndarray, upright: np.ndarray, flipped: bool, art_out: dict | None = None, whole: np.ndarray | None = None) -> np.ndarray:
         """The per-card picture score for a card known to be ``flipped`` or not. Test-time augmentation adds
         views of the oriented card, and each extra index (artwork only, a second model) adds its own
-        similarity: the result is their average per card."""
+        similarity: the result is their average per card. ``whole`` (version 9, ``wholeview``): the whole picture, one more
+        view of the same card, turned like the card is."""
         oriented = np.ascontiguousarray(upright[::-1, ::-1]) if flipped else upright
         extra_views = detect_module.augmented_views(oriented) if self.tta else []
+        if whole is not None:
+            extra_views = extra_views + [np.ascontiguousarray(whole[::-1, ::-1]) if flipped else whole]
         if extra_views:
             best = np.maximum(best, self.index.best_scores(self.embedder.embed(extra_views)))
         if self.extra_signals:
@@ -439,7 +452,7 @@ class CardMatcher:
             name_found = 1
         return ocr_module.completeness(result), name_found
 
-    def _read_text(self, card: np.ndarray, picture_flipped: bool, *, use_names: bool, light: bool = False):
+    def _read_text(self, card: np.ndarray, picture_flipped: bool, *, use_names: bool, light: bool = False, defer_last_resort: bool = False):
         """Read the number strips (and the name line) the right way up.
 
         When the picture search is sure the card is turned (``picture_flipped``), read it turned. Otherwise
@@ -451,9 +464,10 @@ class CardMatcher:
         one orientation only, so this read takes no longer than a normal one (it used to run the whole ladder both ways up)."""
 
         fast = {"fast": True} if (self.fastread or light) else {}  # only passed when on, so a reader without the option still works
+        first = {**fast, "stage": "first"} if defer_last_resort else fast  # the last-resort band waits behind the whole-picture read
 
         def attempt(flipped: bool):
-            result = self.ocr_reader.read(card, read_hp=self.read_hp, flipped=flipped, **fast)
+            result = self.ocr_reader.read(card, read_hp=self.read_hp, flipped=flipped, **first)
             name_read = self.ocr_reader.read_name(card, flipped=flipped, **fast) if use_names else None
             return result, name_read
 
@@ -495,6 +509,39 @@ class CardMatcher:
                 return other, name
         return detection, "guide_crop"
 
+    def _second_read(self, photo_rgb: np.ndarray, text_card: np.ndarray, first, flipped: bool, fast: bool) -> tuple[object, dict]:
+        """Version 9 (``wholeread``): the finder's card gave no complete number, so read the number once more from the whole
+        picture treated as the card (its sharper copy when the photo has one), with the first steps only, merged with the first
+        reading by ``ocr.better_read``; then, if the number is still incomplete and time is left, the last-resort band the first
+        read held back. Returns (the merged reading, what happened: ``tried``, ``skipped``, ``rescued``, ``ms``)."""
+        began = _timer()
+        total = (ocr_module.FAST_BUDGET_SECONDS if fast else ocr_module.BUDGET_SECONDS) * WHOLEREAD_TOTAL
+        spent = float(getattr(first, "seconds", 0.0) or 0.0)
+        info = {"tried": False, "skipped": None, "rescued": False, "last_resort": None}
+        before = ocr_module.completeness(first)
+        extra = {"fast": True} if fast else {}
+        result = first
+        left = total - spent
+        if left >= WHOLEREAD_MIN_SECONDS:
+            whole = detect_module.whole_detection(photo_rgb)
+            picture = whole.hires if whole.hires is not None else whole.card
+            second = self.ocr_reader.read(picture, read_hp=False, flipped=flipped, stage="quick", budget=min(WHOLEREAD_MAX_SECONDS, left), **extra)
+            result = ocr_module.merge_reads(first, second, "whole_picture", "whole-")
+            info["tried"] = True
+            spent += float(getattr(second, "seconds", 0.0) or 0.0)
+        else:
+            info["skipped"] = "budget"
+        if not ocr_module.is_complete(result):  # what the first read held back
+            if spent <= total:
+                last = self.ocr_reader.read(text_card, read_hp=False, flipped=flipped, stage="last", **extra)
+                result = ocr_module.merge_reads(result, last)
+                info["last_resort"] = "read"
+            else:
+                info["last_resort"] = "skipped"
+        info["rescued"] = ocr_module.completeness(result) > before
+        info["ms"] = round((_timer() - began) * 1000, 1)
+        return result, info
+
     def _text_card(self, detection, upright: np.ndarray, full_photo, flat_card, fallback: str | None = None) -> tuple[np.ndarray, str]:
         """The flat card the text is read from, and where it came from. Text is small, so it is read from the
         sharpest picture there is: a stored high-resolution card (a trace), or the full-resolution photo
@@ -528,7 +575,10 @@ class CardMatcher:
         margin = top_turned - top_upright
         picture_flipped = bool(len(best)) and margin >= ORIENT_MARGIN
         art_scores: dict = {}
-        scores = self._picture_scores(best, upright, picture_flipped, art_scores)
+        # Version 9: a guide picture (the camera's card-shaped crop) whose card the finder cut out of it, not the whole picture already.
+        whole_eligible = (self.wholeread or self.wholeview) and detection.method != "whole_picture" and detect_module.is_guide_picture(photo_rgb)
+        whole_card = detect_module.whole_picture(photo_rgb) if (self.wholeview and whole_eligible) else None
+        scores = self._picture_scores(best, upright, picture_flipped, art_scores, whole_card)
         timings["embed"] = (_timer() - t0) * 1000
 
         t0 = _timer()
@@ -546,11 +596,16 @@ class CardMatcher:
             t0 = _timer()
             text_card, text_source = self._text_card(detection, upright, full_photo, flat_card, fallback)
             can_read_names = self.names is not None and hasattr(self.ocr_reader, "read_name")
-            ocr_result, name_read, flipped, how = self._read_text(text_card, picture_flipped, use_names=can_read_names, light=fallback == "guide_crop")
+            second_read = self.wholeread and whole_eligible
+            ocr_result, name_read, flipped, how = self._read_text(text_card, picture_flipped, use_names=can_read_names, light=fallback == "guide_crop",
+                                                                  defer_last_resort=second_read)
+            wholeread_info = None
+            if second_read and not ocr_module.is_complete(ocr_result):
+                ocr_result, wholeread_info = self._second_read(photo_rgb, text_card, ocr_result, flipped, self.fastread or fallback == "guide_crop")
             timings["ocr"] = (_timer() - t0) * 1000
             if flipped != picture_flipped:  # the text turned the card: the extra views follow the card's real orientation
                 t0 = _timer()
-                scores = self._picture_scores(best, upright, flipped, art_scores)
+                scores = self._picture_scores(best, upright, flipped, art_scores, whole_card)
                 hits = self._top_hits(scores, top_k)
                 timings["search"] += (_timer() - t0) * 1000
             ocr_info = {
@@ -560,6 +615,8 @@ class CardMatcher:
                 "text_input": {"source": text_source, "width": int(text_card.shape[1]), "height": int(text_card.shape[0])},
             }
             # Every region OCR read (box, preprocessing, each line's text and confidence): Scanner lab draws them.
+            if wholeread_info is not None:
+                ocr_info["wholeread"] = wholeread_info
             ocr_info["strips"] = list(getattr(ocr_result, "strips", None) or []) + list(getattr(name_read, "strips", None) or [])
             if name_read is not None:
                 if name_read.hp and not ocr_info.get("hp"):
