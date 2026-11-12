@@ -30,6 +30,7 @@ import GreetingStreak from '../progress/GreetingStreak'
 import { readShowDaily } from '../progress/daily'
 import OnThisDayCard from '../delights/OnThisDayCard'
 import WrappedBanner from '../wrapped/WrappedBanner'
+import HomeBanners from '../components/banners/HomeBanners'
 import RecapCard from '../recap/RecapCard'
 import GoalHomeCard from '../goals/GoalHomeCard'
 import { goalsQueryKey, pinnedGoals } from '../goals/goals'
@@ -264,6 +265,8 @@ export default function HomeScreen() {
     <div className="relative isolate -mt-1 flex flex-col gap-6 px-4 pb-6">
       <HeaderBloom variant="home" />
       <h1 className="sr-only">{t('nav.home')}</h1>
+
+      <HomeBanners />
 
       <div className="-mx-4">
       <LargeTitle>

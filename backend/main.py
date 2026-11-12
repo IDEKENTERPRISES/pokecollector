@@ -228,6 +228,11 @@ app.include_router(goals.router, prefix="/api/goals", tags=["goals"])
 app.include_router(feed.router, prefix="/api/feed", tags=["feed"])
 app.include_router(swaps.router, prefix="/api/swaps", tags=["swaps"])
 app.include_router(challenge.router, prefix="/api/challenge", tags=["challenge"])
+from api.admin_notifications import router as admin_notifications_router
+app.include_router(admin_notifications_router, prefix="/api/admin", tags=["admin"])
+from api.banners import admin_router as banners_admin_router, router as banners_router
+app.include_router(banners_admin_router, prefix="/api/admin", tags=["admin"])
+app.include_router(banners_router, prefix="/api/banners", tags=["banners"])
 app.include_router(card_match.router, prefix="/api/card-match", tags=["card-match"])
 
 
