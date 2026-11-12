@@ -284,6 +284,7 @@ export async function runSpeedTest({ files, photoSource, onRow, onPhase, options
   }
 
   // the index
+  const answer = { topk: {}, ocr_lines: [] }
   const query = embeddings.wasm || embeddings.webgpu_fp16 || embeddings.webgpu_uint8
   const wholeIndexes = []
   const artIndexes = []
@@ -302,6 +303,11 @@ export async function runSpeedTest({ files, photoSource, onRow, onPhase, options
   if (query && wholeIndexes.length) {
     await guard('search_whole', () => timed('search_whole', () => searchTopK(wholeIndexes, query, 20)))
     await guard('search_art', () => timed('search_art', () => searchTopK(artIndexes, query, 20)))
+    // what this phone computed for the photo, per backend that embedded it (sent with the photo for the server comparison)
+    for (const [backend, embedding] of Object.entries(embeddings)) {
+      const pick = list => searchTopK(list, embedding, 20).map(item => [item.id, round(item.score, 5)])
+      answer.topk[backend] = { whole: pick(wholeIndexes), art: pick(artIndexes) }
+    }
   } else {
     set('search_whole', { error: 'needs one embedding and the index' })
     set('search_art', { error: 'needs one embedding and the index' })
@@ -352,6 +358,7 @@ export async function runSpeedTest({ files, photoSource, onRow, onPhase, options
               text.push(ctcDecode(values, result.dims[1], result.dims[2], characters))
             }
           }, RUNS, `read: ${text.map(item => item.trim()).filter(Boolean).join(' | ') || '(nothing)'}`)
+          answer.ocr_lines = text.map(item => item.trim().slice(0, 190)).filter(Boolean).slice(0, 20)
           rows.ocr_rec_run.note = `3 lines of 48 px height; read: ${text.map(item => item.trim()).filter(Boolean).join(' | ') || '(nothing)'}`
           onRow('ocr_rec_run', rows.ocr_rec_run)
         })
@@ -365,10 +372,10 @@ export async function runSpeedTest({ files, photoSource, onRow, onPhase, options
   // the estimate
   const values = medians()
   const estimates = { wasm: estimateCard(values, 'wasm'), webgpu_fp16: estimateCard(values, 'webgpu_fp16'), webgpu_uint8: estimateCard(values, 'webgpu_uint8') }
-  return finish(rows, device, estimates)
+  return finish(rows, device, estimates, answer)
 }
 
-function finish(rows, device, estimates = {}) {
+function finish(rows, device, estimates = {}, answer = { topk: {}, ocr_lines: [] }) {
   markStep(null)
   const timings = {}
   for (const [id, row] of Object.entries(rows)) {
@@ -377,7 +384,7 @@ function finish(rows, device, estimates = {}) {
   }
   for (const [backend, value] of Object.entries(estimates)) timings[`estimate_card_${backend}_ms`] = round(value)
   device.estimateOcr = `${OCR_ASSUMPTION.detections} det + ${OCR_ASSUMPTION.recognitions} rec`
-  return { timings, device, estimates, rows }
+  return { timings, device, estimates, rows, answer }
 }
 
 export { median }

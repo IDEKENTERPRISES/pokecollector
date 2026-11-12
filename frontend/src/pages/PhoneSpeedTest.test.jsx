@@ -15,11 +15,12 @@ const render = element => renderToStaticMarkup(<MemoryRouter>{element}</MemoryRo
 describe('Phone speed test visibility', () => {
   beforeEach(() => { auth.user = { role: 'admin' } })
 
-  it('shows the page to an admin, with a camera input that never uploads and the remove button', () => {
+  it('shows the page to an admin, with a camera input, the upload notice and the remove button', () => {
     const html = render(<PhoneSpeedTest />)
     expect(html).toContain('Phone speed test')
     expect(html).toContain('capture="environment"')
-    expect(html).toContain('never uploaded')
+    expect(html).toContain('The photo is kept on the server with the timings (admins only)')
+    expect(html).toContain('built-in sample is never uploaded')
     expect(html).toContain('Remove test files')
     expect(html).toContain('cannot be read on iOS')
   })
@@ -33,6 +34,8 @@ describe('Phone speed test visibility', () => {
 
   it('lists the last runs in Scanner lab with the link to the page', () => {
     const html = render(<PhoneSpeedRuns runs={[{
+      id: '20261113T091500000000-abcd1234', has_photo: true, server: { status: 'done' },
+      compare: { in_use: { wasm: { top1_agree: true, phone_top1_in_server_top20: true, overlap: 14 } } },
       at: '2026-11-13T09:15:00+00:00', by: 'oak', device: { ios: '18.2', gpu: true, crashedBefore: true },
       timings: { embed_wasm_median_ms: 410, card_wasm_median_ms: 2900, estimate_card_wasm_ms: 3800, estimate_card_webgpu_fp16_ms: 900 },
     }]} />)
@@ -41,7 +44,13 @@ describe('Phone speed test visibility', () => {
     expect(html).toContain('2,900 ms')
     expect(html).toContain('GPU 900 ms')
     expect(html).toContain('crashed before')
+    expect(html).toContain('in-use set: top 1 agrees')
+    expect(html).toContain('14/20 shared')
     expect(render(<PhoneSpeedRuns runs={[]} />)).toContain('No runs yet')
+    expect(html).not.toContain('scanner-lab-phone-speed-delete')
+    const withDelete = render(<PhoneSpeedRuns runs={[{ id: 'x', at: '2026-11-13T09:15:00', by: 'oak', has_photo: false, timings: {}, device: {} }]} onDelete={() => {}} />)
+    expect(withDelete).toContain('scanner-lab-phone-speed-delete')
+    expect(withDelete).toContain('no photo (built-in sample)')
   })
 
   it('shows first run and median per step, and an error where a step failed', () => {

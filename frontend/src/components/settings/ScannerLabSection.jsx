@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { FlaskConical, GitCompare, Hammer, Smartphone } from 'lucide-react'
@@ -377,11 +377,45 @@ export function PhoneNote({ phone, rows }) {
 
 const SPEED_KEY = ['card-match-phone-speed']
 
-/** The last phone speed-test runs (numbers and device facts only) and the way to the test page. Admins only: the section is. */
-export function PhoneSpeedRuns({ runs }) {
+/** The photo of a speed-test run as a small thumbnail. Admin-only: fetched with the sign-in token, never a public URL. */
+function RunThumb({ id }) {
+  const [url, setUrl] = useState(null)
+  useEffect(() => {
+    let live = true
+    let made = null
+    api.get(`/card-match/phone-speed/${id}/photo`, { responseType: 'blob' }).then(response => {
+      if (!live) return
+      made = URL.createObjectURL(response.data)
+      setUrl(made)
+    }).catch(() => {})
+    return () => { live = false; if (made) URL.revokeObjectURL(made) }
+  }, [id])
+  if (!url) return <span className="inline-block h-12 w-9 flex-shrink-0 rounded bg-separator" aria-hidden="true" />
+  return <img src={url} alt="Speed-test photo (admins only)" className="h-12 w-auto flex-shrink-0 rounded" draggable={false} data-testid="scanner-lab-phone-speed-thumb" />
+}
+
+/** "Phone and server agree" for one run, from the server's comparison (the numbers the API worked out). */
+export function agreementText(run) {
+  const server = run.server || {}
+  if (!run.has_photo) return 'no photo (built-in sample)'
+  if (server.status === 'pending') return 'server comparison running…'
+  const compare = run.compare
+  if (!compare) return server.in_use?.status === 'error' ? `server could not compare: ${server.in_use.error}` : 'no server comparison'
+  const parts = []
+  for (const [key, label] of [['in_use', 'in-use set'], ['phone8', 'phone8+index8']]) {
+    const backends = compare[key]
+    if (!backends) continue
+    const [backend, item] = Object.entries(backends)[0]
+    parts.push(`${label}: top 1 ${item.top1_agree ? 'agrees' : 'differs'} · phone's top 1 in server's top 20: ${item.phone_top1_in_server_top20 ? 'yes' : 'no'} · ${item.overlap}/20 shared (${backend})`)
+  }
+  return parts.join(' | ')
+}
+
+/** The last phone speed-test runs (numbers, device facts, the photo thumbnail, agreement with the server) and the way to the test page. Admins only: the section is. */
+export function PhoneSpeedRuns({ runs, onDelete }) {
   const when = value => String(value || '').slice(0, 16).replace('T', ' ')
   return (
-    <div className="space-y-1 border-t border-separator px-4 py-3" data-testid="scanner-lab-phone-speed">
+    <div className="space-y-2 border-t border-separator px-4 py-3" data-testid="scanner-lab-phone-speed">
       <div className="flex items-center justify-between gap-3">
         <span className="text-footnote text-text-secondary">Phone speed test (step 2)</span>
         <Link to="/settings/phone-speed" className={button} data-testid="scanner-lab-phone-speed-link">
@@ -393,11 +427,18 @@ export function PhoneSpeedRuns({ runs }) {
         const t = run.timings || {}
         const d = run.device || {}
         return (
-          <p key={run.at + run.by} className="text-footnote tabular-nums" data-testid="scanner-lab-phone-speed-run">
-            {when(run.at)} · iOS {d.ios || '?'} · {d.gpu ? 'WebGPU' : 'no WebGPU'} · embed {number(t.embed_wasm_median_ms)} ms · card ×7 {number(t.card_wasm_median_ms)} ms
-            {' '}· est. {number(t.estimate_card_wasm_ms)} ms{t.estimate_card_webgpu_fp16_ms != null ? ` (GPU ${number(t.estimate_card_webgpu_fp16_ms)} ms)` : ''}
-            {d.crashedBefore ? ' · crashed before' : ''}
-          </p>
+          <div key={run.id || run.at + run.by} className="flex items-start gap-2" data-testid="scanner-lab-phone-speed-run">
+            {run.has_photo && run.id && <RunThumb id={run.id} />}
+            <p className="min-w-0 flex-1 text-footnote tabular-nums">
+              {when(run.at)} · iOS {d.ios || '?'} · {d.gpu ? 'WebGPU' : 'no WebGPU'} · embed {number(t.embed_wasm_median_ms)} ms · card ×7 {number(t.card_wasm_median_ms)} ms
+              {' '}· est. {number(t.estimate_card_wasm_ms)} ms{t.estimate_card_webgpu_fp16_ms != null ? ` (GPU ${number(t.estimate_card_webgpu_fp16_ms)} ms)` : ''}
+              {d.crashedBefore ? ' · crashed before' : ''}
+              <span className="block text-text-secondary" data-testid="scanner-lab-phone-speed-agreement">{agreementText(run)}</span>
+            </p>
+            {onDelete && run.id && (
+              <button type="button" className="flex-shrink-0 text-footnote text-red-500 ios-press" onClick={() => { if (window.confirm('Delete this run and its photo from the server?')) onDelete(run.id) }} data-testid="scanner-lab-phone-speed-delete">Delete</button>
+            )}
+          </div>
         )
       })}
     </div>
@@ -858,8 +899,10 @@ export default function ScannerLabSection() {
   const speed = useQuery({
     queryKey: SPEED_KEY,
     queryFn: () => api.get('/card-match/phone-speed').then(response => response.data.runs),
+    refetchInterval: query => ((query.state.data || []).some(run => run.server?.status === 'pending') ? 10000 : false),
     retry: false,
   })
+  const deleteRun = useMutation({ mutationFn: id => api.delete(`/card-match/phone-speed/${id}`), onSuccess: () => queryClient.invalidateQueries({ queryKey: SPEED_KEY }) })
   const [missTag, setMissTag] = useState(null)
   const openDecidedWrong = () => {
     setMissTag('decided_wrong')
@@ -950,7 +993,7 @@ export default function ScannerLabSection() {
             )}
           </div>
         </div>
-        <PhoneSpeedRuns runs={speed.data} />
+        <PhoneSpeedRuns runs={speed.data} onDelete={id => deleteRun.mutate(id)} />
         {pictureFirst.data?.counts && <PictureFirstView data={pictureFirst.data} onOpenDecidedWrong={data.misses ? openDecidedWrong : undefined} />}
         {shadow.data?.report && (shadow.data.enabled || shadow.data.report.compared > 0) && <ShadowView data={shadow.data} />}
         <HowConfirmedView data={shadow.data?.report?.how_confirmed} />

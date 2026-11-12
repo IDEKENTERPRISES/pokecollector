@@ -4,6 +4,7 @@ import { Camera, Download, Play, Trash2 } from 'lucide-react'
 import api from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { useNavBar } from '../navigation/useNavBar'
+import { speedRunRequest } from '../phonespeed/upload'
 import {
   CACHE_NAME, cacheState, downloadMissing, megabytes, networkHelpers, readCached, removeTestFiles, testFiles, totalBytes, MANIFEST_PATH,
 } from '../phonespeed/bundleCache'
@@ -160,8 +161,11 @@ export default function PhoneSpeedTest() {
 
   const send = async outcome => {
     try {
-      await api.post('/card-match/phone-speed', { timings: outcome.timings, device: outcome.device })
-      setSent('Numbers saved on the server (no photo is ever sent).')
+      const request = speedRunRequest(outcome, photo.current)
+      await api.post('/card-match/phone-speed', request.body, request.multipart ? { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 } : undefined)
+      setSent(request.multipart
+        ? 'Numbers and your photo saved on the server (admins only). The server now matches the photo for comparison.'
+        : 'Numbers saved on the server (the built-in sample is not uploaded).')
     } catch {
       setSent('Could not save the numbers on the server. Tap "Send numbers" to try again.')
     }
@@ -219,7 +223,7 @@ export default function PhoneSpeedTest() {
       </Section>
 
       <Section title="2. Photo">
-        <p className="text-footnote text-text-secondary">The photo stays on this phone. It is never uploaded; only the timings are sent.</p>
+        <p className="text-footnote text-text-secondary">The photo is kept on the server with the timings (admins only). The built-in sample is never uploaded.</p>
         <input ref={fileInput} type="file" accept="image/*" capture="environment" className="sr-only" onChange={pick} data-testid="phone-speed-photo" />
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" className={button} disabled={busy} onClick={() => fileInput.current?.click()}><Camera size={14} aria-hidden="true" /> Take a photo</button>
