@@ -1,7 +1,7 @@
 // The speed test itself: loads onnxruntime-web (only when called: nothing here is imported by the rest of the app),
 // times every step and reports rows to the page. No image ever leaves this module: the photo is decoded on a canvas
 // and only timings and device facts go out.
-import { l2Normalise, parseIndex, searchTopK } from './index8'
+import { l2Normalise, parseIndex, searchTopK, topkAnswer } from './index8'
 import { fromHalfBits, preprocessRgba, toHalfBits, VIEWS_PER_CARD } from './preprocess'
 import { median, round, timeRuns } from './stats'
 import {
@@ -120,15 +120,14 @@ function wantsHalf(session) {
 export const STEP_IDS = [
   ['session_wasm', 'Model session, uint8 on WebAssembly'],
   ['session_webgpu_fp16', 'Model session, fp16 on WebGPU'],
-  ['session_webgpu_uint8', 'Model session, uint8 on WebGPU'],
   ['photo', 'Photo decode and guide crop (once)'],
   ['preprocess', 'Preprocess to the 224×224 tensor'],
   ['embed_wasm', 'One embedding, WebAssembly'],
+  ['embed_art_wasm', 'One artwork-window embedding, WebAssembly'],
   ['card_wasm', `One card, ${VIEWS_PER_CARD.total} embeddings, WebAssembly`],
   ['embed_webgpu_fp16', 'One embedding, WebGPU fp16'],
+  ['embed_art_webgpu_fp16', 'One artwork-window embedding, WebGPU fp16'],
   ['card_webgpu_fp16', `One card, ${VIEWS_PER_CARD.total} embeddings, WebGPU fp16`],
-  ['embed_webgpu_uint8', 'One embedding, WebGPU uint8'],
-  ['card_webgpu_uint8', `One card, ${VIEWS_PER_CARD.total} embeddings, WebGPU uint8`],
   ['index_load', 'Index files into memory (once)'],
   ['search_whole', 'Whole-card top-20 search, one query'],
   ['search_art', 'Artwork top-20 search, one query'],
@@ -159,13 +158,14 @@ export function estimateCard(medians, backend) {
 /**
  * Run every step in `phaseOrder` (WebAssembly first, WebGPU last). `files` = {manifest, read(path) -> ArrayBuffer}.
  * `onRow(id, row)` gets {first, median, runs, note} or {error}. Every finished step is saved at once (`recordStep`), so a crash
- * or an early end keeps what is done: the page posts the partial run. `options.webgpu` false skips WebGPU; `options.uint8Gpu`
- * (off by default) adds the 8-bit model on WebGPU as the very last step. Returns {timings, device, ...} for the server.
+ * or an early end keeps what is done: the page posts the partial run. `options.webgpu` false skips WebGPU. The 8-bit model on
+ * WebGPU is never run (it crashes Safari on iOS 26.6). Returns {timings, device, ...} for the server.
  */
 export async function runSpeedTest({ files, photoSource, onRow, onPhase, options = {}, storage }) {
   const device = readDevice()
   const rows = {}
   const partial = newPartial(device)
+  const runId = partial.runId
   const set = (id, row) => {
     rows[id] = row
     recordStep(partial, id, row, storage)
@@ -194,9 +194,12 @@ export async function runSpeedTest({ files, photoSource, onRow, onPhase, options
   let photo = null
   let card = null
   let views = null
+  const getViews = () => { views = views || cardViews(card); return views }
+  const dropViews = () => { views = null }
   let tensor = null
   const medians = () => Object.fromEntries(Object.entries(rows).map(([id, row]) => [id, row.median ?? null]))
   const embeddings = {}
+  const artEmbeddings = {} // the artwork index is searched with the embedding of the card's artwork window, not of the whole card
   const answer = { topk: {}, ocr_lines: [] }
   const wholeIndexes = []
   const artIndexes = []
@@ -210,7 +213,7 @@ export async function runSpeedTest({ files, photoSource, onRow, onPhase, options
     await guard(sessionId, async () => {
       const result = await timeRuns(async () => {
         if (session) { await session.release?.(); session = null }
-        session = await ort.InferenceSession.create(new Uint8Array(buffer), { executionProviders: providers, graphOptimizationLevel: 'all' })
+        session = await ort.InferenceSession.create(new Uint8Array(buffer), { executionProviders: providers, graphOptimizationLevel: 'all', enableCpuMemArena: false, enableMemPattern: false })
       }, RUNS)
       set(sessionId, { first: result.first, median: result.median, runs: result.runs })
     })
@@ -221,22 +224,27 @@ export async function runSpeedTest({ files, photoSource, onRow, onPhase, options
       await guard(embedId, async () => {
         await timed(embedId, async () => { embeddings[backend] = await embedOne(ort, session, tensor, half) })
       })
+      await guard(`embed_art_${backend}`, async () => {
+        const art = getViews().find(view => view.name === 'art')
+        const artTensor = preprocessRgba(art.data, art.width, art.height)
+        await timed(`embed_art_${backend}`, async () => { artEmbeddings[backend] = await embedOne(ort, session, artTensor, half) })
+      })
       await guard(cardId, async () => {
         await timed(cardId, async () => {
-          for (const view of views) await embedOne(ort, session, preprocessRgba(view.data, view.width, view.height), half)
+          for (const view of getViews()) await embedOne(ort, session, preprocessRgba(view.data, view.width, view.height), half)
         }, RUNS, 'preprocess included: one tensor per view')
       })
     } finally {
       await session.release?.()
       session = null
+      dropViews() // seven RGBA pictures are not kept while the next phase runs
     }
   }
 
   const addTopk = backend => {
     const embedding = embeddings[backend]
     if (!embedding || !wholeIndexes.length) return
-    const pick = list => searchTopK(list, embedding, 20).map(item => [item.id, round(item.score, 5)])
-    answer.topk[backend] = { whole: pick(wholeIndexes), art: pick(artIndexes) }
+    answer.topk[backend] = topkAnswer({ embedding, artEmbedding: artEmbeddings[backend], wholeIndexes, artIndexes })
   }
 
   /** The two search rows need one embedding and the index; with no WebAssembly embedding they wait for the first WebGPU one. */
@@ -244,7 +252,7 @@ export async function runSpeedTest({ files, photoSource, onRow, onPhase, options
     const query = embeddings[backend]
     if (!query || !wholeIndexes.length || rows.search_whole) return
     await guard('search_whole', () => timed('search_whole', () => searchTopK(wholeIndexes, query, 20)))
-    await guard('search_art', () => timed('search_art', () => searchTopK(artIndexes, query, 20)))
+    await guard('search_art', () => timed('search_art', () => searchTopK(artIndexes, artEmbeddings[backend] || query, 20)))
   }
 
   const phases = {
@@ -258,7 +266,7 @@ export async function runSpeedTest({ files, photoSource, onRow, onPhase, options
         device.photoWidth = photo.width
         device.photoHeight = photo.height
       })
-      if (card) views = cardViews(card)
+      photo = null // the decoded photo (11 MB of pixels) is not needed once the card is cut from it
     },
     async preprocess() {
       await guard('preprocess', async () => {
@@ -301,7 +309,7 @@ export async function runSpeedTest({ files, photoSource, onRow, onPhase, options
             let held = null
             const result = await timeRuns(async () => {
               await held?.release?.()
-              held = await ort.InferenceSession.create(new Uint8Array(buffer), { executionProviders: ['wasm'], graphOptimizationLevel: 'all' })
+              held = await ort.InferenceSession.create(new Uint8Array(buffer), { executionProviders: ['wasm'], graphOptimizationLevel: 'all', enableCpuMemArena: false, enableMemPattern: false })
             }, RUNS)
             assign(held)
             set(id, { first: result.first, median: result.median, runs: result.runs })
@@ -353,38 +361,28 @@ export async function runSpeedTest({ files, photoSource, onRow, onPhase, options
       await searchRows('webgpu_fp16')
       addTopk('webgpu_fp16')
     },
-    async webgpu_uint8() {
-      await guard('session_webgpu_uint8', async () => {
-        const ort = await loadGpuRuntime()
-        await modelSteps('webgpu_uint8', ort, int8Path, ['webgpu'], 'session_webgpu_uint8', 'embed_webgpu_uint8', 'card_webgpu_uint8')
-      })
-      addTopk('webgpu_uint8')
-    },
   }
 
-  for (const phase of phaseOrder({ webgpu: hasGpu, uint8Gpu: Boolean(options.uint8Gpu) })) {
+  for (const phase of phaseOrder({ webgpu: hasGpu })) {
     await phases[phase]()
-    if (phase === 'photo' && !card) return finish(rows, device, {}, answer, storage) // nothing else can run without the photo
-    if (phase === 'preprocess') views = views || cardViews(card)
+    if (phase === 'photo' && !card) return finish(rows, device, {}, answer, storage, runId) // nothing else can run without the photo
   }
   if (!hasGpu) {
     for (const id of ['session_webgpu_fp16']) set(id, { error: options.webgpu === false ? 'skipped' : 'navigator.gpu does not exist here' })
   }
-  if (hasGpu && !options.uint8Gpu) set('session_webgpu_uint8', { error: 'off (switch it on to try the 8-bit model on WebGPU)' })
-  if (!hasGpu) set('session_webgpu_uint8', { error: 'navigator.gpu does not exist here' })
 
   const values = medians()
-  const estimates = { wasm: estimateCard(values, 'wasm'), webgpu_fp16: estimateCard(values, 'webgpu_fp16'), webgpu_uint8: estimateCard(values, 'webgpu_uint8') }
-  return finish(rows, device, estimates, answer, storage)
+  const estimates = { wasm: estimateCard(values, 'wasm'), webgpu_fp16: estimateCard(values, 'webgpu_fp16') }
+  return finish(rows, device, estimates, answer, storage, runId)
 }
 
-function finish(rows, device, estimates = {}, answer = { topk: {}, ocr_lines: [] }, storage) {
+function finish(rows, device, estimates = {}, answer = { topk: {}, ocr_lines: [] }, storage, runId = null) {
   markStep(null, storage)
   clearPartial(storage)
   const timings = timingsOf(rows)
   for (const [backend, value] of Object.entries(estimates)) timings[`estimate_card_${backend}_ms`] = round(value)
   device.estimateOcr = `${OCR_ASSUMPTION.detections} det + ${OCR_ASSUMPTION.recognitions} rec`
-  return { timings, device, estimates, rows, answer }
+  return { timings, device, estimates, rows, answer, runId }
 }
 
 export { median }

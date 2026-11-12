@@ -47,6 +47,18 @@ export function searchTopK(indexes, query, k = 20) {
   return best
 }
 
+/**
+ * What the phone reports for a photo: the whole-card list searches the whole-card index with the whole-card embedding, and the
+ * artwork list searches the ARTWORK index with the embedding of the card's artwork window (the server's art index holds
+ * embeddings of that window, so the whole-card embedding must never be used for it). Pairs of [card id, similarity].
+ */
+export function topkAnswer({ embedding, artEmbedding, wholeIndexes, artIndexes, k = 20 }) {
+  const pick = (indexes, query) => searchTopK(indexes, query, k).map(item => [item.id, Math.round(item.score * 1e5) / 1e5])
+  const out = { whole: pick(wholeIndexes, embedding) }
+  if (artEmbedding) out.art = pick(artIndexes, artEmbedding)
+  return out
+}
+
 export function l2Normalise(values) {
   let sum = 0
   for (let i = 0; i < values.length; i++) sum += values[i] * values[i]

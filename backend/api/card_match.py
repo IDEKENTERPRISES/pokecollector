@@ -265,9 +265,9 @@ async def post_phone_speed(request: Request, current_user: User = Depends(get_cu
         run = phone_speed_module.record(json.loads(raw), current_user.username, photo=photo)
     except (ValueError, phone_speed_module.SpeedRunError) as error:  # SpeedRunError is a ValueError; so is bad JSON
         raise HTTPException(status_code=422, detail=str(error)[:200])
-    if photo is not None:
+    if photo is not None and not run.get("duplicate"):
         phone_speed_module.start_compare(run["id"])
-    return {"saved": True, "run": run}
+    return {"saved": True, "duplicate": bool(run.get("duplicate")), "run": run}
 
 
 @router.get("/phone-speed")

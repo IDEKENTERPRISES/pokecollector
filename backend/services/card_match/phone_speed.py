@@ -39,6 +39,7 @@ MAX_TOP = 20
 MAX_OCR_LINES = 20
 NAME = re.compile(r"^[A-Za-z0-9_.\-]{1,48}$")
 CARD_ID = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
+CLIENT_ID = re.compile(r"^[A-Za-z0-9_\-]{8,64}$")
 RUN_ID = re.compile(r"^\d{8}T\d{12}-[0-9a-f]{8}$")
 _lock = threading.RLock()
 _compare_lock = threading.Lock()  # one server comparison at a time: each loads the matcher and reads text
@@ -135,9 +136,14 @@ def clean(body) -> dict:
             out_device[key] = value
         else:
             raise SpeedRunError(f"{key} must be a number, a boolean or a short text")
-    if set(body) - {"timings", "device", "answer", "crashed_step"}:
+    if set(body) - {"timings", "device", "answer", "crashed_step", "client_id"}:
         raise SpeedRunError("Unknown field")
     out = {"timings": out_timings, "device": out_device}
+    client_id = body.get("client_id")
+    if client_id is not None:
+        if not isinstance(client_id, str) or not CLIENT_ID.match(client_id):
+            raise SpeedRunError("client_id must be 8 to 64 letters, digits, dashes or underscores")
+        out["client_id"] = client_id
     if crashed is not None:
         out["crashed_step"] = crashed
     if body.get("answer") is not None:
@@ -172,6 +178,12 @@ def new_run_id(now: datetime.datetime | None = None) -> str:
 def record(body, user: str, data_dir: Path | None = None, now: datetime.datetime | None = None, photo: bytes | None = None) -> dict:
     """Store one run (and its already sanitised JPEG, if any). Returns the stored run, with its ``id``."""
     run = clean(body)
+    if run.get("client_id"):
+        with _lock:
+            existing = _find_by_client_id(run["client_id"], data_dir)
+        if existing is not None:  # the same run posted again (a retry, a second tap, a queue replay): stored once
+            existing["duplicate"] = True
+            return existing
     now = now or datetime.datetime.now(datetime.timezone.utc)
     run["at"] = now.replace(microsecond=0).isoformat()
     run["by"] = str(user)[:64]
@@ -180,6 +192,10 @@ def record(body, user: str, data_dir: Path | None = None, now: datetime.datetime
     run["has_photo"] = photo is not None
     run["server"] = {"status": "pending" if photo is not None else "no_photo"}
     with _lock:
+        if run.get("client_id") and _find_by_client_id(run["client_id"], data_dir) is not None:  # lost a race with the same post
+            existing = _find_by_client_id(run["client_id"], data_dir)
+            existing["duplicate"] = True
+            return existing
         folder = root(data_dir) / run["id"]
         folder.mkdir(parents=True, exist_ok=True, mode=0o700)
         if photo is not None:
@@ -187,6 +203,15 @@ def record(body, user: str, data_dir: Path | None = None, now: datetime.datetime
         _write_json(folder / RESULT, run)
         _trim(data_dir)
     return run
+
+
+def _find_by_client_id(client_id: str, data_dir: Path | None = None) -> dict | None:
+    """A stored run that came with this client-generated id, if any (the stored runs are few: the newest ``KEEP``)."""
+    for folder in reversed(_run_folders(data_dir)):
+        run = _read_json(folder / RESULT)
+        if run is not None and run.get("client_id") == client_id:
+            return run
+    return None
 
 
 def _run_folders(data_dir: Path | None = None) -> list[Path]:
@@ -240,6 +265,24 @@ def compare_summary(run: dict) -> dict | None:
             }
         if per_backend:
             out[label_key] = per_backend
+    way = server.get("phone_way")
+    if isinstance(way, dict) and way.get("status") == "ok":
+        lists = {"whole": [_norm(item["id"]) for item in way.get("whole20", [])], "art": [_norm(item["id"]) for item in way.get("art20", [])]}
+        per_backend = {}
+        for backend, kinds in phone.items():
+            row = {}
+            for kind, server_ids in lists.items():
+                phone_ids = [_norm(item[0]) for item in (kinds.get(kind) or [])]
+                if phone_ids and server_ids:
+                    row[kind] = {"top1_agree": phone_ids[0] == server_ids[0], "overlap": len(set(phone_ids) & set(server_ids))}
+            if row:
+                per_backend[backend] = row
+        size = run.get("device") or {}
+        orientation = None  # the phone and the stored photo must be the same way up (EXIF rotation applied the same way)
+        if size.get("photoWidth") and size.get("photoHeight") and way.get("photo_size"):
+            orientation = (size["photoHeight"] >= size["photoWidth"]) == (way["photo_size"][1] >= way["photo_size"][0])
+        if per_backend:
+            out["phone_way"] = {"backends": per_backend, "orientation_agree": orientation}
     return out or None
 
 
@@ -307,6 +350,54 @@ def _answer_of(result, label: str, milliseconds: float) -> dict:
     }
 
 
+def phone_guide_box(width: int, height: int) -> tuple[float, float, float, float]:
+    """x0, y0, x1, y1 (fractions of the photo) of the card the phone cuts: a centred 63:88 box, 90% of the height, or 96% of
+    the width when that is the limit. The same arithmetic as `guideCardBox` in frontend/src/phonespeed/views.js; the shared
+    reference `frontend/tests/fixtures/phone-matcher/v11/guide-box-reference.json` pins both."""
+    card_h = 0.9 * height
+    card_w = card_h * 63 / 88
+    if card_w > 0.96 * width:
+        card_w = 0.96 * width
+        card_h = card_w * 88 / 63
+    return ((width - card_w) / 2 / width, (height - card_h) / 2 / height, (width + card_w) / 2 / width, (height + card_h) / 2 / height)
+
+
+def phone_crop(photo_rgb, card_size: tuple[int, int] = (630, 880)):
+    """The phone's flat card from the photo: the `phone_guide_box` crop (floor of each edge, like the phone's cropRgba),
+    resized to 630 x 880 (area average when shrinking, cubic when enlarging). No finder, no flattening."""
+    import cv2
+
+    height, width = photo_rgb.shape[:2]
+    x0, y0, x1, y1 = phone_guide_box(width, height)
+    left, top, right, bottom = max(0, int(x0 * width)), max(0, int(y0 * height)), min(width, int(x1 * width)), min(height, int(y1 * height))
+    crop = photo_rgb[top:bottom, left:right]
+    shrinking = crop.shape[1] >= card_size[0] and crop.shape[0] >= card_size[1]
+    return cv2.resize(crop, card_size, interpolation=cv2.INTER_AREA if shrinking else cv2.INTER_CUBIC)
+
+
+def phone_way_answer(photo_rgb, *, embedder=None, whole_index=None, art_index=None) -> dict:
+    """The server does exactly what the phone did, for like-for-like comparison: the phone's crop, the 8-bit model, the card at
+    0 degrees only, CLS and L2 normalised; the top 20 of the 8-bit whole-card index, and of the 8-bit artwork index searched
+    with the embedding of the artwork window of that same card. Indexes are read as the phone stores them (int8 + a scale)."""
+    from . import detect, embed, index as index_module, phone, variants
+
+    embedder = embedder or embed.get_embedder(variants.PHONE_MODEL)
+    whole_index = whole_index if whole_index is not None else index_module.get_index(variants.PHONE_INDEX)
+    art_index = art_index if art_index is not None else index_module.get_index(variants.PHONE_ART_INDEX)
+    if whole_index is None or not len(whole_index) or art_index is None or not len(art_index):
+        raise RuntimeError("the int8 indexes are not built")
+    card = phone_crop(photo_rgb)
+    whole_query = embedder.embed([card])
+    art_query = embedder.embed([detect.art_crop(card)])
+    pick = lambda hits: [{"id": card_id, "similarity": round(float(score), 4)} for card_id, score in hits]  # noqa: E731
+    return {
+        "status": "ok", "label": "phone's way (int8 model, centre crop, 0 degrees)",
+        "photo_size": [int(photo_rgb.shape[1]), int(photo_rgb.shape[0])],
+        "whole20": pick(phone.int8_view(whole_index).search(whole_query, 20)[0]),
+        "art20": pick(phone.int8_view(art_index).search(art_query, 20)[0]),
+    }
+
+
 def default_matcher(label: str):
     """The server's matcher for an option label; raises RuntimeError when its indexes or model are missing here."""
     from . import embed, variants
@@ -323,7 +414,7 @@ def default_matcher(label: str):
     return variants.build_matcher(options, SessionLocal, ocr_reader=get_reader())
 
 
-def compare_server(run_id: str, data_dir: Path | None = None, matcher_factory=None) -> dict:
+def compare_server(run_id: str, data_dir: Path | None = None, matcher_factory=None, phone_way_factory=None) -> dict:
     """Run the server's matcher on the stored photo with the option set in use and with the phone settings; store both
     answers (top 20 and the decision) next to the phone's. Never raises: a failure is stored as the answer."""
     import time
@@ -344,6 +435,11 @@ def compare_server(run_id: str, data_dir: Path | None = None, matcher_factory=No
             result = {"status": "error", "error": f"the stored photo could not be read: {type(error).__name__}"}
         if photo is not None:
             with _compare_lock:
+                try:  # the like-for-like answer first: it is the cheap one
+                    result["phone_way"] = (phone_way_factory or phone_way_answer)(photo)
+                except Exception as error:
+                    logger.warning("Phone speed test: the phone's-way comparison failed: %s", error)
+                    result["phone_way"] = {"status": "error", "error": f"{type(error).__name__}: {error}"[:200]}
                 for key, label in (("in_use", variants.active_label()), ("phone8", variants.PHONE_KEPT_LABEL)):
                     try:
                         matcher = factory(label)

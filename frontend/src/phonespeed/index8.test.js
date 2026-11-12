@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { l2Normalise, parseIndex, searchTopK } from './index8'
+import { l2Normalise, parseIndex, searchTopK, topkAnswer } from './index8'
 
 /** The bytes backend phone.pack_index writes: "PCI8", u32 header length, padded JSON header, int8 rows, float32 scales. */
 function pack(ids, rows, scales) {
@@ -59,6 +59,18 @@ describe('phone int8 index', () => {
     expect(top[1].score).toBeCloseTo(1 / Math.hypot(0.5, 1), 2)
     expect(top[0].score).toBeGreaterThan(top[1].score)
     expect(searchTopK(indexes, query, 20)).toHaveLength(5) // fewer cards than k
+  })
+
+  it('builds the art list from the artwork-window embedding, not the whole-card one', () => {
+    const whole = [parseIndex(file(['sv1-1_en', 'sv1-2_en']))]
+    const art = [parseIndex(file(['sv2-2_en', 'sv2-3_en']))] // an artwork index: its rows are art-window embeddings
+    const wholeQuery = Float32Array.from([1, 0, 0, 0]) // the whole card looks like card 1
+    const artQuery = Float32Array.from([0, 0, 0, 1]) // its artwork window looks like the art row 'sv2-3'
+    const answer = topkAnswer({ embedding: wholeQuery, artEmbedding: artQuery, wholeIndexes: whole, artIndexes: art })
+    expect(answer.whole[0][0]).toBe('sv1-1_en')
+    expect(answer.art[0][0]).toBe('sv2-3_en')
+    expect(answer.art[0][1]).toBeCloseTo(1, 2)
+    expect(topkAnswer({ embedding: wholeQuery, wholeIndexes: whole, artIndexes: art }).art).toBeUndefined() // no art embedding, no art list
   })
 
   it('refuses a query of the wrong size', () => {

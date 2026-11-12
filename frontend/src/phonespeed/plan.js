@@ -38,11 +38,11 @@ export function describeIos(device) {
 
 /**
  * The phases of a run, in the order they run. Everything on WebAssembly comes first (the photo, preprocessing, the model, the
- * index search and OCR), then WebGPU fp16, and the 8-bit model on WebGPU only when the switch is on, as the very last step:
- * it crashed an iPhone page, and a WebGPU crash must not cost the WebAssembly numbers.
+ * index search and OCR), then WebGPU fp16 as the last step, so a WebGPU crash cannot cost the WebAssembly numbers. The 8-bit
+ * model on WebGPU is not tried at all: it crashes Safari on iOS 26.6 (found on the owner's iPhone, even behind a switch).
  */
-export function phaseOrder({ webgpu = true, uint8Gpu = false } = {}) {
-  return ['photo', 'preprocess', 'wasm', 'index', 'ocr', ...(webgpu ? ['webgpu_fp16'] : []), ...(webgpu && uint8Gpu ? ['webgpu_uint8'] : [])]
+export function phaseOrder({ webgpu = true } = {}) {
+  return ['photo', 'preprocess', 'wasm', 'index', 'ocr', ...(webgpu ? ['webgpu_fp16'] : [])]
 }
 
 // -- the crash flag and the partial results (sessionStorage, injectable for tests) -----------------------------------
@@ -94,12 +94,18 @@ export function crashedRunBody(partial, crashedStep, device) {
     timings,
     device: { ...(partial?.device || device || {}), crashedBefore: true },
     crashed_step: String(crashedStep || 'unknown').slice(0, 48),
+    ...(partial?.runId ? { client_id: partial.runId } : {}), // the server stores one run per id: a crash post and the final post never both count
   }
 }
 
 /** The stored copy of a run as the page keeps it while it runs: rows (first/median/error), device facts. */
+export function newRunId() {
+  const random = globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID().replace(/-/g, '') : `${Math.random().toString(16).slice(2)}${Math.random().toString(16).slice(2)}`
+  return `run-${Date.now().toString(36)}-${random.slice(0, 16)}`
+}
+
 export function newPartial(device) {
-  return { startedAt: Date.now(), device, rows: {} }
+  return { runId: newRunId(), startedAt: Date.now(), device, rows: {} }
 }
 
 /** Record one finished step into the partial run and save it at once. */
