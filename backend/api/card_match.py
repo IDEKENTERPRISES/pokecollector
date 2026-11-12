@@ -57,6 +57,7 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
         "options": {"active": variants.active_label(), "compare": list(variants.COMPARE_LABELS)},
         "misses": _misses_summary(),
         "phone": _phone_summary(),
+        "phone_error": jobs_module.phone_error(),
         "job": jobs_module.jobs.status(),
         "reports": benchmark.latest_reports(),
         "labelled_traces": benchmark.count_labelled_traces(trace_dir),

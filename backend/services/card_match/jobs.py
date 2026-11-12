@@ -236,12 +236,24 @@ def autorun_plan(*, indexes_ready: bool, enough_real: bool, phone: bool = False,
     return build + phone_build + real + ["phone-bundle"] + synthetic
 
 
-def _autorun_log(entries: list[dict]) -> None:
+PHONE_STEPS = ("int8-index", "int8-art-index", "phone-bundle")
+
+
+def phone_error() -> str | None:
+    """Why the phone steps of this version's autorun failed (they never stop the server's own measuring), from ``autorun-log.json``."""
+    try:
+        log = json.loads((config.data_dir() / "autorun-log.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return log.get("phone_error") if str(log.get("matcher_version")) == str(MATCHER_VERSION) else None
+
+
+def _autorun_log(entries: list[dict], phone_failure: str | None = None) -> None:
     """When each autorun step started and how long it took, so a slow rerun can be explained from the file."""
     try:
         path = config.data_dir() / "autorun-log.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"matcher_version": MATCHER_VERSION, "steps": entries}), encoding="utf-8")
+        path.write_text(json.dumps({"matcher_version": MATCHER_VERSION, "steps": entries, "phone_error": phone_failure}), encoding="utf-8")
     except OSError:
         logger.exception("Could not write the card-match autorun log")
 
@@ -288,8 +300,13 @@ def autorun_once(warmer=None, model: str = DEFAULT_MODEL, *, delay_seconds: floa
             "synthetic": lambda: start_benchmark("synthetic", model), "compare-synthetic": lambda: start_benchmark("compare-synthetic", model),
         }
         log: list[dict] = []
+        phone_failure: str | None = None  # the first failed phone step: the other phone steps are skipped, the server's own steps go on
         for name in autorun_plan(indexes_ready=ready, enough_real=enough, phone=True, phone_ready=phone_ready):
             began, clock = _now(), time.monotonic()
+            if name in PHONE_STEPS and phone_failure:
+                log.append({"step": name, "started_at": began, "seconds": 0, "skipped": "an earlier phone step failed"})
+                _autorun_log(log, phone_failure)
+                continue
             if name == "warm-up":
                 if warmer is not None:
                     warmer.start()
@@ -297,7 +314,7 @@ def autorun_once(warmer=None, model: str = DEFAULT_MODEL, *, delay_seconds: floa
                     while warmer.is_running() and time.monotonic() < deadline:
                         time.sleep(10)
                 log.append({"step": name, "started_at": began, "seconds": round(time.monotonic() - clock, 1)})
-                _autorun_log(log)
+                _autorun_log(log, phone_failure)
                 continue
             step = actions[name]
             started, _status = step()
@@ -307,9 +324,11 @@ def autorun_once(warmer=None, model: str = DEFAULT_MODEL, *, delay_seconds: floa
             jobs.wait()
             error = jobs.status().get("error")
             log.append({"step": name, "started_at": began, "seconds": round(time.monotonic() - clock, 1), "error": error})
-            _autorun_log(log)
-            if error and name == "phone-bundle":  # the bundle is a side product: its failure must not stop the measuring
-                logger.error("Card-match autorun: the phone bundle was not built: %s", error)
+            _autorun_log(log, phone_failure)
+            if error and name in PHONE_STEPS:  # a side product: its failure must not stop the server's own measuring
+                phone_failure = f"{name}: {error}"
+                logger.error("Card-match autorun: phone step failed, the other phone steps are skipped: %s", phone_failure)
+                _autorun_log(log, phone_failure)
                 continue
             if error:
                 logger.error("Card-match autorun stopped: %s", error)
@@ -317,7 +336,7 @@ def autorun_once(warmer=None, model: str = DEFAULT_MODEL, *, delay_seconds: floa
         try:
             marker = _autorun_marker()
             marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(json.dumps({"matcher_version": MATCHER_VERSION, "model": model, "finished_at": _now(), "steps": log}), encoding="utf-8")
+            marker.write_text(json.dumps({"matcher_version": MATCHER_VERSION, "model": model, "finished_at": _now(), "steps": log, "phone_error": phone_failure}), encoding="utf-8")
         except OSError:
             logger.exception("Could not write the card-match autorun marker")
 

@@ -171,7 +171,7 @@ def decision_settings() -> dict:
 
 def build_bundle(
     data_dir: Path | None = None, *, model_file: Path | None = None, verify_model: bool = True, ocr_files: dict | None = None,
-    progress=None, whole_name: str | None = None, art_name: str | None = None,
+    progress=None, fp16_model_file: Path | None = None, whole_name: str | None = None, art_name: str | None = None,
 ) -> dict:
     """Write ``phone-bundle/v<version>/`` and return its manifest. Raises RuntimeError when the int8 model or an int8 index is missing."""
     from . import embed, index as index_module, variants
@@ -192,6 +192,8 @@ def build_bundle(
             raise RuntimeError(f"The {kind} int8 index ({name}) is not built yet")
         indexes[kind] = found
     ocr = ocr_files or find_ocr_files()
+    webgpu_spec = MODEL_SPECS[variants.FP16_MODEL]
+    webgpu_file = fp16_model_file if fp16_model_file is not None else embed.model_path(variants.FP16_MODEL)
 
     root = bundle_root(data_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -213,6 +215,9 @@ def build_bundle(
     try:
         report({"phase": "model"})
         add(f"model/{spec['filename']}", source=model_file, kind="model")
+        has_webgpu = webgpu_file.is_file() and (not verify_model or _sha256_file(webgpu_file) == webgpu_spec["sha256"])
+        if has_webgpu:  # optional: the half-precision model is the WebGPU candidate (WebGPU has no integer kernels)
+            add(f"model/{webgpu_spec['filename']}", source=webgpu_file, kind="model-webgpu", extra={"optional": True})
         add("ocr/det.onnx", source=Path(ocr["det"]), kind="ocr")
         add("ocr/rec.onnx", source=Path(ocr["rec"]), kind="ocr")
         add("ocr/characters.txt", str(ocr["characters"]).encode("utf-8"), kind="ocr")
@@ -237,6 +242,10 @@ def build_bundle(
             "model": {
                 "file": f"model/{spec['filename']}", "name": variants.PHONE_MODEL, "dim": spec["dim"], "input_size": spec["input_size"],
                 "mean": list(spec["mean"]), "std": list(spec["std"]), "output": spec["output"], "source": spec["source"], "license": spec["license"],
+                "weights": "uint8 (onnx/model_quantized.onnx)", "operators": spec.get("operators", []),
+                "runtime_note": "ConvInteger and MatMulInteger are implemented for uint8 only in ONNX Runtime's CPU kernels, which onnxruntime-web's WebAssembly backend uses; WebGPU has no integer kernels",
+                "webgpu_candidate": {"file": f"model/{webgpu_spec['filename']}", "name": variants.FP16_MODEL, "weights": "float16", "size": webgpu_spec["size_bytes"],
+                                     "sha256": webgpu_spec["sha256"], "in_bundle": has_webgpu, "input": "float32 pixels (the model casts)"},
             },
             "index": {
                 "format": "PCI8", "quantisation": "int8, one float32 scale per row (vector = int8 * scale)", "dim": spec["dim"],
@@ -253,7 +262,8 @@ def build_bundle(
         for item in files:
             group = item["kind"].split("-")[0]
             sizes[group] = sizes.get(group, 0) + item["size"]
-        manifest["totals"] = {"files": len(files), "bytes": sum(sizes.values()), "by_kind": sizes}
+        optional = sum(item["size"] for item in files if item.get("optional"))
+        manifest["totals"] = {"files": len(files), "bytes": sum(sizes.values()) - optional, "optional_bytes": optional, "by_kind": sizes}
         (temp / MANIFEST).write_text(json.dumps(manifest, indent=1, ensure_ascii=False), encoding="utf-8")
         shutil.rmtree(final, ignore_errors=True)
         os.replace(temp, final)
@@ -299,7 +309,7 @@ def bundle_status(data_dir: Path | None = None) -> dict:
         return {"built": False, "matcher_version": MATCHER_VERSION}
     return {
         "built": True, "matcher_version": manifest.get("matcher_version"), "built_at": manifest.get("built_at"),
-        "total_bytes": manifest.get("totals", {}).get("bytes"), "files": manifest.get("totals", {}).get("files"),
+        "total_bytes": manifest.get("totals", {}).get("bytes"), "optional_bytes": manifest.get("totals", {}).get("optional_bytes"), "files": manifest.get("totals", {}).get("files"),
         "by_kind": manifest.get("totals", {}).get("by_kind"), "option_set": manifest.get("option_set"),
     }
 
