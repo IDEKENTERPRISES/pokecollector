@@ -36,6 +36,12 @@ describe('Home banner stack', () => {
     expect(html).not.toContain('Message 4')
   })
 
+  it('sticks to the top of the screen under the nav bar', () => {
+    const html = render(createElement(BannerStack, { banners: [banner(1)], onDismiss: () => {} }))
+    expect(html).toMatch(/class="sticky /)
+    expect(html).toContain('top:calc(var(--safe-top) + var(--navbar-height))')
+  })
+
   it('shows sprite, sender, label, message and the link', () => {
     const html = render(createElement(BannerView, { banner: banner(1, { label: 'system', route: '/sets', style: 'alert' }) }))
     expect(html).toContain(spriteUrl(25))
