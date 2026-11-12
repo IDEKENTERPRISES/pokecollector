@@ -51,7 +51,7 @@ class WinnerAndDefaultTests(unittest.TestCase):
 
     def test_the_default_uses_artwork_and_extra_views_and_stays_safe_without_the_indexes(self):
         self.assertEqual(variants.DEFAULT_LABEL, "names+number+text+art+tta+fastread+numberonce+corners+wholepic")
-        self.assertEqual(MATCHER_VERSION, "10")
+        self.assertEqual(MATCHER_VERSION, "11")
         options = variants.parse(variants.DEFAULT_LABEL)
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(variants.missing_indexes(options, Path(tmp)), [variants.ART_INDEX])

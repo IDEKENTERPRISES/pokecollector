@@ -3,7 +3,8 @@
 import base64
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -12,7 +13,7 @@ from api.auth import get_current_user
 from database import get_db
 from models import Card, User
 from services import scan_trace, trace_sources
-from services.card_match import MATCHER_VERSION, benchmark, config, embed, index as index_module, jobs as jobs_module, misses as misses_module, shadow as shadow_module, variants
+from services.card_match import MATCHER_VERSION, benchmark, config, embed, index as index_module, jobs as jobs_module, misses as misses_module, phone as phone_module, shadow as shadow_module, variants
 from services.card_match.model_specs import DEFAULT_MODEL, MODEL_SPECS
 
 router = APIRouter()
@@ -55,12 +56,26 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
         },
         "options": {"active": variants.active_label(), "compare": list(variants.COMPARE_LABELS)},
         "misses": _misses_summary(),
+        "phone": _phone_summary(),
         "job": jobs_module.jobs.status(),
         "reports": benchmark.latest_reports(),
         "labelled_traces": benchmark.count_labelled_traces(trace_dir),
         "labelled_traces_local": benchmark.count_labelled_traces(trace_dir, source=trace_sources.LOCAL),
         "trace_sources": _trace_sources(),
         "thresholds": benchmark.thresholds(),
+    }
+
+
+def _phone_summary() -> dict:
+    """Version 11, "Phone settings": the int8 model's and indexes' sizes, the options the comparison rows use, the bundle."""
+    model = MODEL_SPECS[variants.PHONE_MODEL]
+    indexes = {name: index_module.index_status(name) for name in (variants.PHONE_INDEX, variants.PHONE_ART_INDEX)}
+    return {
+        "model": {"name": variants.PHONE_MODEL, "size_bytes": model["size_bytes"], "available": embed.model_available(variants.PHONE_MODEL),
+                  "fp32_size_bytes": MODEL_SPECS[DEFAULT_MODEL]["size_bytes"], "fp16_size_bytes": MODEL_SPECS[variants.FP16_MODEL]["size_bytes"]},
+        "indexes": indexes,
+        "labels": [variants.PHONE_LABEL, variants.PHONE_LITE_LABEL, variants.IN_USE + "+fp16+index8"],
+        "bundle": phone_module.bundle_status(),
     }
 
 
@@ -167,6 +182,52 @@ def start_index(body: IndexRequest | None = None, current_user: User = Depends(g
         raise HTTPException(status_code=409, detail="The model file is not in this image")
     started, status = jobs_module.start_index(name)
     return {"started": started, "job": status}
+
+
+@router.post("/phone-bundle/build")
+def build_phone_bundle(current_user: User = Depends(get_current_user)):
+    _require_admin(current_user)
+    if not embed.model_available(variants.PHONE_MODEL):
+        raise HTTPException(status_code=409, detail="The int8 model file is not in this image")
+    for name in (variants.PHONE_INDEX, variants.PHONE_ART_INDEX):
+        status = index_module.index_status(name)
+        if not status["built"] or not status["count"]:
+            raise HTTPException(status_code=409, detail="Build the two int8 indexes first")
+    started, status = jobs_module.start_phone_bundle()
+    return {"started": started, "job": status}
+
+
+_BUNDLE_CACHE = "private, max-age=3600, must-revalidate"
+
+
+def _not_modified(request: Request, etag: str) -> bool:
+    wanted = {part.strip().removeprefix("W/") for part in request.headers.get("if-none-match", "").split(",")}
+    return etag in wanted or "*" in wanted
+
+
+@router.get("/phone-bundle/manifest")
+def phone_bundle_manifest(request: Request, current_user: User = Depends(get_current_user)):
+    """The phone bundle's manifest (any signed-in user; read-only). ETag = the manifest's own sha256."""
+    path = phone_module.bundle_dir() / phone_module.MANIFEST
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="The phone bundle is not built yet")
+    etag = f'"{phone_module._sha256_file(path)}"'
+    if _not_modified(request, etag):
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": _BUNDLE_CACHE})
+    return FileResponse(path, media_type="application/json", headers={"ETag": etag, "Cache-Control": _BUNDLE_CACHE})
+
+
+@router.get("/phone-bundle/files/{path:path}")
+def phone_bundle_file(path: str, request: Request, current_user: User = Depends(get_current_user)):
+    """One file of the phone bundle, only if the manifest lists exactly this path (no traversal). ETag = its sha256."""
+    found = phone_module.resolve_file(path)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Not in the phone bundle")
+    full, entry = found
+    etag = f'"{entry["sha256"]}"'
+    if _not_modified(request, etag):
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": _BUNDLE_CACHE})
+    return FileResponse(full, media_type="application/octet-stream", headers={"ETag": etag, "Cache-Control": _BUNDLE_CACHE})
 
 
 class BenchmarkRequest(BaseModel):

@@ -33,7 +33,7 @@ IN_USE = "names+number+text+art+tta+fastread+numberonce+corners+wholepic"
 @skip
 class OptionAndRowTests(unittest.TestCase):
     def test_version_default_and_options(self):
-        self.assertEqual(MATCHER_VERSION, "10")
+        self.assertEqual(MATCHER_VERSION, "11")
         self.assertEqual(variants.DEFAULT_LABEL, IN_USE)
         default = variants.parse(variants.DEFAULT_LABEL)
         self.assertFalse(default.wholeread or default.wholestrict)  # options the server must measure first
