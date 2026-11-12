@@ -76,7 +76,7 @@ Measured on a generated photo enlarged to 1536×2048 (the stored size), 5 runs, 
 | whole-picture copy for the second read | 162 |
 
 **Before / after.** Nothing changed by default: the quad search stays on 900. I added `findCard(photo, {detectMaxSide})` and measured 720 / 640 / 480 on six generated photos: the search gets
-faster (about 450 → 310 → 270 → 200 ms for `findCard`) but the corners move (a few px on a clean photo, 20–45 px on another, 200+ px on a third, and two photos change source), so the
+faster (about 450 → 310 → 270 → 200 ms for `findCard`) but the corners move (a few px on a clean photo, 20–45 px on another, 200+ px on a third, and one photo changes source), so the
 3a parity result would no longer hold. Decision: keep 900 until an iPhone measurement says the finder stage is too slow, then choose a side with the parity fixtures re-run
 (`createPhoneMatcher({detectMaxSide})` passes it through). The enlarged fixtures are blurrier than a real photo, so only the shape of the numbers is meaningful.
 
