@@ -338,7 +338,9 @@ export function Report({ report, title }) {
   )
 }
 
-const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused', wholeread: 'second read of the whole picture', wholestrict: 'stricter rules for a number read only from the whole picture' }
+const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused', wholeread: 'second read of the whole picture', wholestrict: 'stricter rules for a number read only from the whole picture', phone8: 'phone: 8-bit model', index8: 'phone: 8-bit index', fp16: 'phone: 16-bit model' }
+const isPhoneLabel = label => /(^|\+)(phone8|index8|fp16)(\+|$)/.test(label || '')
+const megabytes = bytes => (bytes == null ? '–' : `${(bytes / 1048576).toFixed(1)} MB`)
 const describeOptions = label => (label === 'baseline' ? OPTION_NAMES.baseline : label.split('+').map(word => OPTION_NAMES[word] || word).join(' + '))
 
 /** The scans one comparison row decided wrong, in the same plain wording as Misses > Decided wrong (text only: no pictures are kept for these). */
@@ -358,7 +360,21 @@ export function WrongList({ row }) {
 }
 
 /** The option sets side by side on the same photos: pick the row with the best top 20 and decided rate with 0 wrong. */
-export function CompareTable({ report, title }) {
+export function PhoneNote({ phone, rows }) {
+  if (!phone || !(rows || []).some(row => isPhoneLabel(row.label))) return null
+  const indexes = Object.values(phone.indexes || {})
+  const built = indexes.filter(item => item.built)
+  return (
+    <p className="text-footnote text-text-secondary" data-testid="scanner-lab-phone-note">
+      Phone settings: rows marked "phone" run the matcher the way the iPhone will and are never picked as the server's own set.
+      The 8-bit model is {megabytes(phone.model?.size_bytes)} (full {megabytes(phone.model?.fp32_size_bytes)}, 16-bit {megabytes(phone.model?.fp16_size_bytes)}).
+      {built.length > 0 ? ` Its indexes on the server: ${built.map(item => `${number(item.count)} pictures, ${megabytes(item.size_bytes)}`).join(' and ')} (the phone stores them as 8-bit numbers, about a quarter of that).` : ' Its indexes are not built yet.'}
+      {phone.bundle?.built ? ` Phone bundle: ${megabytes(phone.bundle.total_bytes)} in ${number(phone.bundle.files)} files.` : ' The phone bundle is not built yet.'}
+    </p>
+  )
+}
+
+export function CompareTable({ report, title, phone }) {
   const [openWrong, setOpenWrong] = useState(null)
   const opened = report.rows.find(row => row.label === openWrong)
   return (
@@ -387,7 +403,7 @@ export function CompareTable({ report, title }) {
           <tbody>
             {report.rows.map(row => (
               <tr key={row.label} className={`tabular-nums ${row.label === report.winner ? 'font-semibold' : ''}`}>
-                <td className="pr-2">{describeOptions(row.label)}</td>
+                <td className="pr-2">{describeOptions(row.label)}{isPhoneLabel(row.label) && <span className="ml-1 text-text-secondary" data-testid="scanner-lab-phone-row">(phone)</span>}</td>
                 {row.status === 'ok' ? (
                   <>
                     <td className="pr-2">{percent(row.top1)}</td><td className="pr-2">{percent(row.top20)}</td><td className="pr-2">{percent(row.number_exact)}</td>
@@ -402,7 +418,7 @@ export function CompareTable({ report, title }) {
                     <td>{row.p95_ms != null ? `${number(row.p95_ms)} ms` : '–'}</td>
                   </>
                 ) : (
-                  <td colSpan={6} className="text-text-secondary">needs the {(row.missing_indexes || []).join(', ')} index</td>
+                  <td colSpan={6} className="text-text-secondary">{row.error ? `could not run here: ${row.error}` : `needs the ${(row.missing_indexes || []).join(', ')} index`}</td>
                 )}
               </tr>
             ))}
@@ -417,6 +433,7 @@ export function CompareTable({ report, title }) {
         </table>
       </div>
       {opened && <WrongList row={opened} />}
+      <PhoneNote phone={phone} rows={report.rows} />
     </div>
   )
 }
@@ -817,6 +834,7 @@ export default function ScannerLabSection() {
   const buildIndex = useMutation({ mutationFn: () => api.post('/card-match/index').then(r => r.data), onSuccess: refresh })
   const benchmark = useMutation({ mutationFn: kind => api.post('/card-match/benchmark', { kind }).then(r => r.data), onSuccess: refresh })
   const buildExtra = useMutation({ mutationFn: name => api.post('/card-match/index', { name }).then(r => r.data), onSuccess: refresh })
+  const buildBundle = useMutation({ mutationFn: () => api.post('/card-match/phone-bundle/build').then(r => r.data), onSuccess: refresh })
   const stop = useMutation({ mutationFn: () => api.post('/card-match/stop').then(r => r.data), onSuccess: refresh })
 
   if (isError || !data) return null
@@ -825,8 +843,8 @@ export default function ScannerLabSection() {
   const running = Boolean(job.running)
   const ready = data.model?.available
   const progress = job.progress || {}
-  const errorText = buildIndex.error?.response?.data?.detail || benchmark.error?.response?.data?.detail || buildExtra.error?.response?.data?.detail
-  const busy = running || buildIndex.isPending || benchmark.isPending || buildExtra.isPending
+  const errorText = buildIndex.error?.response?.data?.detail || benchmark.error?.response?.data?.detail || buildExtra.error?.response?.data?.detail || buildBundle.error?.response?.data?.detail
+  const busy = running || buildIndex.isPending || benchmark.isPending || buildExtra.isPending || buildBundle.isPending
   const extras = Object.entries(data.extra_indexes || {})
 
   let jobLine = null
@@ -855,6 +873,9 @@ export default function ScannerLabSection() {
           {extras.map(([name, extra]) => (
             <Row key={name} label={`Index: ${extra.label}`} value={extra.built ? `${number(extra.count)} pictures` : 'not built'} />
           ))}
+          {data.phone && (
+            <Row testId="scanner-lab-phone-bundle" label="Phone bundle" value={data.phone.bundle?.built ? `built · ${megabytes(data.phone.bundle.total_bytes)} · ${number(data.phone.bundle.files)} files` : 'not built'} />
+          )}
           {!data.ocr_available && <p className="text-footnote text-red-500">The OCR library is not installed in this image.</p>}
           {jobLine && <p className="text-footnote" aria-live="polite" data-testid="scanner-lab-job">{jobLine}</p>}
           {errorText && <p className="text-footnote text-red-500">{errorText}</p>}
@@ -882,6 +903,11 @@ export default function ScannerLabSection() {
                 <Hammer size={13} aria-hidden="true" /> {extra.built ? 'Update' : 'Build'} {extra.label} index
               </button>
             ))}
+            {data.phone && (
+              <button type="button" className={button} disabled={busy || !data.phone.indexes || !Object.values(data.phone.indexes).every(item => item.built) || !data.phone.model?.available} onClick={() => buildBundle.mutate()} data-testid="scanner-lab-build-phone-bundle">
+                <Hammer size={13} aria-hidden="true" /> {data.phone.bundle?.built ? 'Rebuild' : 'Build'} phone bundle
+              </button>
+            )}
             {running && (
               <button type="button" className={button} onClick={() => stop.mutate()}>Stop</button>
             )}
@@ -893,8 +919,8 @@ export default function ScannerLabSection() {
         {data.reports?.synthetic && <Report report={data.reports.synthetic} title="Latest benchmark: synthetic photos" />}
         {data.reports?.labelled && <Report report={data.reports.labelled} title="Latest benchmark: real scans (diagnostics)" />}
         {data.reports?.['ocr-check'] && <OcrCheckView report={data.reports['ocr-check']} />}
-        {data.reports?.['compare-labelled'] && <CompareTable report={data.reports['compare-labelled']} title="Option comparison: real scans" />}
-        {data.reports?.['compare-synthetic'] && <CompareTable report={data.reports['compare-synthetic']} title="Option comparison: synthetic photos" />}
+        {data.reports?.['compare-labelled'] && <CompareTable phone={data.phone} report={data.reports['compare-labelled']} title="Option comparison: real scans" />}
+        {data.reports?.['compare-synthetic'] && <CompareTable phone={data.phone} report={data.reports['compare-synthetic']} title="Option comparison: synthetic photos" />}
         {data.misses && <Misses version={data.misses.created_at} tag={missTag} onTagChange={setMissTag} />}
         {!data.reports?.synthetic && !data.reports?.labelled && (
           <p className="border-t border-separator px-4 py-3 text-footnote text-text-secondary">No benchmark has run yet.</p>

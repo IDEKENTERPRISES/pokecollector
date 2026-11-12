@@ -499,3 +499,33 @@ describe('Wrong decisions of a comparison row', () => {
     expect(html.match(/scanner-lab-row-wrong-open/g)).toHaveLength(1)
   })
 })
+
+describe('Scanner lab phone settings', () => {
+  const rows = [
+    { label: 'names+number', status: 'ok', n: 10, top1: 50, top5: 60, top20: 70, number_exact: 80, decided: 40, decided_wrong: 0, p95_ms: 900 },
+    { label: 'names+number+phone8+index8', status: 'ok', n: 10, top1: 48, top5: 60, top20: 69, number_exact: 80, decided: 39, decided_wrong: 0, p95_ms: 700 },
+    { label: 'names+number+phone8+index8+art', status: 'skipped', missing_indexes: ['dinov2-small-int8-art'] },
+    { label: 'names+fp16+index8', status: 'skipped', missing_indexes: [], error: 'RuntimeError: no fp16 here' },
+  ]
+  const phone = {
+    model: { size_bytes: 24446700, fp32_size_bytes: 88532934, fp16_size_bytes: 44420939 },
+    indexes: { a: { built: true, count: 20000, size_bytes: 31457280 } },
+    bundle: { built: true, total_bytes: 62914560, files: 340 },
+  }
+
+  it('marks the phone rows, keeps the others, and explains the sizes', () => {
+    const html = renderToStaticMarkup(<CompareTable report={{ kind: 'compare-labelled', n: 10, duration_seconds: 5, rows, winner: 'names+number' }} title="Option comparison" phone={phone} />)
+    expect(html).toContain('phone: 8-bit model')
+    expect((html.match(/scanner-lab-phone-row/g) || []).length).toBe(3)
+    expect(html).toContain('Phone settings')
+    expect(html).toContain('23.3 MB')
+    expect(html).toContain('60.0 MB')
+    expect(html).toContain('could not run here: RuntimeError: no fp16 here')
+    expect(html).toContain('needs the dinov2-small-int8-art index')
+  })
+
+  it('shows no phone note when no row uses a phone word', () => {
+    const html = renderToStaticMarkup(<CompareTable report={{ kind: 'compare-labelled', n: 10, duration_seconds: 5, rows: rows.slice(0, 1), winner: null }} title="x" phone={phone} />)
+    expect(html).not.toContain('Phone settings')
+  })
+})

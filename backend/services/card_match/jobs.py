@@ -182,6 +182,16 @@ def start_index(model: str = DEFAULT_MODEL) -> tuple[bool, dict]:
     return jobs.start("index", lambda: build_index_work(model))
 
 
+def start_phone_bundle() -> tuple[bool, dict]:
+    from . import phone
+
+    return jobs.start("phone-bundle", lambda: _bundle_summary(phone.build_bundle(progress=jobs._progress)))
+
+
+def _bundle_summary(manifest: dict) -> dict:
+    return {"version": manifest["matcher_version"], "files": manifest["totals"]["files"], "bytes": manifest["totals"]["bytes"], "by_kind": manifest["totals"]["by_kind"]}
+
+
 def start_benchmark(kind: str = "synthetic", model: str = DEFAULT_MODEL) -> tuple[bool, dict]:
     return jobs.start(f"benchmark-{kind}", lambda: benchmark_work(kind, model))
 
@@ -205,7 +215,7 @@ def index_after_warmup(warmer) -> None:
     threading.Thread(target=wait_then_build, name="card-match-after-sync", daemon=True).start()
 
 
-def autorun_plan(*, indexes_ready: bool, enough_real: bool) -> list[str]:
+def autorun_plan(*, indexes_ready: bool, enough_real: bool, phone: bool = False, phone_ready: bool = False) -> list[str]:
     """The autorun's steps, in order. What the owner decides from comes first: the OCR check, the real-photo
     benchmark and the real-photo comparison. The synthetic runs choose nothing and go last. When the indexes are already
     built the real-photo steps run before the picture warm-up and the index update (version 5 ran those first and the
@@ -213,7 +223,17 @@ def autorun_plan(*, indexes_ready: bool, enough_real: bool) -> list[str]:
     real = ["ocr-check", "labelled", "compare-labelled"] if enough_real else []
     build = ["warm-up", "index", "art-index"]
     synthetic = ["synthetic", "compare-synthetic"]
-    return (real + build + synthetic) if indexes_ready else (build + real + synthetic)
+    if not phone:
+        return (real + build + synthetic) if indexes_ready else (build + real + synthetic)
+    # Version 11: the phone rows of the real-photo comparison need the int8 indexes, so they are built between the
+    # labelled benchmark and the comparison (the pictures are already cached when the other indexes are ready), and the
+    # bundle is written once they exist.
+    phone_build = [] if phone_ready else ["int8-index", "int8-art-index"]
+    if indexes_ready:
+        before = [step for step in real if step != "compare-labelled"]
+        compare = ["compare-labelled"] if enough_real else []
+        return before + phone_build + compare + build + ["phone-bundle"] + synthetic
+    return build + phone_build + real + ["phone-bundle"] + synthetic
 
 
 def _autorun_log(entries: list[dict]) -> None:
@@ -255,16 +275,20 @@ def autorun_once(warmer=None, model: str = DEFAULT_MODEL, *, delay_seconds: floa
         try:
             ready = all(index_module.index_status(name).get("built") and index_module.index_status(name).get("count")
                         for name in (model, variants.ART_INDEX))
+            phone_ready = all(index_module.index_status(name).get("built") and index_module.index_status(name).get("count")
+                              for name in (variants.PHONE_INDEX, variants.PHONE_ART_INDEX))
         except Exception:
-            ready = False
+            ready, phone_ready = False, False
         actions = {
+            "int8-index": lambda: start_index(variants.PHONE_INDEX), "int8-art-index": lambda: start_index(variants.PHONE_ART_INDEX),
+            "phone-bundle": start_phone_bundle,
             "index": lambda: start_index(model), "art-index": lambda: start_index(variants.ART_INDEX),
             "ocr-check": lambda: start_benchmark("ocr-check", model), "labelled": lambda: start_benchmark("labelled", model),
             "compare-labelled": lambda: start_benchmark("compare-labelled", model),
             "synthetic": lambda: start_benchmark("synthetic", model), "compare-synthetic": lambda: start_benchmark("compare-synthetic", model),
         }
         log: list[dict] = []
-        for name in autorun_plan(indexes_ready=ready, enough_real=enough):
+        for name in autorun_plan(indexes_ready=ready, enough_real=enough, phone=True, phone_ready=phone_ready):
             began, clock = _now(), time.monotonic()
             if name == "warm-up":
                 if warmer is not None:
@@ -284,6 +308,9 @@ def autorun_once(warmer=None, model: str = DEFAULT_MODEL, *, delay_seconds: floa
             error = jobs.status().get("error")
             log.append({"step": name, "started_at": began, "seconds": round(time.monotonic() - clock, 1), "error": error})
             _autorun_log(log)
+            if error and name == "phone-bundle":  # the bundle is a side product: its failure must not stop the measuring
+                logger.error("Card-match autorun: the phone bundle was not built: %s", error)
+                continue
             if error:
                 logger.error("Card-match autorun stopped: %s", error)
                 return
