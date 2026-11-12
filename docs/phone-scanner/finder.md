@@ -40,7 +40,7 @@ server pins, `opencv-python-headless==4.10.0.84`). So each routine was ported fr
   positions; OpenCV uses 15-bit fixed-point weights), and the Lab conversion (a float formula; OpenCV's is a fixed-point table);
 - resizing (`INTER_AREA`, `INTER_CUBIC`) comes from `frontend/src/phonespeed/preprocess.js` (step 2).
 
-Size: no new dependency and no new download. The finder is about 40 KB of source (unminified); it ships in the app bundle like any
+Size: no new dependency and no new download. The finder is about 50 KB of source (unminified); it ships in the app bundle like any
 other module, so there is nothing to add to the service-worker exclusion list. `package.json` and the lock file are unchanged.
 
 Speed (desktop Node, one run each, 768x1024 and 1050x1400 photos): `findCard` about 0.5 to 0.7 s, `cardViews` about 0.4 s (the Lab
