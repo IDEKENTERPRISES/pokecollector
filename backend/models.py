@@ -1202,3 +1202,40 @@ class AdminNotification(Base):
     queued_count = Column(Integer, nullable=False, default=0)
     skipped_count = Column(Integer, nullable=False, default=0)
     urgent = Column(Boolean, nullable=False, default=False, server_default="false")  # ignores quiet hours
+
+
+class Banner(Base):
+    """A message an administrator shows as a card on trainers' Home (Settings > Administrator > Banners).
+
+    The display name and picture are stored as they were when the banner was saved."""
+
+    __tablename__ = "banners"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    updated_at = Column(DateTime, nullable=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    sender_mode = Column(String(8), nullable=False, default="me")  # me | custom
+    sender_name = Column(String(40), nullable=False)
+    avatar_mode = Column(String(8), nullable=False, default="me")  # me | pokemon
+    avatar_id = Column(Integer, nullable=True)  # Pokemon number 1-151
+    message = Column(String(280), nullable=False)
+    style = Column(String(8), nullable=False, default="info")  # info | success | warning | alert
+    route = Column(String(64), nullable=True)
+    audience = Column(String(8), nullable=False, default="all")  # all | some
+    audience_user_ids = Column(Text, nullable=True)  # JSON list of user ids when audience is "some"
+    ends_at = Column(DateTime, nullable=True)  # naive UTC
+    ended_at = Column(DateTime, nullable=True)  # set by "End now"
+    dismissible = Column(Boolean, nullable=False, default=True)
+
+
+class BannerDismissal(Base):
+    """A trainer closed a banner; stored on the server so it stays closed on every device."""
+
+    __tablename__ = "banner_dismissals"
+    __table_args__ = (UniqueConstraint("banner_id", "user_id", name="uq_banner_dismissals_banner_user"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    banner_id = Column(Integer, ForeignKey("banners.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=func.now())

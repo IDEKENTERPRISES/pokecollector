@@ -65,6 +65,8 @@ BACKUP_GROUPS = {
         "user_xp_ledger",
         "notification_queue",
         "admin_notifications",
+        "banners",
+        "banner_dismissals",
         "swap_offers",
         "swap_offer_items",
         "challenge_weeks",
