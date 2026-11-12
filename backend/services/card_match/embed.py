@@ -50,6 +50,16 @@ def model_available(name: str = DEFAULT_MODEL) -> bool:
     return name in MODEL_SPECS and model_path(name).is_file()
 
 
+def preprocess(image: np.ndarray, size: int, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
+    """RGB uint8 image (any size) -> the model's input tensor (3, size, size): resize (INTER_AREA when shrinking, INTER_CUBIC
+    when enlarging), scale to 0..1, subtract the mean, divide by the std. Pure; the phone's JavaScript port is tested against it."""
+    import cv2
+
+    resized = cv2.resize(image, (size, size), interpolation=cv2.INTER_AREA if min(image.shape[:2]) > size else cv2.INTER_CUBIC)
+    normalised = (resized.astype(np.float32) / 255.0 - mean) / std
+    return normalised.transpose(2, 0, 1)
+
+
 class OnnxEmbedder:
     """ONNX Runtime CPU embedder for the models in MODEL_SPECS."""
 
@@ -79,11 +89,7 @@ class OnnxEmbedder:
         self.input_half = "float16" in str(self.session.get_inputs()[0].type)  # the fp16 export (version 11) takes half-precision pixels
 
     def prepare(self, image: np.ndarray) -> np.ndarray:
-        import cv2
-
-        resized = cv2.resize(image, (self.size, self.size), interpolation=cv2.INTER_AREA if min(image.shape[:2]) > self.size else cv2.INTER_CUBIC)
-        normalised = (resized.astype(np.float32) / 255.0 - self.mean) / self.std
-        return normalised.transpose(2, 0, 1)
+        return preprocess(image, self.size, self.mean, self.std)
 
     def embed(self, images: Sequence[np.ndarray], batch_size: int = 8) -> np.ndarray:
         out = []
