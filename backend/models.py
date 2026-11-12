@@ -1201,3 +1201,4 @@ class AdminNotification(Base):
     recipient_count = Column(Integer, nullable=False, default=0)  # trainers chosen
     queued_count = Column(Integer, nullable=False, default=0)
     skipped_count = Column(Integer, nullable=False, default=0)
+    urgent = Column(Boolean, nullable=False, default=False, server_default="false")  # ignores quiet hours

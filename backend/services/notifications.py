@@ -226,6 +226,7 @@ def enqueue(
     now: datetime.datetime | None = None,
     repeat_days: int | None = None,
     details: dict | None = None,
+    urgent: bool = False,
 ) -> bool:
     """Queue one notification unless the category is off or the subject was already queued.
 
@@ -247,7 +248,9 @@ def enqueue(
     if seen.first() is not None:
         _log("not queued", category, user_id, subject_key, "duplicate")
         return False
-    send_after = send_time_for_instant(db, user_id, now) if CATEGORIES[category].timing == INSTANT else now
+    send_after = now
+    if not urgent and CATEGORIES[category].timing == INSTANT:
+        send_after = send_time_for_instant(db, user_id, now)
     db.add(NotificationQueue(
         user_id=user_id, category=category, subject_key=subject_key, created_at=now, send_after=send_after,
         details=details or None,
@@ -314,7 +317,7 @@ def build_announcement_payload(details: dict | None) -> str | None:
 
 def queue_announcement(
     db: Session, user_id: int, announcement_id: int, title: str, body: str, route: str,
-    now: datetime.datetime | None = None,
+    now: datetime.datetime | None = None, urgent: bool = False,
 ) -> str:
     """Queue one admin announcement for a trainer. Returns "queued", "off" (announcements switched off)
     or "unreachable" (no push subscription and no Telegram). The caller commits."""
@@ -327,7 +330,11 @@ def queue_announcement(
         return "unreachable"
     queued = enqueue(
         db, user_id, "announcements", f"announcement:{announcement_id}", now=now,
-        details={"announcement_id": announcement_id, "title": title, "body": body, "route": route},
+        details={
+            "announcement_id": announcement_id, "title": title, "body": body, "route": route,
+            **({"urgent": True} if urgent else {}),
+        },
+        urgent=urgent,
     )
     return "queued" if queued else "off"
 
@@ -880,7 +887,8 @@ def flush_due(db: Session, now: datetime.datetime | None = None) -> dict:
 
 def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, result: dict) -> None:
     category, user_id, subject = row.category, row.user_id, row.subject_key
-    if quiet_hours_enabled(db, user_id):
+    urgent = category == "announcements" and bool((row.details or {}).get("urgent"))
+    if not urgent and quiet_hours_enabled(db, user_id):
         zone = user_zone(db, user_id)
         if in_quiet_hours(now, zone):
             row.send_after = quiet_hours_end(now, zone)

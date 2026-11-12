@@ -199,6 +199,112 @@ class AdminNotificationTests(unittest.TestCase):
         self.assertIn("/collection", sent[0])
         db.close()
 
+    def quiet_misty(self):
+        db = self.Session()
+        db.add(UserSetting(user_id=self.ids["misty"], key="notify_quiet_hours", value="true"))
+        db.add(UserSetting(user_id=self.ids["misty"], key="time_zone", value="UTC"))
+        db.commit()
+        db.close()
+
+    def test_urgent_ignores_quiet_hours_at_enqueue_and_flush(self):
+        self.quiet_misty()
+        night = dt.datetime(2026, 11, 12, 2, 40)
+        db = self.Session()
+        notifications.queue_announcement(db, self.ids["misty"], 1, "Now", "Urgent", "/", now=night, urgent=True)
+        notifications.queue_announcement(db, self.ids["brock"], 1, "Now", "Urgent", "/", now=night, urgent=True)
+        db.commit()
+        for row in db.query(NotificationQueue).all():
+            self.assertEqual(row.send_after, night)
+            self.assertTrue(row.details["urgent"])
+        sent = []
+        with patch(
+            "services.notifications.push.send_to_user",
+            side_effect=lambda _d, u, p: sent.append(u) or {"sent": 1, "removed": 0},
+        ):
+            notifications.flush_due(db, now=night)
+        self.assertEqual(sorted(sent), sorted([self.ids["misty"], self.ids["brock"]]))
+        db.close()
+
+    def test_urgent_row_queued_before_quiet_hours_is_not_deferred_at_flush(self):
+        self.quiet_misty()
+        db = self.Session()
+        db.add(NotificationQueue(
+            user_id=self.ids["misty"], category="announcements", subject_key="announcement:9",
+            created_at=dt.datetime(2026, 11, 12, 1, 0), send_after=dt.datetime(2026, 11, 12, 1, 0),
+            details={"title": "T", "body": "B", "route": "/", "urgent": True},
+        ))
+        db.commit()
+        sent = []
+        with patch(
+            "services.notifications.push.send_to_user",
+            side_effect=lambda _d, u, p: sent.append(u) or {"sent": 1, "removed": 0},
+        ):
+            notifications.flush_due(db, now=dt.datetime(2026, 11, 12, 2, 0))
+        self.assertEqual(sent, [self.ids["misty"]])
+        db.close()
+
+    def test_non_urgent_still_defers(self):
+        self.quiet_misty()
+        night = dt.datetime(2026, 11, 12, 2, 40)
+        db = self.Session()
+        notifications.queue_announcement(db, self.ids["misty"], 1, "Later", "Calm", "/", now=night)
+        db.commit()
+        self.assertEqual(db.query(NotificationQueue).one().send_after, dt.datetime(2026, 11, 12, 8, 0))
+        db.close()
+
+    def test_api_stores_urgent_and_audits_it(self):
+        response = self.send(recipients=[self.ids["misty"]], urgent=True)
+        self.assertEqual(response.status_code, 200)
+        db = self.Session()
+        self.assertTrue(db.query(AdminNotification).one().urgent)
+        self.assertTrue(db.query(NotificationQueue).one().details["urgent"])
+        self.assertIn('"urgent": true', db.query(AuditLog).filter_by(action="admin.notification_sent").one().details)
+        db.close()
+        entry = self.client.get("/api/admin/notifications", headers=self.login("admin")).json()["entries"][0]
+        self.assertTrue(entry["urgent"])
+
+    def test_history_counts_sent_waiting_and_skipped(self):
+        self.quiet_misty()
+        db = self.Session()
+        db.add(UserSetting(user_id=self.ids["brock"], key="notify_announcements", value="false"))
+        db.commit()
+        db.close()
+        # admin reachable, misty reachable (in quiet hours when sent), brock off, gary unreachable
+        with patch("api.admin_notifications.datetime") as fake:
+            fake.utcnow.return_value = dt.datetime(2026, 11, 12, 2, 40)
+            self.send(recipients=[self.ids[n] for n in ("admin", "misty", "brock", "gary")])
+        db = self.Session()
+        admin_row = db.query(NotificationQueue).filter_by(user_id=self.ids["admin"]).one()
+        admin_row.sent_at = dt.datetime(2026, 11, 12, 2, 41)
+        db.commit()
+        db.close()
+        entry = self.client.get("/api/admin/notifications", headers=self.login("admin")).json()["entries"][0]
+        self.assertEqual((entry["sent"], entry["waiting"], entry["skipped_count"]), (1, 1, 2))
+        self.assertEqual(entry["waiting_until"], "2026-11-12T08:00:00Z")
+
+    def test_history_falls_back_to_stored_counts_without_queue_rows(self):
+        self.send(recipients=[self.ids["misty"], self.ids["brock"]])
+        db = self.Session()
+        db.query(NotificationQueue).delete()
+        db.commit()
+        db.close()
+        entry = self.client.get("/api/admin/notifications", headers=self.login("admin")).json()["entries"][0]
+        self.assertEqual((entry["sent"], entry["waiting"], entry["waiting_until"]), (2, 0, None))
+
+    def test_audience_counts_trainers_in_quiet_hours(self):
+        self.quiet_misty()
+        with patch("api.admin_notifications.datetime") as fake:
+            fake.utcnow.return_value = dt.datetime(2026, 11, 12, 2, 40)
+            data = self.client.get("/api/admin/notifications/audience", headers=self.login("admin")).json()
+            some = self.client.get(
+                f"/api/admin/notifications/audience?recipients={self.ids['brock']}", headers=self.login("admin")
+            ).json()
+        self.assertEqual(data, {"recipient_count": 4, "quiet_now": 1})
+        self.assertEqual(some, {"recipient_count": 1, "quiet_now": 0})
+        self.assertEqual(
+            self.client.get("/api/admin/notifications/audience", headers=self.login("misty")).status_code, 403
+        )
+
     def test_category_defaults(self):
         spec = notifications.CATEGORIES["announcements"]
         self.assertTrue(spec.default)
