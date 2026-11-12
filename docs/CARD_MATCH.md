@@ -376,6 +376,53 @@ Until prod had scans of its own, the matcher was measured on the owner's scans o
 
 Limits: one index build or benchmark at a time (a second request gets `started: false`); jobs run in a thread at `nice 10` where the OS allows it; ONNX Runtime gets 3 intra-op threads and OpenCV 3.
 
+## Phone settings and bundle (version 11)
+
+The owner has approved running this matcher on the iPhone (tracker phase P27). Step 1 is on the server: measure what the phone's smaller files cost, and build the files the phone will download. **Nothing here changes how the server decides**: no rule or threshold changed, and no phone row can become the server's own set.
+
+### Options (comparison rows only)
+
+| Option | What it does | Needs |
+| --- | --- | --- |
+| `phone8` | the 8-bit model (`onnx/model_int8.onnx`, 24.4 MB against 88.5 MB; `dinov2-small-int8` in `model_specs.py`, same repository commit, sha256 and size pinned, fetched by the Dockerfile with the others) embeds the query for **both** the whole-card and the artwork search | its own indexes `dinov2-small-int8` and `dinov2-small-int8-art`, built with that model |
+| `index8` | the index is searched the way the phone stores it: each row int8 with one float scale (`scale = max|row| / 127`), dequantised in memory (`phone.int8_view`; cached on the loaded index) | works on any index |
+| `fp16` | the half-precision model (44.4 MB, `dinov2-small-fp16`) embeds the query; the server's own fp32 indexes are searched | no extra build (an fp16-built index would differ from the fp32 one far less than the query does). `phone8` wins when both are given |
+
+`int8` was checked at the pinned commit: `model_int8.onnx` (sha256 `dfce54a8…`, 24,446,700 bytes) is also what `model_quantized.onnx` and `model_uint8.onnx` hold under other hashes of the same size; `model_int8.onnx` was pinned. `variants.is_phone_label` says whether a label holds a phone word. `benchmark.pick_winner` ignores such rows (also when it counts the least wrong decisions), `variants.save_chosen` refuses them and `variants.active_label` ignores a `chosen.json` that holds one.
+
+Rows added to `variants.COMPARE_LABELS` (13 rows now), after the version 10 rows:
+
+| Row | Why |
+| --- | --- |
+| in-use set `+phone8+index8` | what the phone scores with the same rules and reading as the server |
+| phone-lite: `names+number+art+fastread+numberonce+corners+wholepic+phone8+index8` | drops `tta` (two extra embeddings, the biggest cost on a phone), `text` (body-text OCR and the text index), `wholeread`/`wholestrict` (a second read). It keeps `art` (one more embedding) because it is what helped most on real photos, and `fastread`, `numberonce`, `corners`, `wholepic` (they cost no model time) |
+| in-use set `+fp16+index8` | a middle option if int8 loses too much; a row whose model cannot run on the server's CPU shows "could not run here" instead of stopping the comparison. Its p95 on the T340 is not a phone number (CPU float16 is emulated) |
+
+The comparison compares like with like: the server's in-use row and the phone rows run on the same photos, so the difference between them is the cost of the smaller model and index. Read **top 20**, **decided** and **wrong** first; **p95** on the T340 is a server number and says little about the phone's speed (the next step measures that on the iPhone).
+
+### The nonprod autorun after a redeploy
+
+`MATCHER_VERSION` 11 makes the autorun run again. `jobs.autorun_plan(phone=True)`: the OCR check and the labelled benchmark, then the two int8 indexes when they are missing (the pictures are already cached), then the real-photo comparison (now with the phone rows), then the usual picture warm-up and index updates, then the phone bundle, then the synthetic runs. A failed bundle build is logged and does not stop the rest. Expected index cost: the same number of pictures as the fp32 indexes, with the int8 model (24 MB, about 2× faster than fp32 on CPU in general; the fp32 index took about 17 minutes with 3 threads, so plan for roughly 10 to 17 minutes each, 20 to 35 minutes for the pair). Each is checkpointed every 1,000 pictures like the others. Memory: the int8 model session is about 40 MB, each index about 30 MB in float32 (about 8 MB as int8), the dequantised `index8` copies add the same again.
+
+### The phone bundle
+
+Built by **Scanner lab → Build phone bundle** (admin; `POST /api/card-match/phone-bundle/build`) and by the autorun, under `<card-match dir>/phone-bundle/v<matcher version>/`. It needs the int8 model file and both int8 indexes. It is built in a temporary folder and moved into place, so a half-built bundle is never served.
+
+| Path | Holds |
+| --- | --- |
+| `model/dinov2-small-int8.onnx` | the pinned int8 model (checked against its sha256 before it is copied) |
+| `index/whole/<set>.bin`, `index/art/<set>.bin` | int8 vectors, one float32 scale per row and the card ids of one set, for the whole-card and the artwork index; a phone that has the older sets only fetches the new ones |
+| `ocr/det.onnx`, `ocr/rec.onnx`, `ocr/characters.txt` | RapidOCR's PP-OCRv4 detection and recognition models copied from the installed wheel, and the character list that is stored inside the recognition model. The angle model is not included: the matcher runs with `use_cls=False` |
+| `manifest.json` | matcher version, the phone option set (and the lite one), the option flags, the decision thresholds (read from `pipeline`, not copied), the model's input size, mean and std, the index format and per-set counts, the OCR settings, and every file with its sha256 and size, and the totals |
+
+Index file format (`PCI8`, little-endian): `PCI8`, `u32 H`, `H` bytes of JSON `{"dim", "count", "ids"}` padded to a multiple of 4, `count × dim` int8 values, `count` float32 scales (vector = int8 × scale). `phone.pack_index` / `phone.unpack_index` write and read it; card ids are the server's (`sv1-1_en`).
+
+Endpoints (any signed-in user, read-only; `phone.resolve_file` serves only a path the manifest lists exactly, so no traversal is possible): `GET /api/card-match/phone-bundle/manifest` and `GET /api/card-match/phone-bundle/files/{path}`. `ETag` is the file's sha256 (the manifest's own for the manifest), `Cache-Control: private, max-age=3600, must-revalidate`, and `If-None-Match` answers 304. Scanner lab shows whether the bundle is built and its total size (`status.phone`).
+
+### Parity fixtures
+
+`backend/scripts/phone_parity_fixtures.py` writes `frontend/tests/fixtures/phone-matcher/v11/` (see its README): the Python matcher's answers for the pure functions and, for three generated photos, the found quad, the flat size, the model input tensor's statistics and the int8 embedding. Inputs are hand-written strings, catalogue-like rows and cards drawn by the test generators only; never a trainer's scan, a real photo or a TCGdex picture. The JavaScript matcher (a later step) is tested against these files in CI.
+
 ## Shadow mode (Phase 2, nonprod only)
 
 `SCAN_MATCHER_SHADOW=1` (set in `docker-compose.nonprod.yml` only) runs the matcher beside today's path and records what it would have decided. **Nothing changes for trainers**: no screen, no result, no extra wait.
@@ -481,4 +528,4 @@ All permissive; the project itself is AGPL-3.0-only. TCGdex card pictures are fe
 2. **Labelled benchmark** once trainers have scanned 300–400 cards with diagnostics on: press "Run on diagnostics".
 3. **Shadow mode** on nonprod (built, see above): read the Shadow run block after 300-400 confirmed scans and decide on the thresholds.
 4. **Primary mode** with the Ollama fallback only when the gaming PC answers a quick check, and "straight to the inbox" (with the picture top matches) when the scanner is unreachable, as the owner chose.
-5. **Phone version** reusing the same model file and index format.
+5. **Phone version**: step 1 (phone settings and bundle, version 11) is built, see above; next a speed test on the iPhone, a JavaScript port tested against the parity fixtures, scanner integration and rollout.

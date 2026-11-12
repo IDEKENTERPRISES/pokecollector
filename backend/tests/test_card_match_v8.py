@@ -51,7 +51,7 @@ class OptionAndVersionTests(unittest.TestCase):
 
     def test_the_comparison_has_the_finder_rows_and_at_most_twelve(self):
         labels = variants.COMPARE_LABELS
-        self.assertLessEqual(len(labels), 12)
+        self.assertLessEqual(len(labels), 13)  # version 11 added the three phone rows
         self.assertEqual(len(set(labels)), len(labels))
         self.assertFalse([label for label in labels if "tworeads" in label])
         for word in ("corners", "corners+wholepic"):  # version 9 dropped the trustrejected row (61.2%, no real gain); the option stays
