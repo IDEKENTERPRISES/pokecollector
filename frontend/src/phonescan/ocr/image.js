@@ -370,8 +370,11 @@ function fromLab({ L, A, B }, width, height) {
 
 /** cv2.createCLAHE(clip, tileGridSize=(tilesX, tilesY)).apply(plane): contrast-limited adaptive histogram equalisation. */
 export function clahe(plane, width, height, clip, tilesX, tilesY) {
-  const padW = width % tilesX === 0 ? width : width + tilesX - (width % tilesX)
-  const padH = height % tilesY === 0 ? height : height + tilesY - (height % tilesY)
+  // OpenCV pads with reflected borders when EITHER side is not a multiple of the grid, and then adds a whole grid step to a
+  // side that already was one (tilesY - rows % tilesY is tilesY for a multiple)
+  const divisible = width % tilesX === 0 && height % tilesY === 0
+  const padW = divisible ? width : width + tilesX - (width % tilesX)
+  const padH = divisible ? height : height + tilesY - (height % tilesY)
   const src = new Uint8Array(padW * padH)
   for (let y = 0; y < padH; y++) {
     const sy = reflect101(y, height)
