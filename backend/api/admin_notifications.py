@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
 from database import get_db
-from models import AdminNotification, User
+from models import AdminNotification, NotificationQueue, User
 from services import notifications
 from services.audit import record_audit
 
@@ -33,6 +33,7 @@ class SendNotificationRequest(BaseModel):
     body: str = Field(max_length=2000)
     route: str = "/"
     recipients: Literal["all"] | list[int] = "all"
+    urgent: bool = False  # send now, even to trainers in quiet hours
 
     @field_validator("title", "body")
     @classmethod
@@ -49,8 +50,23 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() + "Z" if value else None
 
 
-def serialize(row: AdminNotification) -> dict:
+def _status(rows: list[NotificationQueue], row: AdminNotification) -> dict:
+    """What happened to a send, from its queue rows. Once the queue's 30-day cleanup removed them,
+    the stored counts stand in (everything that was queued counts as sent)."""
+    if not rows:
+        return {"sent": row.queued_count, "waiting": 0, "waiting_until": None}
+    waiting = [r for r in rows if r.sent_at is None]
     return {
+        "sent": len(rows) - len(waiting),
+        "waiting": len(waiting),
+        "waiting_until": _iso(min(r.send_after for r in waiting)) if waiting else None,
+    }
+
+
+def serialize(row: AdminNotification, queue_rows: list[NotificationQueue] | None = None) -> dict:
+    return {
+        **_status(queue_rows or [], row),
+        "urgent": bool(row.urgent),
         "id": row.id,
         "created_at": _iso(row.created_at),
         "sent_by": row.sent_by_username,
@@ -99,7 +115,7 @@ def send_notification(
 
     record = AdminNotification(
         created_at=now, sent_by_user_id=current_user.id, sent_by_username=current_user.username,
-        title=payload.title, body=payload.body, route=payload.route,
+        title=payload.title, body=payload.body, route=payload.route, urgent=payload.urgent,
         recipient_count=len(user_ids), queued_count=0, skipped_count=0,
     )
     db.add(record)
@@ -107,7 +123,8 @@ def send_notification(
     queued = skipped = 0
     for user_id in user_ids:
         outcome = notifications.queue_announcement(
-            db, user_id, record.id, payload.title, payload.body, payload.route, now=now
+            db, user_id, record.id, payload.title, payload.body, payload.route, now=now,
+            urgent=payload.urgent,
         )
         if outcome == "queued":
             queued += 1
@@ -118,7 +135,7 @@ def send_notification(
         db, "admin.notification_sent", request=request, actor=current_user,
         target_type="admin_notification", target_id=record.id,
         details={
-            "title": payload.title, "route": payload.route,
+            "title": payload.title, "route": payload.route, "urgent": payload.urgent,
             "recipients": "all" if payload.recipients == "all" else len(user_ids),
             "recipient_count": len(user_ids), "queued": queued, "skipped": skipped,
         },
@@ -132,4 +149,35 @@ def send_notification(
 def list_notifications(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _require_admin(current_user)
     rows = db.query(AdminNotification).order_by(AdminNotification.id.desc()).limit(HISTORY_LIMIT).all()
-    return {"entries": [serialize(row) for row in rows]}
+    by_key: dict[str, list[NotificationQueue]] = {}
+    if rows:
+        keys = [f"announcement:{row.id}" for row in rows]
+        for queued in db.query(NotificationQueue).filter(
+            NotificationQueue.category == "announcements", NotificationQueue.subject_key.in_(keys)
+        ).all():
+            by_key.setdefault(queued.subject_key, []).append(queued)
+    return {"entries": [serialize(row, by_key.get(f"announcement:{row.id}")) for row in rows]}
+
+
+@router.get("/notifications/audience")
+def audience(
+    recipients: str = "all",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """For the confirmation step: how many trainers a send reaches and how many are in quiet hours now."""
+    _require_admin(current_user)
+    active = {uid for (uid,) in db.query(User.id).filter(User.is_active == True).all()}  # noqa: E712
+    if recipients == "all":
+        ids = sorted(active)
+    else:
+        try:
+            ids = sorted({int(part) for part in recipients.split(",") if part.strip()} & active)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid recipients")
+    now = datetime.utcnow()
+    quiet = sum(
+        1 for uid in ids
+        if notifications.quiet_hours_enabled(db, uid) and notifications.in_quiet_hours(now, notifications.user_zone(db, uid))
+    )
+    return {"recipient_count": len(ids), "quiet_now": quiet}
