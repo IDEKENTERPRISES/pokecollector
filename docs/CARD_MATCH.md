@@ -395,7 +395,7 @@ Rows added to `variants.COMPARE_LABELS` (13 rows now), after the version 10 rows
 | Row | Why |
 | --- | --- |
 | in-use set `+phone8+index8` | what the phone scores with the same rules and reading as the server |
-| phone-lite: `names+number+art+fastread+numberonce+corners+wholepic+phone8+index8` | drops `tta` (two extra embeddings, the biggest cost on a phone), `text` (body-text OCR and the text index), `wholeread`/`wholestrict` (a second read). It keeps `art` (one more embedding) because it is what helped most on real photos, and `fastread`, `numberonce`, `corners`, `wholepic` (they cost no model time) |
+| phone-lite: `names+number+art+fastread+numberonce+corners+wholepic+phone8+index8` | drops `tta` (two extra embeddings, the biggest cost on a phone), `text` (body-text OCR and the text index), `wholeread`/`wholestrict` (a second read). It keeps `art` (one more embedding, against two for `tta`) and `fastread`, `numberonce`, `corners`, `wholepic` (they cost no model time) |
 | in-use set `+fp16+index8` | a middle option if int8 loses too much; a row whose model cannot run on the server's CPU shows "could not run here" instead of stopping the comparison. Its p95 on the T340 is not a phone number (CPU float16 is emulated) |
 
 The comparison compares like with like: the server's in-use row and the phone rows run on the same photos, so the difference between them is the cost of the smaller model and index. Read **top 20**, **decided** and **wrong** first; **p95** on the T340 is a server number and says little about the phone's speed (the next step measures that on the iPhone).
