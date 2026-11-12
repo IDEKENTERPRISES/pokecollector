@@ -91,7 +91,7 @@ export function decideCard({ pictureScores = null, pictureTopK = null, read = nu
   const lookup = indexes.lookup ?? null
   const useNumber = Boolean(lookup) && options.useNumber !== false
   const useText = Boolean(lookup) && options.useText !== false
-  const nameRead = read !== null && read.name !== undefined
+  const nameRead = read !== null && read.name !== undefined && names !== null
   let evidence = null
   let added = 0
   const ocr = {}
