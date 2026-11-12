@@ -87,7 +87,11 @@ CATEGORIES: dict[str, Category] = {
     "goal_milestones": Category("goal_milestones", True, INSTANT, "/goals", "goal"),
     "swap_offers": Category("swap_offers", True, INSTANT, "/trades/offers", "swap offer"),
     "feed_activity": Category("feed_activity", True, INSTANT, "/leaderboard/activity", "reaction or comment"),
+    "announcements": Category("announcements", True, INSTANT, "/", "announcement"),
 }
+
+# Routes an administrator may point an announcement at (never free-text URLs).
+ANNOUNCEMENT_ROUTES = ("/", "/sets", "/wishlist", "/collection", "/scans", "/achievements", "/leaderboard/activity")
 # Swap offers are social: the frontend shows their Settings row only while the admin's switch is on.
 UI_CATEGORIES = [c.id for c in CATEGORIES.values() if c.timing]
 
@@ -293,6 +297,39 @@ def notify_scans_ready(
     """Called when a scan job needs review; one push per job. `count` is its items to review now."""
     details = {"job_id": job_id, "count": int(count)} if count is not None else {"job_id": job_id}
     return enqueue(db, user_id, "scans_ready", f"job:{job_id}", now=now, details=details)
+
+
+def build_announcement_payload(details: dict | None) -> str | None:
+    """An administrator's message exactly as written (the "show card names" switch never blanks it).
+    None when the row carries no text."""
+    details = details or {}
+    title = " ".join(str(details.get("title") or "").split())
+    body = " ".join(str(details.get("body") or "").split())
+    if not title or not body:
+        return None
+    route = details.get("route")
+    navigate = route if route in ANNOUNCEMENT_ROUTES else CATEGORIES["announcements"].navigate
+    return push.encode_payload_fitted(title, body, navigate)
+
+
+def queue_announcement(
+    db: Session, user_id: int, announcement_id: int, title: str, body: str, route: str,
+    now: datetime.datetime | None = None,
+) -> str:
+    """Queue one admin announcement for a trainer. Returns "queued", "off" (announcements switched off)
+    or "unreachable" (no push subscription and no Telegram). The caller commits."""
+    from models import PushSubscription
+
+    if not category_enabled(db, user_id, "announcements"):
+        return "off"
+    has_push = db.query(PushSubscription.id).filter(PushSubscription.user_id == user_id).first() is not None
+    if not has_push and not telegram.is_configured(db, user_id):
+        return "unreachable"
+    queued = enqueue(
+        db, user_id, "announcements", f"announcement:{announcement_id}", now=now,
+        details={"announcement_id": announcement_id, "title": title, "body": body, "route": route},
+    )
+    return "queued" if queued else "off"
 
 
 def _active_user_ids(db: Session) -> list[int]:
@@ -908,6 +945,15 @@ def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, 
         outcome = _send(db, user_id, payload)
         result["instant"] += 1
         _log("flushed", category, user_id, subject, _sent_reason(outcome))
+    elif category == "announcements":
+        payload = build_announcement_payload(row.details)
+        if payload is None:
+            _log("skipped", category, user_id, subject, "reason=no_text")
+            return
+        outcome = _send(db, user_id, payload)
+        _send_announcement_telegram(db, user_id, row.details)
+        result["instant"] += 1
+        _log("flushed", category, user_id, subject, _sent_reason(outcome))
     elif category == "weekly_recap":
         from services.recap import build_recap_push
 
@@ -922,6 +968,20 @@ def _flush_instant(db: Session, row: NotificationQueue, now: datetime.datetime, 
         outcome = _send(db, user_id, push.encode_payload_fitted(title, body, navigate))
         result["instant"] += 1
         _log("flushed", category, user_id, subject, _sent_reason(outcome))
+
+
+def _send_announcement_telegram(db: Session, user_id: int, details: dict | None) -> None:
+    import html
+
+    details = details or {}
+    try:
+        if telegram.is_configured(db, user_id):
+            telegram.send_message(
+                f"<b>{html.escape(str(details.get('title') or ''))}</b>\n{html.escape(str(details.get('body') or ''))}",
+                db=db, user_id=user_id,
+            )
+    except Exception:
+        logger.exception("Telegram announcement failed for user %s", user_id)
 
 
 def _flush_digest(db: Session, user_id: int, rows, now: datetime.datetime, result: dict) -> None:

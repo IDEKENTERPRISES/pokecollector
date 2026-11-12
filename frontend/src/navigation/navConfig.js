@@ -86,6 +86,7 @@ export const SETTINGS_SECTIONS = Object.freeze([
   { key: 'notifications', titleKey: 'settings.sections.notifications', icon: 'Bell', colour: '#FF453A' },
   { key: 'data', titleKey: 'settings.sections.data', icon: 'Database', colour: '#FF9F0A', adminOnly: true },
   { key: 'users', titleKey: 'settings.sections.users', icon: 'Users', colour: '#64D2FF', adminOnly: true },
+  { key: 'admin', titleKey: 'settings.sections.admin', icon: 'ShieldCheck', colour: '#5E5CE6', adminOnly: true },
   { key: 'community', titleKey: 'settings.sections.community', icon: 'Heart', colour: '#FF375F' },
   { key: 'about', titleKey: 'settings.sections.about', icon: 'Info', colour: '#8E8E93' },
 ])

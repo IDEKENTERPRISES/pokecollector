@@ -43,6 +43,7 @@ import { settingsSection, visibleSettingsSections } from '../navigation/navConfi
 import { readSplashEnabled, writeSplashEnabled } from '../components/splash/launch'
 import { readShowDaily, writeShowDaily } from '../progress/daily'
 import SplashCacheSection from '../components/splash/SplashCacheSection'
+import AdminSection from '../components/settings/AdminSection'
 import ScannerLabSection from '../components/settings/ScannerLabSection'
 import { ServerPicturesSection } from '../components/settings/OfflineCardDbSection'
 import { requestTour } from '../welcome/tourControl'
@@ -2058,6 +2059,8 @@ export default function Settings() {
           <InvitesSection />
         </>
       )}
+
+      {activeSection === 'admin' && user?.role === 'admin' && <AdminSection />}
 
       <AvatarPicker
         isOpen={showAvatarPicker}
