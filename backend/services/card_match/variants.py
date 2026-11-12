@@ -124,7 +124,7 @@ def parse(label: str | None) -> Options:
 
 def is_phone_label(label: str | None) -> bool:
     """Whether the label holds a phone word. Such rows only measure; they are never the server's own option set."""
-    return any(getattr(parse(label), word) for word in PHONE_WORDS)
+    return bool(set(str(label or "").lower().replace(",", "+").split("+")) & set(PHONE_WORDS))
 
 
 def model_name(options: Options) -> str:
