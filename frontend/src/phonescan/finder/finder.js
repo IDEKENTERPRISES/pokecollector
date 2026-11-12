@@ -335,12 +335,14 @@ export function wholeCard(photo) {
  * detect.detect_card(photo, check=True, whole=True): the card of a photo, flattened to 630x880.
  *   guideInput: null/undefined = judge by the picture's shape (isGuidePicture); false = a whole camera frame; true = a guide crop.
  *   hires: also build the sharper flat copy the text is read from (up to 1008x1408; costs time).
+ *   detectMaxSide: the long side of the copy the quad is searched on (default 900, the server's DETECT_MAX_SIDE, which parity needs). A smaller
+ *     value is faster and can move the corners a little; the warp always comes from the full-size photo. See docs/phone-scanner/integration.md.
  * Returns {card, source: 'quad' | 'guide' | 'whole', quad | null (in photo pixels, tl,tr,br,bl), refused: {reason, quad, ...} | null,
  *          confidence, hires | null}.
  */
-export function findCard(photo, { guideInput = null, hires = false } = {}) {
+export function findCard(photo, { guideInput = null, hires = false, detectMaxSide = DETECT_MAX_SIDE } = {}) {
   const { width: w, height: h } = photo
-  const scale = Math.min(1, DETECT_MAX_SIDE / Math.max(h, w))
+  const scale = Math.min(1, detectMaxSide / Math.max(h, w))
   let small = photo
   if (scale < 1) {
     const sw = Math.max(1, roundHalfEven(w * scale))

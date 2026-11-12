@@ -383,5 +383,108 @@ class IdempotentPostTests(PhoneSpeedEndpointTests):
 
 
 
+MATCHER = {
+    "version": 11, "backend": "fp16 on WebGPU (worker)", "mode": "auto", "runs": 3, "stable": True, "decided": True, "card": "sv1-1", "mechanism": "number_unique",
+    "reason": None, "similarity": 0.9312, "picture_only": False,
+    "top20": [["sv1-1", 0.9312], ["sv1-9_en", 0.51], ["sv2-4", 0.4]],
+    "read": {"number": "001", "total": "198", "name": "Pikachu", "source": "finder_card"},
+    "orientation": {"by": "default", "flipped": False}, "detection": {"source": "quad", "found": True},
+    "wholeread": None, "catalogue": {"present": True, "cards": 19659}, "photo": {"width": 1536, "height": 2048, "bytes": 412345},
+    "timings": {"finder": [610.2, 590.1], "embed": [820.0, 790.5], "total": [2210.4, 2100.0]},
+}
+MATCHER_RUN = {"timings": {"matcher_total_first_ms": 2210.4, "matcher_total_median_ms": 2100.0}, "device": {"gpu": True}, "matcher": MATCHER}
+
+
+@skip
+class MatcherBlockTests(unittest.TestCase):
+    """Step 3d: the phone's full-matcher answer is stored with the run and compared with the server's kept set on the phone's model and index."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+
+    def test_the_matcher_block_is_stored_and_cleaned(self):
+        run = phone_speed.record(MATCHER_RUN, "oak", self.dir)
+        self.assertEqual(run["matcher"]["card"], "sv1-1")
+        self.assertEqual(run["matcher"]["timings"]["total"], [2210.4, 2100.0])
+        self.assertEqual(phone_speed.get(run["id"], self.dir)["matcher"]["top20"][0], ["sv1-1", 0.9312])
+
+    def test_only_a_small_set_of_numbers_and_short_texts_is_accepted(self):
+        bad = [
+            {**MATCHER, "image": "data:image/jpeg;base64,AAAA"},
+            {**MATCHER, "top20": [["../etc/passwd", 0.5]]},
+            {**MATCHER, "top20": [["sv1-1", 0.5]] * 21},
+            {**MATCHER, "card": "x" * 200},
+            {**MATCHER, "decided": "yes"},
+            {**MATCHER, "timings": {"mystery": [1, 2]}},
+            {**MATCHER, "timings": {"total": [1]}},
+            {**MATCHER, "read": {"number": "001", "pixels": "AAAA"}},
+            {**MATCHER, "read": {"name": "x" * 500}},
+            {**MATCHER, "photo": {"width": "wide"}},
+            "not an object",
+        ]
+        for matcher in bad:
+            with self.assertRaises(phone_speed.SpeedRunError, msg=str(matcher)[:60]):
+                phone_speed.clean({**MATCHER_RUN, "matcher": matcher})
+
+    def _compare(self, matcher, server_entry):
+        run = {"matcher": matcher, "server": {"status": "done", "phone8": server_entry} if server_entry is not None else {"status": "pending"}}
+        return phone_speed.compare_matcher(run)
+
+    def entry(self, card="sv1-1", mechanism="number_unique", top=("sv1-1", "sv1-9", "sv3-3")):
+        decision = {"id": card, "mechanism": mechanism, "similarity": 0.93} if card else None
+        return {"status": "ok", "outcome": "decided" if card else "unsure", "unsure_reason": None if card else "no_number_and_picture_not_clear",
+                "decision": decision, "top20": [{"id": item, "similarity": 0.5} for item in top]}
+
+    def test_the_same_card_the_same_mechanism_and_the_shared_top_20(self):
+        out = self._compare(MATCHER, self.entry())
+        self.assertEqual((out["status"], out["agree"], out["same_mechanism"], out["overlap"]), ("compared", True, True, 2))  # sv1-1 and sv1-9 (the _en suffix is ignored)
+        self.assertEqual((out["phone"], out["server"]), ("sv1-1", "sv1-1"))
+
+    def test_a_different_mechanism_still_agrees_on_the_card_but_is_reported(self):
+        out = self._compare(MATCHER, self.entry(mechanism="number_and_picture"))
+        self.assertTrue(out["agree"])
+        self.assertFalse(out["same_mechanism"])
+
+    def test_a_different_card_or_one_side_unsure_is_a_disagreement(self):
+        self.assertFalse(self._compare(MATCHER, self.entry(card="sv9-9"))["agree"])
+        out = self._compare(MATCHER, self.entry(card=None))
+        self.assertEqual((out["agree"], out["same_decided"], out["server"]), (False, False, None))
+        unsure = {**MATCHER, "decided": False, "card": None, "mechanism": None, "reason": "number_not_among_picture_matches"}
+        self.assertFalse(self._compare(unsure, self.entry())["agree"])
+
+    def test_both_unsure_agree(self):
+        unsure = {**MATCHER, "decided": False, "card": None, "mechanism": None, "reason": "number_not_among_picture_matches"}
+        out = self._compare(unsure, self.entry(card=None))
+        self.assertEqual((out["agree"], out["same_decided"], out["phone"], out["server"]), (True, True, None, None))
+
+    def test_without_the_servers_answer_yet_the_comparison_is_pending_and_an_error_is_not_a_comparison(self):
+        self.assertEqual(self._compare(MATCHER, None)["status"], "pending")
+        self.assertEqual(self._compare(MATCHER, {"status": "error", "error": "index not built"})["status"], "done")
+
+    def test_a_run_without_a_matcher_block_has_no_matcher_comparison(self):
+        self.assertIsNone(phone_speed.compare_matcher({"server": {"phone8": self.entry()}}))
+
+    def test_latest_carries_the_matcher_comparison(self):
+        run = phone_speed.record(MATCHER_RUN, "oak", self.dir, photo=jpeg_bytes((300, 420)))
+
+        class Outcome:
+            status = "decided"
+            unsure_reason = None
+            decision = {"tcg_card_id": "sv1-1", "mechanism": "number_unique", "similarity": 0.93}
+            matches = [{"tcg_card_id": "sv1-1", "similarity": 0.93}, {"tcg_card_id": "sv2-4", "similarity": 0.5}]
+
+        class Matcher:
+            def match(self, photo):
+                return Outcome()
+
+        phone_speed.compare_server(run["id"], self.dir, matcher_factory=lambda label: Matcher(), phone_way_factory=lambda photo: {"status": "error", "error": "skipped"})
+        stored = phone_speed.latest(1, self.dir)[0]
+        self.assertEqual(stored["matcher_compare"]["agree"], True)
+        self.assertEqual(stored["matcher_compare"]["overlap"], 2)
+        self.assertTrue(stored["matcher_compare"]["same_mechanism"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,7 +37,7 @@ class OfflineCardDbTests(unittest.TestCase):
         self.db.add_all([
             self.user,
             Setting(key="tcgdex_sync_languages", value="en,de"),
-            Set(id="pbl_en", tcg_set_id="pbl", name="Phantom Blaze", series="Mega", abbreviation="PBL", lang="en", total=2),
+            Set(id="pbl_en", tcg_set_id="pbl", name="Phantom Blaze", series="Mega", abbreviation="PBL", lang="en", total=2, printed_total=1),
             Set(id="viv_en", tcg_set_id="viv", name="Vivid Voltage", series="Sword", abbreviation="VIV", lang="en", total=1),
             Set(id="pbl_de", tcg_set_id="pbl", name="Phantomflamme", series="Mega", abbreviation="PBL", lang="de", total=1),
             _card("pbl-117", "Morpeko", "pbl", "117", price_market=1.5, price_trend=1.2, attacks=[{"name": "Aura Wheel"}]),
@@ -141,6 +141,19 @@ class OfflineCardDbTests(unittest.TestCase):
         again = self.client.get("/api/offline/carddb/sets/en/pbl_en", headers={"If-None-Match": response.headers["etag"]})
         self.assertEqual(again.status_code, 304)
         self.assertEqual(again.content, b"")
+
+    def test_the_set_row_carries_the_printed_total_and_a_change_of_it_changes_only_that_sets_hash(self):
+        # The phone matcher's number-and-total rules need the set's official printed total (``total`` counts secret rares).
+        body = self.client.get("/api/offline/carddb/sets/en/pbl_en").json()
+        self.assertEqual(body["set"]["printed_total"], 1)
+        self.assertEqual(body["set"]["total"], 2)
+        before = self._set_hashes()
+        self.db.query(Set).filter(Set.id == "pbl_en").one().printed_total = 5
+        self.db.commit()
+        offline_carddb.invalidate()
+        after = self._set_hashes()
+        self.assertNotEqual(before["pbl_en"], after["pbl_en"])
+        self.assertEqual(before["viv_en"], after["viv_en"])
 
     def test_set_payload_has_no_prices_and_no_user_data(self):
         body = self.client.get("/api/offline/carddb/sets/en/pbl_en").json()

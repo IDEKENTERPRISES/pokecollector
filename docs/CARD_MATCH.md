@@ -460,6 +460,10 @@ An admin-only page, **Settings › Scanner lab › Phone speed test** (`/setting
 
 **Preprocess parity.** `preprocess.test.js` checks the port two ways: against `tests/fixtures/phone-matcher/v11/preprocess-reference.json` (cv2's output for generated patterns, area and cubic paths; every sampled value within one 8-bit level, about 0.02 in tensor units, and mean/std within 0.003), and against the committed photo fixtures: the test decodes each generated JPEG with `jpeg-js`, flattens the card with the fixture's corners (bilinear, where cv2 warps cubically with its own decoder) and compares the tensor mean and std within 0.05. The photo check is deliberately loose: a different decoder and warp change single pixels, not the picture.
 
+## The phone matcher (step 3d)
+
+The finder, picture search, reader and decision are joined into one phone matcher (`frontend/src/phonescan/matcher/`) that runs in a module Web Worker; the speed-test page has a "Full phone matcher" run that is compared with the server's kept set on the phone's model and index (`phone_speed.compare_matcher`), and the offline card database now carries each set's `printed_total`. Not in the trainers' scanner yet. See `docs/phone-scanner/integration.md`.
+
 ## Shadow mode (Phase 2, nonprod only)
 
 `SCAN_MATCHER_SHADOW=1` (set in `docker-compose.nonprod.yml` only) runs the matcher beside today's path and records what it would have decided. **Nothing changes for trainers**: no screen, no result, no extra wait.

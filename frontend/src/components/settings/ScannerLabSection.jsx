@@ -421,6 +421,29 @@ export function agreementText(run) {
   return parts.join(' | ')
 }
 
+/** "full matcher: phone <card or unsure> / server <card or unsure> · agree yes/no · N/20" for a run that holds the phone's full-matcher answer (step 3d). */
+export function matcherAgreementText(run) {
+  const matcher = run.matcher
+  if (!matcher) return null
+  const phone = matcher.picture_only ? 'picture only' : (matcher.decided ? matcher.card : 'unsure')
+  const compare = run.matcher_compare
+  if (!run.has_photo) return `full matcher: phone ${phone} · no photo, so no server answer`
+  if (!compare || compare.status !== 'compared') return `full matcher: phone ${phone} · server answer ${run.server?.status === 'pending' || !run.server ? 'running…' : 'not available'}`
+  const server = compare.server || 'unsure'
+  const mechanism = compare.same_card && !compare.same_mechanism ? ` · mechanism differs (phone ${compare.phone_mechanism || '–'}, server ${compare.server_mechanism || '–'})` : ''
+  return `full matcher: phone ${phone} / server ${server} · agree ${compare.agree ? 'yes' : 'no'} · ${compare.overlap}/20${mechanism}`
+}
+
+/** The stage times of a matcher run: "finder 600 · embed 800 · … total 2,100 ms (first 2,500)". */
+export function matcherTimingText(run) {
+  const timings = run.matcher?.timings
+  if (!timings) return null
+  const stages = [['finder', 'finder'], ['views', 'views'], ['embed', 'embed'], ['search', 'search'], ['ocr_number', 'number'], ['name', 'name'], ['second_read', 'second read'], ['decide', 'decide']]
+  const parts = stages.filter(([key]) => timings[key]).map(([key, label]) => `${label} ${number(timings[key][1])}`)
+  const total = timings.total
+  return `${run.matcher.backend || '?'} · ${parts.join(' · ')}${total ? ` · total ${number(total[1])} ms (first ${number(total[0])})` : ''}`
+}
+
 /** The last phone speed-test runs (numbers, device facts, the photo thumbnail, agreement with the server) and the way to the test page. Admins only: the section is. */
 export function PhoneSpeedRuns({ runs, onDelete }) {
   const when = value => String(value || '').slice(0, 16).replace('T', ' ')
@@ -440,11 +463,15 @@ export function PhoneSpeedRuns({ runs, onDelete }) {
           <div key={run.id || run.at + run.by} className="flex items-start gap-2" data-testid="scanner-lab-phone-speed-run">
             {run.has_photo && run.id && <RunThumb id={run.id} />}
             <p className="min-w-0 flex-1 text-footnote tabular-nums">
-              {when(run.at)} · {describeIos(d)} · {d.gpu ? 'WebGPU' : 'no WebGPU'} · embed {number(t.embed_wasm_median_ms)} ms · card ×7 {number(t.card_wasm_median_ms)} ms
-              {' '}· est. {number(t.estimate_card_wasm_ms)} ms{t.estimate_card_webgpu_fp16_ms != null ? ` (GPU ${number(t.estimate_card_webgpu_fp16_ms)} ms)` : ''}
+              {run.matcher
+                ? <>{when(run.at)} · {describeIos(d)} · {d.gpu ? 'WebGPU' : 'no WebGPU'} · full phone matcher</>
+                : <>{when(run.at)} · {describeIos(d)} · {d.gpu ? 'WebGPU' : 'no WebGPU'} · embed {number(t.embed_wasm_median_ms)} ms · card ×7 {number(t.card_wasm_median_ms)} ms
+                  {' '}· est. {number(t.estimate_card_wasm_ms)} ms{t.estimate_card_webgpu_fp16_ms != null ? ` (GPU ${number(t.estimate_card_webgpu_fp16_ms)} ms)` : ''}</>}
               {d.crashedBefore && !run.crashed_step ? ' · crashed before' : ''}
               {run.crashed_step && <span className="block font-semibold text-red-500" data-testid="scanner-lab-phone-speed-crashed">Crashed during {run.crashed_step}</span>}
-              <span className="block text-text-secondary" data-testid="scanner-lab-phone-speed-agreement">{agreementText(run)}</span>
+              {run.matcher && <span className="block" data-testid="scanner-lab-phone-matcher-agreement">{matcherAgreementText(run)}</span>}
+              {run.matcher && <span className="block text-text-secondary" data-testid="scanner-lab-phone-matcher-timing">{matcherTimingText(run)}</span>}
+              {!run.matcher && <span className="block text-text-secondary" data-testid="scanner-lab-phone-speed-agreement">{agreementText(run)}</span>}
             </p>
             {onDelete && run.id && (
               <button type="button" className="flex-shrink-0 text-footnote text-red-500 ios-press" onClick={() => { if (window.confirm('Delete this run and its photo from the server?')) onDelete(run.id) }} data-testid="scanner-lab-phone-speed-delete">Delete</button>

@@ -5,7 +5,10 @@ import api from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { useNavBar } from '../navigation/useNavBar'
 import { createPostGuard, speedRunRequest } from '../phonespeed/upload'
-import { clearPartial, crashedRunBody, describeIos, loadPartial, markStep, previousCrash, reportPreviousCrash } from '../phonespeed/plan'
+import { checkManifest } from '../phonescan/matcher/guard'
+import { prepareMatchPhoto } from '../phonespeed/matchPhoto'
+import { describeDecision, matcherOutcome, runMatcherRuns, STAGE_ROWS, summariseTimings } from '../phonespeed/matcherRun'
+import { clearPartial, crashedRunBody, describeIos, loadPartial, markStep, newRunId, previousCrash, reportPreviousCrash } from '../phonespeed/plan'
 import {
   CACHE_NAME, cacheState, downloadMissing, megabytes, networkHelpers, readCached, removeTestFiles, testFiles, totalBytes, MANIFEST_PATH,
 } from '../phonespeed/bundleCache'
@@ -16,11 +19,11 @@ const button = 'inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-ac
 const ms = value => (value === null || value === undefined ? '–' : `${Math.round(value).toLocaleString()} ms`)
 
 /** Rows with first run and median of 5 (the result of one runtime step). */
-export function ResultsTable({ steps, rows }) {
+export function ResultsTable({ steps, rows, medianLabel = 'Median of 5', testId = 'phone-speed-results' }) {
   return (
-    <table className="w-full text-footnote" data-testid="phone-speed-results">
+    <table className="w-full text-footnote" data-testid={testId}>
       <thead>
-        <tr className="text-left text-text-secondary"><th className="py-1 pr-2 font-normal">Step</th><th className="px-1 font-normal">First</th><th className="pl-1 font-normal">Median of 5</th></tr>
+        <tr className="text-left text-text-secondary"><th className="py-1 pr-2 font-normal">Step</th><th className="px-1 font-normal">First</th><th className="pl-1 font-normal">{medianLabel}</th></tr>
       </thead>
       <tbody>
         {steps.map(([id, title]) => {
@@ -69,6 +72,14 @@ export default function PhoneSpeedTest() {
   const crashHandled = useRef(false)
   const postGuard = useRef(createPostGuard()) // one post per run id: the final post and a partial or crash post never both go out
   const hasGpu = Boolean(globalThis.navigator?.gpu)
+  // the "Full phone matcher" run (step 3d)
+  const [matcherMode, setMatcherMode] = useState('auto')
+  const [matcherState, setMatcherState] = useState({ status: 'idle' }) // idle | loading | running | done | error
+  const [matcherResults, setMatcherResults] = useState([])
+  const [matcherInfo, setMatcherInfo] = useState(null)
+  const [matcherSent, setMatcherSent] = useState(null)
+  const [cardDb, setCardDb] = useState(null) // {present} once checked
+  const matcherClient = useRef(null)
 
   const isAdmin = user?.role === 'admin'
 
@@ -103,6 +114,19 @@ export default function PhoneSpeedTest() {
     }).catch(error => live && setManifestError(error.response?.status === 404 ? 'The phone bundle is not built on the server yet.' : 'Could not read the phone bundle manifest.'))
     return () => { live = false }
   }, [isAdmin, refreshState])
+
+  useEffect(() => {
+    if (!isAdmin) return undefined
+    let live = true
+    import('../offline/carddb/store')
+      .then(module => module.createCardDbStore().getMeta('en'))
+      .then(meta => live && setCardDb({ present: Boolean(meta), cards: meta?.cardCount ?? null }), () => live && setCardDb({ present: false }))
+    return () => { live = false }
+  }, [isAdmin])
+
+  useEffect(() => () => { matcherClient.current?.terminate?.() }, []) // leaving the page frees the worker and its models
+
+  useEffect(() => { if (String(crash || '').startsWith('matcher')) setMatcherMode('wasm') }, [crash]) // the last matcher run crashed: start on the safe backend
 
   if (!isAdmin) return <Navigate to="/settings" replace />
 
@@ -187,6 +211,68 @@ export default function PhoneSpeedTest() {
     }
   }
 
+  const guard = manifest ? checkManifest(manifest) : null
+
+  const releaseMatcher = async () => {
+    try { await matcherClient.current?.release() } catch { /* nothing loaded */ }
+    matcherClient.current?.terminate?.()
+    matcherClient.current = null
+    setMatcherInfo(null)
+    setMessage('The matcher was released: its models and indexes are out of memory.')
+  }
+
+  const runMatcher = async () => {
+    if (!runtime || !manifest || !guard?.ok) return
+    setBusy(true)
+    setMatcherResults([])
+    setMatcherSent(null)
+    setMessage(null)
+    setMatcherState({ status: 'loading', stage: 'preparing the photo' })
+    const runId = newRunId()
+    try {
+      markStep('matcher_init')
+      const cache = await caches.open(CACHE_NAME)
+      const { createMatcherClient } = await import('../phonescan/matcher/client')
+      const ort = await import('../phonescan/matcher/ort')
+      if (!matcherClient.current) {
+        matcherClient.current = createMatcherClient({
+          readFile: path => readCached(cache, entries.find(item => item.path === path) || { path, sha256: '', size: -1 }),
+          loadGpu: ort.loadGpuRuntime,
+        })
+      }
+      const prepared = await prepareMatchPhoto(photo.current || SAMPLE_URL)
+      setMatcherState({ status: 'loading', stage: 'loading the models and indexes' })
+      const mainGpu = (await ort.probeWebGpu()).available
+      const info = await matcherClient.current.init({ manifest, mode: matcherMode, mainGpu })
+      setMatcherInfo(info)
+      markStep('matcher_run')
+      const results = await runMatcherRuns({
+        client: matcherClient.current,
+        copy: () => ({ data: new Uint8ClampedArray(prepared.photo.data), width: prepared.photo.width, height: prepared.photo.height }),
+        onStage: (stage, n) => setMatcherState({ status: 'running', stage: `run ${n}: ${stage}` }),
+        onRun: (n, result) => setMatcherResults(current => [...current, result]),
+      })
+      markStep(null)
+      const device = { ...runtime.readDevice(), photoWidth: prepared.photo.width, photoHeight: prepared.photo.height, photoSource: photo.current ? 'taken here' : 'built-in sample', crashedBefore: Boolean(crash) }
+      const outcome = matcherOutcome({ results, device, runId, photo: { width: prepared.photo.width, height: prepared.photo.height, bytes: prepared.bytes }, info })
+      setMatcherState({ status: 'done' })
+      const request = speedRunRequest(outcome, photo.current ? new File([prepared.upload], 'photo.jpg', { type: 'image/jpeg' }) : null)
+      try {
+        await postGuard.current.once(runId, () => api.post('/card-match/phone-speed', request.body, request.multipart ? { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 } : undefined))
+        setMatcherSent(request.multipart
+          ? 'Numbers and the photo the matcher saw saved on the server (admins only). The server now runs its own matcher on that photo; see Scanner lab.'
+          : 'Numbers saved (the built-in sample is not uploaded, so the server cannot compare).')
+      } catch {
+        setMatcherSent('Could not save the numbers on the server.')
+      }
+    } catch (error) {
+      markStep(null)
+      setMatcherState({ status: 'error', code: error.code, message: error.message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const ready = state && !state.missing.length
   const estimates = result?.estimates || {}
   const device = runtime ? runtime.readDevice() : {}
@@ -266,6 +352,79 @@ export default function PhoneSpeedTest() {
           </div>
         )}
       </Section>
+
+      <Section title="4. Full phone matcher (step 3d)">
+        <p className="text-footnote text-text-secondary">
+          Finds the card, searches the pictures, reads the number and name, and decides, all on this phone in a background worker, three times on one photo
+          (the first run, and the median of the next two). It is the matcher of the server's kept option set. Take a photo above first: the photo is made the way the
+          server stores it (2048 px long side, JPEG), the matcher runs on those pixels, and that same photo is uploaded so the server can answer on it.
+        </p>
+        <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-footnote" data-testid="phone-matcher-status">
+          <dt className="text-text-secondary">Matcher version</dt>
+          <dd data-testid="phone-matcher-version">{!manifest ? '?' : guard?.ok ? `${manifest.matcher_version} (this app is written for it)` : <span className="text-red-500">{guard?.message}</span>}</dd>
+          <dt className="text-text-secondary">Offline card database</dt>
+          <dd data-testid="phone-matcher-carddb">{cardDb === null ? 'checking…' : cardDb.present ? 'downloaded' : 'not downloaded: the run is picture-only (no decision, no names)'}</dd>
+        </dl>
+        {guard && !guard.ok && <p className="text-footnote text-red-500" data-testid="phone-matcher-needs-update">Phone matcher needs updating. {guard.message}</p>}
+        {cardDb && !cardDb.present && <p className="text-footnote text-text-secondary">Download the card database in Settings (offline card database) to get the full decision.</p>}
+        <label className="flex items-center gap-2 text-footnote">
+          <span className="text-text-secondary">Model backend</span>
+          <select value={matcherMode} onChange={event => setMatcherMode(event.target.value)} disabled={busy} className="min-w-0 rounded bg-card-secondary px-2 py-1" data-testid="phone-matcher-mode">
+            <option value="auto">Automatic: fp16 on WebGPU if it works, else uint8 on WebAssembly</option>
+            <option value="worker-webgpu">fp16 on WebGPU in the worker</option>
+            <option value="main-webgpu">fp16 on WebGPU on the main thread</option>
+            <option value="wasm">uint8 on WebAssembly only</option>
+          </select>
+        </label>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className={button} disabled={busy || !ready || !runtime || !guard?.ok} onClick={runMatcher} data-testid="phone-matcher-run"><Play size={14} aria-hidden="true" /> Run the full matcher</button>
+          <button type="button" className={button} disabled={busy || !matcherInfo} onClick={releaseMatcher} data-testid="phone-matcher-release"><Trash2 size={14} aria-hidden="true" /> Release the matcher</button>
+        </div>
+        {(matcherState.status === 'loading' || matcherState.status === 'running') && <p className="text-footnote" aria-live="polite">Running: {matcherState.stage}</p>}
+        {matcherState.status === 'error' && (
+          <p className="text-footnote text-red-500" data-testid="phone-matcher-error">
+            {matcherState.code === 'matcher_version' ? `Phone matcher needs updating. ${matcherState.message}` : `The matcher stopped: ${matcherState.message}`}
+          </p>
+        )}
+        {matcherInfo && (
+          <p className="text-footnote text-text-secondary" data-testid="phone-matcher-backend">
+            Backend: {matcherInfo.backend}{matcherInfo.where === 'main thread' ? ' (the model runs on the main thread, everything else in the worker)' : ''} · loaded in {ms(matcherInfo.loadMs)}.
+            {' '}Tried: {(matcherInfo.tried || []).map(step => `${step.step}${step.ok ? ' ok' : ` no (${step.note || 'failed'})`}`).join(', ')}.
+          </p>
+        )}
+        <MatcherResults results={matcherResults} sent={matcherSent} />
+      </Section>
+    </div>
+  )
+}
+
+/** The full-matcher results: stage times, the answer, the top 5 with names from the card database. */
+export function MatcherResults({ results, sent }) {
+  if (!results.length) return null
+  const first = results[0]
+  const summary = summariseTimings(results)
+  const rows = Object.fromEntries(Object.entries(summary).map(([stage, value]) => [stage, { first: value.first, median: value.median }]))
+  const read = first.read
+  return (
+    <div className="space-y-2" data-testid="phone-matcher-results">
+      <ResultsTable steps={STAGE_ROWS} rows={rows} medianLabel={results.length > 1 ? `Median of ${results.length - 1}` : 'Median'} testId="phone-matcher-stages" />
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-footnote">
+        <dt className="text-text-secondary">Backend</dt><dd data-testid="phone-matcher-result-backend">{first.backend}</dd>
+        <dt className="text-text-secondary">Decision</dt><dd data-testid="phone-matcher-decision">{describeDecision(first)}</dd>
+        <dt className="text-text-secondary">Mechanism</dt><dd>{first.mechanism || '–'}</dd>
+        <dt className="text-text-secondary">Reason</dt><dd>{first.unsure_reason || '–'}</dd>
+        <dt className="text-text-secondary">Read</dt><dd>{read ? [read.number && `${read.number}${read.total ? `/${read.total}` : ''}`, read.name, read.numberSource].filter(Boolean).join(' · ') || 'nothing' : 'no text reading'}</dd>
+        <dt className="text-text-secondary">Card found</dt><dd>{first.detection?.found ? 'yes (corners)' : `no (${first.detection?.source})`} · {first.orientation?.flipped ? 'turned' : 'upright'} ({first.orientation?.by})</dd>
+      </dl>
+      {first.notes?.map(note => <p key={note} className="text-footnote text-amber-600" data-testid="phone-matcher-note">{note}</p>)}
+      <p className="text-footnote font-semibold">Top 5</p>
+      <ol className="list-decimal space-y-0.5 pl-5 text-footnote tabular-nums" data-testid="phone-matcher-top5">
+        {(first.candidates || []).slice(0, 5).map(item => (
+          <li key={item.id}>{item.name ? `${item.name} #${item.number ?? '?'}` : item.tcgCardId}{item.set ? ` · ${item.set}` : ''} · {item.score.toFixed(3)}</li>
+        ))}
+      </ol>
+      {results.some(result => result.tcgCardId !== first.tcgCardId || result.mechanism !== first.mechanism) && <p className="text-footnote text-red-500">The runs did not give the same answer.</p>}
+      {sent && <p className="text-footnote" data-testid="phone-matcher-sent">{sent}</p>}
     </div>
   )
 }
