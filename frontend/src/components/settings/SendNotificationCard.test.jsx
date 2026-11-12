@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest'
 import en from '../../i18n/en'
 import { visibleSettingsSections } from '../../navigation/navConfig'
 import {
-  ANNOUNCEMENT_ROUTES, HistoryList, MAX_BODY, MAX_TITLE, PushPreview, canSend, recipientCount, recipientsPayload, resultText,
+  ANNOUNCEMENT_ROUTES, HistoryList, MAX_BODY, MAX_TITLE, PushPreview, canSend, confirmNotes, deliveryText, recipientCount, recipientsPayload, resultText,
+  waitingTime,
 } from './SendNotificationCard'
 
 const t = key => key.split('.').reduce((node, part) => node?.[part], en) ?? key
@@ -73,11 +74,15 @@ describe('preview and history', () => {
   it('lists the sends with their counts', () => {
     const entries = [{
       id: 1, title: 'Maintenance', body: 'Back at noon', sent_by: 'admin', created_at: '2026-11-12T10:00:00Z',
-      recipient_count: 4, queued_count: 3,
+      recipient_count: 4, queued_count: 3, sent: 2, waiting: 1, waiting_until: '2026-11-13T08:00:00Z',
+      skipped_count: 1, urgent: false,
     }]
     const markup = renderToStaticMarkup(createElement(HistoryList, { entries, t }))
     expect(markup).toContain('Maintenance')
-    expect(markup).toContain('3 of 4 queued')
+    expect(markup).toContain('To 4 trainer(s)')
+    expect(markup).toContain('2 sent')
+    expect(markup).toContain('1 waiting until')
+    expect(markup).toContain('1 skipped')
     expect(renderToStaticMarkup(createElement(HistoryList, { entries: [], t }))).toContain('Nothing has been sent yet.')
   })
 })
@@ -86,5 +91,36 @@ describe('Administrator section visibility', () => {
   it('is only listed for administrators', () => {
     expect(visibleSettingsSections({ isAdmin: true }).map(s => s.key)).toContain('admin')
     expect(visibleSettingsSections({ isAdmin: false }).map(s => s.key)).not.toContain('admin')
+  })
+})
+
+describe('delivery status', () => {
+  const now = new Date(2026, 10, 12, 2, 40)
+
+  it('shows sent, waiting and skipped, leaving out empty parts', () => {
+    const waiting = new Date(2026, 10, 12, 8, 0).toISOString()
+    expect(deliveryText({ sent: 1, waiting: 1, waiting_until: waiting, skipped_count: 0 }, t, now)).toBe('1 sent · 1 waiting until 08:00')
+    expect(deliveryText({ sent: 3, waiting: 0, skipped_count: 2 }, t, now)).toBe('3 sent · 2 skipped')
+    expect(deliveryText({ sent: 0, waiting: 0, skipped_count: 0 }, t, now)).toBe('Nothing queued')
+  })
+
+  it('adds the date when the wait ends on another day', () => {
+    expect(waitingTime(new Date(2026, 10, 13, 8, 0).toISOString(), now)).toBe('13 Nov 08:00')
+    expect(waitingTime('nonsense', now)).toBe('')
+  })
+})
+
+describe('confirmation notes', () => {
+  it('says an urgent send ignores quiet hours', () => {
+    expect(confirmNotes({ urgent: true, quietNow: 3 }, t)).toEqual(['Sends now, even to trainers in quiet hours.'])
+  })
+
+  it('says how many will wait until 08:00 when not urgent', () => {
+    expect(confirmNotes({ urgent: false, quietNow: 2 }, t)).toEqual(['2 trainer(s) are in quiet hours and will get it at 08:00.'])
+    expect(confirmNotes({ urgent: false, quietNow: 0 }, t)).toEqual([])
+  })
+
+  it('has the urgent switch strings', () => {
+    expect(t('adminNotify.urgentLabel')).toBe('Send now, even during quiet hours')
   })
 })

@@ -3,9 +3,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
 import toast from 'react-hot-toast'
 import { getUsers } from '../../api/client'
-import { getAdminNotifications, sendAdminNotification } from '../../api/adminNotifications'
+import { getAdminNotificationAudience, getAdminNotifications, sendAdminNotification } from '../../api/adminNotifications'
 import { useSettings } from '../../contexts/SettingsContext'
 import SegmentedControl from '../ios/SegmentedControl'
+import Switch from '../ios/Switch'
 
 export const MAX_TITLE = 60
 export const MAX_BODY = 240
@@ -51,6 +52,30 @@ export function resultText(result, t) {
   return result.skipped > 0 ? `${base} ${fill(t('adminNotify.skipped'), { skipped: result.skipped })}` : base
 }
 
+/** The time a send waits until, in the viewer's local time: "08:00", or with the date when it is not today. */
+export function waitingTime(value, now = new Date()) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toDateString() === now.toDateString() ? format(date, 'HH:mm') : format(date, 'd MMM HH:mm')
+}
+
+/** "1 sent · 1 waiting until 08:00 · 2 skipped": what happened to a send, parts with nothing left out. */
+export function deliveryText(entry, t, now = new Date()) {
+  const parts = []
+  if (entry.sent > 0) parts.push(fill(t('adminNotify.statusSent'), { n: entry.sent }))
+  if (entry.waiting > 0) {
+    parts.push(fill(t('adminNotify.statusWaiting'), { n: entry.waiting, time: waitingTime(entry.waiting_until, now) }))
+  }
+  if (entry.skipped_count > 0) parts.push(fill(t('adminNotify.statusSkipped'), { n: entry.skipped_count }))
+  return parts.length ? parts.join(' · ') : t('adminNotify.statusNone')
+}
+
+/** The sentences of the confirmation step beyond the recipient count. */
+export function confirmNotes({ urgent, quietNow }, t) {
+  if (urgent) return [t('adminNotify.confirmUrgent')]
+  return quietNow > 0 ? [fill(t('adminNotify.confirmQuiet'), { count: quietNow })] : []
+}
+
 function whenText(value) {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? '' : format(date, 'd MMM yyyy, HH:mm')
@@ -80,7 +105,10 @@ export function HistoryList({ entries, t }) {
           <p className="text-footnote text-text-secondary" style={{ overflowWrap: 'anywhere' }}>{entry.body}</p>
           <p className="text-caption-1 text-text-muted">
             {entry.sent_by} · {whenText(entry.created_at)} ·{' '}
-            {fill(t('adminNotify.historyCounts'), { queued: entry.queued_count, total: entry.recipient_count })}
+            {t('adminNotify.recipientsOf').replace('{total}', entry.recipient_count)}
+          </p>
+          <p className="text-caption-1 text-text-secondary" data-testid="admin-notify-status">
+            {deliveryText(entry, t)}{entry.urgent ? ` · ${t('adminNotify.statusUrgent')}` : ''}
           </p>
         </li>
       ))}
@@ -97,6 +125,7 @@ export default function SendNotificationCard() {
   const [mode, setMode] = useState('all')
   const [chosen, setChosen] = useState([])
   const [confirming, setConfirming] = useState(false)
+  const [urgent, setUrgent] = useState(false)
 
   const { data: allUsers = [] } = useQuery({ queryKey: ['users'], queryFn: getUsers })
   const users = allUsers.filter(user => user.is_active !== false)
@@ -105,9 +134,15 @@ export default function SendNotificationCard() {
   const ready = canSend({ title, body, mode, chosen })
   const count = recipientCount({ mode, chosen, users })
 
+  const audience = useQuery({
+    queryKey: ['admin-notification-audience', mode, chosen],
+    queryFn: () => getAdminNotificationAudience(recipientsPayload({ mode, chosen })),
+    enabled: confirming && !urgent,
+  })
+
   const mutation = useMutation({
     mutationFn: () => sendAdminNotification({
-      title: clean(title), body: clean(body), route, recipients: recipientsPayload({ mode, chosen }),
+      title: clean(title), body: clean(body), route, recipients: recipientsPayload({ mode, chosen }), urgent,
     }),
     onSuccess: result => {
       toast.success(resultText(result, t))
@@ -116,6 +151,7 @@ export default function SendNotificationCard() {
       setRoute('/')
       setMode('all')
       setChosen([])
+      setUrgent(false)
       setConfirming(false)
       queryClient.invalidateQueries({ queryKey: ['admin-notifications'] })
       queryClient.invalidateQueries({ queryKey: ['audit-log'] })
@@ -193,11 +229,25 @@ export default function SendNotificationCard() {
           )}
         </div>
 
+        <div className="flex min-h-[44px] items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-subheadline font-semibold">{t('adminNotify.urgentLabel')}</p>
+            <p className="text-footnote text-text-secondary">{t('adminNotify.urgentDesc')}</p>
+          </div>
+          <Switch
+            checked={urgent} label={t('adminNotify.urgentLabel')}
+            onChange={value => { setUrgent(value); setConfirming(false) }}
+          />
+        </div>
+
         <PushPreview title={title} body={body} t={t} />
 
         {confirming ? (
           <div className="space-y-3" data-testid="admin-notify-confirm">
             <p className="text-subheadline">{fill(t('adminNotify.confirm'), { count })}</p>
+            {confirmNotes({ urgent, quietNow: audience.data?.quiet_now ?? 0 }, t).map(note => (
+              <p key={note} className="text-footnote text-text-secondary" data-testid="admin-notify-confirm-note">{note}</p>
+            ))}
             <div className="flex gap-3">
               <button type="button" className="btn-secondary flex-1 justify-center" onClick={() => setConfirming(false)}>
                 {t('adminNotify.cancel')}
