@@ -35,8 +35,8 @@ describe('NotificationPrefs', () => {
   it('renders one switch per category plus quiet hours and card details, with their captions and the digest time', () => {
     const html = renderToStaticMarkup(<NotificationPrefs settings={{ notify_big_movers: 'true', notify_new_sets: 'false', notify_digest_hour: '9' }} save={vi.fn()} t={t} />)
     const tags = switches(html)
-    expect(tags).toHaveLength(11)
-    expect(tags.map(checkedOf)).toEqual([true, true, false, true, true, true, false, true, true, false, true])
+    expect(tags).toHaveLength(12)
+    expect(tags.map(checkedOf)).toEqual([true, true, false, true, true, true, false, true, true, true, false, true])
     for (const key of ['notifyPrefs.scansReadyDesc', 'notifyPrefs.newSetsDesc', 'notifyPrefs.wishlistDipsDesc', 'notifyPrefs.bigMoversDesc', 'notifyPrefs.badgesDesc', 'notifyPrefs.weeklyRecapDesc', 'notifyPrefs.wrappedDesc', 'notifyPrefs.digestTime', 'notifyPrefs.quietHoursDesc', 'notifyPrefs.showDetails', 'notifyPrefs.showDetailsDesc']) {
       expect(html).toContain(key)
     }
@@ -47,12 +47,12 @@ describe('NotificationPrefs', () => {
     const save = vi.fn().mockResolvedValue({})
     const tree = NotificationPrefs({ settings: { notify_big_movers: "true" }, save, t })
     const toggles = findAll(tree, n => typeof n.props.onChange === "function" && n.props.label)
-    expect(toggles.map(n => n.props.label)).toEqual(["notifyPrefs.scansReady", "notifyPrefs.wishlistAlerts", "notifyPrefs.newSets", "notifyPrefs.wishlistDips", "notifyPrefs.bigMovers", "notifyPrefs.badges", "notifyPrefs.weeklyRecap", "notifyPrefs.wrapped", "notifyPrefs.goalMilestones", "notifyPrefs.quietHours", "notifyPrefs.showDetails"])
+    expect(toggles.map(n => n.props.label)).toEqual(["notifyPrefs.scansReady", "notifyPrefs.wishlistAlerts", "notifyPrefs.newSets", "notifyPrefs.wishlistDips", "notifyPrefs.bigMovers", "notifyPrefs.badges", "notifyPrefs.weeklyRecap", "notifyPrefs.wrapped", "notifyPrefs.goalMilestones", "notifyPrefs.announcements", "notifyPrefs.quietHours", "notifyPrefs.showDetails"])
     toggles[0].props.onChange(false)
     toggles[4].props.onChange(false)
-    toggles[9].props.onChange(false)
     toggles[10].props.onChange(false)
-    toggles[10].props.onChange(true)
+    toggles[11].props.onChange(false)
+    toggles[11].props.onChange(true)
     expect(save.mock.calls).toEqual([
       [{ notify_scans_ready: "false" }], [{ notify_big_movers: "false" }], [{ notify_quiet_hours: "false" }],
       [{ notify_show_details: "false" }], [{ notify_show_details: "true" }],
