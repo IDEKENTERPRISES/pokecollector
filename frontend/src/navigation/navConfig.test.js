@@ -200,9 +200,9 @@ describe('navConfig and the offline routes', () => {
 })
 
 describe('settings sections', () => {
-  it('lists the eight sections of §5.6 in order', () => {
+  it('lists the sections of §5.6 in order', () => {
     expect(SETTINGS_SECTIONS.map(s => s.key)).toEqual([
-      'account', 'appearance', 'scanner', 'notifications', 'data', 'users', 'community', 'about',
+      'account', 'appearance', 'scanner', 'notifications', 'data', 'users', 'admin', 'community', 'about',
     ])
   })
 
@@ -210,7 +210,9 @@ describe('settings sections', () => {
     expect(visibleSettingsSections({ isAdmin: false }).map(s => s.key)).toEqual([
       'account', 'appearance', 'scanner', 'notifications', 'community', 'about',
     ])
-    expect(visibleSettingsSections({ isAdmin: true })).toHaveLength(8)
+    const adminKeys = visibleSettingsSections({ isAdmin: true }).map(s => s.key)
+    expect(adminKeys).toHaveLength(9)
+    expect(adminKeys.indexOf('admin')).toBe(adminKeys.indexOf('users') + 1)
   })
 
   it('leaves the Scanner section out for a user whose scanner an administrator manages', () => {

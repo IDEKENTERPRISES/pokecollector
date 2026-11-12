@@ -25,7 +25,7 @@ async function installApi(page, user) {
   })
 }
 
-const SECTIONS = ['account', 'appearance', 'scanner', 'notifications', 'data', 'users', 'community', 'about']
+const SECTIONS = ['account', 'appearance', 'scanner', 'notifications', 'data', 'users', 'admin', 'community', 'about']
 
 for (const section of SECTIONS) {
   test(`admin in multi-user mode can open /settings/${section} without a crash`, async ({ page }) => {
@@ -53,5 +53,11 @@ test('account shows change password and sign out other devices to a trainer', as
 test('export and restore are not offered to a trainer', async ({ page }) => {
   await installApi(page, TRAINER)
   await page.goto('/settings/data')
+  await expect(page).toHaveURL(/\/settings$/)
+})
+
+test('the Administrator section is not offered to a trainer', async ({ page }) => {
+  await installApi(page, TRAINER)
+  await page.goto('/settings/admin')
   await expect(page).toHaveURL(/\/settings$/)
 })
