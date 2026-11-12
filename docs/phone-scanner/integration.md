@@ -43,10 +43,7 @@ The code is written for `matcher_version` 11. `checkManifest(manifest)` refuses 
 - **"Works"** means `navigator.gpu.requestAdapter()` returns an adapter, tried in the **worker** (`probeWebGpu`, reported as "probe worker WebGPU" in the page's *Tried* line).
   Order for `auto`: fp16 in the worker → fp16 on the main thread (the model there, everything else in the worker) → uint8 on WebAssembly. A WebGPU session that fails to start falls through
   to the next, and the page shows what was tried. The page's *Model backend* select forces a choice (it still ends on WebAssembly if WebGPU is missing).
-- **Is WebGPU available in a worker on Safari 26?** I could not establish it from outside a device: WebKit's Safari 26 notes confirm WebGPU on iOS 26 for windows, and I found nothing either way for
-  dedicated workers. So the code does not assume: the worker probes, and the main-thread route exists for the case where it says no. The main-thread route is a small RPC: the worker pre-processes
-  (the same pixels either way) and sends the tensors, the main thread runs the fp16 session and sends the unit vectors back (`rpc` messages `load-model`, `embed`, `release-model`). The first
-  iPhone run will say which route `auto` took (the backend line reads "fp16 on WebGPU (worker)" or "(main thread)").
+- **WebGPU in a worker on Safari 26: no (measured on the owner's iPhone, iOS 26.6.3).** The worker's probe finds no adapter, so `auto` takes the main-thread route: the fp16 model runs on the main thread with WebGPU and everything else stays in the worker. That route is a small RPC: the worker pre-processes (the same pixels either way) and sends the tensors, the main thread runs the session and sends the unit vectors back (`rpc` messages `load-model`, `embed`, `release-model`; the main thread keeps its models in a map by name). The probe stays in the code in case a later iOS adds it.
 - **Protocol** (client → host): `init {manifest, mode, mainGpu, budgets}`, `match {photo, options}` (the pixel buffer is transferred), `release`, `rpc-result`. Host → client: `ready {info}`, `progress {stage}`,
   `result`, `error {code, message}`, `released`, `rpc`. Matches run one at a time, in order. Everything loads once in the worker: ORT sessions, the index files (parsed as views over the cached
   buffers), the catalogue indexes. `release` frees the sessions; leaving the page terminates the worker.
@@ -113,3 +110,30 @@ undecided, same card, same mechanism, and the overlap of the two top 20s (`_en` 
 photos with the real finder, views and decision rules and fake embeddings/reading), `host.test.js` (version guard, backend choice, protocol, memory, worker failure), `pictureIndex.test.js`,
 `phonespeed/matcherRun.test.js`, the page tests, `backend/tests/test_card_match_phone_speed.py` (storage, validation, comparison). No real scan photo is used anywhere. Not covered by CI: ORT with the real models in
 a browser, and WebGPU; that is what the iPhone run is for.
+
+## First iPhone run, and the fixes after it
+
+First full run (iOS 26.6.3): the answer agreed with the server (`sv08.5-137`, 18/20 shared), backend "fp16 on WebGPU (main thread)", finder 500 · views 200 · embed 415 · search 53 · **number 1,611** · name 292 · second read 0 · decide 16 · **total 3,092 ms (first 4,013)** against a 1.5 s target. Two problems:
+
+**1. The page went black on run 2 (a memory kill by iOS, most likely).** I could not reproduce it off the device and found no single leak by reading the code, so the fix is crash-safety, a way to get numbers regardless, and measures that
+reduce what can pile up. Nothing here is a claim that the cause is found; the options below are how the owner tells which side grows.
+- *Crash-safe like step 2:* the stage that is running is flagged in sessionStorage (`matcher_r<run>_<stage>`) and every finished stage's time is saved at once; a page that dies is posted on the next load as a crashed run that names the stage
+  (`reportPreviousCrash`, shown in Scanner lab as "Crashed during matcher_r2_views"), and the page then preselects "uint8 on WebAssembly only".
+- *Runs: 1 or 3.* "1 run only" gets numbers even if repeats still die.
+- *Fresh worker for every run* (on by default): between runs the worker is terminated and a new one started (`client.restartWorker()`), which frees its WebAssembly heaps (ORT's heap never shrinks), the picture indexes and the decide indexes and rebuilds
+  them (a couple of seconds, not counted in the stage times); the fp16 model on the main thread stays loaded (a restarted worker's `load-model` finds it). If runs 2 and 3 now survive, the growth was in the worker; if they still die with this on, it is on the main
+  thread (the WebGPU session, the photo, the canvases).
+- *Checked and already fine:* the main-thread session is created once per page and reused (`init` is not repeated per run unless "fresh worker" asks for it, and then it reuses the model); the output tensors are disposed after every read; the 2048 px re-encode and decode canvases are zeroed
+  (`width = height = 0`) and the bitmaps closed; each run gets its own copy of the photo (transferred to the worker, so the page does not keep a second live copy); no view or card is kept after a result is returned.
+- *Less garbage per photo:* the decision's card-id lookup map (19.7k entries) is built once with the index instead of on every photo.
+- *Memory estimate on the page* (iOS gives no reading): picture indexes ~60 MB, the embedding model, the reader models, the card-database indexes ~16 MB, the photo as pixels (~12.6 MB here plus one copy per run in the worker), listed after a run.
+
+**2. Speed: the number reading took 1.6 s.** The run now records what the reader did: per reader stage the number of detection and recognition calls, ms per call and input sizes, the ladder steps that ran with their times, and why the ladder stopped
+(`accepted` = a complete sure number, `budget` = the 0.9 s budget, `end` = every step ran). They are shown on the page, posted (`matcher.ocr`, `matcher.ladder`) and summarised in Scanner lab. Options the owner can compare, each independent, with the safe combination as the default:
+- **(a) Overlap** (off by default): the upright read (number, then name) starts in the worker while the main thread's WebGPU runs the embeddings. It is speculative: if the picture then says the card is turned, the speculative read is thrown away and the card is
+  read turned, so the answer is always the sequential one (tests). It only applies when the model runs on the main thread. The stage times then overlap, so they add up to more than the total.
+- **(b) Reader on WebGPU on the main thread** (off by default): the detection and recognition models run as fp32 on the main thread's WebGPU, called from the worker over rpc (`ocr-load`, `ocr-run`). If a session cannot be created the error is shown on the page naming the operator
+  that is not supported, and the reader falls back to WebAssembly. No fp16 reader models are in the bundle, so fp32 only. Untested on a device: dynamic input sizes may compile a shader per shape, which the per-call times will show.
+- **(c) Lean ladder** (off by default): stop after the first 3 steps (the two tight strips and the plain bottom band) instead of the server's 6. `readCard({maxSteps, acceptConfidence})` exist for it; the defaults are the server's, so the 3b parity tests are untouched. Cost in parity, from replaying the 3b recordings
+  (`ocr/lean.test.js`): with 2, 3 or 4 steps all 10 recorded reads give the same number and total as Python, using 41 / 42 / 44 of the 50 recorded model calls. Those are clean generated cards, the best case; real photos are what the iPhone run measures. A smaller detection input is **not** offered:
+  the recordings pin the exact detector input shape, so its parity cannot be shown offline.

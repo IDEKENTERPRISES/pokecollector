@@ -391,6 +391,9 @@ MATCHER = {
     "orientation": {"by": "default", "flipped": False}, "detection": {"source": "quad", "found": True},
     "wholeread": None, "catalogue": {"present": True, "cards": 19659}, "photo": {"width": 1536, "height": 2048, "bytes": 412345},
     "timings": {"finder": [610.2, 590.1], "embed": [820.0, 790.5], "total": [2210.4, 2100.0]},
+    "variant": "restart=1 overlap=0 ocr=wasm ladder=server runs=3",
+    "ocr": {"ocr_number": {"det_calls": 3, "det_ms": 420.5, "rec_calls": 4, "rec_ms": 130}, "name": {"det_calls": 1, "det_ms": 90, "rec_calls": 1, "rec_ms": 30}},
+    "ladder": {"stopped": "accepted", "attempts": 2, "seconds": 0.62, "budget": 0.9},
 }
 MATCHER_RUN = {"timings": {"matcher_total_first_ms": 2210.4, "matcher_total_median_ms": 2100.0}, "device": {"gpu": True}, "matcher": MATCHER}
 
@@ -408,6 +411,9 @@ class MatcherBlockTests(unittest.TestCase):
         run = phone_speed.record(MATCHER_RUN, "oak", self.dir)
         self.assertEqual(run["matcher"]["card"], "sv1-1")
         self.assertEqual(run["matcher"]["timings"]["total"], [2210.4, 2100.0])
+        self.assertEqual(run["matcher"]["ocr"]["ocr_number"]["det_calls"], 3)
+        self.assertEqual(run["matcher"]["ladder"]["stopped"], "accepted")
+        self.assertIn("restart=1", run["matcher"]["variant"])
         self.assertEqual(phone_speed.get(run["id"], self.dir)["matcher"]["top20"][0], ["sv1-1", 0.9312])
 
     def test_only_a_small_set_of_numbers_and_short_texts_is_accepted(self):
@@ -422,6 +428,10 @@ class MatcherBlockTests(unittest.TestCase):
             {**MATCHER, "read": {"number": "001", "pixels": "AAAA"}},
             {**MATCHER, "read": {"name": "x" * 500}},
             {**MATCHER, "photo": {"width": "wide"}},
+            {**MATCHER, "ocr": {"hp": {"det_calls": 1}}},
+            {**MATCHER, "ocr": {"name": {"det_calls": "many"}}},
+            {**MATCHER, "ladder": {"stopped": "x" * 200}},
+            {**MATCHER, "variant": "x" * 300},
             "not an object",
         ]
         for matcher in bad:

@@ -441,7 +441,9 @@ export function matcherTimingText(run) {
   const stages = [['finder', 'finder'], ['views', 'views'], ['embed', 'embed'], ['search', 'search'], ['ocr_number', 'number'], ['name', 'name'], ['second_read', 'second read'], ['decide', 'decide']]
   const parts = stages.filter(([key]) => timings[key]).map(([key, label]) => `${label} ${number(timings[key][1])}`)
   const total = timings.total
-  return `${run.matcher.backend || '?'} · ${parts.join(' · ')}${total ? ` · total ${number(total[1])} ms (first ${number(total[0])})` : ''}`
+  const reader = run.matcher.ocr ? Object.entries(run.matcher.ocr).map(([stage, c]) => `${stage.replace('ocr_', '')} ${c.det_calls} det / ${c.rec_calls} rec`).join(', ') : null
+  const ladder = run.matcher.ladder ? `ladder ${run.matcher.ladder.attempts} steps, stopped by ${run.matcher.ladder.stopped}` : null
+  return `${run.matcher.backend || '?'} · ${parts.join(' · ')}${total ? ` · total ${number(total[1])} ms (first ${number(total[0])})` : ''}${reader ? ` · reader calls: ${reader}` : ''}${ladder ? ` · ${ladder}` : ''}${run.matcher.variant ? ` · ${run.matcher.variant}` : ''}`
 }
 
 /** The last phone speed-test runs (numbers, device facts, the photo thumbnail, agreement with the server) and the way to the test page. Admins only: the section is. */

@@ -7,8 +7,8 @@ import { useNavBar } from '../navigation/useNavBar'
 import { createPostGuard, speedRunRequest } from '../phonespeed/upload'
 import { checkManifest } from '../phonescan/matcher/guard'
 import { prepareMatchPhoto } from '../phonespeed/matchPhoto'
-import { describeDecision, matcherOutcome, runMatcherRuns, STAGE_ROWS, summariseTimings } from '../phonespeed/matcherRun'
-import { clearPartial, crashedRunBody, describeIos, loadPartial, markStep, newRunId, previousCrash, reportPreviousCrash } from '../phonespeed/plan'
+import { describeDecision, estimateMemory, matcherOutcome, runMatcherRuns, STAGE_ROWS, summariseTimings, variantText } from '../phonespeed/matcherRun'
+import { clearPartial, crashedRunBody, describeIos, loadPartial, markStep, newPartial, previousCrash, recordStep, reportPreviousCrash } from '../phonespeed/plan'
 import {
   CACHE_NAME, cacheState, downloadMissing, megabytes, networkHelpers, readCached, removeTestFiles, testFiles, totalBytes, MANIFEST_PATH,
 } from '../phonespeed/bundleCache'
@@ -74,6 +74,12 @@ export default function PhoneSpeedTest() {
   const hasGpu = Boolean(globalThis.navigator?.gpu)
   // the "Full phone matcher" run (step 3d)
   const [matcherMode, setMatcherMode] = useState('auto')
+  // the safest combination first: three runs, a fresh worker for each (frees its memory), no overlap, the server's reader ladder on WebAssembly
+  const [matcherRuns, setMatcherRuns] = useState(3)
+  const [matcherRestart, setMatcherRestart] = useState(true)
+  const [matcherOverlap, setMatcherOverlap] = useState(false)
+  const [matcherOcr, setMatcherOcr] = useState('wasm')
+  const [matcherLadder, setMatcherLadder] = useState('server')
   const [matcherState, setMatcherState] = useState({ status: 'idle' }) // idle | loading | running | done | error
   const [matcherResults, setMatcherResults] = useState([])
   const [matcherInfo, setMatcherInfo] = useState(null)
@@ -228,9 +234,15 @@ export default function PhoneSpeedTest() {
     setMatcherSent(null)
     setMessage(null)
     setMatcherState({ status: 'loading', stage: 'preparing the photo' })
-    const runId = newRunId()
+    const variant = variantText({ restart: matcherRestart, overlap: matcherOverlap, ocrBackend: matcherOcr, ladder: matcherLadder, runs: matcherRuns })
+    // crash-safe like the step 2 test: the stage that is running is flagged, every finished stage is saved at once, and a page that dies is
+    // posted on the next load as a crashed run that names the stage (reportPreviousCrash).
+    const base = { ...runtime.readDevice(), photoSource: photo.current ? 'taken here' : 'built-in sample', matcherMode, matcherVariant: variant, crashedBefore: Boolean(crash) }
+    const partial = newPartial(base)
+    const runId = partial.runId
     try {
       markStep('matcher_init')
+      recordStep(partial, 'matcher_init', { first: 0, median: 0 })
       const cache = await caches.open(CACHE_NAME)
       const { createMatcherClient } = await import('../phonescan/matcher/client')
       const ort = await import('../phonescan/matcher/ort')
@@ -241,21 +253,34 @@ export default function PhoneSpeedTest() {
         })
       }
       const prepared = await prepareMatchPhoto(photo.current || SAMPLE_URL)
-      setMatcherState({ status: 'loading', stage: 'loading the models and indexes' })
       const mainGpu = (await ort.probeWebGpu()).available
-      const info = await matcherClient.current.init({ manifest, mode: matcherMode, mainGpu })
+      const initOptions = { manifest, mode: matcherMode, mainGpu, ocrBackend: matcherOcr, ocrProfile: matcherLadder }
+      setMatcherState({ status: 'loading', stage: 'loading the models and indexes' })
+      let info = await matcherClient.current.init(initOptions)
       setMatcherInfo(info)
-      markStep('matcher_run')
       const results = await runMatcherRuns({
         client: matcherClient.current,
+        runs: matcherRuns,
+        overlap: matcherOverlap,
+        beforeRun: async n => {
+          if (n > 1 && matcherRestart) {
+            setMatcherState({ status: 'loading', stage: `run ${n}: restarting the worker` })
+            matcherClient.current.restartWorker()
+            info = await matcherClient.current.init(initOptions)
+            setMatcherInfo(info)
+          }
+        },
         copy: () => ({ data: new Uint8ClampedArray(prepared.photo.data), width: prepared.photo.width, height: prepared.photo.height }),
-        onStage: (stage, n) => setMatcherState({ status: 'running', stage: `run ${n}: ${stage}` }),
+        onStage: (stage, n, stageInfo) => {
+          if (!stageInfo) { markStep(`matcher_r${n}_${stage}`); setMatcherState({ status: 'running', stage: `run ${n}: ${stage}` }) } else recordStep(partial, `matcher_r${n}_${stage}`, { first: stageInfo.ms, median: stageInfo.ms })
+        },
         onRun: (n, result) => setMatcherResults(current => [...current, result]),
       })
       markStep(null)
-      const device = { ...runtime.readDevice(), photoWidth: prepared.photo.width, photoHeight: prepared.photo.height, photoSource: photo.current ? 'taken here' : 'built-in sample', crashedBefore: Boolean(crash) }
-      const outcome = matcherOutcome({ results, device, runId, photo: { width: prepared.photo.width, height: prepared.photo.height, bytes: prepared.bytes }, info })
-      setMatcherState({ status: 'done' })
+      clearPartial()
+      const device = { ...base, photoWidth: prepared.photo.width, photoHeight: prepared.photo.height }
+      const outcome = matcherOutcome({ results, device, runId, photo: { width: prepared.photo.width, height: prepared.photo.height, bytes: prepared.bytes }, info, variant })
+      setMatcherState({ status: 'done', memory: estimateMemory({ manifest, info, photo: prepared.photo }) })
       const request = speedRunRequest(outcome, photo.current ? new File([prepared.upload], 'photo.jpg', { type: 'image/jpeg' }) : null)
       try {
         await postGuard.current.once(runId, () => api.post('/card-match/phone-speed', request.body, request.multipart ? { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 } : undefined))
@@ -376,6 +401,22 @@ export default function PhoneSpeedTest() {
             <option value="wasm">uint8 on WebAssembly only</option>
           </select>
         </label>
+        <div className="space-y-1 text-footnote" data-testid="phone-matcher-options">
+          <label className="flex items-center gap-2"><span className="text-text-secondary">Runs</span>
+            <select value={matcherRuns} onChange={event => setMatcherRuns(Number(event.target.value))} disabled={busy} className="rounded bg-card-secondary px-2 py-1" data-testid="phone-matcher-runs">
+              <option value={3}>3 (first, and the median of the next two)</option><option value={1}>1 run only</option>
+            </select></label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={matcherRestart} onChange={event => setMatcherRestart(event.target.checked)} disabled={busy} data-testid="phone-matcher-restart" /> Start a fresh worker for every run (frees its memory; the model on the main thread stays)</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={matcherOverlap} onChange={event => setMatcherOverlap(event.target.checked)} disabled={busy} data-testid="phone-matcher-overlap" /> Overlap: read the text while the embeddings run (only with the model on the main thread)</label>
+          <label className="flex items-center gap-2"><span className="text-text-secondary">Reader</span>
+            <select value={matcherOcr} onChange={event => setMatcherOcr(event.target.value)} disabled={busy} className="min-w-0 rounded bg-card-secondary px-2 py-1" data-testid="phone-matcher-ocr">
+              <option value="wasm">WebAssembly in the worker</option><option value="webgpu-main">WebGPU on the main thread (fp32; names an unsupported operator if it fails)</option>
+            </select></label>
+          <label className="flex items-center gap-2"><span className="text-text-secondary">Ladder</span>
+            <select value={matcherLadder} onChange={event => setMatcherLadder(event.target.value)} disabled={busy} className="min-w-0 rounded bg-card-secondary px-2 py-1" data-testid="phone-matcher-ladder">
+              <option value="server">The server's (6 steps)</option><option value="lean">Lean: the first 3 steps</option>
+            </select></label>
+        </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" className={button} disabled={busy || !ready || !runtime || !guard?.ok} onClick={runMatcher} data-testid="phone-matcher-run"><Play size={14} aria-hidden="true" /> Run the full matcher</button>
           <button type="button" className={button} disabled={busy || !matcherInfo} onClick={releaseMatcher} data-testid="phone-matcher-release"><Trash2 size={14} aria-hidden="true" /> Release the matcher</button>
@@ -392,14 +433,14 @@ export default function PhoneSpeedTest() {
             {' '}Tried: {(matcherInfo.tried || []).map(step => `${step.step}${step.ok ? ' ok' : ` no (${step.note || 'failed'})`}`).join(', ')}.
           </p>
         )}
-        <MatcherResults results={matcherResults} sent={matcherSent} />
+        <MatcherResults results={matcherResults} sent={matcherSent} memory={matcherState.memory} />
       </Section>
     </div>
   )
 }
 
 /** The full-matcher results: stage times, the answer, the top 5 with names from the card database. */
-export function MatcherResults({ results, sent }) {
+export function MatcherResults({ results, sent, memory = null }) {
   if (!results.length) return null
   const first = results[0]
   const summary = summariseTimings(results)
@@ -423,8 +464,46 @@ export function MatcherResults({ results, sent }) {
           <li key={item.id}>{item.name ? `${item.name} #${item.number ?? '?'}` : item.tcgCardId}{item.set ? ` · ${item.set}` : ''} · {item.score.toFixed(3)}</li>
         ))}
       </ol>
+      <OcrStats stats={first.ocrStats} />
+      {memory && (
+        <div className="text-footnote" data-testid="phone-matcher-memory">
+          <p className="font-semibold">Held in memory (estimate, iOS gives no reading)</p>
+          <ul className="list-disc pl-5 tabular-nums">{memory.rows.map(([label, value]) => <li key={label}>{label}: {value} MB</li>)}</ul>
+          <p>Total about {memory.total} MB, before the working memory of the finder and the models.</p>
+        </div>
+      )}
       {results.some(result => result.tcgCardId !== first.tcgCardId || result.mechanism !== first.mechanism) && <p className="text-footnote text-red-500">The runs did not give the same answer.</p>}
       {sent && <p className="text-footnote" data-testid="phone-matcher-sent">{sent}</p>}
+    </div>
+  )
+}
+
+/** What the reader did: model calls per stage (count, ms per call, input sizes) and the number ladder's steps and why it stopped. */
+export function OcrStats({ stats }) {
+  if (!stats) return null
+  const stages = Object.entries(stats.calls || {})
+  const number = stats.number
+  return (
+    <div className="space-y-1 text-footnote" data-testid="phone-matcher-ocr-stats">
+      <p className="font-semibold">Reader calls</p>
+      <table className="w-full tabular-nums">
+        <thead><tr className="text-left text-text-secondary"><th className="font-normal">Stage</th><th className="font-normal">Detection</th><th className="font-normal">Recognition</th></tr></thead>
+        <tbody>
+          {stages.map(([stage, entry]) => (
+            <tr key={stage} className="border-t border-separator align-top">
+              <td>{stage}</td>
+              <td>{entry.det.n} × {entry.det.perCall ?? '–'} ms<div className="text-text-secondary">{[...new Set(entry.det.inputs)].join(', ')}</div></td>
+              <td>{entry.rec.n} × {entry.rec.perCall ?? '–'} ms<div className="text-text-secondary">{[...new Set(entry.rec.inputs)].join(', ')}</div></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {number && (
+        <p data-testid="phone-matcher-ladder-note">
+          Number ladder: {number.attempts} of 6 steps ran ({(number.steps || []).map(step => `${step.label} ${step.variant} ${step.ms} ms`).join(' · ') || 'none'}); stopped by {number.stopped === 'budget' ? `the ${number.budget} s budget` : number.stopped === 'accepted' ? 'a complete, sure number' : 'the end of the ladder'}; {number.seconds} s used.
+        </p>
+      )}
+      {stats.name && <p>Name ladder: {(stats.name.steps || []).map(step => `${step.label} ${step.ms} ms`).join(' · ') || 'none'}.</p>}
     </div>
   )
 }

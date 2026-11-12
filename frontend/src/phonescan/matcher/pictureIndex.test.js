@@ -67,7 +67,7 @@ describe('searching all rows', () => {
   it('without an artwork index the score is the whole-card score and there is no artwork vector', () => {
     const only = buildPictureIndex([wholeA.file], [])
     const best = Float32Array.from([0.9, 0.8, 0.7])
-    expect(combineScores(only, best, null)).toEqual({ ids: only.ids, scores: best, art: null })
+    expect(combineScores(only, best, null)).toEqual({ ids: only.ids, scores: best, art: null, rowOf: only.rowOf })
   })
 
   it('takes the elementwise maximum like np.maximum', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeDecision, flatTimings, matcherBlock, matcherOutcome, MATCHER_RUNS, runMatcherRuns, stageTimes, summariseTimings } from './matcherRun'
+import { describeDecision, estimateMemory, flatTimings, ladderOf, ocrCounts, variantText, matcherBlock, matcherOutcome, MATCHER_RUNS, runMatcherRuns, stageTimes, summariseTimings } from './matcherRun'
 import { fitSize } from './matchPhoto'
 
 const result = (total, over = {}) => ({
@@ -81,5 +81,37 @@ describe('the photo the matcher runs on', () => {
     expect(fitSize(4032, 3024)).toEqual({ width: 2048, height: 1536 })
     expect(fitSize(3024, 4032)).toEqual({ width: 1536, height: 2048 })
     expect(fitSize(1920, 1080)).toEqual({ width: 1920, height: 1080 })
+  })
+})
+
+describe('the experiment settings and the reader statistics (iPhone fix)', () => {
+  const stats = {
+    calls: { ocr_number: { det: { n: 3, ms: 420.5, perCall: 140, inputs: ['1x3x128x704'] }, rec: { n: 4, ms: 130, perCall: 32.5, inputs: [] } }, other: { det: { n: 9, ms: 1 }, rec: { n: 9, ms: 1 } } },
+    number: { stopped: 'budget', attempts: 3, seconds: 0.95, budget: 0.9 },
+  }
+  it('counts the reader calls per reader stage only, and says how the ladder stopped', () => {
+    expect(ocrCounts(stats)).toEqual({ ocr_number: { det_calls: 3, det_ms: 420.5, rec_calls: 4, rec_ms: 130 } })
+    expect(ladderOf(stats)).toEqual({ stopped: 'budget', attempts: 3, seconds: 0.95, budget: 0.9 })
+    expect(ocrCounts(null)).toBeNull()
+    expect(ladderOf(null)).toBeNull()
+  })
+  it('writes the settings as one short text and puts it, the counts and the ladder in the posted block', () => {
+    expect(variantText({ restart: true, overlap: false, ocrBackend: 'wasm', ladder: 'server', runs: 3 })).toBe('restart=1 overlap=0 ocr=wasm ladder=server runs=3')
+    expect(variantText({ restart: false, overlap: true, ocrBackend: 'webgpu-main', ladder: 'lean', runs: 1 })).toBe('restart=0 overlap=1 ocr=gpu ladder=lean runs=1')
+    const block = matcherBlock([result(2000, { ocrStats: stats })], { variant: 'restart=1 overlap=0 ocr=wasm ladder=server runs=1' })
+    expect(block.variant).toContain('restart=1')
+    expect(block.ocr.ocr_number.det_calls).toBe(3)
+    expect(block.ladder.stopped).toBe('budget')
+  })
+  it('estimates what is held in memory from the bundle sizes', () => {
+    const manifest = { model: { file: 'model/q.onnx', webgpu_candidate: { file: 'model/h.onnx' } }, files: [
+      { path: 'model/q.onnx', size: 24 * 1048576 }, { path: 'model/h.onnx', size: 42 * 1048576 }, { path: 'ocr/det.onnx', size: 5 * 1048576 }, { path: 'ocr/rec.onnx', size: 11 * 1048576 },
+      { path: 'index/whole/a.bin', size: 30 * 1048576 }, { path: 'index/art/a.bin', size: 30 * 1048576 },
+    ] }
+    const gpu = estimateMemory({ manifest, info: { backend: 'fp16 on WebGPU (main thread)' }, photo: { width: 1536, height: 2048 } })
+    expect(gpu.rows[0]).toEqual(['Picture indexes (whole + artwork, 8-bit)', 60])
+    expect(gpu.rows[1][1]).toBe(42)
+    expect(gpu.total).toBeCloseTo(60 + 42 + 16 + 16 + 12, 0)
+    expect(estimateMemory({ manifest, info: { backend: 'uint8 on WebAssembly' } }).rows[1][1]).toBe(24)
   })
 })

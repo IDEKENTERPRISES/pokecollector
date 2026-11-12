@@ -30,11 +30,49 @@ export function flatTimings(summary) {
 
 const trim = (value, length = 60) => (value === null || value === undefined ? null : String(value).slice(0, length))
 
+/** Per stage, the number of reader model calls and their time: {ocr_number: {det_calls, det_ms, rec_calls, rec_ms}}. */
+export function ocrCounts(stats) {
+  const calls = stats?.calls
+  if (!calls) return null
+  const out = {}
+  for (const [stage, entry] of Object.entries(calls)) {
+    if (!['ocr_number', 'name', 'second_read'].includes(stage)) continue
+    out[stage] = { det_calls: entry.det.n, det_ms: round(entry.det.ms), rec_calls: entry.rec.n, rec_ms: round(entry.rec.ms) }
+  }
+  return out
+}
+
+/** How the number ladder went: why it stopped, how many steps, the seconds against the budget. */
+export function ladderOf(stats) {
+  const number = stats?.number
+  if (!number) return null
+  return { stopped: trim(number.stopped, 12), attempts: number.attempts ?? null, seconds: number.seconds ?? null, budget: number.budget ?? null }
+}
+
+/** The settings of a run as one short text, e.g. "restart=1 overlap=0 ocr=wasm ladder=server runs=3". */
+export function variantText({ restart, overlap, ocrBackend, ladder, runs }) {
+  return `restart=${restart ? 1 : 0} overlap=${overlap ? 1 : 0} ocr=${ocrBackend === 'webgpu-main' ? 'gpu' : 'wasm'} ladder=${ladder} runs=${runs}`
+}
+
+/** A rough list of what is held in memory while the matcher is loaded, in MB (the bundle's sizes: iOS gives no memory reading). */
+export function estimateMemory({ manifest, info, photo = null }) {
+  const mb = bytes => Math.round(bytes / 1048576 * 10) / 10
+  const size = path => (manifest?.files || []).find(file => file.path === path)?.size || 0
+  const indexBytes = (manifest?.files || []).filter(file => file.path.startsWith('index/')).reduce((sum, file) => sum + file.size, 0)
+  const rows = [['Picture indexes (whole + artwork, 8-bit)', mb(indexBytes)]]
+  const embedModel = info?.backend?.startsWith('fp16') ? manifest?.model?.webgpu_candidate?.file : manifest?.model?.file
+  rows.push([`Embedding model (${info?.backend ?? '?'})`, mb(size(embedModel))])
+  rows.push(['Reader models (detection + recognition)', mb(size('ocr/det.onnx') + size('ocr/rec.onnx'))])
+  rows.push(['Card database search indexes (about)', 16])
+  if (photo) rows.push(['The photo as pixels (here, plus one copy per run in the worker)', mb(photo.width * photo.height * 4)])
+  return { rows, total: Math.round(rows.reduce((sum, [, value]) => sum + value, 0) * 10) / 10 }
+}
+
 /**
  * The `matcher` block of a posted run, from the results (the first one's answer is the answer: the runs are the same photo, so the
  * answers agree unless something is nondeterministic, which `stable` says).
  */
-export function matcherBlock(results, { photo = null, info = null } = {}) {
+export function matcherBlock(results, { photo = null, info = null, variant = null } = {}) {
   const first = results[0]
   const summary = summariseTimings(results)
   const key = result => `${result.tcgCardId ?? 'unsure'}|${result.mechanism ?? ''}`
@@ -43,6 +81,9 @@ export function matcherBlock(results, { photo = null, info = null } = {}) {
     backend: trim(first.backend, 80),
     mode: trim(info?.mode, 24),
     runs: results.length,
+    variant: trim(variant, 120),
+    ocr: ocrCounts(first.ocrStats),
+    ladder: ladderOf(first.ocrStats),
     stable: results.every(result => key(result) === key(first)),
     decided: Boolean(first.decided),
     card: first.decided ? trim(first.tcgCardId, 64) : null,
@@ -65,10 +106,11 @@ export function matcherBlock(results, { photo = null, info = null } = {}) {
  * Runs the matcher `runs` times on the photo: `copy()` gives a fresh {data, width, height} each time (the worker takes the buffer).
  * `onRun(n, result)` after each. Returns the results in order.
  */
-export async function runMatcherRuns({ client, copy, runs = MATCHER_RUNS, onStage = null, onRun = null, useText = true }) {
+export async function runMatcherRuns({ client, copy, runs = MATCHER_RUNS, onStage = null, onRun = null, useText = true, overlap = false, beforeRun = null }) {
   const results = []
   for (let n = 1; n <= runs; n++) {
-    const result = await client.match(copy(), { onStage: stage => onStage?.(stage, n), useText })
+    await beforeRun?.(n) // e.g. restart the worker so every run starts from a fresh heap
+    const result = await client.match(copy(), { onStage: (stage, info) => onStage?.(stage, n, info), useText, overlap })
     results.push(result)
     onRun?.(n, result)
   }
@@ -76,8 +118,8 @@ export async function runMatcherRuns({ client, copy, runs = MATCHER_RUNS, onStag
 }
 
 /** The speed-test run body for a matcher run: flat stage timings + device + the `matcher` block. */
-export function matcherOutcome({ results, device, runId, photo, info }) {
-  const block = matcherBlock(results, { photo, info })
+export function matcherOutcome({ results, device, runId, photo, info, variant = null }) {
+  const block = matcherBlock(results, { photo, info, variant })
   const summary = summariseTimings(results)
   return { timings: flatTimings(summary), device, matcher: block, runId, summary }
 }

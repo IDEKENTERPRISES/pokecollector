@@ -7,7 +7,7 @@ vi.mock('../contexts/AuthContext', () => ({ useAuth: () => auth }))
 vi.mock('../navigation/useNavBar', () => ({ useNavBar: () => {} }))
 vi.mock('../api/client', () => ({ default: { get: vi.fn(() => new Promise(() => {})), post: vi.fn() } }))
 
-const { default: PhoneSpeedTest, ResultsTable, MatcherResults } = await import('./PhoneSpeedTest')
+const { default: PhoneSpeedTest, ResultsTable, MatcherResults, OcrStats } = await import('./PhoneSpeedTest')
 const { PhoneSpeedRuns, matcherAgreementText, matcherTimingText } = await import('../components/settings/ScannerLabSection')
 
 const render = element => renderToStaticMarkup(<MemoryRouter>{element}</MemoryRouter>)
@@ -30,7 +30,7 @@ describe('Phone speed test visibility', () => {
     const withGpu = render(<PhoneSpeedTest />)
     vi.unstubAllGlobals()
     expect(withGpu).not.toContain('8-bit model on WebGPU')
-    expect(withGpu).not.toContain('type="checkbox"')
+    expect(withGpu).not.toMatch(/uint8 on WebGPU|8-bit on WebGPU/) // the only checkboxes are the matcher's restart and overlap options
   })
 
   it('shows nothing to a trainer (it sends them back to Settings)', () => {
@@ -142,5 +142,37 @@ describe('the full phone matcher section (step 3d)', () => {
     const html = render(<PhoneSpeedRuns runs={[run]} />)
     expect(html).toContain('full phone matcher')
     expect(html).toContain('full matcher: phone sv1-25 / server sv1-25 · agree yes · 17/20')
+  })
+})
+
+describe('the matcher options and statistics on the page (iPhone fix)', () => {
+  it('offers one run only, a fresh worker per run, overlap, the reader on WebGPU and the lean ladder, with the safe choices first', () => {
+    const html = render(<PhoneSpeedTest />)
+    for (const id of ['runs', 'restart', 'overlap', 'ocr', 'ladder']) expect(html).toContain(`data-testid="phone-matcher-${id}"`)
+    expect(html).toContain('1 run only')
+    expect(html).toContain('WebGPU on the main thread (fp32')
+    expect(html).toContain('Lean: the first 3 steps')
+    expect(html).toMatch(/data-testid="phone-matcher-restart"[^>]*checked|checked[^>]*data-testid="phone-matcher-restart"/)
+    expect(html).not.toMatch(/checked[^>]*data-testid="phone-matcher-overlap"|data-testid="phone-matcher-overlap"[^>]*checked/)
+  })
+
+  it('shows the reader calls per stage, the ladder and why it stopped, and the memory estimate', () => {
+    const stats = {
+      calls: { ocr_number: { det: { n: 3, ms: 420, perCall: 140, inputs: ['1x3x128x704', '1x3x128x704'] }, rec: { n: 4, ms: 130, perCall: 32.5, inputs: ['1x3x48x320'] } } },
+      number: { attempts: 3, steps: [{ label: 'number-left-tight', variant: 'plain', ms: 300 }], stopped: 'budget', budget: 0.9, seconds: 0.95 },
+      name: { steps: [{ label: 'name-line', ms: 120 }] },
+    }
+    const html = render(<OcrStats stats={stats} />)
+    expect(html).toContain('3 × 140 ms')
+    expect(html).toContain('1x3x128x704')
+    expect(html).toContain('4 × 32.5 ms')
+    expect(html).toContain('3 of 6 steps ran')
+    expect(html).toContain('stopped by the 0.9 s budget')
+    expect(html).toContain('name-line 120 ms')
+    expect(render(<OcrStats stats={null} />)).toBe('')
+    const memory = { rows: [['Picture indexes', 60], ['Embedding model', 42]], total: 102 }
+    const withMemory = render(<MatcherResults results={[{ decided: false, candidates: [], timings_ms: {}, ocrStats: stats }]} memory={memory} />)
+    expect(withMemory).toContain('Picture indexes: 60 MB')
+    expect(withMemory).toContain('Total about 102 MB')
   })
 })

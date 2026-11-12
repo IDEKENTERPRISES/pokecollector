@@ -29,7 +29,8 @@ export function buildPictureIndex(wholeFiles, artFiles) {
   artFiles.forEach((file, n) => { for (let i = 0; i < file.count; i++) if (!artRowOf.has(file.ids[i])) artRowOf.set(file.ids[i], art.parts[n].offset + i) })
   const artRowFor = new Int32Array(ids.length)
   for (let row = 0; row < ids.length; row++) artRowFor[row] = artRowOf.has(ids[row]) ? artRowOf.get(ids[row]) : -1
-  return { dim, ids, whole, art, artRowFor, count: ids.length, artCount: art.total }
+  const rowOf = new Map(ids.map((id, row) => [id, row])) // made once: the decision looks cards up by id on every photo
+  return { dim, ids, whole, art, artRowFor, rowOf, count: ids.length, artCount: art.total }
 }
 
 /** Parses the index files ({path -> ArrayBuffer}) into a picture index. Paths are `index/whole/<set>.bin` and `index/art/<set>.bin`. */
@@ -84,7 +85,7 @@ export function maxInto(into, other) {
  * {ids, scores, art}. A card the art index lacks scores `best` for its art part (`own`), as the server does.
  */
 export function combineScores(index, best, artBest) {
-  if (!artBest) return { ids: index.ids, scores: best, art: null }
+  if (!artBest) return { ids: index.ids, scores: best, art: null, rowOf: index.rowOf }
   const scores = new Float32Array(best.length)
   const art = new Float32Array(best.length)
   for (let row = 0; row < best.length; row++) {
@@ -93,5 +94,5 @@ export function combineScores(index, best, artBest) {
     art[row] = own
     scores[row] = (best[row] + own) / 2
   }
-  return { ids: index.ids, scores, art }
+  return { ids: index.ids, scores, art, rowOf: index.rowOf }
 }

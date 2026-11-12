@@ -82,7 +82,7 @@ export function decideCard({ pictureScores = null, pictureTopK = null, read = nu
   const picture = pictureScores ?? scoresFromTopK(pictureTopK)
   const { ids, scores } = picture
   const art = picture.art ?? null
-  const rowOf = new Map(ids.map((id, row) => [id, row]))
+  const rowOf = picture.rowOf ?? new Map(ids.map((id, row) => [id, row])) // a caller that scores every card on every photo passes its own map (no 19.7k-entry map per photo)
   const topK = options.topK ?? t.top_k
   const count = scores.length
   let hits = topHits(scores, ids, topK)
