@@ -2,6 +2,7 @@ import { copyFileSync, appendFileSync, readdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from '@playwright/test'
+import { NOT_PRECACHED } from '../../scripts/build-sw.mjs'
 
 const dist = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist')
 const admin = { id: 1, username: 'admin', role: 'admin', avatar_id: null, must_change_password: false }
@@ -61,9 +62,14 @@ test('registers on first load, controls after reload and precaches every asset b
     return { names, urls: keys.map(request => new URL(request.url).pathname) }
   })
   expect(cached.names).toHaveLength(1)
-  for (const file of readdirSync(resolve(dist, 'assets')).filter(name => !name.endsWith('.map'))) {
-    expect(cached.urls).toContain(`/assets/${file}`)
+  // The same rule the build uses: the onnxruntime-web files of the admin phone speed test are never precached.
+  const files = readdirSync(resolve(dist, 'assets')).filter(name => !name.endsWith('.map'))
+  for (const file of files) {
+    if (NOT_PRECACHED.test(`/assets/${file}`)) expect(cached.urls).not.toContain(`/assets/${file}`)
+    else expect(cached.urls).toContain(`/assets/${file}`)
   }
+  expect(files.some(file => NOT_PRECACHED.test(`/assets/${file}`))).toBe(true) // the excluded files exist in this build
+  expect(cached.urls.filter(url => /\.wasm$|\/ort[.-]/.test(url))).toEqual([])
   expect(cached.urls).not.toContain('/index.html')
   expect(cached.urls).not.toContain('/robots.txt')
   expect(cached.urls).not.toContain('/')
