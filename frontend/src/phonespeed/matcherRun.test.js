@@ -98,6 +98,7 @@ describe('the experiment settings and the reader statistics (iPhone fix)', () =>
   it('writes the settings as one short text and puts it, the counts and the ladder in the posted block', () => {
     expect(variantText({ restart: true, overlap: false, ocrBackend: 'wasm', ladder: 'server', runs: 3 })).toBe('restart=1 overlap=0 ocr=wasm ladder=server runs=3')
     expect(variantText({ restart: false, overlap: true, ocrBackend: 'webgpu-main', ladder: 'lean', runs: 1 })).toBe('restart=0 overlap=1 ocr=gpu ladder=lean runs=1')
+    expect(variantText({ restart: true, overlap: false, ocrBackend: 'wasm', ladder: 'server', runs: 1, lowMemory: true })).toBe('restart=1 overlap=0 ocr=wasm ladder=server runs=1 low=1')
     const block = matcherBlock([result(2000, { ocrStats: stats })], { variant: 'restart=1 overlap=0 ocr=wasm ladder=server runs=1' })
     expect(block.variant).toContain('restart=1')
     expect(block.ocr.ocr_number.det_calls).toBe(3)

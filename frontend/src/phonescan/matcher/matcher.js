@@ -75,6 +75,7 @@ const better = (a, b) => (a[0] !== b[0] ? a[0] > b[0] : a[1] > b[1])
  *   embedder      {embed(images) -> Promise<Float32Array[]> (unit vectors, one per image, in order), backend: string}
  *   index         buildPictureIndex(...) result
  *   sessions      the reader's {detect, recognise, characters} (null: no text reading, picture only)
+ *   resources     {openIndex, closeIndex, openReader, closeReader, closeDecide}: what `lowMemory` loads when a stage needs it and releases when the stage is done
  *   getDecideIndexes   async () -> catalogue indexes (buildDecideIndexes result) or null when the card database is not on the phone
  *   thresholds    the manifest (or its thresholds)
  *   budgets       {number, name, secondRead} seconds
@@ -84,7 +85,7 @@ const better = (a, b) => (a[0] !== b[0] ? a[0] > b[0] : a[1] > b[1])
  *   parts         replacements for the ported pieces (tests): findCard, augmentedViews, artCrop, rotate180, isGuidePicture, wholeCard,
  *                 readCard, readName, secondRead, decideCard, scoreNames
  */
-export function createPhoneMatcher({ embedder, index, sessions = null, getDecideIndexes = async () => null, thresholds = null, budgets = {}, now = defaultNow, parts = {}, detectMaxSide = null, ocr = {} }) {
+export function createPhoneMatcher({ embedder, index, sessions = null, getDecideIndexes = async () => null, thresholds = null, budgets = {}, now = defaultNow, parts = {}, detectMaxSide = null, ocr = {}, resources = null }) {
   const p = {
     findCard: defaultFindCard, augmentedViews: defaultAugmentedViews, artCrop: defaultArtCrop, rotate180: defaultRotate180, isGuidePicture: defaultIsGuide,
     wholeCard: defaultWholeCard, readCard: defaultReadCard, readName: defaultReadName, secondRead: defaultSecondRead, decideCard: defaultDecideCard, scoreNames: defaultScoreNames,
@@ -98,14 +99,21 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
   /**
    * options: onStage(name, info) at the start of a stage (info null) and at its end (info {ms}); useText; signal; overlap: start reading the
    * text (upright, speculatively) while the embeddings run, which only pays when the model runs on another thread (the main thread's WebGPU).
+   * lowMemory: strictly one thing at a time. All seven pictures are embedded first with nothing else loaded; then the picture index is opened, searched and
+   * released; then the reader (and the card-database indexes) are opened, used and released. Slower (every run reloads them), for a phone that runs out of memory.
    */
-  async function match(photo, { onStage = null, useText = true, signal = null, overlap = false } = {}) {
+  async function match(photo, { onStage = null, useText = true, signal = null, overlap = false, lowMemory: lowRequested = false } = {}) {
+    const lowMemory = Boolean(lowRequested && resources)
+    let reader = sessions
+    let liveIndex = lowMemory ? null : index
+    const withIndex = async () => liveIndex ?? (liveIndex = await resources.openIndex())
+    const dropIndex = async () => { if (lowMemory && liveIndex) { liveIndex = null; await resources.closeIndex?.() } }
     const clock = timer(now)
     const started = now()
     const notes = []
     const stage = async (name, fn) => {
       if (signal?.aborted) throw new Error('aborted')
-      if (OCR_STAGES.has(name)) sessions?.mark?.(name)
+      if (OCR_STAGES.has(name)) reader?.mark?.(name)
       onStage?.(name, null)
       const began = now()
       try {
@@ -133,32 +141,61 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
         return { tight, clahe, art: pictures.map(picture => p.artCrop(picture)) }
       })
       const embedded = await stage('embed', () => embedder.embed([extra.tight, extra.clahe, ...extra.art]))
-      return stage('search', () => {
+      return stage('search', async () => {
+        const idx = await withIndex()
         const whole = new Float32Array(best) // a copy: the turned-card pass starts again from the two-view best
-        maxInto(whole, searchWhole(index, embedded.slice(0, 2)).best)
-        const artBest = searchArt(index, embedded.slice(2))
-        return combineScores(index, whole, artBest)
+        maxInto(whole, searchWhole(idx, embedded.slice(0, 2)).best)
+        const artBest = searchArt(idx, embedded.slice(2))
+        return combineScores(idx, whole, artBest)
       })
     }
+    // lowMemory: everything the upright card needs is embedded in ONE batch while nothing else is loaded; the index is opened afterwards.
+    const lowMemoryChain = async () => {
+      const made = await stage('views', () => {
+        const turned = p.rotate180(upright)
+        const [tight, clahe] = p.augmentedViews(upright)
+        return { turned, tight, clahe, art: [upright, tight, clahe].map(picture => p.artCrop(picture)) }
+      })
+      turnedCard = made.turned
+      const embedded = await stage('embed', () => embedder.embed([upright, made.turned, made.tight, made.clahe, ...made.art]))
+      made.tight = made.clahe = made.art = null
+      const idx = await stage('search', () => withIndex())
+      const main = await stage('search', () => searchWhole(idx, embedded.slice(0, 2)))
+      const margin = main.viewMax[1] - main.viewMax[0]
+      const pictureFlipped = idx.count > 0 && margin >= t.orient_margin
+      best = main.best
+      let picture
+      if (pictureFlipped) picture = await scoresFor(true) // the card is turned: the extra views come from the turned card (a second, small embedding batch)
+      else {
+        picture = await stage('search', () => {
+          const whole = new Float32Array(best)
+          maxInto(whole, searchWhole(idx, embedded.slice(2, 4)).best)
+          return combineScores(idx, whole, searchArt(idx, embedded.slice(4)))
+        })
+      }
+      await dropIndex()
+      return { margin, pictureFlipped, picture }
+    }
     const pictureChain = async () => {
+      if (lowMemory) return lowMemoryChain()
       turnedCard = await stage('views', () => p.rotate180(upright))
       const first = await stage('embed', () => embedder.embed([upright, turnedCard]))
-      const main = await stage('search', () => searchWhole(index, first))
+      const main = await stage('search', () => searchWhole(liveIndex, first))
       const margin = main.viewMax[1] - main.viewMax[0]
-      const pictureFlipped = index.count > 0 && margin >= t.orient_margin
+      const pictureFlipped = liveIndex.count > 0 && margin >= t.orient_margin
       best = main.best
       return { margin, pictureFlipped, picture: await scoresFor(pictureFlipped) }
     }
 
-    const canRead = Boolean(useText && sessions)
-    const overlapping = Boolean(overlap && canRead && embedder.where === 'main thread')
+    const canRead = Boolean(useText && (sessions || (lowMemory && resources.openReader)))
+    const overlapping = Boolean(overlap && canRead && !lowMemory && embedder.where === 'main thread')
     const wholeEligible = found.source !== 'whole' && p.isGuidePicture(photo)
     const ocrLimits = { maxSteps: ocr.maxSteps ?? null, acceptConfidence: ocr.acceptConfidence ?? undefined }
     const attemptFor = names => async isFlipped => {
-      const result = await stage('ocr_number', () => p.readCard(sessions, textCard, {
+      const result = await stage('ocr_number', () => p.readCard(reader, textCard, {
         fast: true, flipped: isFlipped, readHp: false, stage: wholeEligible ? 'first' : 'all', budget: limits.number, ...ocrLimits,
       }))
-      const name = names ? await stage('name', () => p.readName(sessions, textCard, { flipped: isFlipped, budget: limits.name })) : null
+      const name = names ? await stage('name', () => p.readName(reader, textCard, { flipped: isFlipped, budget: limits.name })) : null
       return { result, name }
     }
     // Overlap: the upright read (what the server does first unless the picture says "turned") starts now, beside the embeddings. When the
@@ -180,7 +217,9 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
     let how = 'picture'
     let wholeread = null
     const indexes = canRead ? await (loading ?? getDecideIndexes()) : null // no card database on the phone: nothing to read the text against
+    if (lowMemory && indexes && canRead) reader = await resources.openReader()
     const names = indexes?.names ?? null
+    let ocrCalls = null
     let ocrResult = null
     let firstRead = null
     if (canRead && indexes) {
@@ -215,15 +254,17 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
       if (secondReadApplies && !isComplete(ocrResult)) {
         const done = await stage('second_read', async () => {
           const wholeImage = p.wholeCard(photo)
-          return p.secondRead(sessions, { first: ocrResult, wholeImage, textCard, flipped, fast: true, budget: limits.secondRead })
+          return p.secondRead(reader, { first: ocrResult, wholeImage, textCard, flipped, fast: true, budget: limits.secondRead })
         })
         ocrResult = done.reading
         wholeread = done.info
       }
       if (ocrResult.number && !ocrResult.source) ocrResult.source = SOURCE_FINDER_CARD
+      ocrCalls = reader?.take?.() ?? null
+      if (lowMemory) { reader = null; await resources.closeReader?.() } // the reader's models are released before anything else is loaded
 
       // 6. the text turned the card: the extra views follow the card's real orientation
-      if (flipped !== pictureFlipped) picture = await scoresFor(flipped)
+      if (flipped !== pictureFlipped) { picture = await scoresFor(flipped); await dropIndex() }
 
       read = {
         number: ocrResult.number ?? null,
@@ -248,10 +289,11 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
       }))
     } else {
       pictureOnly = true
-      notes.push(useText && sessions ? 'The card database is not on this phone: the picture alone, no decision.' : 'No text reading: the picture alone, no decision.')
+      notes.push(canRead ? 'The card database is not on this phone: the picture alone, no decision.' : 'No text reading: the picture alone, no decision.')
       decided = await stage('decide', () => pictureOnlyAnswer(picture, t.top_k))
     }
 
+    if (lowMemory) await resources.closeDecide?.()
     const total = now() - started
     const timings_ms = Object.fromEntries(STAGES.map(name => [name, roundMs(clock.timings[name])]))
     timings_ms.total = roundMs(total)
@@ -285,8 +327,9 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
       stages: clock.trace,
       timings_ms,
       overlapped: overlapping,
+      lowMemory,
       ocrStats: canRead ? {
-        calls: sessions?.take?.() ?? null,
+        calls: ocrCalls,
         number: ladderSummary(firstRead, limits.number),
         name: nameRead ? { budget: limits.name, steps: (nameRead.strips || []).map(strip => ({ label: strip.label, variant: strip.variant, zoom: strip.zoom, ms: strip.ms })) } : null,
         options: { maxSteps: ocrLimits.maxSteps, acceptConfidence: ocrLimits.acceptConfidence ?? null },

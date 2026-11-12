@@ -129,28 +129,50 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
     if (embedder?.where === 'main thread' || sessions?.inner?.where === 'main thread WebGPU') await rpc('release-model', {}).catch(() => {})
   }
 
-  async function init({ manifest, mode = 'auto', mainGpu = false, budgets = {}, ocrBackend = 'wasm', ocrProfile = 'server', detectMaxSide = null }) {
+  async function init({ manifest, mode = 'auto', mainGpu = false, budgets = {}, ocrBackend = 'wasm', ocrProfile = 'server', detectMaxSide = null, lowMemory = false }) {
     const guard = checkManifest(manifest)
     if (!guard.ok) return { fail: guard }
     await release() // a second init replaces the first: one embedding model at a time
     const tried = []
     const began = now()
-    state.sessions = recordSessions(await chooseOcr(manifest, ocrBackend, tried), now)
-    state.index = make.pictureIndexFromBuffers(await readAll(manifest, 'index/'))
-    state.embedder = await chooseEmbedder(manifest, mode, mainGpu, tried)
-    const lazy = cardDb ? make.createLazyIndexes({ source: cardDb, restrictToIds: state.index.ids }) : null
-    state.getIndexes = async () => {
-      if (!lazy || !(await cardDb.getMeta('en'))) return null // the offline card database is not downloaded on this phone
-      return lazy()
+    state.lowMemory = Boolean(lowMemory)
+    let resources = null
+    if (lowMemory) {
+      // Strictly one thing at a time: only the embedding model is loaded now. The picture index, the reader and the card-database indexes are
+      // opened by the stage that needs them and released when it is done (matcher.js `lowMemory`).
+      state.embedder = await chooseEmbedder(manifest, mode, mainGpu, tried)
+      let ids = null // the ids of the picture index, kept (about 1 MB) so the card-database indexes can be restricted to it
+      let lazyNow = null
+      resources = {
+        openIndex: async () => { const opened = make.pictureIndexFromBuffers(await readAll(manifest, 'index/')); ids = opened.ids; state.info && (state.info.pictures = opened.count); return opened },
+        closeIndex: async () => {},
+        openReader: async () => (state.sessions = recordSessions(await chooseOcr(manifest, ocrBackend, []), now)),
+        closeReader: async () => { const old = state.sessions; state.sessions = null; await old?.release?.(); },
+        closeDecide: async () => { lazyNow = null },
+      }
+      state.getIndexes = async () => {
+        if (!cardDb || !(await cardDb.getMeta('en'))) return null
+        lazyNow = lazyNow || make.createLazyIndexes({ source: cardDb, restrictToIds: ids })
+        return lazyNow()
+      }
+    } else {
+      state.embedder = await chooseEmbedder(manifest, mode, mainGpu, tried) // first: the GPU session is made before the other models fill the memory
+      state.sessions = recordSessions(await chooseOcr(manifest, ocrBackend, tried), now)
+      state.index = make.pictureIndexFromBuffers(await readAll(manifest, 'index/'))
+      const lazy = cardDb ? make.createLazyIndexes({ source: cardDb, restrictToIds: state.index.ids }) : null
+      state.getIndexes = async () => {
+        if (!lazy || !(await cardDb.getMeta('en'))) return null // the offline card database is not downloaded on this phone
+        return lazy()
+      }
     }
     state.manifest = manifest
     state.matcher = make.createPhoneMatcher({
-      embedder: state.embedder, index: state.index, sessions: state.sessions, getDecideIndexes: state.getIndexes,
+      embedder: state.embedder, index: state.index, sessions: state.sessions, getDecideIndexes: state.getIndexes, resources,
       thresholds: thresholdsFromManifest(manifest), budgets, now, detectMaxSide, ocr: OCR_PROFILES[ocrProfile] ?? {},
     })
     state.info = {
-      backend: state.embedder.backend, where: state.embedder.where, mode, ocrBackend: state.sessions.inner.where, ocrProfile, detectMaxSide, tried, loadMs: Math.round(now() - began),
-      pictures: state.index.count, artPictures: state.index.artCount, thresholds: 'manifest',
+      backend: state.embedder.backend, where: state.embedder.where, mode, ocrBackend: lowMemory ? `${ocrBackend === 'webgpu-main' ? 'main thread WebGPU' : 'worker WebAssembly'} (opened per run)` : state.sessions.inner.where, ocrProfile, detectMaxSide, lowMemory: Boolean(lowMemory), tried, loadMs: Math.round(now() - began),
+      pictures: state.index ? state.index.count : (manifest.index?.whole_count ?? null), artPictures: state.index ? state.index.artCount : (manifest.index?.art_count ?? null), thresholds: 'manifest',
       cardDb: cardDb ? Boolean(await cardDb.getMeta('en')) : false,
     }
     state.ready = true
@@ -160,8 +182,10 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
   async function match({ photo, options = {} }, id) {
     if (!state.ready) throw new Error('The matcher is not loaded')
     const picture = { data: photo.data instanceof Uint8ClampedArray ? photo.data : new Uint8ClampedArray(photo.data), width: photo.width, height: photo.height }
-    const result = await state.matcher.match(picture, { ...options, onStage: (stage, info) => post({ type: 'progress', id, stage, ...(info ? { done: true, ms: info.ms } : {}) }) })
-    const indexes = await state.getIndexes()
+    const result = await state.matcher.match(picture, { ...options, lowMemory: state.lowMemory, onStage: (stage, info) => post({ type: 'progress', id, stage, ...(info ? { done: true, ms: info.ms } : {}) }) })
+    // low memory: asking again would build the card-database indexes just to count them, so only say whether the database is there
+    const indexes = state.lowMemory ? null : await state.getIndexes()
+    if (state.lowMemory) { result.catalogue = { present: Boolean(cardDb && await cardDb.getMeta('en')), cards: null }; return result }
     result.catalogue = indexes ? { present: true, cards: indexes.count, printedTotalMissing: indexes.stats?.printedTotalMissing ?? null, buildMs: indexes.stats?.buildMs ?? null } : { present: false }
     return result
   }

@@ -148,6 +148,9 @@ describe('the full phone matcher section (step 3d)', () => {
 describe('the matcher options and statistics on the page (iPhone fix)', () => {
   it('offers one run only, a fresh worker per run, overlap, the reader on WebGPU and the lean ladder, with the safe choices first', () => {
     const html = render(<PhoneSpeedTest />)
+    expect(html).toMatch(/data-testid="phone-matcher-low"/)
+    expect(html).toContain('Low memory: one thing at a time')
+    expect(html).toMatch(/checked[^>]*data-testid="phone-matcher-low"|data-testid="phone-matcher-low"[^>]*checked/)
     for (const id of ['runs', 'restart', 'overlap', 'ocr', 'ladder']) expect(html).toContain(`data-testid="phone-matcher-${id}"`)
     expect(html).toContain('1 run only')
     expect(html).toContain('WebGPU on the main thread (fp32')

@@ -43,7 +43,7 @@ const complete = (number, total, over = {}) => reading({ number, total, source: 
 /** Tagged pictures instead of pixels: every finder piece returns a labelled object the stubbed embedder understands. */
 function harness({
   source = 'quad', guide = true, found = {}, embedVector = () => query({ [idOf('Pikachu')]: 1 }), read = () => complete('25', '198'), nameRead = () => ({ name: 'Pikachu', lines: [], confidence: 0.9 }),
-  second = null, decide = null, cardDb = true, useIndex = unitIndex(), budgets, where = 'here', sessions = { stub: true }, ocr,
+  second = null, decide = null, cardDb = true, useIndex = unitIndex(), budgets, where = 'here', sessions = { stub: true }, ocr, resources = null,
 } = {}) {
   const calls = { embed: [], read: [], name: [], second: [], decide: [], views: [], rotate: 0 }
   const upright = { tag: 'upright', width: 630, height: 880 }
@@ -68,7 +68,7 @@ function harness({
     async embed(images) { order.push('embed-start'); calls.embed.push(images.map(image => image.tag)); await new Promise(resolve => setTimeout(resolve, 5)); order.push('embed-end'); return images.map((image, n) => embedVector(image, n, calls.embed.length)) },
   }
   const matcher = createPhoneMatcher({
-    embedder, index: useIndex, sessions, ocr, getDecideIndexes: async () => (cardDb ? indexes : null), parts, budgets,
+    embedder, index: useIndex, sessions, ocr, resources, getDecideIndexes: async () => (cardDb ? indexes : null), parts, budgets,
     now: (() => { let t = 0; return () => (t += 1) })(),
   })
   return { matcher, calls, upright, turned, order }
@@ -408,5 +408,80 @@ describe('the overlap option and the reader statistics (step 3d fix)', () => {
     await harness().matcher.match(photo, { onStage: (stage, info) => { if (info) ends.push(stage) } })
     expect(ends).toContain('finder')
     expect(ends).toContain('decide')
+  })
+})
+
+describe('low memory mode (step 3d fix)', () => {
+  /** Resources that log what is open when, so the test can see what is alive at each step. */
+  function lowHarness(extra = {}) {
+    const events = []
+    const open = new Set()
+    const resources = {
+      openIndex: async () => { events.push('open index'); open.add('index'); return unitIndex() },
+      closeIndex: async () => { events.push('close index'); open.delete('index') },
+      openReader: async () => { events.push('open reader'); open.add('reader'); return { stub: true } },
+      closeReader: async () => { events.push('close reader'); open.delete('reader') },
+      closeDecide: async () => { events.push('close decide'); open.delete('decide') },
+    }
+    const built = harness({ sessions: null, resources, useIndex: null, ...extra })
+    const embed = built.matcher // wrap embed to log what is alive during it
+    return { ...built, events, open, resources, embed }
+  }
+
+  it('embeds all seven pictures in one batch with nothing else loaded, then searches and releases the index, then reads with only the reader open', async () => {
+    const seen = {}
+    const built = lowHarness()
+    const original = built.resources.openIndex
+    built.resources.openIndex = async () => { seen.embedsBeforeIndex = built.calls.embed.length; seen.openAtIndex = [...built.open]; return original() }
+    const readCard = built.calls.read
+    const result = await built.matcher.match(photo, { lowMemory: true })
+    expect(built.calls.embed).toHaveLength(1)
+    expect(built.calls.embed[0]).toEqual(['upright', 'turned', 'tight(upright)', 'clahe(upright)', 'art(upright)', 'art(tight(upright))', 'art(clahe(upright))'])
+    expect(seen.embedsBeforeIndex).toBe(1) // the index is opened after the embeddings
+    expect(seen.openAtIndex).toEqual([]) // nothing else is open while it is
+    expect(built.events.indexOf('close index')).toBeLessThan(built.events.indexOf('open reader')) // never both at once
+    expect(built.events.indexOf('close reader')).toBeLessThan(built.events.indexOf('close decide'))
+    expect(built.events.at(-1)).toBe('close decide')
+    expect(readCard).toHaveLength(1)
+    expect(result.lowMemory).toBe(true)
+    expect(result.decided).toBe(true)
+    expect(result.tcgCardId).toBe('sv1-25')
+  })
+
+  it('gives the same answer as the normal run', async () => {
+    const normal = await harness().matcher.match(photo)
+    const low = await lowHarness().matcher.match(photo, { lowMemory: true })
+    expect(low.matches).toEqual(normal.matches)
+    expect(low.tcgCardId).toBe(normal.tcgCardId)
+    expect(low.mechanism).toBe(normal.mechanism)
+    expect(low.orientation.flipped).toBe(normal.orientation.flipped)
+  })
+
+  it('a turned card: the extra views come from the turned card in a second small batch, and the answer is the same', async () => {
+    const spread = query(Object.fromEntries(IDS.slice(0, 10).map(id => [id, 1])))
+    const embedVector = image => (image.tag === 'upright' ? spread : query({ [idOf('Pikachu')]: 1 }))
+    const normal = await harness({ embedVector }).matcher.match(photo)
+    const built = lowHarness({ embedVector })
+    const low = await built.matcher.match(photo, { lowMemory: true })
+    expect(built.calls.embed).toHaveLength(2)
+    expect(built.calls.embed[1][0]).toBe('tight(turned)')
+    expect(low.orientation).toMatchObject({ by: 'picture', flipped: true })
+    expect(low.matches).toEqual(normal.matches)
+    expect(built.open.size).toBe(0) // everything was released at the end
+  })
+
+  it('when the text turns the card the index is opened again for the new views and released again', async () => {
+    const built = lowHarness({ read: ({ flipped }) => (flipped ? complete('25', '198') : reading()), nameRead: ({ flipped }) => ({ name: flipped ? 'Pikachu' : null, lines: [], confidence: null }) })
+    const result = await built.matcher.match(photo, { lowMemory: true })
+    expect(result.orientation.by).toBe('text')
+    expect(built.events.filter(event => event === 'open index')).toHaveLength(2)
+    expect(built.events.filter(event => event === 'close index')).toHaveLength(2)
+    expect(built.open.size).toBe(0)
+  })
+
+  it('without the resources the option does nothing (the normal run)', async () => {
+    const { matcher } = harness()
+    const result = await matcher.match(photo, { lowMemory: true })
+    expect(result.lowMemory).toBe(false)
   })
 })

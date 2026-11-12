@@ -77,6 +77,7 @@ export default function PhoneSpeedTest() {
   // the safest combination first: three runs, a fresh worker for each (frees its memory), no overlap, the server's reader ladder on WebAssembly
   const [matcherRuns, setMatcherRuns] = useState(3)
   const [matcherRestart, setMatcherRestart] = useState(true)
+  const [matcherLow, setMatcherLow] = useState(true) // strictly one thing at a time: the model first, then the picture index, then the reader, each released after use
   const [matcherOverlap, setMatcherOverlap] = useState(false)
   const [matcherOcr, setMatcherOcr] = useState('wasm')
   const [matcherLadder, setMatcherLadder] = useState('server')
@@ -234,7 +235,7 @@ export default function PhoneSpeedTest() {
     setMatcherSent(null)
     setMessage(null)
     setMatcherState({ status: 'loading', stage: 'preparing the photo' })
-    const variant = variantText({ restart: matcherRestart, overlap: matcherOverlap, ocrBackend: matcherOcr, ladder: matcherLadder, runs: matcherRuns })
+    const variant = variantText({ restart: matcherRestart, overlap: matcherOverlap, ocrBackend: matcherOcr, ladder: matcherLadder, runs: matcherRuns, lowMemory: matcherLow })
     // crash-safe like the step 2 test: the stage that is running is flagged, every finished stage is saved at once, and a page that dies is
     // posted on the next load as a crashed run that names the stage (reportPreviousCrash).
     const base = { ...runtime.readDevice(), photoSource: photo.current ? 'taken here' : 'built-in sample', matcherMode, matcherVariant: variant, crashedBefore: Boolean(crash) }
@@ -254,10 +255,11 @@ export default function PhoneSpeedTest() {
       }
       const prepared = await prepareMatchPhoto(photo.current || SAMPLE_URL)
       const mainGpu = (await ort.probeWebGpu()).available
-      const initOptions = { manifest, mode: matcherMode, mainGpu, ocrBackend: matcherOcr, ocrProfile: matcherLadder }
+      const initOptions = { manifest, mode: matcherMode, mainGpu, ocrBackend: matcherOcr, ocrProfile: matcherLadder, lowMemory: matcherLow }
       setMatcherState({ status: 'loading', stage: 'loading the models and indexes' })
       let info = await matcherClient.current.init(initOptions)
       setMatcherInfo(info)
+      let handed = 0
       const results = await runMatcherRuns({
         client: matcherClient.current,
         runs: matcherRuns,
@@ -270,7 +272,12 @@ export default function PhoneSpeedTest() {
             setMatcherInfo(info)
           }
         },
-        copy: () => ({ data: new Uint8ClampedArray(prepared.photo.data), width: prepared.photo.width, height: prepared.photo.height }),
+        // every run but the last gets its own copy; the last one gets the page's own pixels (moved to the worker, so no second copy stays here)
+        copy: () => {
+          handed += 1
+          const data = handed >= matcherRuns ? prepared.photo.data : new Uint8ClampedArray(prepared.photo.data)
+          return { data, width: prepared.photo.width, height: prepared.photo.height }
+        },
         onStage: (stage, n, stageInfo) => {
           if (!stageInfo) { markStep(`matcher_r${n}_${stage}`); setMatcherState({ status: 'running', stage: `run ${n}: ${stage}` }) } else recordStep(partial, `matcher_r${n}_${stage}`, { first: stageInfo.ms, median: stageInfo.ms })
         },
@@ -406,6 +413,7 @@ export default function PhoneSpeedTest() {
             <select value={matcherRuns} onChange={event => setMatcherRuns(Number(event.target.value))} disabled={busy} className="rounded bg-card-secondary px-2 py-1" data-testid="phone-matcher-runs">
               <option value={3}>3 (first, and the median of the next two)</option><option value={1}>1 run only</option>
             </select></label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={matcherLow} onChange={event => setMatcherLow(event.target.checked)} disabled={busy} data-testid="phone-matcher-low" /> Low memory: one thing at a time. Embeds first with nothing else loaded, then opens and releases the picture index, then the reader (slower: every run reloads them)</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={matcherRestart} onChange={event => setMatcherRestart(event.target.checked)} disabled={busy} data-testid="phone-matcher-restart" /> Start a fresh worker for every run (frees its memory; the model on the main thread stays)</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={matcherOverlap} onChange={event => setMatcherOverlap(event.target.checked)} disabled={busy} data-testid="phone-matcher-overlap" /> Overlap: read the text while the embeddings run (only with the model on the main thread)</label>
           <label className="flex items-center gap-2"><span className="text-text-secondary">Reader</span>

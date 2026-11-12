@@ -49,11 +49,12 @@ function setup({ workerGpu = false, mainGpu = false, cardDb = true, failGpu = fa
       createOcrSessions: async () => ({ characters: [], detect: async () => ({}), recognise: async () => ({}), release: async () => log.push('release-ocr') }),
       pictureIndexFromBuffers: () => ({ ids: ['a_en', 'b_en'], count: 2, artCount: 2 }),
       createLazyIndexes: () => async () => ({ count: 2, stats: { printedTotalMissing: 0, buildMs: 5 } }),
-      createPhoneMatcher: ({ embedder, getDecideIndexes, sessions, ocr, detectMaxSide }) => ({
-        async match(photo, { onStage, overlap }) {
+      createPhoneMatcher: ({ embedder, getDecideIndexes, sessions, ocr, detectMaxSide, resources }) => ({
+        async match(photo, { onStage, overlap, lowMemory }) {
+          if (lowMemory) { await resources.openIndex(); await resources.closeIndex(); const reader = await resources.openReader(); ocrCalls.push({ lowReader: reader.inner.where }); await resources.closeReader() }
           onStage?.('finder', null)
           onStage?.('finder', { ms: 5 })
-          ocrCalls.push({ overlap, ocr, detectMaxSide, where: sessions.inner.where })
+          ocrCalls.push({ overlap, ocr, detectMaxSide, where: sessions?.inner?.where })
           const vectors = await embedder.embed([{ data: new Uint8ClampedArray(8 * 8 * 4), width: 8, height: 8 }])
           onStage?.('decide', null)
           const indexes = await getDecideIndexes()
@@ -102,7 +103,7 @@ describe('starting the matcher', () => {
     expect(log.filter(entry => entry.includes('webgpu') || entry.includes('gpu'))).toEqual([])
     expect(info.cardDb).toBe(true)
     expect(info.pictures).toBe(2)
-    expect(info.tried.map(step => step.step)).toEqual(['ocr wasm (worker)', 'probe worker WebGPU', 'wasm'])
+    expect(info.tried.map(step => step.step)).toEqual(['probe worker WebGPU', 'wasm', 'ocr wasm (worker)'])
   })
 
   it('uses fp16 on WebGPU in the worker when the worker has WebGPU', async () => {
@@ -278,5 +279,21 @@ describe('the reader on the main thread, the lean ladder, the overlap and the wo
     expect(loads()).toBe(1) // the model was not made again
     const result = await client.match(photo())
     expect(result.vector[0]).toBeCloseTo(1, 5)
+  })
+})
+
+describe('low memory mode (step 3d fix)', () => {
+  it('loads only the embedding model at start; the index and the reader are opened by the stage that needs them and released', async () => {
+    const { client, log, reads } = setup({ workerGpu: false })
+    const info = await client.init({ manifest: manifest(), mode: 'wasm', lowMemory: true })
+    expect(info.lowMemory).toBe(true)
+    expect(info.pictures).toBeNull() // not parsed yet (the manifest here carries no counts)
+    expect(reads).toEqual(['model/model_quantized.onnx']) // no index file, no reader model
+    expect(log).not.toContain('release-ocr')
+    const result = await client.match({ data: new Uint8ClampedArray(16), width: 2, height: 2 })
+    expect(reads.filter(path => path.startsWith('index/'))).toHaveLength(2) // read when the search needed them
+    expect(reads).toContain('ocr/det.onnx')
+    expect(log).toContain('release-ocr') // the reader was released after the read
+    expect(result.catalogue).toEqual({ present: true, cards: null })
   })
 })

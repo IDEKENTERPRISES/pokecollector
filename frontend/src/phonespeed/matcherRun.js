@@ -50,8 +50,8 @@ export function ladderOf(stats) {
 }
 
 /** The settings of a run as one short text, e.g. "restart=1 overlap=0 ocr=wasm ladder=server runs=3". */
-export function variantText({ restart, overlap, ocrBackend, ladder, runs }) {
-  return `restart=${restart ? 1 : 0} overlap=${overlap ? 1 : 0} ocr=${ocrBackend === 'webgpu-main' ? 'gpu' : 'wasm'} ladder=${ladder} runs=${runs}`
+export function variantText({ restart, overlap, ocrBackend, ladder, runs, lowMemory = false }) {
+  return `restart=${restart ? 1 : 0} overlap=${overlap ? 1 : 0} ocr=${ocrBackend === 'webgpu-main' ? 'gpu' : 'wasm'} ladder=${ladder} runs=${runs}${lowMemory ? ' low=1' : ''}`
 }
 
 /** A rough list of what is held in memory while the matcher is loaded, in MB (the bundle's sizes: iOS gives no memory reading). */

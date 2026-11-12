@@ -122,8 +122,8 @@ export function createMatcherClient({ createWorker = defaultWorker, readFile = a
 
   return Object.assign(client, {
     /** Loads the models and indexes in the worker. Rejects with `code: 'matcher_version'` for a bundle of another version. */
-    async init({ manifest, mode = 'auto', mainGpu = false, budgets = {}, ocrBackend = 'wasm', ocrProfile = 'server', detectMaxSide = null }) {
-      const reply = await send({ type: 'init', manifest, mode, mainGpu, budgets, ocrBackend, ocrProfile, detectMaxSide })
+    async init({ manifest, mode = 'auto', mainGpu = false, budgets = {}, ocrBackend = 'wasm', ocrProfile = 'server', detectMaxSide = null, lowMemory = false }) {
+      const reply = await send({ type: 'init', manifest, mode, mainGpu, budgets, ocrBackend, ocrProfile, detectMaxSide, lowMemory })
       client.info = reply.info
       return reply.info
     },
