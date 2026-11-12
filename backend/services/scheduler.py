@@ -166,6 +166,12 @@ def run_scan_trace_cleanup():
         purge_old_traces()
     except Exception:
         logger.exception("Scan diagnostics cleanup failed")
+    try:  # the phone speed test's photos follow the same retention
+        from services.card_match import phone_speed
+
+        phone_speed.purge_old()
+    except Exception:
+        logger.exception("Phone speed test cleanup failed")
 
 
 def run_pokedex_metadata_backfill():

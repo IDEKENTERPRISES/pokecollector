@@ -65,6 +65,10 @@ DEFAULT_LABEL = IN_USE  # an unbuilt artwork index is left out, see ``usable``
 # (measured against the set in use with version 9: 66.3% decided against 67.4%, both 0 wrong).
 PHONE_LABEL = IN_USE + "+phone8+index8"
 PHONE_LITE_LABEL = "names+number+art+fastread+numberonce+corners+wholepic+phone8+index8"
+# Step 2 rows: the same two with the whole-picture second read (``wholeread+wholestrict``, +4.6 points on the full model);
+# the phone rows above were measured before those two options existed.
+PHONE_KEPT_LABEL = IN_USE + "+wholeread+wholestrict+phone8+index8"
+PHONE_LITE_WHOLE_LABEL = "names+number+art+fastread+numberonce+corners+wholepic+wholeread+wholestrict+phone8+index8"
 COMPARE_LABELS = (
     "baseline", "names", "names+number", "names+number+text", "names+number+text+art",
     "names+number+text+art+tta+fastread", "names+number+text+art+tta+fastread+corners", IN_USE,
@@ -72,6 +76,7 @@ COMPARE_LABELS = (
     # Version 11, phone settings (read-only rows: never picked, never chosen.json): what the iPhone would score.
     # PHONE_LITE drops tta (two more embeddings), text (body-text OCR), wholeread and wholestrict (a second read of the whole picture).
     PHONE_LABEL, PHONE_LITE_LABEL, IN_USE + "+fp16+index8",
+    PHONE_KEPT_LABEL, PHONE_LITE_WHOLE_LABEL,
 )
 # The synthetic comparison chooses nothing, so it runs a short list on fewer photos
 # (version 5: 10 rows x 400 photos took 89 minutes).

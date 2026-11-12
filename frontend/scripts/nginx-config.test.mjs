@@ -24,6 +24,13 @@ test('security header snippet carries the CSP with script-src self', () => {
   }
 });
 
+test('the CSP allows WebAssembly compilation (the phone speed test) and nothing else new in script-src', () => {
+  const csp = snippet.match(/Content-Security-Policy "([^"]*)"/)[1];
+  const scriptSrc = csp.split(';').map((part) => part.trim()).find((part) => part.startsWith('script-src'));
+  assert.equal(scriptSrc, "script-src 'self' 'wasm-unsafe-eval'");
+  assert.ok(!/'unsafe-eval'/.test(csp), 'plain unsafe-eval must stay out');
+});
+
 test('nginx.conf includes the snippet at server level and moved the inline headers', () => {
   const serverLevel = conf.split(/^\s{4}location\s/m)[0];
   assert.match(serverLevel, INCLUDE);
