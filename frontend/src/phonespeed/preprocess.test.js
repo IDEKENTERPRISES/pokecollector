@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import jpeg from 'jpeg-js'
 import { describe, expect, it } from 'vitest'
-import { INPUT_SIZE, preprocessRgba, resizeArea, tensorStats, toHalfBits, VIEWS_PER_CARD } from './preprocess'
+import { fromHalfBits, INPUT_SIZE, preprocessRgba, resizeArea, tensorStats, toHalfBits, VIEWS_PER_CARD } from './preprocess'
 
 const fixtures = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'tests', 'fixtures', 'phone-matcher', 'v11')
 const readJson = name => JSON.parse(readFileSync(resolve(fixtures, name), 'utf-8'))
@@ -83,6 +83,12 @@ describe('preprocess port (embed.preprocess, matcher version 11)', () => {
   it('writes half-precision bits for a float16 model input', () => {
     const bits = toHalfBits(new Float32Array([0, 1, -2, 0.5, 65504, 1e-8, 70000, 0.333251953125]))
     expect([...bits]).toEqual([0x0000, 0x3c00, 0xc000, 0x3800, 0x7bff, 0x0000, 0x7c00, 0x3555])
+  })
+
+  it('reads half-precision bits back', () => {
+    const values = new Float32Array([0, 1, -2, 0.5, 65504, 0.333251953125, 1e-5])
+    const back = fromHalfBits(toHalfBits(values))
+    values.forEach((value, i) => expect(Math.abs(back[i] - value)).toBeLessThanOrEqual(Math.abs(value) * 1e-3 + 1e-7))
   })
 
   it('knows how many views the kept option set embeds per card', () => {

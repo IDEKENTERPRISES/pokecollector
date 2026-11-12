@@ -61,6 +61,20 @@ test('writes sw.js identical to sw.real.js, copies the kill worker, replaces pla
   }
 })
 
+test('the onnxruntime-web files of the phone speed test are never precached', () => {
+  const dir = fixture()
+  try {
+    for (const name of ['ort-wasm-simd-threaded-AAA.wasm', 'ort-wasm-simd-threaded.jsep-BBB.wasm', 'ort.wasm.bundle.min-CCC.js', 'other-DDD.wasm']) {
+      writeFileSync(join(dir, 'assets', name), 'x')
+    }
+    const urls = buildServiceWorker({ distDir: dir, swSource, killSource }).entries.map(entry => entry.url)
+    assert.deepEqual(urls.filter(url => /wasm|ort[.-]/.test(url)), [])
+    assert.ok(urls.includes('/assets/index-AAA.js'))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('the build id changes when an asset is added and is stable otherwise', () => {
   const dir = fixture()
   try {

@@ -12,6 +12,10 @@ const FIXED_FILES = [
   'apple-touch-icon.png', 'icon-192.png', 'icon-512.png', 'manifest.json',
 ]
 
+// Never precached: the onnxruntime-web files of the admin phone speed test (a ~15 MB and a ~30 MB .wasm and their loader
+// chunks). They are loaded only on that page and cached nowhere by the service worker.
+export const NOT_PRECACHED = /(^|\/)(ort[.-][^/]*|[^/]*\.wasm)$/i
+
 const sha256 = data => createHash('sha256').update(data).digest('hex')
 
 function walk(dir) {
@@ -28,7 +32,7 @@ export function buildServiceWorker({ distDir, swSource, killSource, budgetBytes 
   const urlOf = file => '/' + relative(distDir, file).split(sep).join('/')
   const files = new Map()
   for (const file of walk(join(distDir, 'assets'))) {
-    if (!file.endsWith('.map')) files.set(urlOf(file), file)
+    if (!file.endsWith('.map') && !NOT_PRECACHED.test(urlOf(file))) files.set(urlOf(file), file)
   }
   for (const name of FIXED_FILES) {
     const file = join(distDir, name)

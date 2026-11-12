@@ -195,6 +195,21 @@ export function toHalfBits(values) {
   return out
 }
 
+/** IEEE half bits (Uint16Array) -> Float32Array, for a float16 model output. */
+export function fromHalfBits(bits) {
+  const out = new Float32Array(bits.length)
+  for (let i = 0; i < bits.length; i++) {
+    const h = bits[i]
+    const sign = h & 0x8000 ? -1 : 1
+    const exponent = (h >> 10) & 0x1f
+    const mantissa = h & 0x3ff
+    if (exponent === 0) out[i] = sign * mantissa * 2 ** -24
+    else if (exponent === 31) out[i] = mantissa ? NaN : sign * Infinity
+    else out[i] = sign * (1 + mantissa / 1024) * 2 ** (exponent - 15)
+  }
+  return out
+}
+
 // The views the kept option set embeds per card (pipeline.py `_picture_scores`, `detect.py`):
 //   2 orientations (card as found and turned 180 degrees, one batch),
 //   + 2 test-time-augmentation views (a tighter crop, a brightness-normalised copy) of the oriented card for the whole-card search,

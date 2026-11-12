@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { FlaskConical, GitCompare, Hammer } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { FlaskConical, GitCompare, Hammer, Smartphone } from 'lucide-react'
 import api from '../../api/client'
 import Misses, { DecidedWrong } from './ScannerLabMisses'
 
@@ -371,6 +372,35 @@ export function PhoneNote({ phone, rows }) {
       {built.length > 0 ? ` Its indexes on the server: ${built.map(item => `${number(item.count)} pictures, ${megabytes(item.size_bytes)}`).join(' and ')} (the phone stores them as 8-bit numbers, about a quarter of that).` : ' Its indexes are not built yet.'}
       {phone.bundle?.built ? ` Phone bundle: ${megabytes(phone.bundle.total_bytes)} in ${number(phone.bundle.files)} files.` : ' The phone bundle is not built yet.'}
     </p>
+  )
+}
+
+const SPEED_KEY = ['card-match-phone-speed']
+
+/** The last phone speed-test runs (numbers and device facts only) and the way to the test page. Admins only: the section is. */
+export function PhoneSpeedRuns({ runs }) {
+  const when = value => String(value || '').slice(0, 16).replace('T', ' ')
+  return (
+    <div className="space-y-1 border-t border-separator px-4 py-3" data-testid="scanner-lab-phone-speed">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-footnote text-text-secondary">Phone speed test (step 2)</span>
+        <Link to="/settings/phone-speed" className={button} data-testid="scanner-lab-phone-speed-link">
+          <Smartphone size={13} aria-hidden="true" /> Phone speed test
+        </Link>
+      </div>
+      {(runs || []).length === 0 && <p className="text-footnote text-text-secondary">No runs yet. Open it on the iPhone, in the Home Screen app, on Wi-Fi.</p>}
+      {(runs || []).map(run => {
+        const t = run.timings || {}
+        const d = run.device || {}
+        return (
+          <p key={run.at + run.by} className="text-footnote tabular-nums" data-testid="scanner-lab-phone-speed-run">
+            {when(run.at)} · iOS {d.ios || '?'} · {d.gpu ? 'WebGPU' : 'no WebGPU'} · embed {number(t.embed_wasm_median_ms)} ms · card ×7 {number(t.card_wasm_median_ms)} ms
+            {' '}· est. {number(t.estimate_card_wasm_ms)} ms{t.estimate_card_webgpu_fp16_ms != null ? ` (GPU ${number(t.estimate_card_webgpu_fp16_ms)} ms)` : ''}
+            {d.crashedBefore ? ' · crashed before' : ''}
+          </p>
+        )
+      })}
+    </div>
   )
 }
 
@@ -825,6 +855,11 @@ export default function ScannerLabSection() {
     refetchInterval: 60000,
     retry: false,
   })
+  const speed = useQuery({
+    queryKey: SPEED_KEY,
+    queryFn: () => api.get('/card-match/phone-speed').then(response => response.data.runs),
+    retry: false,
+  })
   const [missTag, setMissTag] = useState(null)
   const openDecidedWrong = () => {
     setMissTag('decided_wrong')
@@ -915,6 +950,7 @@ export default function ScannerLabSection() {
             )}
           </div>
         </div>
+        <PhoneSpeedRuns runs={speed.data} />
         {pictureFirst.data?.counts && <PictureFirstView data={pictureFirst.data} onOpenDecidedWrong={data.misses ? openDecidedWrong : undefined} />}
         {shadow.data?.report && (shadow.data.enabled || shadow.data.report.compared > 0) && <ShadowView data={shadow.data} />}
         <HowConfirmedView data={shadow.data?.report?.how_confirmed} />

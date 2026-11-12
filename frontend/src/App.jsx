@@ -44,6 +44,7 @@ const Settings = lazy(() => import('./pages/Settings'))
 const VersionHistory = lazy(() => import('./welcome/VersionHistory'))
 const CardMigration = lazy(() => import('./pages/CardMigration'))
 const ScanQueue = lazy(() => import('./pages/ScanQueue'))
+const PhoneSpeedTest = lazy(() => import('./pages/PhoneSpeedTest'))
 const OfflineCenter = lazy(() => import('./pages/OfflineCenter'))
 const Login = lazy(() => import('./pages/Login'))
 const InviteAccept = lazy(() => import('./pages/InviteAccept'))
@@ -257,6 +258,7 @@ function ProtectedRoutes() {
         <Route path="achievements" element={lazyRoute(<Achievements />)} />
         <Route path="achievements/:userId" element={lazyRoute(<Achievements />)} />
         <Route path="settings" element={lazyRoute(<Settings />)} />
+        <Route path="settings/phone-speed" element={lazyRoute(<PhoneSpeedTest />)} />
         <Route path="settings/about/versions" element={lazyRoute(<VersionHistory />)} />
         <Route path="settings/about/versions/:id" element={lazyRoute(<VersionHistory />)} />
         <Route path="settings/:section" element={lazyRoute(<Settings />)} />
