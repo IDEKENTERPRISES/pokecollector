@@ -7,7 +7,7 @@ vi.mock('../contexts/AuthContext', () => ({ useAuth: () => auth }))
 vi.mock('../navigation/useNavBar', () => ({ useNavBar: () => {} }))
 vi.mock('../api/client', () => ({ default: { get: vi.fn(() => new Promise(() => {})), post: vi.fn() } }))
 
-const { default: PhoneSpeedTest, ResultsTable, MatcherResults, OcrStats } = await import('./PhoneSpeedTest')
+const { default: PhoneSpeedTest, ResultsTable, MatcherResults, OcrStats, GpuDiagnosis } = await import('./PhoneSpeedTest')
 const { PhoneSpeedRuns, matcherAgreementText, matcherTimingText } = await import('../components/settings/ScannerLabSection')
 
 const render = element => renderToStaticMarkup(<MemoryRouter>{element}</MemoryRouter>)
@@ -88,7 +88,11 @@ describe('the full phone matcher section (step 3d)', () => {
     expect(html).toContain('2048 px long side, JPEG')
     expect(html).toContain('data-testid="phone-matcher-run"')
     expect(html).toContain('data-testid="phone-matcher-release"')
-    expect(html).toContain('uint8 on WebAssembly only')
+    expect(html).toContain('uint8 on WebAssembly in the worker (safe default)')
+    expect(html).toContain('uint8 on WebAssembly on the main thread')
+    expect(html).toContain('data-testid="phone-gpu-diag-worker"')
+    expect(html).toContain('data-testid="phone-gpu-diag-main"')
+    expect(html).toMatch(/<option value="wasm" selected/) // the safe backend is the default
     expect(html).not.toContain('uint8 on WebGPU') // never offered
     expect(html).toContain('data-testid="phone-matcher-carddb"')
   })
@@ -177,5 +181,16 @@ describe('the matcher options and statistics on the page (iPhone fix)', () => {
     const withMemory = render(<MatcherResults results={[{ decided: false, candidates: [], timings_ms: {}, ocrStats: stats }]} memory={memory} />)
     expect(withMemory).toContain('Picture indexes: 60 MB')
     expect(withMemory).toContain('Total about 102 MB')
+  })
+})
+
+describe('the WebGPU test on the page (iPhone fix)', () => {
+  it('lists each step, marks the failure in red with the real error, and shows nothing before a test', () => {
+    expect(render(<GpuDiagnosis diag={null} />)).toBe('')
+    const html = render(<GpuDiagnosis diag={{ where: 'worker', running: false, rows: [{ step: 'adapter', ok: true, ms: 12, note: 'apple / common-3' }, { step: 'session', ok: false, ms: 900, note: 'RangeError: out of memory' }] }} />)
+    expect(html).toContain('WebGPU in the worker')
+    expect(html).toContain('✓ adapter · 12 ms · apple / common-3')
+    expect(html).toContain('✗ session · 900 ms · RangeError: out of memory')
+    expect(html).toContain('text-red-500')
   })
 })

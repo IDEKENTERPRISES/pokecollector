@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { useNavBar } from '../navigation/useNavBar'
 import { createPostGuard, speedRunRequest } from '../phonespeed/upload'
 import { checkManifest } from '../phonescan/matcher/guard'
+import { summariseDiagnosis } from '../phonescan/matcher/gpuDiag'
 import { prepareMatchPhoto } from '../phonespeed/matchPhoto'
 import { describeDecision, estimateMemory, matcherOutcome, runMatcherRuns, STAGE_ROWS, summariseTimings, variantText } from '../phonespeed/matcherRun'
 import { clearPartial, crashedRunBody, describeIos, loadPartial, markStep, newPartial, previousCrash, recordStep, reportPreviousCrash } from '../phonespeed/plan'
@@ -73,7 +74,8 @@ export default function PhoneSpeedTest() {
   const postGuard = useRef(createPostGuard()) // one post per run id: the final post and a partial or crash post never both go out
   const hasGpu = Boolean(globalThis.navigator?.gpu)
   // the "Full phone matcher" run (step 3d)
-  const [matcherMode, setMatcherMode] = useState('auto')
+  const [matcherMode, setMatcherMode] = useState('wasm') // the safe default: the 8-bit model on WebAssembly (fp16 on WebGPU blacked the page out on the owner's iPhone)
+  const [gpuDiag, setGpuDiag] = useState(null) // {where, rows, running}
   // the safest combination first: three runs, a fresh worker for each (frees its memory), no overlap, the server's reader ladder on WebAssembly
   const [matcherRuns, setMatcherRuns] = useState(3)
   const [matcherRestart, setMatcherRestart] = useState(true)
@@ -251,6 +253,7 @@ export default function PhoneSpeedTest() {
         matcherClient.current = createMatcherClient({
           readFile: path => readCached(cache, entries.find(item => item.path === path) || { path, sha256: '', size: -1 }),
           loadGpu: ort.loadGpuRuntime,
+          loadWasm: ort.loadWasmRuntime,
         })
       }
       const prepared = await prepareMatchPhoto(photo.current || SAMPLE_URL)
@@ -300,6 +303,46 @@ export default function PhoneSpeedTest() {
     } catch (error) {
       markStep(null)
       setMatcherState({ status: 'error', code: error.code, message: error.message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** WebGPU step by step in the worker or on the main thread (the page may die in a step: it is flagged and each finished step saved, like a run). */
+  const diagnoseGpu = async where => {
+    if (!runtime || !manifest) return
+    const path = manifest.model?.webgpu_candidate?.file
+    setBusy(true)
+    setMessage(null)
+    const rows = []
+    setGpuDiag({ where, rows: [], running: true })
+    const partial = newPartial({ ...runtime.readDevice(), gpuDiag: where })
+    try {
+      const cache = await caches.open(CACHE_NAME)
+      const { createMatcherClient } = await import('../phonescan/matcher/client')
+      const ort = await import('../phonescan/matcher/ort')
+      const client = matcherClient.current || createMatcherClient({
+        readFile: file => readCached(cache, entries.find(item => item.path === file) || { path: file, sha256: '', size: -1 }),
+        loadGpu: ort.loadGpuRuntime,
+        loadWasm: ort.loadWasmRuntime,
+      })
+      matcherClient.current = client
+      const onStep = (step, row) => {
+        if (!row) { markStep(`gpudiag_${where}_${step.replace(/\W+/g, '_')}`); return }
+        recordStep(partial, `gpudiag_${where}_${step.replace(/\W+/g, '_')}`, { first: row.ms, median: row.ms })
+        rows.push({ ...row, step })
+        setGpuDiag({ where, rows: [...rows], running: true })
+      }
+      const result = where === 'worker' ? await client.diagnoseWorker({ manifest, path, onStep }) : await client.diagnoseMain({ path, onStep })
+      markStep(null)
+      clearPartial()
+      setGpuDiag({ where, rows: result, running: false })
+      const device = { ...runtime.readDevice(), gpuDiag: `${where}: ${summariseDiagnosis(result)}`.slice(0, 190) }
+      const timings = Object.fromEntries(result.map(row => [`gpudiag_${where}_${row.step.replace(/\W+/g, '_')}_ms`, row.ms]))
+      await postGuard.current.once(partial.runId, () => api.post('/card-match/phone-speed', { timings, device, client_id: partial.runId })).catch(() => {})
+    } catch (error) {
+      markStep(null)
+      setGpuDiag({ where, rows, running: false, error: error.message })
     } finally {
       setBusy(false)
     }
@@ -402,10 +445,11 @@ export default function PhoneSpeedTest() {
         <label className="flex items-center gap-2 text-footnote">
           <span className="text-text-secondary">Model backend</span>
           <select value={matcherMode} onChange={event => setMatcherMode(event.target.value)} disabled={busy} className="min-w-0 rounded bg-card-secondary px-2 py-1" data-testid="phone-matcher-mode">
-            <option value="auto">Automatic: fp16 on WebGPU if it works, else uint8 on WebAssembly</option>
+            <option value="wasm">uint8 on WebAssembly in the worker (safe default)</option>
+            <option value="main-wasm">uint8 on WebAssembly on the main thread (the reader runs beside it; the page freezes while it embeds)</option>
+            <option value="auto">Automatic: fp16 on WebGPU on the main thread if it works (blacked out on the owner's iPhone), else uint8</option>
             <option value="worker-webgpu">fp16 on WebGPU in the worker</option>
             <option value="main-webgpu">fp16 on WebGPU on the main thread</option>
-            <option value="wasm">uint8 on WebAssembly only</option>
           </select>
         </label>
         <div className="space-y-1 text-footnote" data-testid="phone-matcher-options">
@@ -415,7 +459,7 @@ export default function PhoneSpeedTest() {
             </select></label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={matcherLow} onChange={event => setMatcherLow(event.target.checked)} disabled={busy} data-testid="phone-matcher-low" /> Low memory: one thing at a time. Embeds first with nothing else loaded, then opens and releases the picture index, then the reader (slower: every run reloads them)</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={matcherRestart} onChange={event => setMatcherRestart(event.target.checked)} disabled={busy} data-testid="phone-matcher-restart" /> Start a fresh worker for every run (frees its memory; the model on the main thread stays)</label>
-          <label className="flex items-center gap-2"><input type="checkbox" checked={matcherOverlap} onChange={event => setMatcherOverlap(event.target.checked)} disabled={busy} data-testid="phone-matcher-overlap" /> Overlap: read the text while the embeddings run (only with the model on the main thread)</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={matcherOverlap} onChange={event => setMatcherOverlap(event.target.checked)} disabled={busy} data-testid="phone-matcher-overlap" /> Overlap: read the text while the embeddings run (needs the model on the main thread and Low memory off)</label>
           <label className="flex items-center gap-2"><span className="text-text-secondary">Reader</span>
             <select value={matcherOcr} onChange={event => setMatcherOcr(event.target.value)} disabled={busy} className="min-w-0 rounded bg-card-secondary px-2 py-1" data-testid="phone-matcher-ocr">
               <option value="wasm">WebAssembly in the worker</option><option value="webgpu-main">WebGPU on the main thread (fp32; names an unsupported operator if it fails)</option>
@@ -427,6 +471,8 @@ export default function PhoneSpeedTest() {
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" className={button} disabled={busy || !ready || !runtime || !guard?.ok} onClick={runMatcher} data-testid="phone-matcher-run"><Play size={14} aria-hidden="true" /> Run the full matcher</button>
+          <button type="button" className={button} disabled={busy || !ready || !runtime} onClick={() => diagnoseGpu('worker')} data-testid="phone-gpu-diag-worker">Test WebGPU in the worker</button>
+          <button type="button" className={button} disabled={busy || !ready || !runtime} onClick={() => diagnoseGpu('main')} data-testid="phone-gpu-diag-main">Test WebGPU on the main thread</button>
           <button type="button" className={button} disabled={busy || !matcherInfo} onClick={releaseMatcher} data-testid="phone-matcher-release"><Trash2 size={14} aria-hidden="true" /> Release the matcher</button>
         </div>
         {(matcherState.status === 'loading' || matcherState.status === 'running') && <p className="text-footnote" aria-live="polite">Running: {matcherState.stage}</p>}
@@ -441,6 +487,7 @@ export default function PhoneSpeedTest() {
             {' '}Tried: {(matcherInfo.tried || []).map(step => `${step.step}${step.ok ? ' ok' : ` no (${step.note || 'failed'})`}`).join(', ')}.
           </p>
         )}
+        <GpuDiagnosis diag={gpuDiag} />
         <MatcherResults results={matcherResults} sent={matcherSent} memory={matcherState.memory} />
       </Section>
     </div>
@@ -512,6 +559,22 @@ export function OcrStats({ stats }) {
         </p>
       )}
       {stats.name && <p>Name ladder: {(stats.name.steps || []).map(step => `${step.label} ${step.ms} ms`).join(' · ') || 'none'}.</p>}
+    </div>
+  )
+}
+
+/** The WebGPU step list: what worked, how long it took, and the real error of the first step that failed. */
+export function GpuDiagnosis({ diag }) {
+  if (!diag) return null
+  return (
+    <div className="space-y-1 text-footnote" data-testid="phone-gpu-diag">
+      <p className="font-semibold">WebGPU in the {diag.where === 'worker' ? 'worker' : 'main thread'}{diag.running ? ' (running…)' : ''}</p>
+      <ul className="space-y-0.5">
+        {diag.rows.map(row => (
+          <li key={row.step} className={row.ok ? '' : 'text-red-500'}>{row.ok ? '✓' : '✗'} {row.step} · {row.ms} ms{row.note ? ` · ${row.note}` : ''}</li>
+        ))}
+      </ul>
+      {diag.error && <p className="text-red-500">{diag.error}</p>}
     </div>
   )
 }

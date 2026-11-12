@@ -25,6 +25,6 @@ const host = createMatcherHost({
 })
 
 self.onmessage = event => {
-  if (event.data?.type === 'init') manifest = event.data.manifest
+  if (event.data?.type === 'init' || event.data?.type === 'diag-gpu') manifest = event.data.manifest
   host.handle(event.data)
 }

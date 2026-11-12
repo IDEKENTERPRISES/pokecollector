@@ -68,6 +68,7 @@ function setup({ workerGpu = false, mainGpu = false, cardDb = true, failGpu = fa
     createWorker: () => { const worker = loopbackWorker(host); created.push(worker); return worker },
     readFile: async path => new ArrayBuffer(path.startsWith('ocr/') ? 4 : 8),
     loadGpu: async () => ort('main-gpu'),
+    loadWasm: async () => ort('main-wasm'),
   })
   return { client, log, reads, created, ocrCalls }
 }
@@ -106,9 +107,9 @@ describe('starting the matcher', () => {
     expect(info.tried.map(step => step.step)).toEqual(['probe worker WebGPU', 'wasm', 'ocr wasm (worker)'])
   })
 
-  it('uses fp16 on WebGPU in the worker when the worker has WebGPU', async () => {
+  it('uses fp16 on WebGPU in the worker only when that is asked for and the worker has WebGPU', async () => {
     const { client, reads } = setup({ workerGpu: true })
-    const info = await client.init({ manifest: manifest(), mode: 'auto', mainGpu: true })
+    const info = await client.init({ manifest: manifest(), mode: 'worker-webgpu', mainGpu: true })
     expect(info.backend).toBe('fp16 on WebGPU (worker)')
     expect(reads).toContain('model/model_fp16.onnx')
     expect(reads).not.toContain('model/model_quantized.onnx') // the 8-bit model is not even read: never uint8 on WebGPU, one model at a time
@@ -124,9 +125,17 @@ describe('starting the matcher', () => {
     expect(result.backend).toBe('fp16 on WebGPU (main thread)')
   })
 
+  it('Automatic never starts a WebGPU runtime in the worker (a failed attempt would leave a second one alive beside the main thread)', async () => {
+    const { client, log } = setup({ workerGpu: true })
+    const info = await client.init({ manifest: manifest(), mode: 'auto', mainGpu: true })
+    expect(info.backend).toBe('fp16 on WebGPU (main thread)')
+    expect(info.tried.map(step => step.step)).not.toContain('worker-webgpu')
+    expect(log).not.toContain('session:gpu:webgpu')
+  })
+
   it('falls back from a WebGPU that fails to start to WebAssembly, and says what it tried', async () => {
     const { client } = setup({ workerGpu: true, failGpu: true })
-    const info = await client.init({ manifest: manifest(), mode: 'auto', mainGpu: false })
+    const info = await client.init({ manifest: manifest(), mode: 'worker-webgpu', mainGpu: false })
     expect(info.backend).toBe('uint8 on WebAssembly')
     const gpu = info.tried.find(step => step.step === 'worker-webgpu')
     expect(gpu).toMatchObject({ ok: false })
@@ -295,5 +304,32 @@ describe('low memory mode (step 3d fix)', () => {
     expect(reads).toContain('ocr/det.onnx')
     expect(log).toContain('release-ocr') // the reader was released after the read
     expect(result.catalogue).toEqual({ present: true, cards: null })
+  })
+})
+
+describe('the main-thread WebAssembly model and the WebGPU test (iPhone fix)', () => {
+  it('runs the 8-bit model on WebAssembly on the main thread when asked (so the reader can run beside it)', async () => {
+    const { client, log } = setup({ workerGpu: true })
+    const info = await client.init({ manifest: manifest(), mode: 'main-wasm', mainGpu: true })
+    expect(info.backend).toBe('uint8 on WebAssembly (main thread)')
+    expect(info.where).toBe('main thread')
+    expect(log).toContain('session:main-wasm:wasm')
+    expect(log.filter(entry => entry.includes('webgpu'))).toEqual([]) // never uint8 on WebGPU, and no fp16 session was made at all
+    const result = await client.match({ data: new Uint8ClampedArray(16), width: 2, height: 2 })
+    expect(result.vector[0]).toBeCloseTo(1, 5)
+  })
+
+  it('keeps the real reason a WebGPU model did not start in the worker, with the error name', async () => {
+    const { client } = setup({ workerGpu: true, failGpu: true })
+    const info = await client.init({ manifest: manifest(), mode: 'worker-webgpu', mainGpu: false })
+    expect(info.tried.find(step => step.step === 'worker-webgpu').note).toMatch(/webgpu is not here/)
+  })
+
+  it('runs the WebGPU step list inside the worker and reports each step as it starts and ends', async () => {
+    const { client } = setup()
+    const seen = []
+    const rows = await client.diagnoseWorker({ manifest: manifest(), path: 'model/model_fp16.onnx', onStep: (step, row) => seen.push(row ? `${step}:${row.ok}` : `${step}:start`) })
+    expect(rows[0]).toMatchObject({ step: 'navigator.gpu', ok: false }) // the test runtime has no WebGPU
+    expect(seen).toEqual(['navigator.gpu:start', 'navigator.gpu:false'])
   })
 })

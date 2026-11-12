@@ -16,9 +16,10 @@ import { createPhoneMatcher } from './matcher'
 import { createOcrSessions } from './ocrSessions'
 import { recordSessions } from './ocrStats'
 import { characterTable } from '../ocr'
+import { diagnoseWebGpu } from './gpuDiag'
 import { pictureIndexFromBuffers } from './pictureIndex'
 
-export const MODES = ['auto', 'worker-webgpu', 'main-webgpu', 'wasm']
+export const MODES = ['auto', 'worker-webgpu', 'main-webgpu', 'main-wasm', 'wasm']
 export const OCR_BACKENDS = ['wasm', 'webgpu-main']
 /** The reader's ladder: 'server' is the server's (parity-checked); 'lean' stops after the first three steps (see docs/phone-scanner/integration.md for its cost). */
 export const OCR_PROFILES = { server: {}, lean: { maxSteps: 3 } }
@@ -65,8 +66,11 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
     const gpuHere = here.available && Boolean(fp16)
     const gpuMain = Boolean(mainGpu) && Boolean(fp16)
     const order = []
-    if ((mode === 'auto' || mode === 'worker-webgpu') && gpuHere) order.push('worker-webgpu')
+    // Automatic does NOT try the worker: on Safari 26 the worker's WebGPU session fails, and a failed attempt leaves a second WebGPU runtime (the 29 MB asyncify
+    // wasm, a device, the model bytes) alive next to the main thread's, which is a candidate for the page being killed. Ask for it with 'worker-webgpu'.
+    if (mode === 'worker-webgpu' && gpuHere) order.push('worker-webgpu')
     if ((mode === 'auto' || mode === 'main-webgpu') && gpuMain) order.push('main-webgpu')
+    if (mode === 'main-wasm') order.push('main-wasm') // the 8-bit model on WebAssembly on the main thread: the reader can run in the worker beside it
     order.push('wasm') // never uint8 on WebGPU: the fallback is always WebAssembly
     for (const way of [...new Set(order)]) {
       try {
@@ -83,6 +87,11 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
           tried.push({ step: way, ok: true })
           return make.remoteEmbedder({ backend: 'fp16 on WebGPU (main thread)', half: true, request: (tensors, half) => rpc('embed', { tensors, half }, tensors.map(tensor => tensor.buffer)) })
         }
+        if (way === 'main-wasm') {
+          await rpc('load-model', { path: int8Path, provider: 'wasm' })
+          tried.push({ step: way, ok: true })
+          return make.remoteEmbedder({ backend: 'uint8 on WebAssembly (main thread)', half: false, request: (tensors, half) => rpc('embed', { tensors, half }, tensors.map(tensor => tensor.buffer)) })
+        }
         const ort = await loadWasm()
         const buffer = await files.read(int8Path)
         if (!buffer) throw new Error('the 8-bit model is not downloaded')
@@ -90,7 +99,7 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
         tried.push({ step: way, ok: true })
         return embedder
       } catch (error) {
-        tried.push({ step: way, ok: false, note: String(error?.message || error).slice(0, 160) })
+        tried.push({ step: way, ok: false, note: `${error?.name && error.name !== 'Error' ? `${error.name}: ` : ''}${String(error?.message || error)}`.replace(/\s+/g, ' ').slice(0, 220) })
         if (way === 'wasm') throw error
       }
     }
@@ -209,6 +218,9 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
           else post({ type: 'ready', id, info: done.info })
         } else if (type === 'match') {
           post({ type: 'result', id, result: await match(message, id) })
+        } else if (type === 'diag-gpu') {
+          const rows = await diagnoseWebGpu({ nav: message.nav ?? undefined, loadGpu, readFile: path => files.read(path), path: message.path, onStep: (step, row) => post({ type: 'progress', id, stage: step, ...(row ? { done: true, ms: row.ms, ok: row.ok, note: row.note } : {}) }), now })
+          post({ type: 'diag', id, rows })
         } else if (type === 'release') {
           await release()
           post({ type: 'released', id })
