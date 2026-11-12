@@ -4,7 +4,7 @@ import { Camera, Download, Play, Trash2 } from 'lucide-react'
 import api from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { useNavBar } from '../navigation/useNavBar'
-import { speedRunRequest } from '../phonespeed/upload'
+import { createPostGuard, speedRunRequest } from '../phonespeed/upload'
 import { clearPartial, crashedRunBody, describeIos, loadPartial, markStep, previousCrash, reportPreviousCrash } from '../phonespeed/plan'
 import {
   CACHE_NAME, cacheState, downloadMissing, megabytes, networkHelpers, readCached, removeTestFiles, testFiles, totalBytes, MANIFEST_PATH,
@@ -68,6 +68,7 @@ export default function PhoneSpeedTest() {
   const [crash, setCrash] = useState(null)
   const [uint8Gpu, setUint8Gpu] = useState(false) // the 8-bit model on WebGPU crashed an iPhone page: off unless asked for
   const crashHandled = useRef(false)
+  const postGuard = useRef(createPostGuard()) // one post per run id: the final post and a partial or crash post never both go out
   const hasGpu = Boolean(globalThis.navigator?.gpu)
 
   const isAdmin = user?.role === 'admin'
@@ -80,7 +81,7 @@ export default function PhoneSpeedTest() {
       setCrash(previousCrash())
       if (crashHandled.current) return
       crashHandled.current = true
-      reportPreviousCrash(body => api.post('/card-match/phone-speed', body), module.readDevice())
+      reportPreviousCrash(body => postGuard.current.once(body.client_id || 'crash', () => api.post('/card-match/phone-speed', body)), module.readDevice())
         .then(step => { if (step) setMessage(`The last run crashed during "${step}". The steps that had finished were saved on the server.`) })
         .catch(() => setMessage('The last run crashed. Could not save its partial results on the server.'))
     })
@@ -167,8 +168,8 @@ export default function PhoneSpeedTest() {
     } catch (error) {
       setMessage(`The test stopped: ${error.message}`)
       const partial = loadPartial() // the run ended early: keep what finished
-      if (partial) {
-        api.post('/card-match/phone-speed', crashedRunBody(partial, 'stopped_early', device)).then(() => { clearPartial(); markStep(null) }).catch(() => {})
+      if (partial && !postGuard.current.has(partial.runId)) {
+        postGuard.current.once(partial.runId, () => api.post('/card-match/phone-speed', crashedRunBody(partial, 'stopped_early', device))).then(() => { clearPartial(); markStep(null) }).catch(() => {})
       }
     } finally {
       setBusy(false)
@@ -179,7 +180,7 @@ export default function PhoneSpeedTest() {
   const send = async outcome => {
     try {
       const request = speedRunRequest(outcome, photo.current)
-      await api.post('/card-match/phone-speed', request.body, request.multipart ? { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 } : undefined)
+      await postGuard.current.once(outcome.runId || 'final', () => api.post('/card-match/phone-speed', request.body, request.multipart ? { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 } : undefined))
       setSent(request.multipart
         ? 'Numbers and your photo saved on the server (admins only). The server now matches the photo for comparison.'
         : 'Numbers saved on the server (the built-in sample is not uploaded).')

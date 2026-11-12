@@ -47,7 +47,7 @@ describe('Phone speed test visibility', () => {
   it('lists the last runs in Scanner lab with the link to the page', () => {
     const html = render(<PhoneSpeedRuns runs={[{
       id: '20261113T091500000000-abcd1234', has_photo: true, server: { status: 'done' },
-      compare: { in_use: { wasm: { top1_agree: true, phone_top1_in_server_top20: true, overlap: 14 } } },
+      compare: { in_use: { wasm: { top1_agree: true, phone_top1_in_server_top20: true, overlap: 14 } }, phone_way: { orientation_agree: true, backends: { wasm: { whole: { top1_agree: true, overlap: 19 }, art: { top1_agree: false, overlap: 12 } } } } },
       at: '2026-11-13T09:15:00+00:00', by: 'oak', device: { ios: '26.6', ios_raw: '18.7', gpu: true, crashedBefore: true },
       timings: { embed_wasm_median_ms: 410, card_wasm_median_ms: 2900, estimate_card_wasm_ms: 3800, estimate_card_webgpu_fp16_ms: 900 },
     }]} />)
@@ -59,6 +59,8 @@ describe('Phone speed test visibility', () => {
     expect(html).toContain('iOS 26.6 (user agent says 18.7)')
     expect(html).toContain('in-use set: top 1 agrees')
     expect(html).toContain('14/20 shared')
+    expect(html).toContain('like-for-like (wasm): whole 19/20 shared, top 1 agrees · art 12/20 shared')
+    expect(html).not.toContain('PHOTO TURNED DIFFERENTLY')
     expect(render(<PhoneSpeedRuns runs={[]} />)).toContain('No runs yet')
     expect(html).not.toContain('scanner-lab-phone-speed-delete')
     const withDelete = render(<PhoneSpeedRuns runs={[{ id: 'x', at: '2026-11-13T09:15:00', by: 'oak', has_photo: false, timings: {}, device: {} }]} onDelete={() => {}} />)

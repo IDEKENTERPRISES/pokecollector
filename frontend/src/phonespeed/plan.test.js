@@ -69,9 +69,18 @@ describe('crash flag and partial results', () => {
       timings: { session_wasm_first_ms: 900, session_wasm_median_ms: 700, embed_wasm_first_ms: 410.3, embed_wasm_median_ms: 399.9 },
       device: { ios: '26.6', ios_raw: '18.7', gpu: true, crashedBefore: true },
       crashed_step: 'card_webgpu_uint8',
+      client_id: partial.runId,
     })
     expect(Object.keys(body)).not.toContain('answer')
     expect(JSON.stringify(body)).not.toMatch(/photo|image/i)
+  })
+
+  it('gives every run an id that its partial and crash posts carry, so the server can store it once', () => {
+    const partial = newPartial({})
+    expect(partial.runId).toMatch(/^run-[a-z0-9]+-[a-z0-9]{8,16}$/)
+    expect(newPartial({}).runId).not.toBe(partial.runId)
+    expect(crashedRunBody(partial, 'search_art', {}).client_id).toBe(partial.runId)
+    expect(crashedRunBody(null, 'search_art', {})).not.toHaveProperty('client_id')
   })
 
   it('posts a crash with no finished step too, using the device read after the reload', () => {

@@ -403,6 +403,15 @@ export function agreementText(run) {
   const compare = run.compare
   if (!compare) return server.in_use?.status === 'error' ? `server could not compare: ${server.in_use.error}` : 'no server comparison'
   const parts = []
+  const way = compare.phone_way
+  if (way) {
+    const [backend, item] = Object.entries(way.backends || {})[0] || []
+    if (item) {
+      const lists = ['whole', 'art'].filter(kind => item[kind]).map(kind => `${kind} ${item[kind].overlap}/20 shared${item[kind].top1_agree ? ', top 1 agrees' : ''}`)
+      const way_up = way.orientation_agree === false ? ' · PHOTO TURNED DIFFERENTLY' : ''
+      parts.push(`like-for-like (${backend}): ${lists.join(' · ')}${way_up}`)
+    }
+  }
   for (const [key, label] of [['in_use', 'in-use set'], ['phone8', 'phone8+index8']]) {
     const backends = compare[key]
     if (!backends) continue
