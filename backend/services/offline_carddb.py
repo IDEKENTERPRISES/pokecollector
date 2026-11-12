@@ -35,7 +35,7 @@ FORMAT_VERSION = 1
 
 SET_FIELDS = (
     "id", "tcg_set_id", "name", "series", "series_id", "abbreviation", "release_date",
-    "total", "images_symbol", "images_logo", "is_digital", "lang",
+    "total", "printed_total", "images_symbol", "images_logo", "is_digital", "lang",
 )
 
 CARD_FIELDS = (
