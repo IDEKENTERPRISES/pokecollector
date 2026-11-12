@@ -92,6 +92,14 @@ export function auditDetailText(entry, t) {
     parts.push(t('audit.details.newUser').replace('{name}', details.username))
   }
   if (details.note) parts.push(`“${details.note}”`)
+  if (String(entry.action).startsWith('banner.')) {
+    if (details.sender_name) parts.push(t('audit.details.bannerFrom').replace('{name}', details.sender_name))
+    if (details.audience != null) {
+      parts.push(details.audience === 'all'
+        ? t('audit.details.bannerEveryone')
+        : t('audit.details.bannerTrainers').replace('{count}', details.audience.length))
+    }
+  }
   return parts.join(' · ')
 }
 
