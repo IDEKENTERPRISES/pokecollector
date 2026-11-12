@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FlaskConical, GitCompare, Hammer } from 'lucide-react'
 import api from '../../api/client'
-import Misses from './ScannerLabMisses'
+import Misses, { DecidedWrong } from './ScannerLabMisses'
 
 const QUERY_KEY = ['card-match-status']
 const SHADOW_KEY = ['card-match-shadow']
@@ -86,6 +86,54 @@ export function BatchGroups({ groups }) {
   )
 }
 
+const trainerCount = n => `${number(n)} ${n === 1 ? 'trainer' : 'trainers'}`
+
+/** One line per read-only source (prod's stored scans): readable or not, and why in plain words, how many scans, how many confirmed, the newest date. */
+export function TraceSources({ sources }) {
+  if (!sources?.length) return null
+  return (
+    <div className="space-y-0.5" data-testid="scanner-lab-trace-sources">
+      {sources.map(source => (
+        <p key={source.label} className="text-footnote" data-testid={`scanner-lab-source-${source.label}`}>
+          <span className="text-text-secondary">Scans from {source.label}: </span>
+          {source.readable
+            ? `readable · ${number(source.scans)} scans, ${number(source.confirmed)} confirmed${source.newest ? `, newest from ${source.newest}` : ''}`
+            : `not readable: ${source.reason || 'unknown reason'}`}
+        </p>
+      ))}
+    </div>
+  )
+}
+
+/** Scans from a read-only source (prod), apart from your own: the ones tuning may use and the held-back ones, with how many trainers they come from. */
+export function SourceGroups({ groups, note }) {
+  const rows = Object.entries(groups || {}).filter(([name]) => name !== 'local')
+  if (!rows.length) return null
+  return (
+    <div data-testid="scanner-lab-source-groups">
+      <h4 className="text-footnote font-semibold">Scans from prod</h4>
+      <table className="w-full text-footnote">
+        <thead>
+          <tr className="text-left text-text-secondary">
+            <th className="pr-2 font-normal">Group</th><th className="pr-2 font-normal">Scans</th><th className="pr-2 font-normal">Trainers</th>
+            <th className="pr-2 font-normal">Top 1</th><th className="pr-2 font-normal">Top 20</th><th className="pr-2 font-normal">Decided</th><th className="font-normal">Right</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([name, g]) => (
+            <tr key={name} className="tabular-nums" data-testid={`scanner-lab-group-${name}`}>
+              <td className="pr-2">{g.label || name}</td><td className="pr-2">{g.n}</td><td className="pr-2">{g.trainers}</td>
+              <td className="pr-2">{percent(g.top1)}</td><td className="pr-2">{percent(g.top20)}</td><td className="pr-2">{percent(g.decided)}</td>
+              <td>{percent(g.decided_right)}{g.decided_wrong ? ` (${g.decided_wrong} wrong)` : ''}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {note && <p className="text-footnote text-text-secondary">{note}</p>}
+    </div>
+  )
+}
+
 const REASON_NAMES = {
   rules_choice_not_close_in_picture: 'The number says one card, but its picture is not close enough',
   number_matches_several_printings: 'The number fits several printings and the picture cannot split them',
@@ -148,21 +196,36 @@ export function FallbackGroups({ data }) {
 const REFUSED_NAMES = { too_small: 'too small a part of the picture', sideways: 'turned on its side', not_rectangular: 'not rectangular', bad_angles: 'corners far from square' }
 const spread = value => (value ? `${value.min} to ${value.max}, typically ${value.median}` : '–')
 
-/** The corners check (real scans only): how many scans the card finder spoils, measured against the confirmed card's own picture. */
+const pct = (part, whole) => (whole ? Math.round((100 * part) / whole) : null)
+
+/** The corners check (real scans only): which cut-out is closer to the confirmed card’s own catalogue picture, the finder’s or the plain guide frame. */
 export function CornersCheck({ data }) {
   if (!data || !data.all?.scans) return null
   const rows = [['all', 'All scans'], ['tuning', 'Used for tuning'], ['new', 'New scans, not used for tuning']].filter(([key]) => data[key]?.scans)
   const g = data.all
   return (
     <div className="space-y-1" data-testid="scanner-lab-corners">
-      <h4 className="text-footnote font-semibold">Did the card finder spoil the scan? ({number(g.scans)} scans)</h4>
+      <h4 className="text-footnote font-semibold">Which cut-out is closer to the catalogue picture? ({number(g.scans)} scans)</h4>
       <p className="text-footnote text-text-secondary">
-        For each scan, the card the finder cut out and the plain guide frame were each compared with the confirmed card’s own picture. “Spoiled” means the guide frame was closer by at least {data.margin} (on a 0 to 1 scale), so the finder reported a card and made the picture worse.
+        For each scan, the card the finder cut out and the plain guide frame were each compared with the confirmed card’s own catalogue picture. “Guide frame closer” counts scans where the guide frame was closer by at least {data.margin} (on a 0 to 1 scale).
+        It only says which cut-out looks more like the catalogue picture: those finder cut-outs look like normal ones, and it is not a count of broken scans. Read it as a ranking signal.
       </p>
+      {(() => {
+        const withCard = g.scans - g.no_quad
+        const inGroup = pct(g.spoiled_no_number, g.spoiled)
+        const overall = pct(g.no_number_all, withCard)
+        if (inGroup == null || overall == null) return null
+        return (
+          <p className="text-footnote text-text-secondary" data-testid="scanner-lab-corners-number-rate">
+            In that group the number was not read in {inGroup}% of the scans ({number(g.spoiled_no_number)} of {number(g.spoiled)}); across all {number(withCard)} scans with a card found it was not read in {overall}% ({number(g.no_number_all)}).
+            {Math.abs(inGroup - overall) <= 5 ? ' That is about the same, so this group does not predict a missed number.' : inGroup > overall ? ' That is higher than for all scans.' : ' That is lower than for all scans.'}
+          </p>
+        )
+      })()}
       <table className="w-full text-footnote">
         <thead>
           <tr className="text-left text-text-secondary">
-            <th className="pr-2 font-normal">Scans</th><th className="pr-2 font-normal">Measured</th><th className="pr-2 font-normal">Spoiled</th>
+            <th className="pr-2 font-normal">Scans</th><th className="pr-2 font-normal">Measured</th><th className="pr-2 font-normal">Guide frame closer</th>
             <th className="pr-2 font-normal">… no number read</th><th className="font-normal">Whole picture closer</th>
           </tr>
         </thead>
@@ -177,14 +240,14 @@ export function CornersCheck({ data }) {
       </table>
       {g.spoiled > 0 && (
         <p className="text-footnote text-text-secondary" data-testid="scanner-lab-corners-shape">
-          The spoiled quads cover {spread(g.coverage)} of the picture (the others: {spread(g.coverage_of_the_rest)}); shape error against a card {spread(g.ratio_error)}; widest corner angle off square {spread(g.angle_deviation)}°.
-          Where the guide frame wins it is closer by {g.mean_gain} on average. This version’s finder refuses {number(g.refused_among_spoiled)} of the {number(g.spoiled)}.
+          In those scans the finder’s cut-out covers {spread(g.coverage)} of the picture (the others: {spread(g.coverage_of_the_rest)}); shape error against a card {spread(g.ratio_error)}; widest corner angle off square {spread(g.angle_deviation)}°.
+          Where the guide frame is closer it is closer by {g.mean_gain} on average. This version’s finder refuses {number(g.refused_among_spoiled)} of the {number(g.spoiled)}.
         </p>
       )}
       {g.no_quad > 0 && <p className="text-footnote text-text-secondary">{number(g.no_quad)} scans had no card found at all and are not in these counts.</p>}
       {data.sets?.some(item => item.spoiled) && (
         <p className="text-footnote text-text-secondary" data-testid="scanner-lab-corners-sets">
-          By set: {data.sets.filter(item => item.spoiled).map(item => `${item.set} ${item.spoiled} of ${item.scans}`).join(' · ')}
+          Guide frame closer, by set: {data.sets.filter(item => item.spoiled).map(item => `${item.set} ${item.spoiled} of ${item.scans}`).join(' · ')}
         </p>
       )}
       {Object.keys(data.refused_reasons || {}).length > 0 && (
@@ -221,6 +284,7 @@ export function Report({ report, title }) {
         <Row label="Of those, right" value={`${percent(m.decided_right_pct)} (${number(m.decided_wrong)} wrong)`} />
       </div>
       {report.kind === 'labelled' && <BatchGroups groups={report.by_scan_time} />}
+      {report.kind === 'labelled' && <SourceGroups groups={report.by_group} note={report.held_back_note} />}
       {report.kind === 'labelled' && <UndecidedReasons data={report.undecided_first_right} />}
       {report.kind === 'labelled' && <FallbackGroups data={report.fallback} />}
       {report.kind === 'labelled' && <CornersCheck data={report.corners_check} />}
@@ -274,11 +338,29 @@ export function Report({ report, title }) {
   )
 }
 
-const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused' }
+const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused', wholeread: 'second read of the whole picture', wholestrict: 'stricter rules for a number read only from the whole picture' }
 const describeOptions = label => (label === 'baseline' ? OPTION_NAMES.baseline : label.split('+').map(word => OPTION_NAMES[word] || word).join(' + '))
+
+/** The scans one comparison row decided wrong, in the same plain wording as Misses > Decided wrong (text only: no pictures are kept for these). */
+export function WrongList({ row }) {
+  const items = row.wrong_scans || []
+  return (
+    <div className="space-y-1.5 rounded-md bg-fill px-2 py-2" data-testid="scanner-lab-row-wrong">
+      <p className="text-footnote font-semibold">Decided wrong with {describeOptions(row.label)}</p>
+      {items.length === 0 ? (
+        <p className="text-footnote text-text-secondary">{row.decided_wrong ? 'This run did not keep the details of its wrong decisions (it ran before they were kept).' : 'Nothing was decided wrong.'}</p>
+      ) : (
+        items.map((item, position) => <DecidedWrong key={`${item.key}-${position}`} item={item} />)
+      )}
+      {items.length > 0 && items.length < row.decided_wrong && <p className="text-footnote text-text-secondary">Showing the first {items.length} of {row.decided_wrong}.</p>}
+    </div>
+  )
+}
 
 /** The option sets side by side on the same photos: pick the row with the best top 20 and decided rate with 0 wrong. */
 export function CompareTable({ report, title }) {
+  const [openWrong, setOpenWrong] = useState(null)
+  const opened = report.rows.find(row => row.label === openWrong)
   return (
     <div className="space-y-2 border-t border-separator px-4 py-3" data-testid={`scanner-lab-${report.kind}`}>
       <div>
@@ -288,6 +370,12 @@ export function CompareTable({ report, title }) {
           {report.winner ? ` · kept: ${describeOptions(report.winner)}` : ''}
         </p>
       </div>
+      {report.held_back_note && <p className="text-footnote text-text-secondary" data-testid="scanner-lab-held-back-note">{report.held_back_note}</p>}
+      {report.groups && Object.keys(report.groups).some(name => name !== 'local') && (
+        <p className="text-footnote text-text-secondary">
+          {Object.entries(report.groups).map(([name, g]) => `${g.label || name}: ${number(g.scans)} scans, ${trainerCount(g.trainers)}`).join(' · ')}
+        </p>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-footnote">
           <thead>
@@ -303,21 +391,37 @@ export function CompareTable({ report, title }) {
                 {row.status === 'ok' ? (
                   <>
                     <td className="pr-2">{percent(row.top1)}</td><td className="pr-2">{percent(row.top20)}</td><td className="pr-2">{percent(row.number_exact)}</td>
-                    <td className="pr-2">{percent(row.decided)}</td><td className="pr-2">{number(row.decided_wrong)}</td><td>{row.p95_ms != null ? `${number(row.p95_ms)} ms` : '–'}</td>
+                    <td className="pr-2">{percent(row.decided)}</td>
+                    <td className="pr-2">
+                      {row.decided_wrong > 0 ? (
+                        <button type="button" className="ios-press text-tint underline" aria-expanded={openWrong === row.label} onClick={() => setOpenWrong(openWrong === row.label ? null : row.label)} data-testid="scanner-lab-row-wrong-open">
+                          {number(row.decided_wrong)}
+                        </button>
+                      ) : number(row.decided_wrong)}
+                    </td>
+                    <td>{row.p95_ms != null ? `${number(row.p95_ms)} ms` : '–'}</td>
                   </>
                 ) : (
                   <td colSpan={6} className="text-text-secondary">needs the {(row.missing_indexes || []).join(', ')} index</td>
                 )}
               </tr>
             ))}
+            {report.held_back && report.held_back.status === 'ok' && (
+              <tr className="tabular-nums text-text-secondary" data-testid="scanner-lab-held-back-row">
+                <td className="pr-2">Held back, with {describeOptions(report.held_back.label)} ({number(report.held_back.n)} scans)</td>
+                <td className="pr-2">{percent(report.held_back.top1)}</td><td className="pr-2">{percent(report.held_back.top20)}</td><td className="pr-2">{percent(report.held_back.number_exact)}</td>
+                <td className="pr-2">{percent(report.held_back.decided)}</td><td className="pr-2">{number(report.held_back.decided_wrong)}</td><td>{report.held_back.p95_ms != null ? `${number(report.held_back.p95_ms)} ms` : '–'}</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
+      {opened && <WrongList row={opened} />}
     </div>
   )
 }
 
-const OCR_MODE_NAMES = { fixed: 'Fixed strips (old way)', detect: 'Find and read (new way)' }
+const OCR_MODE_NAMES = { fixed: 'Fixed strips (old way)', detect: 'Find and read (new way)', wholeread: 'Find and read, then the whole picture' }
 const OCR_VARIANT_NAMES = { plain: 'as photographed', sharp: 'sharpened', clahe: 'local contrast', binary: 'black and white', deglare: 'glare removed' }
 const RESOLUTION_NAMES = { 1024: 'Older scans: 1024 px crop', full: 'Newer scans: full resolution', guide_crop: 'Card not found: read from the guide frame', all: 'All scans' }
 
@@ -347,7 +451,7 @@ function OcrRows({ rows }) {
 }
 
 const STEP_LABELS = {
-  'number-left-tight': 'Number: left corner strip', 'number-right-tight': 'Number: right corner strip', 'bottom-band': 'Number: whole bottom band',
+  'whole-number-left-tight': 'Whole picture: left corner strip', 'whole-number-right-tight': 'Whole picture: right corner strip', 'whole-bottom-band': 'Whole picture: bottom band', 'number-left-tight': 'Number: left corner strip', 'number-right-tight': 'Number: right corner strip', 'bottom-band': 'Number: whole bottom band',
   'number-left-wide': 'Number: left wide strip', 'number-right-wide': 'Number: right wide strip', 'bottom-wide': 'Number: tall band at the bottom',
   'name-line': 'Name: top strip', 'name-band': 'Name: name band', 'top-wide': 'Name: tall band at the top',
 }
@@ -399,8 +503,40 @@ export function OcrSteps({ steps }) {
   )
 }
 
+const sayNumber = value => (value == null ? '–' : value)
+
+/** Version 9: how sharp, bright and glared the flat cards were, where the number was read and where it was not, so "photographed worse" can be told from "printed differently". */
+export function CaptureQuality({ data }) {
+  if (!data || !data.scans) return null
+  const t = data.thresholds || { brightness: 85, sharpness: 30 }
+  const line = block => `typical sharpness ${sayNumber(block.read.sharpness)} where the number was read (${number(block.read.n)} scans), ${sayNumber(block.missed.sharpness)} where it was not (${number(block.missed.n)}); typical brightness ${sayNumber(block.read.brightness)} against ${sayNumber(block.missed.brightness)} (out of 255); blown-out share ${sayNumber(block.read.blown_pct)}% against ${sayNumber(block.missed.blown_pct)}%`
+  return (
+    <div className="space-y-1" data-testid="scanner-lab-capture">
+      <h5 className="text-footnote font-semibold">How well the scans were photographed</h5>
+      <p className="text-[11px] text-text-secondary">All scans: {line(data)}.</p>
+      {data.missed.n > 0 && (
+        <p className="text-[11px] text-text-secondary">
+          {sayNumber(data.missed_low_light_or_blur_pct)}% of the scans where the number was not read are low light or blur (brightness under {t.brightness} or sharpness under {t.sharpness}), against {sayNumber(data.read_low_light_or_blur_pct)}% of the scans where it was read.
+        </p>
+      )}
+      {data.sets?.length > 0 && (
+        <ul className="space-y-1 text-[11px] text-text-secondary">
+          {data.sets.map(item => (
+            <li key={item.set} className="break-words" data-testid="scanner-lab-capture-set">
+              {item.set}: {line(item)}.{item.missed.n > 0 ? ` ${sayNumber(item.missed_low_light_or_blur_pct)}% of its ${number(item.missed.n)} misses are low light or blur.` : ''}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-[11px] text-text-secondary">
+        If a set’s misses are much less sharp or darker than its reads, it was photographed worse. If they look the same as its reads, the number is missed for another reason, for example the set prints its number differently.
+      </p>
+    </div>
+  )
+}
+
 /** Why the number was never right, per group: counts per cause and up to ten examples each, as text. */
-export function NeverRight({ data }) {
+export function NeverRight({ data, capture }) {
   const groups = Object.entries(data || {}).filter(([, group]) => group.scans)
   if (groups.length === 0) return null
   return (
@@ -430,9 +566,21 @@ export function NeverRight({ data }) {
           {group.sets?.length > 0 && (
             <p className="text-[11px] text-text-secondary">Sets with the most wrong: {group.sets.map(item => `${item.set} ${item.wrong} of ${item.scans}`).join(' · ')}</p>
           )}
+          <CaptureQuality data={capture?.[resolution]} />
         </div>
       ))}
     </div>
+  )
+}
+
+/** Version 9: how many scans the whole-picture second read was tried on and how many it completed. */
+export function WholeReadSummary({ data }) {
+  const rows = Object.entries(data || {}).filter(([, counts]) => counts.tried > 0)
+  if (rows.length === 0) return null
+  return (
+    <p className="text-footnote text-text-secondary" data-testid="scanner-lab-wholeread">
+      Whole-picture second read (the “wholeread” row, and “whole-…” steps in the table below): {rows.map(([group, counts]) => `${RESOLUTION_NAMES[group] || group}: tried on ${counts.tried} scans, completed the number on ${counts.rescued}`).join(' · ')}.
+    </p>
   )
 }
 
@@ -457,8 +605,22 @@ export function OcrCheckView({ report }) {
           </div>
         )
       })}
-      <NeverRight data={report.never_right} />
+      <NeverRight data={report.never_right} capture={report.capture} />
+      <WholeReadSummary data={report.wholeread} />
       <OcrSteps steps={report.steps} />
+      {Object.entries(report.groups || {}).map(([name, group]) => {
+        const rows = Object.entries(group.by_resolution?.all || {})
+        const info = report.group_info?.[name]
+        return (
+          <div key={name} data-testid={`scanner-lab-ocr-group-${name}`}>
+            <h4 className="text-footnote font-semibold">
+              {group.label || info?.label || name} ({number(info?.scans ?? group.scans)} scans, {trainerCount(info?.trainers ?? group.trainers)})
+            </h4>
+            {rows.length > 0 && <OcrRows rows={rows} />}
+          </div>
+        )
+      })}
+      {report.groups && Object.keys(report.groups).length > 0 && <p className="text-footnote text-text-secondary">{report.groups_note}</p>}
       {(report.failures || []).length > 0 && (
         <details>
           <summary className="cursor-pointer text-footnote text-text-secondary">First {report.failures.length} scans where the name or the number was not read</summary>
@@ -689,6 +851,7 @@ export default function ScannerLabSection() {
           <Row label="Index built" value={index.built ? `${index.built_at?.slice(0, 16).replace('T', ' ')} UTC · ${duration(index.build_seconds) || 'in steps'}` : 'not yet'} />
           <Row label="Threads" value={`${data.threads}${data.autorun ? ' · runs by itself after a deploy' : ''}`} />
           <Row testId="scanner-lab-options" label="Matching options in use" value={describeOptions(data.options?.active || 'baseline')} />
+          <TraceSources sources={data.trace_sources} />
           {extras.map(([name, extra]) => (
             <Row key={name} label={`Index: ${extra.label}`} value={extra.built ? `${number(extra.count)} pictures` : 'not built'} />
           ))}

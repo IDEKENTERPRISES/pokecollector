@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { CompareTable, HowConfirmedView, OcrCheckView, PictureFirstView, Report, ShadowView } from './ScannerLabSection'
-import { MissesView, StripRow } from './ScannerLabMisses'
+import { CompareTable, WrongList, HowConfirmedView, OcrCheckView, PictureFirstView, Report, ShadowView, SourceGroups, TraceSources } from './ScannerLabSection'
+import { DecidedWrong, MissesView, StripRow } from './ScannerLabMisses'
 
 const report = {
   kind: 'synthetic',
@@ -379,11 +379,14 @@ describe('Scanner lab version 7', () => {
     const group = { scans: 276, no_quad: 15, spoiled: 40, whole_better: 22, spoiled_no_number: 25, no_number_all: 90, refused_now: 38, refused_among_spoiled: 35, coverage: { min: 0.2, median: 0.4, max: 0.5 }, ratio_error: { min: 0, median: 0.02, max: 0.1 }, angle_deviation: { min: 0, median: 3, max: 20 }, coverage_of_the_rest: { min: 0.5, median: 0.8, max: 0.95 }, mean_gain: 0.12 }
     const corners = { margin: 0.05, all: group, tuning: { ...group, scans: 139, spoiled: 10 }, new: { ...group, scans: 137, spoiled: 30 }, sets: [{ set: 'Black Bolt', scans: 64, spoiled: 20, spoiled_no_number: 15 }], refused_reasons: { too_small: 30, sideways: 8 } }
     const html = renderToStaticMarkup(<Report report={{ ...report, kind: 'labelled', corners_check: corners }} title="Real scans" />)
-    expect(html).toContain('Did the card finder spoil the scan? (276 scans)')
+    expect(html).toContain('Which cut-out is closer to the catalogue picture? (276 scans)')
+    expect(html).not.toContain('spoil')
     expect(html).toContain('the guide frame was closer by at least 0.05')
+    expect(html).toContain('In that group the number was not read in 63% of the scans (25 of 40); across all 261 scans with a card found it was not read in 34% (90).')
+    expect(html).toContain('That is higher than for all scans.')
     expect(html).toContain('Black Bolt 20 of 64')
     expect(html).toContain('30 too small a part of the picture')
-    expect(renderToStaticMarkup(<Report report={{ ...report, kind: 'labelled', corners_check: null }} title="Real scans" />)).not.toContain('spoil the scan')
+    expect(renderToStaticMarkup(<Report report={{ ...report, kind: 'labelled', corners_check: null }} title="Real scans" />)).not.toContain('Which cut-out is closer')
     const item = {
       key: 'c', kind: 'not_top1', rank: 3, tags: ['corners_off'], truth: { name: 'Slowpoke', number: '29', set: 'Pitch Black', tcg_card_id: 'x-29' }, top3: [],
       ocr: { lines: [] }, photo: null, card: null, corners: { quad: 0.41, guide: 0.77, whole: 0.8, coverage: 0.4, ratio_error: 0.01, angle_deviation: 2, refused: 'too_small' },
@@ -393,5 +396,106 @@ describe('Scanner lab version 7', () => {
     expect(view).toContain('finder’s quad 0.41, guide frame 0.77, whole picture 0.8')
     expect(view).toContain('covers 40% of the picture')
     expect(view).toContain('refuses it (too small)')
+  })
+})
+
+describe('Scanner lab version 9', () => {
+  it('says the corners group does not predict missed numbers when the rates match', () => {
+    const group = { scans: 276, no_quad: 15, spoiled: 117, whole_better: 48, spoiled_no_number: 41, no_number_all: 91, refused_now: 0, refused_among_spoiled: 0, coverage: null, ratio_error: null, angle_deviation: null, coverage_of_the_rest: null, mean_gain: 0.1 }
+    const html = renderToStaticMarkup(<Report report={{ ...report, kind: 'labelled', corners_check: { margin: 0.05, all: group, sets: [], refused_reasons: {} } }} title="Real scans" />)
+    expect(html).toContain('In that group the number was not read in 35% of the scans (41 of 117)')
+    expect(html).toContain('about the same, so this group does not predict a missed number')
+  })
+
+  it('shows sharpness per set where the number was read and where it was not, in plain words', () => {
+    const block = (set, readSharp, missedSharp) => ({
+      set, scans: 66, read: { n: 32, sharpness: readSharp, brightness: 120, blown_pct: 0.4 }, missed: { n: 34, sharpness: missedSharp, brightness: 90, blown_pct: 0.2 },
+      missed_low_light_or_blur_pct: 70, read_low_light_or_blur_pct: 12,
+    })
+    const capture = { full: { ...block(undefined, 60, 25), scans: 105, sets: [block('Black Bolt', 41, 18)], thresholds: { brightness: 85, sharpness: 30 } } }
+    const never = { full: { scans: 105, sets: [], buckets: [] } }
+    const html = renderToStaticMarkup(<OcrCheckView report={{ traces: 105, skipped: 0, by_resolution: {}, never_right: never, capture, wholeread: { full: { tried: 40, rescued: 12 } } }} />)
+    expect(html).toContain('Black Bolt: typical sharpness 41 where the number was read (32 scans), 18 where it was not (34)')
+    expect(html).toContain('70% of its 34 misses are low light or blur')
+    expect(html).toContain('brightness under 85 or sharpness under 30')
+    expect(html).toContain('tried on 40 scans, completed the number on 12')
+  })
+
+  it('names the new options', () => {
+    const html = renderToStaticMarkup(
+      <CompareTable report={{ kind: 'compare-labelled', n: 139, created_at: '2026-11-06T01:00:00+00:00', duration_seconds: 100, winner: null, rows: [{ label: 'names+corners+wholepic+wholeread+wholestrict', status: 'skipped', missing_indexes: ['x'] }] }} title="Compare" />,
+    )
+    expect(html).toContain('second read of the whole picture')
+    expect(html).toContain('stricter rules for a number read only from the whole picture')
+  })
+})
+
+describe('Scans from prod', () => {
+  it('says in plain words whether prod is readable, and what it holds', () => {
+    const ok = renderToStaticMarkup(<TraceSources sources={[{ label: 'prod', readable: true, reason: null, scans: 120, confirmed: 80, newest: '2026-11-12' }]} />)
+    expect(ok).toContain('readable')
+    expect(ok).toContain('120 scans, 80 confirmed')
+    expect(ok).toContain('newest from 2026-11-12')
+    const bad = renderToStaticMarkup(<TraceSources sources={[{ label: 'prod', readable: false, reason: 'no permission to read it', scans: 0, confirmed: 0, newest: null }]} />)
+    expect(bad).toContain('not readable: no permission to read it')
+    expect(renderToStaticMarkup(<TraceSources sources={[]} />)).toBe('')
+  })
+
+  it('shows the tuning and the held-back group apart, with trainer counts and no names', () => {
+    const groups = {
+      local: { n: 5, label: 'From this server' },
+      prod_tuning: { n: 70, trainers: 4, label: 'From prod: for tuning', top1: 80, top20: 90, decided: 60, decided_right: 98, decided_wrong: 1 },
+      prod_held_back: { n: 30, trainers: 3, label: 'From prod: held back', top1: 70, top20: 85, decided: 50, decided_right: 97, decided_wrong: 1 },
+    }
+    const html = renderToStaticMarkup(<SourceGroups groups={groups} note="Held-back scans are left out." />)
+    expect(html).toContain('From prod: for tuning')
+    expect(html).toContain('From prod: held back')
+    expect(html).toContain('Held-back scans are left out.')
+    expect(renderToStaticMarkup(<SourceGroups groups={{ local: groups.local }} />)).toBe('')
+  })
+
+  it('adds a held-back row under the option comparison', () => {
+    const rows = [{ label: 'baseline', status: 'ok', n: 10, top1: 80, top5: 90, top20: 95, number_exact: 70, decided: 60, decided_right: 99, decided_wrong: 0, p95_ms: 200 }]
+    const html = renderToStaticMarkup(
+      <CompareTable
+        title="Option comparison"
+        report={{ kind: 'compare-labelled', n: 10, rows, winner: 'baseline', held_back: { ...rows[0], n: 5 }, held_back_note: 'Held back scans were left out of the pick.', groups: { prod_held_back: { label: 'From prod: held back', scans: 5, trainers: 2 } } }}
+      />,
+    )
+    expect(html).toContain('scanner-lab-held-back-row')
+    expect(html).toContain('Held back scans were left out of the pick.')
+    expect(html).toContain('2 trainers')
+  })
+})
+
+describe('Wrong decisions of a comparison row', () => {
+  const item = {
+    key: 'k1', mechanism: 'number_and_picture', rank: 3, reasons: ['number_and_picture', 'number_from_whole_picture', 'total_not_read'],
+    decided_card: { tcg_card_id: 'a-1', name: 'Comfey', number: '077', printed_total: 128, set: 'Set A', similarity: 0.7, rank: 1, lead: 0.1 },
+    truth: { name: 'Kommo-o', number: '143', printed_total: 128, set: 'Set A', similarity: 0.44 },
+    ocr: { number: '077', total: '128', name: null, number_source: 'whole_picture', number_confidence: 0.9 },
+  }
+
+  it('shows where the number came from and what stood behind the decision', () => {
+    const html = renderToStaticMarkup(<DecidedWrong item={item} />)
+    expect(html).toContain('only the second read of the whole picture')
+    expect(html).toContain('90% confidence')
+    expect(html).toContain('number from the whole picture only')
+    expect(html).toContain('total not read')
+  })
+
+  it('lists the scans of a row, and says so plainly when the details were not kept', () => {
+    const row = { label: 'names+wholeread', status: 'ok', decided_wrong: 1, wrong_scans: [item] }
+    expect(renderToStaticMarkup(<WrongList row={row} />)).toContain('Comfey')
+    expect(renderToStaticMarkup(<WrongList row={{ ...row, wrong_scans: undefined }} />)).toContain('did not keep the details')
+  })
+
+  it('makes only a non-zero Wrong figure a button', () => {
+    const rows = [
+      { label: 'baseline', status: 'ok', top1: 1, top20: 1, number_exact: 1, decided: 1, decided_wrong: 0, p95_ms: 1 },
+      { label: 'names', status: 'ok', top1: 1, top20: 1, number_exact: 1, decided: 1, decided_wrong: 2, p95_ms: 1, wrong_scans: [item] },
+    ]
+    const html = renderToStaticMarkup(<CompareTable title="t" report={{ kind: 'compare-labelled', n: 1, rows, winner: null }} />)
+    expect(html.match(/scanner-lab-row-wrong-open/g)).toHaveLength(1)
   })
 })

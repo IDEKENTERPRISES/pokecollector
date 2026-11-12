@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -185,6 +186,64 @@ def card_full(card_rgb) -> bytes:
     return _jpeg(card_rgb, FULL_QUALITY)
 
 
+def decided_card(outcome, decision: dict, loaded: dict) -> dict:
+    """The card the matcher decided on, with its own number, total and picture similarity, for the "Decided wrong" list."""
+    row = next((m for m in outcome.matches if m["card_id"] == decision["card_id"]), {})
+    return {
+        "tcg_card_id": decision.get("tcg_card_id"), "name": row.get("name"), "number": row.get("number"), "set": row.get("set"),
+        "printed_total": row.get("printed_total"), "similarity": decision.get("similarity"), "rank": row.get("rank"), "lead": decision.get("lead"),
+        "picture_rank": row.get("picture_rank"), "image": (loaded.get(decision["card_id"]) or {}).get("images_small"),
+    }
+
+
+def wrong_reasons(outcome, decision: dict) -> list[str]:
+    """Plain codes for what stood behind a wrong decision: the mechanism, where the number came from, and what was corrected or refused."""
+    ocr = outcome.ocr or {}
+    codes = [str(decision.get("mechanism"))]
+    if ocr.get("number_local"):
+        codes.append(f"number_from_{ocr.get('number_source') or 'finder_card'}")
+    if not ocr.get("number_total") and ocr.get("number_local"):
+        codes.append("total_not_read")
+    if ocr.get("corrected"):
+        codes.append("number_corrected")
+    if ocr.get("number_from_lookup"):
+        codes.append("number_from_lookup")
+    detection = outcome.detection or {}
+    if detection.get("fallback"):
+        codes.append(f"fallback_{detection['fallback']}")
+    if detection.get("rejected"):
+        codes.append("quad_refused")
+    if (ocr.get("wholeread") or {}).get("rescued"):
+        codes.append("wholeread_rescued")
+    return codes
+
+
+def wrong_record(*, trace: str, source: str, trace_rel: str | None, outcome, truth_id: str, loaded: dict) -> dict:
+    """What the Misses list keeps about a wrong decision, as text only (no pictures), for a comparison row's own list."""
+    decision = outcome.decision
+    truth = {"card_id": truth_id, **(loaded.get(truth_id) or {})}
+    top = next((m for m in outcome.matches if m["card_id"] == truth_id), None)
+    ocr = outcome.ocr or {}
+    return {
+        "key": "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in (Path(trace).stem if source == "local" else f"{source}-{Path(trace).stem}"))[:80],
+        "trace": trace, "source": source, "trace_rel": trace_rel, "kind": "decided_wrong", "rank": top["rank"] if top else None,
+        "mechanism": decision["mechanism"], "decided_card": decided_card(outcome, decision, loaded), "reasons": wrong_reasons(outcome, decision),
+        "truth": {
+            "tcg_card_id": truth.get("tcg_card_id"), "name": truth.get("name"), "number": truth.get("number"), "set": truth.get("set"),
+            "rarity": truth.get("rarity"), "image": truth.get("images_small"), "image_large": truth.get("images_large"),
+            "printed_total": truth.get("printed_total"), "similarity": top.get("similarity") if top else None,
+            "picture_rank": top.get("picture_rank") if top else None,
+        },
+        "top3": [{"tcg_card_id": m["tcg_card_id"], "name": m.get("name"), "number": m.get("number"), "set": m.get("set"),
+                  "similarity": m.get("similarity"), "picture_rank": m.get("picture_rank"), "image": (loaded.get(m["card_id"]) or {}).get("images_small")}
+                 for m in outcome.matches[:3]],
+        "ocr": {"number": ocr.get("number_local"), "total": ocr.get("number_total"), "name": ocr.get("name"), "hp": ocr.get("hp"),
+                "number_source": ocr.get("number_source"), "number_confidence": ocr.get("number_confidence"),
+                "lines": (ocr.get("lines") or [])[:6], "name_lines": (ocr.get("name_lines") or [])[:4]},
+        "detection": {k: (outcome.detection or {}).get(k) for k in ("found", "confidence", "method", "fallback", "rejected")},
+    }
+
+
 class MissCollector:
     """Collects the misses of one labelled run and writes them out at the end."""
 
@@ -197,7 +256,8 @@ class MissCollector:
         self.scans = 0
         self.fallback_scans = 0  # scans (misses or not) whose card was not found on the recognition image
 
-    def add(self, *, trace: str, photo, outcome, truth_id: str, label: str = "", confirmation: str | None = None, matcher=None, corners: dict | None = None) -> None:
+    def add(self, *, trace: str, photo, outcome, truth_id: str, label: str = "", confirmation: str | None = None, matcher=None, corners: dict | None = None,
+            source: str = "local", trace_rel: str | None = None) -> None:
         """Record one scan if it is a miss (the right card is not the first pick). ``matcher`` measures whether
         the card is really turned (against the confirmed card's own picture)."""
         from . import detect
@@ -233,7 +293,8 @@ class MissCollector:
         )
         if wrong:
             tags = ["decided_wrong"] + [tag for tag in tags if tag != "other"]
-        key = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in Path(trace).stem)[:80] or f"scan{self.scans}"
+        # A scan of a read-only source (prod) is named by its source too: its file names can equal a local scan's.
+        key = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in (Path(trace).stem if source == "local" else f"{source}-{Path(trace).stem}"))[:80] or f"scan{self.scans}"
         self.run_dir.mkdir(parents=True, exist_ok=True)
         corners = outcome.detection.get("corners") or []
         if outcome.detection.get("corners_space") in ("full_photo", "review_photo"):
@@ -244,7 +305,7 @@ class MissCollector:
         read_card = outcome.text_card if getattr(outcome, "text_card", None) is not None else card.card
         (self.run_dir / f"{key}-card-full.jpg").write_bytes(card_full(read_card))
         self.items.append({
-            "key": key, "trace": trace, "kind": "not_in_top20" if rank is None else "not_top1" if rank != 1 else "decided_wrong", "rank": rank,
+            "key": key, "trace": trace, "source": source, "trace_rel": trace_rel, "kind": "not_in_top20" if rank is None else "not_top1" if rank != 1 else "decided_wrong", "rank": rank,
             "mechanism": decision["mechanism"] if decision else None,
             "decided_card": self._decided_card(outcome, decision, loaded) if wrong else None,
             "tags": tags, "primary": primary_tag(tags),
@@ -262,8 +323,10 @@ class MissCollector:
                  "similarity": m.get("similarity"), "image": (loaded.get(m["card_id"]) or {}).get("images_small")}
                 for m in top3
             ],
+            "reasons": wrong_reasons(outcome, decision) if wrong else None,
             "ocr": {
                 "number": outcome.ocr.get("number_local"), "total": outcome.ocr.get("number_total"), "name": outcome.ocr.get("name"),
+                "number_source": outcome.ocr.get("number_source"), "number_confidence": outcome.ocr.get("number_confidence"),
                 "hp": outcome.ocr.get("hp"), "lines": (outcome.ocr.get("lines") or [])[:6], "name_lines": (outcome.ocr.get("name_lines") or [])[:4],
                 "strips": outcome.ocr.get("strips") or [],  # every region read: box, preprocessing, text and confidence per line
             },
@@ -276,13 +339,7 @@ class MissCollector:
 
     @staticmethod
     def _decided_card(outcome, decision: dict, loaded: dict) -> dict:
-        """The card the matcher decided on, with its own number, total and picture similarity, for the "Decided wrong" list."""
-        row = next((m for m in outcome.matches if m["card_id"] == decision["card_id"]), {})
-        return {
-            "tcg_card_id": decision.get("tcg_card_id"), "name": row.get("name"), "number": row.get("number"), "set": row.get("set"),
-            "printed_total": row.get("printed_total"), "similarity": decision.get("similarity"), "rank": row.get("rank"), "lead": decision.get("lead"),
-            "image": (loaded.get(decision["card_id"]) or {}).get("images_small"),
-        }
+        return decided_card(outcome, decision, loaded)
 
     def finish(self, label: str = "") -> dict:
         report = {
@@ -305,6 +362,99 @@ class MissCollector:
         return report
 
 
+# ── Derived files follow their scan ──────────────────────────────────────────
+# A Misses report keeps thumbnails and full-size pictures made from scans. When a scan is deleted at its source (an admin, the
+# 12-month clean-up, on prod) its trace disappears from the read-only mount; the pictures made from it must go too: at the next
+# run, and meanwhile they are not served. A source that cannot be read right now proves nothing: its scans are not served
+# (nothing about them can be checked) but nothing is deleted.
+
+def _trace_roots(local_dir: Path | None = None) -> dict:
+    from services import scan_trace, trace_sources
+
+    roots = {trace_sources.LOCAL: local_dir if local_dir is not None else (scan_trace.trace_root() or scan_trace.trace_storage_root())}
+    for root in trace_sources.readonly_roots():
+        roots[root.label] = root.path
+    return roots
+
+
+def _readable(path: Path | None) -> bool:
+    if path is None:
+        return False
+    try:
+        with os.scandir(path) as entries:
+            next(entries, None)
+        return True
+    except OSError:
+        return False
+
+
+def item_state(item: dict, roots: dict, readable: dict) -> str:
+    """``live``, ``gone`` (its source is readable and the trace is not there) or ``unknown`` (it cannot be checked now)."""
+    rel = item.get("trace_rel")
+    source = item.get("source") or "local"
+    if not rel or ".." in Path(rel).parts:
+        return "live"  # an older report: nothing recorded to check against
+    root = roots.get(source)
+    if source == "local" and root is None:
+        return "live"
+    if root is None:
+        return "unknown"  # a source that is no longer configured
+    if source not in readable:
+        readable[source] = _readable(root)
+    if not readable[source]:
+        return "unknown"
+    try:
+        return "live" if (root / rel).is_file() else "gone"
+    except OSError:
+        return "unknown"
+
+
+def _recount(report: dict, items: list[dict]) -> dict:
+    return {
+        **report, "items": items, "misses": sum(1 for item in items if item["kind"] != "decided_wrong"),
+        "decided_wrong": sum(1 for item in items if item.get("decided_wrong")), "fallback_misses": sum(1 for item in items if item.get("fallback")),
+        "counts": count_tags(items),
+        "primary_counts": {tag: sum(1 for item in items if item["primary"] == tag) for tag in TAGS if any(item["primary"] == tag for item in items)},
+        "orientation_check": orientation_check(items),
+    }
+
+
+def without_vanished(report: dict, local_dir: Path | None = None) -> tuple[dict, list[dict]]:
+    """(the report with only the scans that can be shown, the items whose scan is gone). Reads only; deletes nothing."""
+    roots, readable = _trace_roots(local_dir), {}
+    states = [(item, item_state(item, roots, readable)) for item in report.get("items", [])]
+    live = [item for item, state in states if state == "live"]
+    gone = [item for item, state in states if state == "gone"]
+    if len(live) == len(report.get("items", [])):
+        return report, gone
+    return _recount(report, live), gone
+
+
+def purge_vanished(data_dir: Path | None = None, local_dir: Path | None = None) -> int:
+    """Remove the pictures of misses whose scan no longer exists (their four files in the latest run) and take them out of
+    latest.json. Touches only the Misses folder of this stack, never a trace root. Returns how many were removed."""
+    report = load_latest(data_dir)
+    if report is None:
+        return 0
+    _shown, gone = without_vanished(report, local_dir)
+    if not gone:
+        return 0
+    run_dir = misses_dir(data_dir) / str(report.get("run") or "")
+    for item in gone:
+        for suffix in ("photo", "card", "photo-full", "card-full"):
+            try:
+                (run_dir / f"{item['key']}-{suffix}.jpg").unlink(missing_ok=True)
+            except OSError:
+                logger.exception("Card-match: could not remove a picture of a deleted scan")
+    gone_keys = {item["key"] for item in gone}
+    kept = _recount(report, [item for item in report["items"] if item["key"] not in gone_keys])
+    kept["removed_deleted_scans"] = int(report.get("removed_deleted_scans") or 0) + len(gone)
+    temp = misses_dir(data_dir) / "latest.tmp"
+    temp.write_text(json.dumps(kept, ensure_ascii=False), encoding="utf-8")
+    temp.replace(misses_dir(data_dir) / "latest.json")
+    return len(gone)
+
+
 def load_latest(data_dir: Path | None = None) -> dict | None:
     try:
         return json.loads((misses_dir(data_dir) / "latest.json").read_text(encoding="utf-8"))
@@ -322,6 +472,8 @@ def _inline(path: Path) -> str | None:
 def full_image(key: str, kind: str, data_dir: Path | None = None) -> bytes | None:
     """The full-size ``photo`` (corners drawn) or ``card`` (flat card as read) of one miss in the latest run."""
     report = load_latest(data_dir)
+    if report is not None:
+        report, _gone = without_vanished(report)
     if report is None or kind not in ("photo", "card") or not any(item["key"] == key for item in report["items"]):
         return None
     try:
@@ -343,6 +495,8 @@ def strip_views(key: str, data_dir: Path | None = None) -> list[dict] | None:
     from .images import decode_rgb
 
     report = load_latest(data_dir)
+    if report is not None:
+        report, _gone = without_vanished(report)
     item = next((it for it in (report or {}).get("items", []) if it["key"] == key), None)
     if item is None:
         return None
@@ -354,7 +508,8 @@ def strip_views(key: str, data_dir: Path | None = None) -> list[dict] | None:
     for strip in (item.get("ocr") or {}).get("strips") or []:
         picture = None
         try:
-            picture = ocr_module.render_strip(card, strip)
+            if strip.get("source") != "whole_picture":  # (read from the whole picture, which is not stored with the miss: text only)
+                picture = ocr_module.render_strip(card, strip)
         except Exception:
             logger.exception("Card-match: could not draw a strip for %s", key)
         image = None
@@ -371,6 +526,7 @@ def page(tag: str | None = None, offset: int = 0, limit: int = PAGE_SIZE, data_d
     report = load_latest(data_dir)
     if report is None:
         return {"available": False}
+    report, _gone = without_vanished(report)  # not the pictures of a scan deleted at its source
     items = [item for item in report["items"] if not tag or tag in item["tags"]]
     run_dir = misses_dir(data_dir) / report["run"]
     window = []

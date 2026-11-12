@@ -136,6 +136,12 @@ const MECHANISM_NAMES = {
   text_and_picture: 'the card text and the picture',
   reprint_art_lead: 'the artwork picked between reprints',
 }
+const NUMBER_SOURCES = { finder_card: 'the card the finder cut out', whole_picture: 'only the second read of the whole picture' }
+const REASON_NAMES = {
+  number_from_whole_picture: 'number from the whole picture only', number_from_finder_card: 'number from the finder’s card', total_not_read: 'total not read',
+  number_corrected: 'number corrected from the catalogue', number_from_lookup: 'number taken from the lookup', quad_refused: 'finder’s quad refused', wholeread_rescued: 'second read completed the number',
+}
+const reasonName = code => REASON_NAMES[code] || MECHANISM_NAMES[code] || code.replace(/^fallback_/, 'card not found: ').replace(/_/g, ' ')
 
 /** A decided-wrong scan in plain words: how it was decided, what was read, and both cards with their picture similarity. */
 export function DecidedWrong({ item }) {
@@ -150,8 +156,14 @@ export function DecidedWrong({ item }) {
         {decided.lead != null ? ` (lead ${decided.lead})` : ''}.
       </p>
       <p>Read: number {read.number ? `${read.number}${read.total ? `/${read.total}` : ''}` : '–'}, name “{read.name || '–'}”.</p>
+      {read.number && read.number_source && (
+        <p data-testid="decided-wrong-number-source">
+          The number came from {NUMBER_SOURCES[read.number_source] || read.number_source}{read.number_confidence != null ? `, read with ${Math.round(read.number_confidence * 100)}% confidence` : ''}.
+        </p>
+      )}
       <p>Decided: {describe(decided, ` · picture ${decided.similarity ?? '–'}${decided.rank ? ` · ranked ${decided.rank}` : ''}`)}</p>
       <p>Confirmed: {describe(truth, ` · picture ${truth.similarity ?? 'not in the top 20'}${item.rank ? ` · ranked ${item.rank}` : ''}`)}</p>
+      {(item.reasons || []).length > 0 && <p className="text-text-secondary" data-testid="decided-wrong-reasons">Behind it: {item.reasons.map(reasonName).join(', ')}.</p>}
     </div>
   )
 }

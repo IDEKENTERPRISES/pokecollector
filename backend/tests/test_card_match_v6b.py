@@ -133,11 +133,11 @@ class NumberOnceTests(unittest.TestCase):
         return [card_id for card_id, _s in ordered]
 
     def test_the_option_is_a_comparison_row_after_the_set_it_changes(self):
-        label = "names+number+text+art+tta+fastread+numberonce"
+        label = "names+number+text+art+tta+fastread+numberonce+corners+wholepic"  # version 9: asked on top of the measured best set
         self.assertTrue(variants.parse(label).numberonce)
         self.assertEqual(variants.parse(label).label, label)
         self.assertIn(label, variants.COMPARE_LABELS)
-        self.assertFalse(variants.parse(variants.DEFAULT_LABEL).numberonce)
+        self.assertTrue(variants.parse(variants.DEFAULT_LABEL).numberonce)  # version 10: the measured pick is the default
 
     def test_kommo_o_143_beats_comfey_077_once_the_read_number_is_counted_once(self):
         # picture 0.634 against 0.4243; the read number 077/128 is Comfey's (number + total level, 0.14)

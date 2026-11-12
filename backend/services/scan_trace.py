@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from models import User, UserSetting
+from services import trace_sources
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,7 @@ def trace_storage_root() -> Path | None:
 
 
 def _ensure_private_dir(path: Path) -> Path:
+    trace_sources.ensure_writable(path)  # never in a read-only root (SCAN_TRACE_READONLY_DIRS)
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     path.chmod(0o700)
     return path
@@ -184,7 +186,7 @@ def _user_dir(user_id: int, root: Path | None = None) -> Path | None:
 def _cleanup_roots(extra_root: Path | None = None) -> list[Path]:
     roots: list[Path] = []
     for root in (extra_root, trace_root(), trace_storage_root()):
-        if root is not None and root not in roots:
+        if root is not None and root not in roots and not trace_sources.is_readonly_path(root):  # a read-only root is never cleaned up or written
             roots.append(root)
     return roots
 
@@ -201,6 +203,7 @@ def _is_revoked(user_id: int, extra_root: Path | None = None) -> bool:
 
 
 def _write_private(path: Path, content: bytes | str) -> None:
+    trace_sources.ensure_writable(path)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     descriptor = os.open(path, flags, 0o600)
     try:
@@ -783,6 +786,7 @@ def record_ground_truth(
     for path in sorted(paths):
         temp: Path | None = None
         try:
+            trace_sources.ensure_writable(path)
             with _TRACE_LOCK:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 data["ground_truth"] = card_id
@@ -818,6 +822,7 @@ def record_ground_truth(
 
 
 def _delete_user_dir(root: Path, user_id: int) -> dict[str, int]:
+    trace_sources.ensure_writable(root)
     user_dir = _user_dir(user_id, root)
     if user_dir is None or not user_dir.exists():
         return {"traces": 0, "images": 0}
@@ -865,7 +870,7 @@ def purge_old_traces(keep_days: int | None = None, *, today: datetime.date | Non
     for root in _cleanup_roots():
         try:
             resolved_root = root.resolve()
-            if resolved_root in seen or not root.is_dir() or root.is_symlink():
+            if trace_sources.is_readonly_path(root) or resolved_root in seen or not root.is_dir() or root.is_symlink():
                 continue
             seen.add(resolved_root)
             user_dirs = [p for p in root.iterdir() if _USER_DIR.match(p.name) and p.is_dir() and not p.is_symlink()]
