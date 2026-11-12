@@ -29,11 +29,12 @@ export async function loadWasmRuntime() {
   return wasmRuntime
 }
 
-/** The build with the WebGPU execution provider (its own .wasm, the "jsep" one, also from this origin). */
+/** The build with the WebGPU execution provider. Its bundle has the "asyncify" glue inlined (checked in the built chunk), so the
+ *  matching .wasm is the asyncify one (~29 MB), also served from this origin. */
 export async function loadGpuRuntime() {
   if (!gpuRuntime) {
     gpuRuntime = (async () => {
-      const [ort, wasm] = await Promise.all([import('onnxruntime-web/webgpu'), import('onnxruntime-web/ort-wasm-simd-threaded.jsep.wasm?url')])
+      const [ort, wasm] = await Promise.all([import('onnxruntime-web/webgpu'), import('onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url')])
       ort.env.wasm.numThreads = 1
       ort.env.wasm.proxy = false
       ort.env.wasm.wasmPaths = { wasm: new URL(wasm.default, window.location.href).href }

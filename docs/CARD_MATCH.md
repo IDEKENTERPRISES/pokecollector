@@ -390,12 +390,14 @@ The owner has approved running this matcher on the iPhone (tracker phase P27). S
 
 **Which 8-bit file (corrected after the first nonprod run).** The first pin, `onnx/model_int8.onnx` (signed int8 weights), failed to build an index on the T340: `NOT_IMPLEMENTED: Could not find an implementation for ConvInteger(10) node '/embeddings/patch_embeddings/projection/Conv_quant'`. ONNX Runtime's CPU kernels, which onnxruntime-web's WebAssembly backend uses too, implement `ConvInteger` and `MatMulInteger` for **uint8** only. The pin is now `onnx/model_quantized.onnx` (`model_uint8.onnx` is the same file; sha256 `c179f8f7…`, 24,446,700 bytes). Checked with onnxruntime 1.19.2 (the image's version) on `CPUExecutionProvider`: it loads, and a zeros `1×3×224×224` input gives `(1, 257, 384)` like the fp32 model; on one structured test image its CLS vector has cosine 0.993 with the fp32 one (a smoke check, not a quality measure: the comparison rows measure that). `model_fp16.onnx` also loads and runs on CPU (it takes float32 pixels and casts inside). Operators the phone runtime needs for the 8-bit model: `ConvInteger` (uint8), `MatMulInteger` (uint8), `DynamicQuantizeLinear`, plus the usual float ones (opset 14); WebGPU has no integer kernels, so the fp16 file is the WebGPU candidate. Both are named in the manifest (`model.operators`, `model.webgpu_candidate`) and the fp16 file is in the bundle as an optional extra (`model/dinov2-small-fp16.onnx`, `optional: true`, left out of `totals.bytes`, counted in `totals.optional_bytes`).
 
-Rows added to `variants.COMPARE_LABELS` (13 rows now), after the version 10 rows:
+Rows added to `variants.COMPARE_LABELS` (13 rows with version 11, 15 with the speed-test step), after the version 10 rows:
 
 | Row | Why |
 | --- | --- |
 | in-use set `+phone8+index8` | what the phone scores with the same rules and reading as the server |
 | phone-lite: `names+number+art+fastread+numberonce+corners+wholepic+phone8+index8` | drops `tta` (two extra embeddings, the biggest cost on a phone), `text` (body-text OCR and the text index), `wholeread`/`wholestrict` (a second read). It keeps `art` (one more embedding, against two for `tta`) and `fastread`, `numberonce`, `corners`, `wholepic` (they cost no model time) |
+| step 2: in-use set `+wholeread+wholestrict+phone8+index8` (`variants.PHONE_KEPT_LABEL`) | the kept set exactly, with the phone model and index. The two rows above were built before `wholeread+wholestrict` existed (+4.6 points on the full model); this is the one that answers "what does the kept set score on the phone?" |
+| step 2: phone-lite `+wholeread+wholestrict` (`variants.PHONE_LITE_WHOLE_LABEL`) | phone-lite with the whole-picture second read, to see whether the cheap set recovers most of that gain |
 | in-use set `+fp16+index8` | a middle option if int8 loses too much; a row whose model cannot run on the server's CPU shows "could not run here" instead of stopping the comparison. Its p95 on the T340 is not a phone number (CPU float16 is emulated) |
 
 The comparison compares like with like: the server's in-use row and the phone rows run on the same photos, so the difference between them is the cost of the smaller model and index. Read **top 20**, **decided** and **wrong** first; **p95** on the T340 is a server number and says little about the phone's speed (the next step measures that on the iPhone).
@@ -422,6 +424,33 @@ Endpoints (any signed-in user, read-only; `phone.resolve_file` serves only a pat
 ### Parity fixtures
 
 `backend/scripts/phone_parity_fixtures.py` writes `frontend/tests/fixtures/phone-matcher/v11/` (see its README): the Python matcher's answers for the pure functions and, for three generated photos, the found quad, the flat size, the model input tensor's statistics and the int8 embedding. Inputs are hand-written strings, catalogue-like rows and cards drawn by the test generators only; never a trainer's scan, a real photo or a TCGdex picture. The JavaScript matcher (a later step) is tested against these files in CI.
+
+## Phone speed test (step 2)
+
+An admin-only page, **Settings › Scanner lab › Phone speed test** (`/settings/phone-speed`, `frontend/src/pages/PhoneSpeedTest.jsx`), answers one question before the matcher is ported to JavaScript: **how long does the model and the text reader take on the owner's iPhone?** The gate is about 1.5 s per card. Non-admins are sent back to Settings.
+
+**What runs where.** `onnxruntime-web` 1.31.1 (exact pin; published 2026-10-26, so older than two weeks, with both the WebAssembly and the WebGPU execution providers) is loaded only on this page: the page and the runtime (`frontend/src/phonespeed/runtime.js`) are lazy chunks and `import('onnxruntime-web/wasm')` / `import('onnxruntime-web/webgpu')` run when a test starts. Its `.wasm` files are Vite assets of the app's own origin (14.8 MB for WebAssembly, 28.7 MB "asyncify" for WebGPU: the WebGPU bundle has that glue inlined). Single-threaded WebAssembly (`numThreads = 1`, no worker proxy), because the app is not cross-origin isolated (sprites and card pictures load cross-origin). The service worker never precaches them (`NOT_PRECACHED` in `frontend/scripts/build-sw.mjs`). The only CSP change is `'wasm-unsafe-eval'` in `script-src` (`frontend/nginx-security-headers.conf`); WebGPU and the same-origin `.wasm` fetches need nothing more.
+
+**Downloads.** The page reads the bundle manifest, lists the files it needs with their sizes, asks before downloading (use Wi-Fi), downloads them with a progress bar, checks every sha256 against the manifest and keeps them in Cache Storage under `pc-phone-speed-v1` (keys carry the sha256, so a rebuilt bundle is fetched again). "Remove test files" deletes that cache. Photos: a file input with `capture="environment"` or the built-in sample (`public/phone-speed-sample.jpg`, a drawn card). A photo is decoded on a canvas in memory and never uploaded.
+
+**What is timed** (first run, and the median of 5 runs, for each row):
+
+| Row | Meaning |
+| --- | --- |
+| model session | creating the session: (a) uint8 on WebAssembly; (b) fp16 on WebGPU, only when `navigator.gpu` exists and the optional file is in the bundle; (c) uint8 on WebGPU, which may fall back or fail: the error text is the result |
+| preprocess | `preprocessRgba` (`frontend/src/phonespeed/preprocess.js`), a pure port of `embed.preprocess` for the 630×880 card |
+| one embedding | one 224×224 view through the model, per backend that loaded. On WebGPU the first run includes shader compilation: compare it with the median |
+| one card | the 7 embeddings the kept set needs (card and its 180° turn, 2 tta views, 3 artwork crops), preprocessing included |
+| index | all per-set int8 files of both kinds read into memory (once), then a top-20 cosine search of one embedding per kind |
+| OCR | detection and recognition sessions on WebAssembly; one detection run on the card at the reader's 480 px side limit; recognition of 3 text-line crops (name line and the two number strips, 48 px high) |
+
+**The estimate** is `7 × preprocess + card embeddings + 4 whole-card and 3 artwork searches + 2 detection runs + 6 line recognitions`. The OCR counts are an assumption (the real reader runs a ladder of strips), so treat the estimate as a rough upper-middle guess; step 3 replaces it with a measurement. The contrast view is a global stretch standing in for CLAHE (same cost class, not the same pixels).
+
+**Reading it.** (1) A first run far above the median is warm-up (JIT, shader compile): the user feels the first card. (2) If the card row on WebAssembly is under about 1 s, the model alone fits the gate; add the OCR rows. (3) If only WebGPU fp16 is fast, the app would ship the 42 MB model for phones with `navigator.gpu`. (4) "Last run crashed the page" is read from `sessionStorage` (set before each heavy step, cleared at the end): a "yes" with the step name means that step ran the page out of memory. JavaScript memory cannot be read on iOS, so there is no memory number.
+
+**Results.** `POST /api/card-match/phone-speed` (admin) stores the numbers and device facts only (never an image or text): at most 80 timings and 24 device fields, every name 1 to 48 safe characters, numbers finite, strings at most 200 characters, body at most 8 KB; the last 50 runs are kept in `phone-speed.json` in the card-match data folder. `GET` returns the last 10, which Scanner lab lists. Tests: `backend/tests/test_card_match_phone_speed.py`, `frontend/src/phonespeed/*.test.js`.
+
+**Preprocess parity.** `preprocess.test.js` checks the port two ways: against `tests/fixtures/phone-matcher/v11/preprocess-reference.json` (cv2's output for generated patterns, area and cubic paths; every sampled value within one 8-bit level, 0.0183 in tensor units, and mean/std within 0.003), and against the committed photo fixtures: the test decodes each generated JPEG with `jpeg-js`, flattens the card with the fixture's corners (bilinear, where cv2 warps cubically with its own decoder) and compares the tensor mean and std within 0.05. The photo check is deliberately loose: a different decoder and warp change single pixels, not the picture.
 
 ## Shadow mode (Phase 2, nonprod only)
 
