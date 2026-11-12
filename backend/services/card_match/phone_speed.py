@@ -105,7 +105,11 @@ def clean(body) -> dict:
     if not isinstance(body, dict):
         raise SpeedRunError("A JSON object is needed")
     timings, device = body.get("timings"), body.get("device")
-    if not isinstance(timings, dict) or not timings:
+    crashed = body.get("crashed_step")
+    if crashed is not None and (not isinstance(crashed, str) or not NAME.match(crashed)):
+        raise SpeedRunError("crashed_step must be a step name")
+    # A crashed page posts the steps that finished: none at all is possible, and is still a result.
+    if not isinstance(timings, dict) or (not timings and crashed is None):
         raise SpeedRunError("timings must be an object of numbers")
     if len(timings) > MAX_TIMINGS:
         raise SpeedRunError("Too many timings")
@@ -131,9 +135,11 @@ def clean(body) -> dict:
             out_device[key] = value
         else:
             raise SpeedRunError(f"{key} must be a number, a boolean or a short text")
-    if set(body) - {"timings", "device", "answer"}:
+    if set(body) - {"timings", "device", "answer", "crashed_step"}:
         raise SpeedRunError("Unknown field")
     out = {"timings": out_timings, "device": out_device}
+    if crashed is not None:
+        out["crashed_step"] = crashed
     if body.get("answer") is not None:
         out["answer"] = _clean_answer(body["answer"])
     return out

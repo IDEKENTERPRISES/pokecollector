@@ -4,11 +4,13 @@
 import { l2Normalise, parseIndex, searchTopK } from './index8'
 import { fromHalfBits, preprocessRgba, toHalfBits, VIEWS_PER_CARD } from './preprocess'
 import { median, round, timeRuns } from './stats'
+import {
+  clearPartial, markStep, newPartial, ORT_VERSION, parseDevice, phaseOrder, previousCrash, recordStep, timingsOf,
+} from './plan'
 import { cardViews, CARD_H, CARD_W, ctcDecode, detectionTensor, guideCardBox, recognitionTensor, textLines, cropRgba } from './views'
 
-export const ORT_VERSION = '1.31.1'
+export { ORT_VERSION, markStep, previousCrash }
 export const RUNS = 5
-const CRASH_KEY = 'pcPhoneSpeedStep'
 
 // -- onnxruntime-web, loaded on demand -------------------------------------------------------------------------------
 
@@ -46,32 +48,7 @@ export async function loadGpuRuntime() {
 
 // -- device facts ----------------------------------------------------------------------------------------------------
 
-export function readDevice(nav = globalThis.navigator, win = globalThis) {
-  const ua = String(nav?.userAgent || '')
-  const ios = /OS (\d+)[._](\d+)/.exec(ua)
-  const safari = /Version\/(\d+(?:\.\d+)?)/.exec(ua)
-  return {
-    ua: ua.slice(0, 190),
-    ios: ios ? `${ios[1]}.${ios[2]}` : null,
-    safari: safari ? safari[1] : null,
-    gpu: Boolean(nav?.gpu),
-    crossOriginIsolated: Boolean(win?.crossOriginIsolated),
-    hardwareConcurrency: Number(nav?.hardwareConcurrency) || null,
-    ortVersion: ORT_VERSION,
-  }
-}
-
-// -- the crash flag --------------------------------------------------------------------------------------------------
-
-const store = () => { try { return globalThis.sessionStorage } catch { return null } }
-
-/** The step that was running when the page last went away, if the run never finished. */
-export function previousCrash() {
-  try { return store()?.getItem(CRASH_KEY) || null } catch { return null }
-}
-export function markStep(name) {
-  try { if (name) store()?.setItem(CRASH_KEY, name); else store()?.removeItem(CRASH_KEY) } catch { /* storage blocked */ }
-}
+export const readDevice = parseDevice
 
 // -- helpers ---------------------------------------------------------------------------------------------------------
 
@@ -180,15 +157,22 @@ export function estimateCard(medians, backend) {
 }
 
 /**
- * Run every step. `files` = {manifest, read(path) -> ArrayBuffer}. `onRow(id, row)` gets {first, median, runs, note} or {error}.
- * `options.webgpu` false skips the WebGPU steps. Returns {timings, device} for the server.
+ * Run every step in `phaseOrder` (WebAssembly first, WebGPU last). `files` = {manifest, read(path) -> ArrayBuffer}.
+ * `onRow(id, row)` gets {first, median, runs, note} or {error}. Every finished step is saved at once (`recordStep`), so a crash
+ * or an early end keeps what is done: the page posts the partial run. `options.webgpu` false skips WebGPU; `options.uint8Gpu`
+ * (off by default) adds the 8-bit model on WebGPU as the very last step. Returns {timings, device, ...} for the server.
  */
-export async function runSpeedTest({ files, photoSource, onRow, onPhase, options = {} }) {
+export async function runSpeedTest({ files, photoSource, onRow, onPhase, options = {}, storage }) {
   const device = readDevice()
   const rows = {}
-  const set = (id, row) => { rows[id] = row; onRow(id, row) }
+  const partial = newPartial(device)
+  const set = (id, row) => {
+    rows[id] = row
+    recordStep(partial, id, row, storage)
+    onRow(id, row)
+  }
   const guard = async (id, fn) => {
-    markStep(id)
+    markStep(id, storage)
     onPhase?.(id)
     try {
       await fn()
@@ -207,50 +191,35 @@ export async function runSpeedTest({ files, photoSource, onRow, onPhase, options
   const fp16Path = manifest.model.webgpu_candidate?.in_bundle ? manifest.model.webgpu_candidate.file : null
   const hasGpu = Boolean(globalThis.navigator?.gpu) && options.webgpu !== false
 
-  // the photo
   let photo = null
   let card = null
   let views = null
   let tensor = null
-  await guard('photo', async () => {
-    const result = await timeRuns(async () => {
-      photo = await decodePhoto(photoSource)
-      card = guideCard(photo)
-    }, 1)
-    set('photo', { first: result.first, median: result.first, runs: result.runs, note: `${photo.width}×${photo.height} photo → ${card.width}×${card.height} card` })
-    device.photoWidth = photo.width
-    device.photoHeight = photo.height
-  })
-  if (!card) return finish(rows, device)
-  views = cardViews(card)
-
-  await guard('preprocess', async () => {
-    const result = await timed('preprocess', () => { tensor = preprocessRgba(card.data, card.width, card.height) }, RUNS, `${card.width}×${card.height} RGBA → 3×224×224 float32`)
-    return result
-  })
-  if (!tensor) tensor = preprocessRgba(card.data, card.width, card.height)
-
   const medians = () => Object.fromEntries(Object.entries(rows).map(([id, row]) => [id, row.median ?? null]))
   const embeddings = {}
+  const answer = { topk: {}, ocr_lines: [] }
+  const wholeIndexes = []
+  const artIndexes = []
 
-  /** Session creation (5 times, each released but the last) then one embedding and one 7-view card on that backend. */
+  /** Session creation (5 times, each released), then one embedding and one 7-view card on that backend. The session is released
+   *  at the end, and a WebGPU phase starts only after everything before it released its sessions: two models are never held at once. */
   const modelSteps = async (backend, ort, path, providers, sessionId, embedId, cardId) => {
-    const buffer = await files.read(path)
+    let buffer = await files.read(path)
     if (!buffer) throw new Error('The file is not in the cache')
     let session = null
     await guard(sessionId, async () => {
       const result = await timeRuns(async () => {
-        session?.release?.()
+        if (session) { await session.release?.(); session = null }
         session = await ort.InferenceSession.create(new Uint8Array(buffer), { executionProviders: providers, graphOptimizationLevel: 'all' })
       }, RUNS)
       set(sessionId, { first: result.first, median: result.median, runs: result.runs })
     })
+    buffer = null // the model bytes are in the session now
     if (!session) return
     const half = wantsHalf(session)
     try {
       await guard(embedId, async () => {
-        const result = await timed(embedId, async () => { embeddings[backend] = await embedOne(ort, session, tensor, half) })
-        return result
+        await timed(embedId, async () => { embeddings[backend] = await embedOne(ort, session, tensor, half) })
       })
       await guard(cardId, async () => {
         await timed(cardId, async () => {
@@ -258,130 +227,161 @@ export async function runSpeedTest({ files, photoSource, onRow, onPhase, options
         }, RUNS, 'preprocess included: one tensor per view')
       })
     } finally {
-      session.release?.()
+      await session.release?.()
+      session = null
     }
   }
 
-  // WebAssembly, uint8
-  await guard('session_wasm', async () => {
-    const ort = await loadWasmRuntime()
-    await modelSteps('wasm', ort, int8Path, ['wasm'], 'session_wasm', 'embed_wasm', 'card_wasm')
-  })
-
-  // WebGPU, fp16 and uint8 (integer operators may fall back to the CPU or fail: either is a result)
-  if (hasGpu) {
-    await guard('session_webgpu_fp16', async () => {
-      if (!fp16Path) { set('session_webgpu_fp16', { error: 'the fp16 model is not in the bundle' }); return }
-      const ort = await loadGpuRuntime()
-      await modelSteps('webgpu_fp16', ort, fp16Path, ['webgpu'], 'session_webgpu_fp16', 'embed_webgpu_fp16', 'card_webgpu_fp16')
-    })
-    await guard('session_webgpu_uint8', async () => {
-      const ort = await loadGpuRuntime()
-      await modelSteps('webgpu_uint8', ort, int8Path, ['webgpu'], 'session_webgpu_uint8', 'embed_webgpu_uint8', 'card_webgpu_uint8')
-    })
-  } else {
-    for (const id of ['session_webgpu_fp16', 'session_webgpu_uint8']) set(id, { error: options.webgpu === false ? 'skipped' : 'navigator.gpu does not exist here' })
+  const addTopk = backend => {
+    const embedding = embeddings[backend]
+    if (!embedding || !wholeIndexes.length) return
+    const pick = list => searchTopK(list, embedding, 20).map(item => [item.id, round(item.score, 5)])
+    answer.topk[backend] = { whole: pick(wholeIndexes), art: pick(artIndexes) }
   }
 
-  // the index
-  const answer = { topk: {}, ocr_lines: [] }
-  const query = embeddings.wasm || embeddings.webgpu_fp16 || embeddings.webgpu_uint8
-  const wholeIndexes = []
-  const artIndexes = []
-  await guard('index_load', async () => {
-    const result = await timeRuns(async () => {
-      for (const entry of manifest.files.filter(item => item.path.startsWith('index/'))) {
-        const buffer = await files.read(entry.path)
-        if (!buffer) throw new Error(`${entry.path} is not in the cache`)
-        ;(entry.path.startsWith('index/whole/') ? wholeIndexes : artIndexes).push(parseIndex(buffer))
-      }
-    }, 1)
-    const rowsLoaded = wholeIndexes.reduce((sum, index) => sum + index.count, 0)
-    set('index_load', { first: result.first, median: result.first, runs: result.runs, note: `${wholeIndexes.length + artIndexes.length} files, ${rowsLoaded.toLocaleString()} cards per kind` })
-    device.indexCards = rowsLoaded
-  })
-  if (query && wholeIndexes.length) {
+  /** The two search rows need one embedding and the index; with no WebAssembly embedding they wait for the first WebGPU one. */
+  const searchRows = async backend => {
+    const query = embeddings[backend]
+    if (!query || !wholeIndexes.length || rows.search_whole) return
     await guard('search_whole', () => timed('search_whole', () => searchTopK(wholeIndexes, query, 20)))
     await guard('search_art', () => timed('search_art', () => searchTopK(artIndexes, query, 20)))
-    // what this phone computed for the photo, per backend that embedded it (sent with the photo for the server comparison)
-    for (const [backend, embedding] of Object.entries(embeddings)) {
-      const pick = list => searchTopK(list, embedding, 20).map(item => [item.id, round(item.score, 5)])
-      answer.topk[backend] = { whole: pick(wholeIndexes), art: pick(artIndexes) }
-    }
-  } else {
-    set('search_whole', { error: 'needs one embedding and the index' })
-    set('search_art', { error: 'needs one embedding and the index' })
   }
 
-  // OCR on WebAssembly
-  await guard('ocr_det_session', async () => {
-    const ort = await loadWasmRuntime()
-    const detBuffer = await files.read('ocr/det.onnx')
-    const recBuffer = await files.read('ocr/rec.onnx')
-    const characters = new TextDecoder().decode(await files.read('ocr/characters.txt')).split('\n').filter(Boolean)
-    let detection = null
-    let recognition = null
-    const create = async (id, buffer, assign) => {
-      await guard(id, async () => {
-        let held = null
+  const phases = {
+    async photo() {
+      await guard('photo', async () => {
         const result = await timeRuns(async () => {
-          held?.release?.()
-          held = await ort.InferenceSession.create(new Uint8Array(buffer), { executionProviders: ['wasm'], graphOptimizationLevel: 'all' })
-        }, RUNS)
-        assign(held)
-        set(id, { first: result.first, median: result.median, runs: result.runs })
+          photo = await decodePhoto(photoSource)
+          card = guideCard(photo)
+        }, 1)
+        set('photo', { first: result.first, median: result.first, runs: result.runs, note: `${photo.width}×${photo.height} photo → ${card.width}×${card.height} card` })
+        device.photoWidth = photo.width
+        device.photoHeight = photo.height
       })
-    }
-    await create('ocr_det_session', detBuffer, session => { detection = session })
-    await create('ocr_rec_session', recBuffer, session => { recognition = session })
-    try {
-      if (detection) {
-        await guard('ocr_det_run', async () => {
-          const input = detectionTensor(card)
-          await timed('ocr_det_run', async () => {
-            const out = await detection.run({ [detection.inputNames[0]]: new ort.Tensor('float32', input.data, input.dims) })
-            const map = out[detection.outputNames[0]]
-            await map.getData()
-          }, RUNS, `${input.dims[3]}×${input.dims[2]} input (longest side 480)`)
-        })
-      }
-      if (recognition) {
-        await guard('ocr_rec_run', async () => {
-          const lines = textLines(card).slice(0, 3).map(line => recognitionTensor(line))
-          let text = []
-          await timed('ocr_rec_run', async () => {
-            text = []
-            for (const line of lines) {
-              const out = await recognition.run({ [recognition.inputNames[0]]: new ort.Tensor('float32', line.data, line.dims) })
-              const result = out[recognition.outputNames[0]]
-              const values = await result.getData()
-              text.push(ctcDecode(values, result.dims[1], result.dims[2], characters))
-            }
-          }, RUNS, `read: ${text.map(item => item.trim()).filter(Boolean).join(' | ') || '(nothing)'}`)
-          answer.ocr_lines = text.map(item => item.trim().slice(0, 190)).filter(Boolean).slice(0, 20)
-          rows.ocr_rec_run.note = `3 lines of 48 px height; read: ${text.map(item => item.trim()).filter(Boolean).join(' | ') || '(nothing)'}`
-          onRow('ocr_rec_run', rows.ocr_rec_run)
-        })
-      }
-    } finally {
-      detection?.release?.()
-      recognition?.release?.()
-    }
-  })
+      if (card) views = cardViews(card)
+    },
+    async preprocess() {
+      await guard('preprocess', async () => {
+        await timed('preprocess', () => { tensor = preprocessRgba(card.data, card.width, card.height) }, RUNS, `${card.width}×${card.height} RGBA → 3×224×224 float32`)
+      })
+      if (!tensor) tensor = preprocessRgba(card.data, card.width, card.height)
+    },
+    async wasm() {
+      await guard('session_wasm', async () => {
+        const ort = await loadWasmRuntime()
+        await modelSteps('wasm', ort, int8Path, ['wasm'], 'session_wasm', 'embed_wasm', 'card_wasm')
+      })
+    },
+    async index() {
+      await guard('index_load', async () => {
+        const result = await timeRuns(async () => {
+          for (const entry of manifest.files.filter(item => item.path.startsWith('index/'))) {
+            const buffer = await files.read(entry.path)
+            if (!buffer) throw new Error(`${entry.path} is not in the cache`)
+            ;(entry.path.startsWith('index/whole/') ? wholeIndexes : artIndexes).push(parseIndex(buffer))
+          }
+        }, 1)
+        const rowsLoaded = wholeIndexes.reduce((sum, index) => sum + index.count, 0)
+        set('index_load', { first: result.first, median: result.first, runs: result.runs, note: `${wholeIndexes.length + artIndexes.length} files, ${rowsLoaded.toLocaleString()} cards per kind` })
+        device.indexCards = rowsLoaded
+      })
+      await searchRows('wasm')
+      addTopk('wasm')
+    },
+    async ocr() {
+      await guard('ocr_det_session', async () => {
+        const ort = await loadWasmRuntime()
+        const detBuffer = await files.read('ocr/det.onnx')
+        const recBuffer = await files.read('ocr/rec.onnx')
+        const characters = new TextDecoder().decode(await files.read('ocr/characters.txt')).split('\n').filter(Boolean)
+        let detection = null
+        let recognition = null
+        const create = async (id, buffer, assign) => {
+          await guard(id, async () => {
+            let held = null
+            const result = await timeRuns(async () => {
+              await held?.release?.()
+              held = await ort.InferenceSession.create(new Uint8Array(buffer), { executionProviders: ['wasm'], graphOptimizationLevel: 'all' })
+            }, RUNS)
+            assign(held)
+            set(id, { first: result.first, median: result.median, runs: result.runs })
+          })
+        }
+        await create('ocr_det_session', detBuffer, session => { detection = session })
+        await create('ocr_rec_session', recBuffer, session => { recognition = session })
+        try {
+          if (detection) {
+            await guard('ocr_det_run', async () => {
+              const input = detectionTensor(card)
+              await timed('ocr_det_run', async () => {
+                const out = await detection.run({ [detection.inputNames[0]]: new ort.Tensor('float32', input.data, input.dims) })
+                const map = out[detection.outputNames[0]]
+                await map.getData()
+              }, RUNS, `${input.dims[3]}×${input.dims[2]} input (longest side 480)`)
+            })
+          }
+          if (recognition) {
+            await guard('ocr_rec_run', async () => {
+              const lines = textLines(card).slice(0, 3).map(line => recognitionTensor(line))
+              let text = []
+              await timed('ocr_rec_run', async () => {
+                text = []
+                for (const line of lines) {
+                  const out = await recognition.run({ [recognition.inputNames[0]]: new ort.Tensor('float32', line.data, line.dims) })
+                  const result = out[recognition.outputNames[0]]
+                  const values = await result.getData()
+                  text.push(ctcDecode(values, result.dims[1], result.dims[2], characters))
+                }
+              }, RUNS)
+              answer.ocr_lines = text.map(item => item.trim().slice(0, 190)).filter(Boolean).slice(0, 20)
+              rows.ocr_rec_run.note = `3 lines of 48 px height; read: ${text.map(item => item.trim()).filter(Boolean).join(' | ') || '(nothing)'}`
+              onRow('ocr_rec_run', rows.ocr_rec_run)
+            })
+          }
+        } finally {
+          await detection?.release?.()
+          await recognition?.release?.()
+        }
+      })
+    },
+    async webgpu_fp16() {
+      await guard('session_webgpu_fp16', async () => {
+        if (!fp16Path) { set('session_webgpu_fp16', { error: 'the fp16 model is not in the bundle' }); return }
+        const ort = await loadGpuRuntime()
+        await modelSteps('webgpu_fp16', ort, fp16Path, ['webgpu'], 'session_webgpu_fp16', 'embed_webgpu_fp16', 'card_webgpu_fp16')
+      })
+      await searchRows('webgpu_fp16')
+      addTopk('webgpu_fp16')
+    },
+    async webgpu_uint8() {
+      await guard('session_webgpu_uint8', async () => {
+        const ort = await loadGpuRuntime()
+        await modelSteps('webgpu_uint8', ort, int8Path, ['webgpu'], 'session_webgpu_uint8', 'embed_webgpu_uint8', 'card_webgpu_uint8')
+      })
+      addTopk('webgpu_uint8')
+    },
+  }
 
-  // the estimate
+  for (const phase of phaseOrder({ webgpu: hasGpu, uint8Gpu: Boolean(options.uint8Gpu) })) {
+    await phases[phase]()
+    if (phase === 'photo' && !card) return finish(rows, device, {}, answer, storage) // nothing else can run without the photo
+    if (phase === 'preprocess') views = views || cardViews(card)
+  }
+  if (!hasGpu) {
+    for (const id of ['session_webgpu_fp16']) set(id, { error: options.webgpu === false ? 'skipped' : 'navigator.gpu does not exist here' })
+  }
+  if (hasGpu && !options.uint8Gpu) set('session_webgpu_uint8', { error: 'off (switch it on to try the 8-bit model on WebGPU)' })
+  if (!hasGpu) set('session_webgpu_uint8', { error: 'navigator.gpu does not exist here' })
+
   const values = medians()
   const estimates = { wasm: estimateCard(values, 'wasm'), webgpu_fp16: estimateCard(values, 'webgpu_fp16'), webgpu_uint8: estimateCard(values, 'webgpu_uint8') }
-  return finish(rows, device, estimates, answer)
+  return finish(rows, device, estimates, answer, storage)
 }
 
-function finish(rows, device, estimates = {}, answer = { topk: {}, ocr_lines: [] }) {
-  markStep(null)
-  const timings = {}
-  for (const [id, row] of Object.entries(rows)) {
-    timings[`${id}_first_ms`] = row.error ? null : round(row.first)
-    timings[`${id}_median_ms`] = row.error ? null : round(row.median)
-  }
+function finish(rows, device, estimates = {}, answer = { topk: {}, ocr_lines: [] }, storage) {
+  markStep(null, storage)
+  clearPartial(storage)
+  const timings = timingsOf(rows)
   for (const [backend, value] of Object.entries(estimates)) timings[`estimate_card_${backend}_ms`] = round(value)
   device.estimateOcr = `${OCR_ASSUMPTION.detections} det + ${OCR_ASSUMPTION.recognitions} rec`
   return { timings, device, estimates, rows, answer }
