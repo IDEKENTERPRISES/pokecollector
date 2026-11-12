@@ -1183,3 +1183,21 @@ class ChallengeProgress(Base):
     place = Column(Integer, nullable=True)
 
     __table_args__ = (UniqueConstraint("week", "user_id", name="uq_challenge_progress_week_user"),)
+
+
+class AdminNotification(Base):
+    """One custom notification an administrator sent to trainers (Settings > Administrator)."""
+
+    __tablename__ = "admin_notifications"
+    __table_args__ = (Index("ix_admin_notifications_sender_created", "sent_by_user_id", "created_at"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    sent_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    sent_by_username = Column(String(64), nullable=True)
+    title = Column(String(60), nullable=False)
+    body = Column(String(240), nullable=False)
+    route = Column(String(64), nullable=False, default="/")
+    recipient_count = Column(Integer, nullable=False, default=0)  # trainers chosen
+    queued_count = Column(Integer, nullable=False, default=0)
+    skipped_count = Column(Integer, nullable=False, default=0)
