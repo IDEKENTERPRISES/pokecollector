@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { FlaskConical, GitCompare, Hammer, Smartphone } from 'lucide-react'
 import api from '../../api/client'
 import Misses, { DecidedWrong } from './ScannerLabMisses'
+import { describeIos } from '../../phonespeed/plan'
 
 const QUERY_KEY = ['card-match-status']
 const SHADOW_KEY = ['card-match-shadow']
@@ -430,9 +431,10 @@ export function PhoneSpeedRuns({ runs, onDelete }) {
           <div key={run.id || run.at + run.by} className="flex items-start gap-2" data-testid="scanner-lab-phone-speed-run">
             {run.has_photo && run.id && <RunThumb id={run.id} />}
             <p className="min-w-0 flex-1 text-footnote tabular-nums">
-              {when(run.at)} · iOS {d.ios || '?'} · {d.gpu ? 'WebGPU' : 'no WebGPU'} · embed {number(t.embed_wasm_median_ms)} ms · card ×7 {number(t.card_wasm_median_ms)} ms
+              {when(run.at)} · {describeIos(d)} · {d.gpu ? 'WebGPU' : 'no WebGPU'} · embed {number(t.embed_wasm_median_ms)} ms · card ×7 {number(t.card_wasm_median_ms)} ms
               {' '}· est. {number(t.estimate_card_wasm_ms)} ms{t.estimate_card_webgpu_fp16_ms != null ? ` (GPU ${number(t.estimate_card_webgpu_fp16_ms)} ms)` : ''}
-              {d.crashedBefore ? ' · crashed before' : ''}
+              {d.crashedBefore && !run.crashed_step ? ' · crashed before' : ''}
+              {run.crashed_step && <span className="block font-semibold text-red-500" data-testid="scanner-lab-phone-speed-crashed">Crashed during {run.crashed_step}</span>}
               <span className="block text-text-secondary" data-testid="scanner-lab-phone-speed-agreement">{agreementText(run)}</span>
             </p>
             {onDelete && run.id && (

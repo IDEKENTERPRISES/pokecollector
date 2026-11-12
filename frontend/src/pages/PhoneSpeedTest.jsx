@@ -5,6 +5,7 @@ import api from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { useNavBar } from '../navigation/useNavBar'
 import { speedRunRequest } from '../phonespeed/upload'
+import { clearPartial, crashedRunBody, describeIos, loadPartial, markStep, previousCrash, reportPreviousCrash } from '../phonespeed/plan'
 import {
   CACHE_NAME, cacheState, downloadMissing, megabytes, networkHelpers, readCached, removeTestFiles, testFiles, totalBytes, MANIFEST_PATH,
 } from '../phonespeed/bundleCache'
@@ -65,13 +66,24 @@ export default function PhoneSpeedTest() {
   const fileInput = useRef(null)
   const [photoName, setPhotoName] = useState(null)
   const [crash, setCrash] = useState(null)
+  const [uint8Gpu, setUint8Gpu] = useState(false) // the 8-bit model on WebGPU crashed an iPhone page: off unless asked for
+  const crashHandled = useRef(false)
   const hasGpu = Boolean(globalThis.navigator?.gpu)
 
   const isAdmin = user?.role === 'admin'
 
   useEffect(() => {
     if (!isAdmin) return
-    import('../phonespeed/runtime').then(module => { setRuntime(module); setCrash(module.previousCrash()) })
+    import('../phonespeed/runtime').then(module => {
+      setRuntime(module)
+      // A page that died during a run left a flag and the steps that had finished: post them as a run (no photo), once.
+      setCrash(previousCrash())
+      if (crashHandled.current) return
+      crashHandled.current = true
+      reportPreviousCrash(body => api.post('/card-match/phone-speed', body), module.readDevice())
+        .then(step => { if (step) setMessage(`The last run crashed during "${step}". The steps that had finished were saved on the server.`) })
+        .catch(() => setMessage('The last run crashed. Could not save its partial results on the server.'))
+    })
   }, [isAdmin])
 
   const entries = manifest ? testFiles(manifest, { webgpu: hasGpu }) : []
@@ -145,6 +157,7 @@ export default function PhoneSpeedTest() {
         photoSource: photo.current || SAMPLE_URL,
         onRow: (id, row) => setRows(current => ({ ...current, [id]: row })),
         onPhase: setPhase,
+        options: { uint8Gpu },
       })
       outcome.device.crashedBefore = Boolean(wasCrash)
       outcome.device.crashedStep = wasCrash || null
@@ -153,6 +166,10 @@ export default function PhoneSpeedTest() {
       await send(outcome)
     } catch (error) {
       setMessage(`The test stopped: ${error.message}`)
+      const partial = loadPartial() // the run ended early: keep what finished
+      if (partial) {
+        api.post('/card-match/phone-speed', crashedRunBody(partial, 'stopped_early', device)).then(() => { clearPartial(); markStep(null) }).catch(() => {})
+      }
     } finally {
       setBusy(false)
       setPhase(null)
@@ -187,7 +204,7 @@ export default function PhoneSpeedTest() {
 
       <Section title="This phone">
         <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-footnote" data-testid="phone-speed-device">
-          <dt className="text-text-secondary">iOS / Safari</dt><dd>{device.ios || '?'} / {device.safari || '?'}</dd>
+          <dt className="text-text-secondary">iOS / Safari</dt><dd data-testid="phone-speed-ios">{describeIos(device)} / Safari {device.safari || '?'}</dd>
           <dt className="text-text-secondary">WebGPU (navigator.gpu)</dt><dd>{device.gpu ? 'yes' : 'no'}</dd>
           <dt className="text-text-secondary">crossOriginIsolated</dt><dd>{device.crossOriginIsolated ? 'yes' : 'no (single-threaded WebAssembly)'}</dd>
           <dt className="text-text-secondary">hardwareConcurrency</dt><dd>{device.hardwareConcurrency ?? '?'}</dd>
@@ -233,6 +250,12 @@ export default function PhoneSpeedTest() {
       </Section>
 
       <Section title="3. Run">
+        {hasGpu && (
+          <label className="flex items-start gap-2 text-footnote" data-testid="phone-speed-uint8-switch">
+            <input type="checkbox" checked={uint8Gpu} onChange={event => setUint8Gpu(event.target.checked)} disabled={busy} />
+            <span>Also try the 8-bit model on WebGPU (may crash). It runs last, after everything else.</span>
+          </label>
+        )}
         <button type="button" className={button} disabled={busy || !ready || !runtime} onClick={run} data-testid="phone-speed-run"><Play size={14} aria-hidden="true" /> Run the test</button>
         {busy && phase && <p className="text-footnote" aria-live="polite">Running: {phase}</p>}
         {message && <p className="text-footnote" aria-live="polite">{message}</p>}

@@ -112,6 +112,19 @@ class PhoneSpeedEndpointTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/card-match/phone-speed", content=b"not json").status_code, 422)
         self.assertEqual(phone_speed.latest(), [])
 
+    def test_a_crash_is_a_result_even_with_no_finished_step(self):
+        crashed = {"timings": {}, "device": {"ios": "26.6", "ios_raw": "18.7", "gpu": True, "crashedBefore": True}, "crashed_step": "card_webgpu_uint8"}
+        run = self.post(crashed).json()["run"]
+        self.assertEqual(run["crashed_step"], "card_webgpu_uint8")
+        self.assertFalse(run["has_photo"])
+        partial = self.post({"timings": {"embed_wasm_median_ms": 400.5}, "device": {}, "crashed_step": "session_webgpu_fp16"}).json()["run"]
+        self.assertEqual(partial["timings"], {"embed_wasm_median_ms": 400.5})
+        listed = self.client.get("/api/card-match/phone-speed").json()["runs"]
+        self.assertEqual([item.get("crashed_step") for item in listed][:2], ["session_webgpu_fp16", "card_webgpu_uint8"])
+        self.assertEqual(self.post({"timings": {}, "device": {}}).status_code, 422)  # no crash and no timings: nothing to keep
+        for bad in (5, "bad name!", ["x"], "x" * 80):
+            self.assertEqual(self.post({"timings": {}, "device": {}, "crashed_step": bad}).status_code, 422, str(bad))
+
     def test_the_json_size_is_limited(self):
         big = json.dumps(RUN) + " " * phone_speed.MAX_JSON_BYTES
         response = self.client.post("/api/card-match/phone-speed", content=big, headers={"content-type": "application/json"})
