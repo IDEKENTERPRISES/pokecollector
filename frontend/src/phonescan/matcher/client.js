@@ -3,6 +3,7 @@
 // dies) is reported as an error; `loopbackWorker` runs the same host in this scope, which the tests use.
 import { serveEmbeddings } from './embedder'
 import { SESSION_OPTIONS } from './ort'
+import { diagnoseWebGpu } from './gpuDiag'
 
 export class MatcherError extends Error {
   constructor(message, code) { super(message); this.code = code }
@@ -17,12 +18,12 @@ export const defaultWorker = () => new Worker(new URL('./worker.js', import.meta
  *   readFile(path)   -> ArrayBuffer | null   (for the fp16 model when it has to run on this thread)
  *   loadGpu()        -> the ORT WebGPU build (this thread)
  */
-export function createMatcherClient({ createWorker = defaultWorker, readFile = async () => null, loadGpu = null } = {}) {
+export function createMatcherClient({ createWorker = defaultWorker, readFile = async () => null, loadGpu = null, loadWasm = null } = {}) {
   let worker = null
   let nextId = 1
   const pending = new Map()
   const stageListeners = new Map()
-  let mainModel = null
+  const models = new Map() // main-thread sessions by name: 'embed', 'det', 'rec'
   const client = { info: null }
 
   const dead = error => {
@@ -31,26 +32,59 @@ export function createMatcherClient({ createWorker = defaultWorker, readFile = a
     worker = null
   }
 
+  async function openModel(name, path, provider = 'webgpu') {
+    const ort = await (provider === 'wasm' ? loadWasm() : loadGpu())
+    const buffer = await readFile(path)
+    if (!buffer) throw new Error(`${path} is not downloaded`)
+    const session = await ort.InferenceSession.create(new Uint8Array(buffer), { executionProviders: [provider], ...SESSION_OPTIONS })
+    models.set(name, { path, provider, session, ort, run: name === 'embed' ? await serveEmbeddings({ ort, session }) : null })
+  }
+
+  async function dropModels(names) {
+    for (const name of names) {
+      const old = models.get(name)
+      models.delete(name)
+      await old?.session?.release?.()
+    }
+  }
+
   async function serve(method, payload) {
     if (method === 'load-model') {
-      await serve('release-model')
-      const ort = await loadGpu()
-      const buffer = await readFile(payload.path)
-      if (!buffer) throw new Error('the fp16 model is not downloaded')
-      const session = await ort.InferenceSession.create(new Uint8Array(buffer), { executionProviders: ['webgpu'], ...SESSION_OPTIONS })
-      mainModel = { session, run: await serveEmbeddings({ ort, session }) }
+      const wanted = payload.provider || 'webgpu'
+      if (models.get('embed')?.path === payload.path && models.get('embed')?.provider === wanted) return true // a restarted worker finds the model still loaded here
+      await dropModels(['embed'])
+      await openModel('embed', payload.path, wanted)
       return true
     }
     if (method === 'embed') {
-      if (!mainModel) throw new Error('no model on the main thread')
-      return mainModel.run(payload.tensors)
+      if (!models.has('embed')) throw new Error('no model on the main thread')
+      return models.get('embed').run(payload.tensors)
     }
-    if (method === 'release-model') {
-      const old = mainModel
-      mainModel = null
-      await old?.session?.release?.()
+    if (method === 'ocr-load') { // the two reader models on WebGPU: an unsupported operator names itself in the error
+      if (models.has('det') && models.has('rec')) return true
+      await dropModels(['det', 'rec'])
+      try {
+        await openModel('det', 'ocr/det.onnx')
+        await openModel('rec', 'ocr/rec.onnx')
+      } catch (error) {
+        await dropModels(['det', 'rec'])
+        throw error
+      }
       return true
     }
+    if (method === 'ocr-run') {
+      const model = models.get(payload.kind)
+      if (!model) throw new Error('the OCR model is not loaded on the main thread')
+      const { ort, session } = model
+      const out = await session.run({ [session.inputNames[0]]: new ort.Tensor('float32', payload.data, payload.dims) })
+      const value = out[session.outputNames[0]]
+      const data = await value.getData()
+      const result = { data: Float32Array.from(data), dims: [...value.dims] }
+      value.dispose?.()
+      return result
+    }
+    if (method === 'ocr-release') { await dropModels(['det', 'rec']); return true }
+    if (method === 'release-model') { await dropModels([...models.keys()]); return true }
     throw new Error(`Unknown rpc ${method}`)
   }
 
@@ -66,7 +100,7 @@ export function createMatcherClient({ createWorker = defaultWorker, readFile = a
         )
         return
       }
-      if (message.type === 'progress') { stageListeners.get(message.id)?.(message.stage); return }
+      if (message.type === 'progress') { stageListeners.get(message.id)?.(message.stage, message.done ? { ms: message.ms, ok: message.ok, note: message.note } : null); return }
       const entry = pending.get(message.id)
       if (!entry) return
       pending.delete(message.id)
@@ -90,18 +124,31 @@ export function createMatcherClient({ createWorker = defaultWorker, readFile = a
 
   return Object.assign(client, {
     /** Loads the models and indexes in the worker. Rejects with `code: 'matcher_version'` for a bundle of another version. */
-    async init({ manifest, mode = 'auto', mainGpu = false, budgets = {} }) {
-      const reply = await send({ type: 'init', manifest, mode, mainGpu, budgets })
+    async init({ manifest, mode = 'auto', mainGpu = false, budgets = {}, ocrBackend = 'wasm', ocrProfile = 'server', detectMaxSide = null, lowMemory = false }) {
+      const reply = await send({ type: 'init', manifest, mode, mainGpu, budgets, ocrBackend, ocrProfile, detectMaxSide, lowMemory })
       client.info = reply.info
       return reply.info
     },
     /** `photo` = {data: Uint8ClampedArray RGBA, width, height}; its buffer is moved to the worker. */
-    async match(photo, { onStage = null, useText = true } = {}) {
-      const reply = await send({ type: 'match', photo, options: { useText } }, [photo.data.buffer], onStage)
+    async match(photo, { onStage = null, useText = true, overlap = false } = {}) {
+      const reply = await send({ type: 'match', photo, options: { useText, overlap } }, [photo.data.buffer], onStage)
       return reply.result
     },
     async release() { await send({ type: 'release' }); await serve('release-model') },
+    /** WebGPU step by step in the worker: [{step, ok, ms, note}], the first failure ends the list. `onStep(step, row|null)` as each step starts and ends. */
+    async diagnoseWorker({ manifest, path, onStep = null }) {
+      const reply = await send({ type: 'diag-gpu', manifest, path }, [], (step, info) => onStep?.(step, info))
+      return reply.rows
+    },
+    /** The same steps on this (the main) thread. */
+    diagnoseMain: ({ path, onStep = null }) => diagnoseWebGpu({ loadGpu, readFile, path, onStep }),
+    /** Stops the worker (its wasm heaps and indexes go) but keeps the models on this thread: the next `init` starts a fresh worker. */
+    restartWorker() {
+      try { worker?.terminate() } catch { /* already gone */ }
+      dead(new MatcherError('The matcher worker was restarted', 'terminated'))
+    },
     terminate() {
+      serve('release-model').catch(() => {})
       try { worker?.terminate() } catch { /* already gone */ }
       dead(new MatcherError('The matcher worker was stopped', 'terminated'))
     },

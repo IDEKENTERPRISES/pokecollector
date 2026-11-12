@@ -43,7 +43,7 @@ const complete = (number, total, over = {}) => reading({ number, total, source: 
 /** Tagged pictures instead of pixels: every finder piece returns a labelled object the stubbed embedder understands. */
 function harness({
   source = 'quad', guide = true, found = {}, embedVector = () => query({ [idOf('Pikachu')]: 1 }), read = () => complete('25', '198'), nameRead = () => ({ name: 'Pikachu', lines: [], confidence: 0.9 }),
-  second = null, decide = null, cardDb = true, useIndex = unitIndex(), budgets,
+  second = null, decide = null, cardDb = true, useIndex = unitIndex(), budgets, where = 'here', sessions = { stub: true }, ocr, resources = null,
 } = {}) {
   const calls = { embed: [], read: [], name: [], second: [], decide: [], views: [], rotate: 0 }
   const upright = { tag: 'upright', width: 630, height: 880 }
@@ -56,20 +56,22 @@ function harness({
     artCrop: picture => ({ tag: `art(${picture.tag})` }),
     isGuidePicture: () => guide,
     wholeCard: () => ({ tag: 'whole' }),
-    readCard: async (sessions, card, options) => { calls.read.push({ card: card.tag, ...options }); return read(options, calls.read.length) },
+    readCard: async (sessions, card, options) => { order.push('read'); calls.read.push({ card: card.tag, ...options }); return read(options, calls.read.length) },
     readName: async (sessions, card, options) => { calls.name.push({ card: card.tag, ...options }); return nameRead(options, calls.name.length) },
     secondRead: async (sessions, args) => { calls.second.push({ ...args, textCard: args.textCard.tag, wholeImage: args.wholeImage.tag }); return second ? second(args) : { reading: args.first, info: { tried: true, rescued: false, skipped: null, last_resort: null } } },
     ...(decide ? { decideCard: (args) => { calls.decide.push(args); return decideCard(args) } } : { decideCard: args => { calls.decide.push(args); return decideCard(args) } }),
   }
+  const order = []
   const embedder = {
     backend: 'stub',
-    async embed(images) { calls.embed.push(images.map(image => image.tag)); return images.map((image, n) => embedVector(image, n, calls.embed.length)) },
+    where,
+    async embed(images) { order.push('embed-start'); calls.embed.push(images.map(image => image.tag)); await new Promise(resolve => setTimeout(resolve, 5)); order.push('embed-end'); return images.map((image, n) => embedVector(image, n, calls.embed.length)) },
   }
   const matcher = createPhoneMatcher({
-    embedder, index: useIndex, sessions: { stub: true }, getDecideIndexes: async () => (cardDb ? indexes : null), parts, budgets,
+    embedder, index: useIndex, sessions, ocr, resources, getDecideIndexes: async () => (cardDb ? indexes : null), parts, budgets,
     now: (() => { let t = 0; return () => (t += 1) })(),
   })
-  return { matcher, calls, upright, turned }
+  return { matcher, calls, upright, turned, order }
 }
 const photo = { data: new Uint8ClampedArray(4), width: 768, height: 1024 }
 
@@ -265,7 +267,7 @@ describe('progress and stopping', () => {
   it('reports every stage as it starts, and stops when asked', async () => {
     const seen = []
     const first = harness()
-    await first.matcher.match(photo, { onStage: stage => seen.push(stage) })
+    await first.matcher.match(photo, { onStage: (stage, info) => { if (!info) seen.push(stage) } })
     expect(seen.slice(0, 3)).toEqual(['finder', 'views', 'embed'])
     const controller = new AbortController()
     const second = harness()
@@ -343,5 +345,143 @@ describe('end to end on the generated photos (real finder and views, fake embedd
     expect(typeof findCard).toBe('function')
     expect(typeof augmentedViews).toBe('function')
     expect(typeof rotate180).toBe('function')
+  })
+})
+
+describe('the overlap option and the reader statistics (step 3d fix)', () => {
+  const pikachu = () => idOf('Pikachu')
+
+  it('starts the upright read before the embeddings finish when the model runs on the main thread, and gives the sequential answer', async () => {
+    const sequential = harness({ where: 'main thread' })
+    const a = await sequential.matcher.match(photo)
+    const overlapped = harness({ where: 'main thread' })
+    const b = await overlapped.matcher.match(photo, { overlap: true })
+    expect(b.overlapped).toBe(true)
+    expect(overlapped.order.indexOf('read')).toBeLessThan(overlapped.order.lastIndexOf('embed-end'))
+    expect(sequential.order.indexOf('read')).toBeGreaterThan(sequential.order.lastIndexOf('embed-end'))
+    expect(b.tcgCardId).toBe(a.tcgCardId)
+    expect(b.matches).toEqual(a.matches)
+    expect(overlapped.calls.read).toHaveLength(1) // the speculative read is the read
+  })
+
+  it('does not overlap when the model runs in the worker (one thread: nothing to gain)', async () => {
+    const { matcher, order } = harness({ where: 'here' })
+    const result = await matcher.match(photo, { overlap: true })
+    expect(result.overlapped).toBe(false)
+    expect(order.indexOf('read')).toBeGreaterThan(order.lastIndexOf('embed-end'))
+  })
+
+  it('throws the speculative upright read away when the picture says the card is turned, and reads it turned: the sequential answer', async () => {
+    const spread = query(Object.fromEntries(IDS.slice(0, 10).map(id => [id, 1])))
+    const embedVector = image => (image.tag === 'upright' ? spread : query({ [pikachu()]: 1 }))
+    const sequential = harness({ where: 'main thread', embedVector })
+    const a = await sequential.matcher.match(photo)
+    const overlapped = harness({ where: 'main thread', embedVector })
+    const b = await overlapped.matcher.match(photo, { overlap: true })
+    expect(overlapped.calls.read.map(call => call.flipped)).toEqual([false, true])
+    expect(sequential.calls.read.map(call => call.flipped)).toEqual([true])
+    expect(b.orientation).toMatchObject({ by: 'picture', flipped: true })
+    expect(b.tcgCardId).toBe(a.tcgCardId)
+    expect(b.matches).toEqual(a.matches)
+  })
+
+  it('passes the lean ladder options to the reader, and nothing when the server ladder is wanted', async () => {
+    const lean = harness({ ocr: { maxSteps: 3 } })
+    await lean.matcher.match(photo)
+    expect(lean.calls.read[0]).toMatchObject({ maxSteps: 3 })
+    const server = harness()
+    await server.matcher.match(photo)
+    expect(server.calls.read[0].maxSteps).toBeNull()
+  })
+
+  it('reports the model calls of each ocr stage from the recording sessions, and the ladder that ran', async () => {
+    const taken = { ocr_number: { det: { n: 2, ms: 300, perCall: 150, inputs: ['1x3x128x704'] }, rec: { n: 2, ms: 80, perCall: 40, inputs: ['1x3x48x320'] } } }
+    const sessions = { mark: () => {}, take: () => taken }
+    const { matcher } = harness({ sessions, read: () => complete('25', '198', { attempts: 2, seconds: 0.4, stopped: 'accepted', strips: [{ label: 'number-left-tight', variant: 'plain', zoom: 2, ms: 180 }, { label: 'hp', ms: 5 }] }) })
+    const result = await matcher.match(photo)
+    expect(result.ocrStats.calls).toBe(taken)
+    expect(result.ocrStats.number).toMatchObject({ attempts: 2, stopped: 'accepted', budget: 0.9, steps: [{ label: 'number-left-tight', ms: 180 }] })
+  })
+
+  it('reports the stage end times to the caller', async () => {
+    const ends = []
+    await harness().matcher.match(photo, { onStage: (stage, info) => { if (info) ends.push(stage) } })
+    expect(ends).toContain('finder')
+    expect(ends).toContain('decide')
+  })
+})
+
+describe('low memory mode (step 3d fix)', () => {
+  /** Resources that log what is open when, so the test can see what is alive at each step. */
+  function lowHarness(extra = {}) {
+    const events = []
+    const open = new Set()
+    const resources = {
+      openIndex: async () => { events.push('open index'); open.add('index'); return unitIndex() },
+      closeIndex: async () => { events.push('close index'); open.delete('index') },
+      openReader: async () => { events.push('open reader'); open.add('reader'); return { stub: true } },
+      closeReader: async () => { events.push('close reader'); open.delete('reader') },
+      closeDecide: async () => { events.push('close decide'); open.delete('decide') },
+    }
+    const built = harness({ sessions: null, resources, useIndex: null, ...extra })
+    const embed = built.matcher // wrap embed to log what is alive during it
+    return { ...built, events, open, resources, embed }
+  }
+
+  it('embeds all seven pictures in one batch with nothing else loaded, then searches and releases the index, then reads with only the reader open', async () => {
+    const seen = {}
+    const built = lowHarness()
+    const original = built.resources.openIndex
+    built.resources.openIndex = async () => { seen.embedsBeforeIndex = built.calls.embed.length; seen.openAtIndex = [...built.open]; return original() }
+    const readCard = built.calls.read
+    const result = await built.matcher.match(photo, { lowMemory: true })
+    expect(built.calls.embed).toHaveLength(1)
+    expect(built.calls.embed[0]).toEqual(['upright', 'turned', 'tight(upright)', 'clahe(upright)', 'art(upright)', 'art(tight(upright))', 'art(clahe(upright))'])
+    expect(seen.embedsBeforeIndex).toBe(1) // the index is opened after the embeddings
+    expect(seen.openAtIndex).toEqual([]) // nothing else is open while it is
+    expect(built.events.indexOf('close index')).toBeLessThan(built.events.indexOf('open reader')) // never both at once
+    expect(built.events.indexOf('close reader')).toBeLessThan(built.events.indexOf('close decide'))
+    expect(built.events.at(-1)).toBe('close decide')
+    expect(readCard).toHaveLength(1)
+    expect(result.lowMemory).toBe(true)
+    expect(result.decided).toBe(true)
+    expect(result.tcgCardId).toBe('sv1-25')
+  })
+
+  it('gives the same answer as the normal run', async () => {
+    const normal = await harness().matcher.match(photo)
+    const low = await lowHarness().matcher.match(photo, { lowMemory: true })
+    expect(low.matches).toEqual(normal.matches)
+    expect(low.tcgCardId).toBe(normal.tcgCardId)
+    expect(low.mechanism).toBe(normal.mechanism)
+    expect(low.orientation.flipped).toBe(normal.orientation.flipped)
+  })
+
+  it('a turned card: the extra views come from the turned card in a second small batch, and the answer is the same', async () => {
+    const spread = query(Object.fromEntries(IDS.slice(0, 10).map(id => [id, 1])))
+    const embedVector = image => (image.tag === 'upright' ? spread : query({ [idOf('Pikachu')]: 1 }))
+    const normal = await harness({ embedVector }).matcher.match(photo)
+    const built = lowHarness({ embedVector })
+    const low = await built.matcher.match(photo, { lowMemory: true })
+    expect(built.calls.embed).toHaveLength(2)
+    expect(built.calls.embed[1][0]).toBe('tight(turned)')
+    expect(low.orientation).toMatchObject({ by: 'picture', flipped: true })
+    expect(low.matches).toEqual(normal.matches)
+    expect(built.open.size).toBe(0) // everything was released at the end
+  })
+
+  it('when the text turns the card the index is opened again for the new views and released again', async () => {
+    const built = lowHarness({ read: ({ flipped }) => (flipped ? complete('25', '198') : reading()), nameRead: ({ flipped }) => ({ name: flipped ? 'Pikachu' : null, lines: [], confidence: null }) })
+    const result = await built.matcher.match(photo, { lowMemory: true })
+    expect(result.orientation.by).toBe('text')
+    expect(built.events.filter(event => event === 'open index')).toHaveLength(2)
+    expect(built.events.filter(event => event === 'close index')).toHaveLength(2)
+    expect(built.open.size).toBe(0)
+  })
+
+  it('without the resources the option does nothing (the normal run)', async () => {
+    const { matcher } = harness()
+    const result = await matcher.match(photo, { lowMemory: true })
+    expect(result.lowMemory).toBe(false)
   })
 })

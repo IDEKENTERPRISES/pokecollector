@@ -128,18 +128,20 @@ function turned(card) {
 }
 
 /** The number ladder (OcrReader._read_card). */
-async function readNumber(reader, card, { fast, stage, budget, flipped }) {
+async function readNumber(reader, card, { fast, stage, budget, flipped, maxSteps = null, acceptConfidence = ACCEPT_CONFIDENCE }) {
   const record = []
   const started = reader.now()
   let ladder = fast ? NUMBER_LADDER_FAST : NUMBER_LADDER_FAST // the slow steps are not ported: the phone reads the fast ladder
   if (stage === 'quick') ladder = NUMBER_LADDER_FAST.slice(0, QUICK_STEPS)
   else if (stage === 'last') ladder = []
+  if (maxSteps !== null) ladder = ladder.slice(0, maxSteps) // a leaner ladder (an option of the phone: the default is the server's)
   let lines = []
   let best = null
   let reads = 0
+  let stopped = 'end'
   for (const [label, box, variant, zoom, low] of ladder) {
-    if (best !== null && completeness(best) === 2 && (best.confidence || 0.0) >= ACCEPT_CONFIDENCE) break
-    if (reads && overBudget(reader, started, budget)) break
+    if (best !== null && completeness(best) === 2 && (best.confidence || 0.0) >= acceptConfidence) { stopped = 'accepted'; break }
+    if (reads && overBudget(reader, started, budget)) { stopped = 'budget'; break }
     const got = await reader.scan(card, label, box, variant, zoom, low, record, flipped)
     if (got === null) continue
     reads++
@@ -166,6 +168,7 @@ async function readNumber(reader, card, { fast, stage, budget, flipped }) {
   const result = best || parseText([])
   result.lines = lines.map(line => ({ text: line.text, score: line.score, box: line.box }))
   result.attempts = reads
+  result.stopped = stopped // 'accepted' (a complete, sure number), 'budget' (the time budget ran out) or 'end' (every step ran)
   result.strips = record
   result.complete = isComplete(result)
   return result
@@ -176,16 +179,16 @@ async function readNumber(reader, card, { fast, stage, budget, flipped }) {
  *
  * Options: ``fast`` (kept for the server's name; this port only has the fast ladder), ``flipped`` (true: the card is read
  * turned 180 degrees; false, the default: upright; null: upright, and turned too when no complete number came out),
- * ``readHp`` (default true), ``stage`` ("all" | "first" | "quick" | "last", see the docs), ``budget`` (seconds, default none),
+ * ``readHp`` (default true), ``maxSteps`` / ``acceptConfidence`` (a leaner ladder: only the first steps, a lower confidence that ends it; the defaults are the server's), ``stage`` ("all" | "first" | "quick" | "last", see the docs), ``budget`` (seconds, default none),
  * ``now`` (a clock in seconds), ``setCodes`` (a Set of known set codes, to fill ``setCode``).
  */
 export async function readCard(sessions, card, options = {}) {
-  const { fast = true, flipped = false, readHp = true, stage = 'all', budget = null, setCodes = null } = options
+  const { fast = true, flipped = false, readHp = true, stage = 'all', budget = null, setCodes = null, maxSteps = null, acceptConfidence = ACCEPT_CONFIDENCE } = options
   const reader = new Reader(sessions, options)
   const started = reader.now()
   let isTurned = Boolean(flipped)
   let picture = isTurned ? turned(card) : card
-  const params = { fast, stage, budget }
+  const params = { fast, stage, budget, maxSteps, acceptConfidence }
   let result = await readNumber(reader, picture, { ...params, flipped: isTurned })
   if (flipped === null && !isComplete(result)) {
     const other = turned(picture)

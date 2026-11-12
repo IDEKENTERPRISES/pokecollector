@@ -142,13 +142,13 @@ def _clean_matcher(matcher) -> dict:
     if not isinstance(matcher, dict):
         raise SpeedRunError("matcher must be an object")
     allowed = {"version", "backend", "mode", "runs", "stable", "decided", "card", "mechanism", "reason", "similarity", "picture_only", "top20", "read",
-               "orientation", "detection", "wholeread", "catalogue", "photo", "timings"}
+               "orientation", "detection", "wholeread", "catalogue", "photo", "timings", "variant", "ocr", "ladder"}
     if set(matcher) - allowed:
         raise SpeedRunError("matcher holds unknown fields")
     out: dict = {}
     for key in ("version", "runs", "similarity"):
         out[key] = None if matcher.get(key) is None else _number(matcher[key], f"matcher.{key}")
-    for key, limit in (("backend", 80), ("mode", 24), ("card", 64), ("mechanism", 40), ("reason", 80)):
+    for key, limit in (("backend", 80), ("mode", 24), ("card", 64), ("mechanism", 40), ("reason", 80), ("variant", 120)):
         out[key] = _short(matcher.get(key), f"matcher.{key}", limit)
     if out["card"] is not None and not CARD_ID.match(out["card"]):
         raise SpeedRunError("matcher.card is not a card id")
@@ -171,6 +171,14 @@ def _clean_matcher(matcher) -> dict:
     out["wholeread"] = _small_object(matcher.get("wholeread"), "matcher.wholeread", {"tried": "flag", "rescued": "flag"})
     out["catalogue"] = _small_object(matcher.get("catalogue"), "matcher.catalogue", {"present": "flag", "cards": "number"})
     out["photo"] = _small_object(matcher.get("photo"), "matcher.photo", {"width": "number", "height": "number", "bytes": "number"})
+    out["ladder"] = _small_object(matcher.get("ladder"), "matcher.ladder", {"stopped": "text", "attempts": "number", "seconds": "number", "budget": "number"})
+    reader = matcher.get("ocr")
+    if reader is not None:  # per reader stage: how many model calls and how long they took
+        if not isinstance(reader, dict) or set(reader) - {"ocr_number", "name", "second_read"}:
+            raise SpeedRunError("matcher.ocr holds unknown stages")
+        out["ocr"] = {stage: _small_object(entry, f"matcher.ocr.{stage}", {"det_calls": "number", "det_ms": "number", "rec_calls": "number", "rec_ms": "number"}) for stage, entry in reader.items()}
+    else:
+        out["ocr"] = None
     timings = matcher.get("timings") or {}
     if not isinstance(timings, dict) or set(timings) - set(MATCHER_STAGES):
         raise SpeedRunError("matcher.timings holds unknown stages")
