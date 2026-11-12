@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from api.auth import get_current_user
 from database import get_db
 from models import Card, User
-from services import scan_trace, trace_sources
+from services import scan_storage, scan_trace, trace_sources
 from services.card_match import MATCHER_VERSION, benchmark, config, embed, index as index_module, jobs as jobs_module, misses as misses_module, phone as phone_module, phone_speed as phone_speed_module, shadow as shadow_module, variants
 from services.card_match.model_specs import DEFAULT_MODEL, MODEL_SPECS
 
@@ -234,19 +234,39 @@ def phone_bundle_file(path: str, request: Request, current_user: User = Depends(
 
 @router.post("/phone-speed")
 async def post_phone_speed(request: Request, current_user: User = Depends(get_current_user)):
-    """Step 2: one phone speed-test run (admins). Numbers and device facts only, size-limited; nothing else is kept."""
+    """Step 2: one phone speed-test run (admins). Either JSON (timings, device, answer) or multipart: `data` (that JSON as text)
+    plus `photo`, the capture taken or picked on the test page (never the built-in sample). The photo goes through the
+    scan upload checks and is stored with the run, admin-only; the JSON holds numbers and short texts only."""
     _require_admin(current_user)
+    limit = scan_storage.MAX_FILE_BYTES + phone_speed_module.MAX_JSON_BYTES + 65536
     declared = request.headers.get("content-length")
-    if declared and declared.isdigit() and int(declared) > phone_speed_module.MAX_BODY_BYTES:
+    if declared and declared.isdigit() and int(declared) > limit:
         raise HTTPException(status_code=413, detail="Too large")
-    raw = await request.body()
-    if len(raw) > phone_speed_module.MAX_BODY_BYTES:
-        raise HTTPException(status_code=413, detail="Too large")
+    photo = None
+    if request.headers.get("content-type", "").lower().startswith("multipart/form-data"):
+        form = await request.form()
+        raw = form.get("data")
+        upload = form.get("photo")
+        if not isinstance(raw, str) or len(raw.encode("utf-8")) > phone_speed_module.MAX_JSON_BYTES:
+            raise HTTPException(status_code=413 if isinstance(raw, str) else 422, detail="The data part must be JSON text of at most 32 KB")
+        if upload is not None and not hasattr(upload, "read"):
+            raise HTTPException(status_code=422, detail="photo must be a file")
+        if upload is not None:
+            try:
+                data = await scan_storage.read_limited_upload(upload, remaining_job_bytes=scan_storage.MAX_FILE_BYTES)
+                photo = scan_storage.sanitize_image_bytes(data).data
+            except scan_storage.ScanUploadError as error:
+                raise HTTPException(status_code=422, detail=str(error))
+    else:
+        raw = await request.body()
+        if len(raw) > phone_speed_module.MAX_JSON_BYTES:
+            raise HTTPException(status_code=413, detail="Too large")
     try:
-        body = json.loads(raw)
-        run = phone_speed_module.record(body, current_user.username)
+        run = phone_speed_module.record(json.loads(raw), current_user.username, photo=photo)
     except (ValueError, phone_speed_module.SpeedRunError) as error:  # SpeedRunError is a ValueError; so is bad JSON
         raise HTTPException(status_code=422, detail=str(error)[:200])
+    if photo is not None:
+        phone_speed_module.start_compare(run["id"])
     return {"saved": True, "run": run}
 
 
@@ -254,6 +274,35 @@ async def post_phone_speed(request: Request, current_user: User = Depends(get_cu
 def get_phone_speed(current_user: User = Depends(get_current_user)):
     _require_admin(current_user)
     return {"runs": phone_speed_module.latest(10)}
+
+
+@router.get("/phone-speed/{run_id}/photo")
+def get_phone_speed_photo(run_id: str, size: str = "thumb", current_user: User = Depends(get_current_user)):
+    """The stored photo of a run, for admins only: inline, never cached, never as a download. `size=thumb` is a small copy."""
+    _require_admin(current_user)
+    path = phone_speed_module.photo_path(run_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="No photo for this run")
+    data = path.read_bytes()
+    if size != "full":
+        import io
+
+        from PIL import Image
+
+        with Image.open(io.BytesIO(data)) as image:
+            image.thumbnail((160, 160))
+            out = io.BytesIO()
+            image.convert("RGB").save(out, format="JPEG", quality=70)
+            data = out.getvalue()
+    return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "private, no-store", "Content-Disposition": "inline", "X-Content-Type-Options": "nosniff"})
+
+
+@router.delete("/phone-speed/{run_id}")
+def delete_phone_speed(run_id: str, current_user: User = Depends(get_current_user)):
+    _require_admin(current_user)
+    if not phone_speed_module.delete(run_id):
+        raise HTTPException(status_code=404, detail="No such run")
+    return {"deleted": True}
 
 
 class BenchmarkRequest(BaseModel):
