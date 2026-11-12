@@ -271,5 +271,117 @@ class PhoneSpeedStorageTests(unittest.TestCase):
         self.assertFalse((self.dir / "phone-speed" / run["id"]).exists())
 
 
+@skip
+class PhoneWayTests(unittest.TestCase):
+    def test_the_guide_box_maths_equals_the_javascript_reference(self):
+        """frontend/src/phonespeed/views.test.js checks guideCardBox against the same file."""
+        folder = Path(__file__).resolve().parents[2] / "frontend" / "tests" / "fixtures" / "phone-matcher" / "v11"
+        reference = folder / "guide-box-reference.json"
+        if not reference.is_file():
+            self.skipTest("the frontend fixtures are not in this checkout (the backend CI image holds only backend/)")
+        for case in json.loads(reference.read_text(encoding="utf-8"))["cases"]:
+            got = phone_speed.phone_guide_box(case["width"], case["height"])
+            for a, b in zip(got, case["box"]):
+                self.assertAlmostEqual(a, b, places=9, msg=str(case))
+
+    def test_the_crop_is_the_centre_card_resized_to_630_by_880(self):
+        import numpy as np
+
+        photo = np.zeros((1920, 1440, 3), dtype=np.uint8)
+        photo[:, :, 0] = 255
+        card = phone_speed.phone_crop(photo)
+        self.assertEqual(card.shape, (880, 630, 3))
+        x0, y0, x1, y1 = phone_speed.phone_guide_box(1440, 1920)
+        self.assertAlmostEqual((y1 - y0) * 1920, 0.9 * 1920, places=6)
+        self.assertAlmostEqual((x1 - x0) * 1440 / ((y1 - y0) * 1920), 63 / 88, places=6)
+        wide = phone_speed.phone_guide_box(500, 300)  # width-limited photos use 96% of the width
+        self.assertLessEqual(wide[2] - wide[0], 0.96 + 1e-9)
+
+    def test_the_server_does_what_the_phone_did_and_the_art_list_comes_from_the_art_crop(self):
+        import numpy as np
+
+        from services.card_match import detect, index as index_module
+
+        seen = []
+
+        class Embedder:
+            def embed(self, images):
+                seen.extend(images)
+                rows = []
+                for image in images:  # a stand-in: the first value tells which picture it was (whole card or artwork window)
+                    vector = np.zeros(4, dtype=np.float32)
+                    vector[0 if image.shape[0] == 880 else 1] = 1.0
+                    rows.append(vector)
+                return np.stack(rows)
+
+        entries = [(f"sv1-{i}_en", f"k{i}") for i in range(4)]
+        whole = index_module.CardIndex("w", np.eye(4, dtype=np.float32), entries)
+        art = index_module.CardIndex("a", np.eye(4, dtype=np.float32)[::-1].copy(), entries)  # art row 0 is axis 3, row 2 is axis 1
+        photo = np.full((1920, 1440, 3), 120, dtype=np.uint8)
+        answer = phone_speed.phone_way_answer(photo, embedder=Embedder(), whole_index=whole, art_index=art)
+        self.assertEqual(len(seen), 2)  # one whole card at 0 degrees and its artwork window: two embeddings
+        self.assertEqual(seen[0].shape, (880, 630, 3))
+        self.assertEqual(seen[1].shape, detect.art_crop(seen[0]).shape)
+        self.assertEqual(answer["whole20"][0]["id"], "sv1-0_en")
+        self.assertEqual(answer["art20"][0]["id"], "sv1-2_en")  # searched with the ART crop's embedding, not the whole card's
+        self.assertEqual(answer["photo_size"], [1440, 1920])
+        with self.assertRaises(RuntimeError):
+            phone_speed.phone_way_answer(photo, embedder=Embedder(), whole_index=index_module.CardIndex("w", np.zeros((0, 4), dtype=np.float32), []), art_index=art)
+
+
+@skip
+class PhoneWayComparisonTests(unittest.TestCase):
+    def test_shared_counts_for_the_whole_and_art_lists_and_the_orientation(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        directory = Path(tmp.name)
+        answer = {"topk": {"wasm": {"whole": [[f"sv1-{i}_en", 0.9 - i / 100] for i in range(20)], "art": [[f"sv1-{i}_en", 0.8] for i in range(10, 30)]}}}
+        run = phone_speed.record({"timings": {"n": 1}, "answer": answer, "device": {"photoWidth": 1440, "photoHeight": 1920}}, "oak", directory, photo=jpeg_bytes((300, 420)))
+
+        class Outcome:
+            status, unsure_reason, decision, matches = "unsure", None, None, []
+
+        class Matcher:
+            def match(self, photo):
+                return Outcome()
+
+        way = {"status": "ok", "photo_size": [300, 420], "whole20": [{"id": f"sv1-{i}", "similarity": 0.9} for i in range(20)],
+               "art20": [{"id": f"sv1-{i}_en", "similarity": 0.8} for i in range(15, 35)]}
+        phone_speed.compare_server(run["id"], directory, matcher_factory=lambda label: Matcher(), phone_way_factory=lambda photo: way)
+        stored = phone_speed.latest(1, directory)[0]
+        compare = stored["compare"]["phone_way"]
+        self.assertEqual(compare["backends"]["wasm"]["whole"], {"top1_agree": True, "overlap": 20})  # ids with and without _en are the same printing
+        self.assertEqual(compare["backends"]["wasm"]["art"], {"top1_agree": False, "overlap": 15})
+        self.assertTrue(compare["orientation_agree"])
+        phone_speed.compare_server(run["id"], directory, matcher_factory=lambda label: Matcher(), phone_way_factory=lambda photo: (_ for _ in ()).throw(RuntimeError("the int8 indexes are not built")))
+        self.assertEqual(phone_speed.get(run["id"], directory)["server"]["phone_way"]["status"], "error")
+
+
+@skip
+class IdempotentPostTests(PhoneSpeedEndpointTests):
+    def test_the_same_client_id_is_stored_once_and_starts_one_comparison(self):
+        body = {**RUN, "client_id": "run-abc123456789"}
+        first = self.post_photo(jpeg_bytes(), body).json()
+        second = self.post_photo(jpeg_bytes(), body).json()
+        self.assertFalse(first["duplicate"])
+        self.assertTrue(second["duplicate"])
+        self.assertEqual(first["run"]["id"], second["run"]["id"])
+        self.assertEqual(len(phone_speed.latest()), 1)
+        self.compare_mock.assert_called_once()
+        self.assertEqual(len([p for p in phone_speed.root().iterdir()]), 1)
+        self.assertEqual(self.post({**RUN, "client_id": "other-run-0001"}).json()["duplicate"], False)
+        self.assertEqual(len(phone_speed.latest()), 2)
+
+    def test_a_crash_post_and_the_final_post_of_one_run_are_one_run(self):
+        self.assertFalse(self.post({"timings": {}, "device": {}, "crashed_step": "search_art", "client_id": "run-crash-00001"}).json()["duplicate"])
+        self.assertTrue(self.post({**RUN, "client_id": "run-crash-00001"}).json()["duplicate"])
+        self.assertEqual(len(phone_speed.latest()), 1)
+
+    def test_a_bad_client_id_is_refused(self):
+        for bad in ("short", "has space in it", "x" * 80, 12345678, ["abcdefgh"]):
+            self.assertEqual(self.post({**RUN, "client_id": bad}).status_code, 422, str(bad))
+
+
+
 if __name__ == "__main__":
     unittest.main()
