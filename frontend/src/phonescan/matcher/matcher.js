@@ -77,11 +77,12 @@ const better = (a, b) => (a[0] !== b[0] ? a[0] > b[0] : a[1] > b[1])
  *   getDecideIndexes   async () -> catalogue indexes (buildDecideIndexes result) or null when the card database is not on the phone
  *   thresholds    the manifest (or its thresholds)
  *   budgets       {number, name, secondRead} seconds
+ *   detectMaxSide the long side of the copy the finder searches the quad on (null: the server's 900, which parity needs)
  *   now           clock in ms (injectable)
  *   parts         replacements for the ported pieces (tests): findCard, augmentedViews, artCrop, rotate180, isGuidePicture, wholeCard,
  *                 readCard, readName, secondRead, decideCard, scoreNames
  */
-export function createPhoneMatcher({ embedder, index, sessions = null, getDecideIndexes = async () => null, thresholds = null, budgets = {}, now = defaultNow, parts = {} }) {
+export function createPhoneMatcher({ embedder, index, sessions = null, getDecideIndexes = async () => null, thresholds = null, budgets = {}, now = defaultNow, parts = {}, detectMaxSide = null }) {
   const p = {
     findCard: defaultFindCard, augmentedViews: defaultAugmentedViews, artCrop: defaultArtCrop, rotate180: defaultRotate180, isGuidePicture: defaultIsGuide,
     wholeCard: defaultWholeCard, readCard: defaultReadCard, readName: defaultReadName, secondRead: defaultSecondRead, decideCard: defaultDecideCard, scoreNames: defaultScoreNames,
@@ -101,7 +102,7 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
     }
 
     // 1. the card
-    const found = await stage('finder', () => p.findCard(photo, { hires: true }))
+    const found = await stage('finder', () => p.findCard(photo, detectMaxSide ? { hires: true, detectMaxSide } : { hires: true }))
     const detectionFound = found.source === 'quad'
     const fallback = detectionFound ? null : 'guide_crop' // the finder did not find the card: the guide crop (or the whole picture) stands in
     const upright = found.card

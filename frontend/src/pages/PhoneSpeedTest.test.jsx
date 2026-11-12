@@ -7,8 +7,8 @@ vi.mock('../contexts/AuthContext', () => ({ useAuth: () => auth }))
 vi.mock('../navigation/useNavBar', () => ({ useNavBar: () => {} }))
 vi.mock('../api/client', () => ({ default: { get: vi.fn(() => new Promise(() => {})), post: vi.fn() } }))
 
-const { default: PhoneSpeedTest, ResultsTable } = await import('./PhoneSpeedTest')
-const { PhoneSpeedRuns } = await import('../components/settings/ScannerLabSection')
+const { default: PhoneSpeedTest, ResultsTable, MatcherResults } = await import('./PhoneSpeedTest')
+const { PhoneSpeedRuns, matcherAgreementText, matcherTimingText } = await import('../components/settings/ScannerLabSection')
 
 const render = element => renderToStaticMarkup(<MemoryRouter>{element}</MemoryRouter>)
 
@@ -75,5 +75,72 @@ describe('Phone speed test visibility', () => {
     expect(html).toContain('1,200 ms')
     expect(html).toContain('800 ms')
     expect(html).toContain('unsupported operator ConvInteger')
+  })
+})
+
+describe('the full phone matcher section (step 3d)', () => {
+  beforeEach(() => { auth.user = { role: 'admin' } })
+
+  it('explains the run, the photo handling and the backend choice, and has the run and release buttons', () => {
+    const html = render(<PhoneSpeedTest />)
+    expect(html).toContain('Full phone matcher')
+    expect(html).toContain('three times on one photo')
+    expect(html).toContain('2048 px long side, JPEG')
+    expect(html).toContain('data-testid="phone-matcher-run"')
+    expect(html).toContain('data-testid="phone-matcher-release"')
+    expect(html).toContain('uint8 on WebAssembly only')
+    expect(html).not.toContain('uint8 on WebGPU') // never offered
+    expect(html).toContain('data-testid="phone-matcher-carddb"')
+  })
+
+  const result = over => ({
+    version: 11, backend: 'fp16 on WebGPU (worker)', decided: true, tcgCardId: 'sv1-25', cardId: 'sv1-25_en', mechanism: 'number_unique', unsure_reason: null,
+    decision: { similarity: 0.93 }, pictureOnly: false, notes: [],
+    read: { number: '25', total: '198', name: 'Pikachu', numberSource: 'finder_card' }, orientation: { by: 'default', flipped: false }, detection: { found: true, source: 'quad' },
+    candidates: [1, 2, 3, 4, 5, 6].map(n => ({ id: `sv${n}-25_en`, tcgCardId: `sv${n}-25`, name: `Pikachu${n}`, number: '25', set: `Set ${n}`, score: 1 - n / 10 })),
+    timings_ms: { finder: 600, views: 300, embed: 800, search: 90, ocr_number: 500, name: 200, second_read: 0, decide: 20, total: 2510 },
+    ...over,
+  })
+
+  it('shows the stage times (first and median of the next two), the backend, the decision and the top 5 with names', () => {
+    const html = render(<MatcherResults results={[result(), result({ timings_ms: { ...result().timings_ms, total: 2000 } }), result({ timings_ms: { ...result().timings_ms, total: 2200 } })]} sent="Numbers saved." />)
+    expect(html).toContain('Find the card')
+    expect(html).toContain('Total per card')
+    expect(html).toContain('Median of 2')
+    expect(html).toContain('2,510 ms')
+    expect(html).toContain('2,100 ms')
+    expect(html).toContain('fp16 on WebGPU (worker)')
+    expect(html).toContain('Pikachu1 #25 · number_unique'.replace('Pikachu1', 'Pikachu1'))
+    expect((html.match(/<li>/g) || []).length).toBe(5)
+    expect(html).toContain('Pikachu5 #25 · Set 5')
+    expect(html).not.toContain('Pikachu6')
+    expect(html).toContain('Numbers saved.')
+  })
+
+  it('says plainly when the run was picture-only for want of the card database', () => {
+    const html = render(<MatcherResults results={[result({ pictureOnly: true, decided: false, tcgCardId: null, mechanism: null, unsure_reason: 'no_card_database', read: null, notes: ['The card database is not on this phone: the picture alone, no decision.'] })]} />)
+    expect(html).toContain('picture only (no card database)')
+    expect(html).toContain('The card database is not on this phone')
+  })
+
+  it('warns when the three runs did not agree', () => {
+    expect(render(<MatcherResults results={[result(), result({ tcgCardId: 'sv9-9' })]} />)).toContain('did not give the same answer')
+  })
+
+  it('Scanner lab lists the full matcher as "phone X / server Y · agree yes/no · N/20"', () => {
+    const run = {
+      id: 'x', at: '2026-11-13T09:15:00', by: 'oak', has_photo: true, server: { status: 'done' }, device: { ios: '26.6', gpu: true }, timings: { matcher_total_median_ms: 2100 },
+      matcher: { decided: true, card: 'sv1-25', backend: 'fp16 on WebGPU (worker)', timings: { finder: [610, 590], embed: [820, 790], total: [2500, 2100] } },
+      matcher_compare: { status: 'compared', phone: 'sv1-25', server: 'sv1-25', agree: true, same_card: true, same_mechanism: true, overlap: 17 },
+    }
+    expect(matcherAgreementText(run)).toBe('full matcher: phone sv1-25 / server sv1-25 · agree yes · 17/20')
+    expect(matcherAgreementText({ ...run, matcher: { ...run.matcher, decided: false, card: null }, matcher_compare: { status: 'compared', phone: null, server: 'sv1-25', agree: false, overlap: 9 } })).toBe('full matcher: phone unsure / server sv1-25 · agree no · 9/20')
+    expect(matcherAgreementText({ ...run, matcher_compare: { status: 'compared', phone: 'sv1-25', server: 'sv1-25', agree: true, same_card: true, same_mechanism: false, overlap: 20, phone_mechanism: 'number_unique', server_mechanism: 'number_and_picture' } })).toContain('mechanism differs')
+    expect(matcherAgreementText({ ...run, matcher_compare: null })).toContain('server answer')
+    expect(matcherAgreementText({ ...run, has_photo: false })).toContain('no photo')
+    expect(matcherTimingText(run)).toBe('fp16 on WebGPU (worker) · finder 590 · embed 790 · total 2,100 ms (first 2,500)')
+    const html = render(<PhoneSpeedRuns runs={[run]} />)
+    expect(html).toContain('full phone matcher')
+    expect(html).toContain('full matcher: phone sv1-25 / server sv1-25 · agree yes · 17/20')
   })
 })

@@ -25,6 +25,8 @@ export default defineConfig(({ command }) => ({
     __RELEASE_CHANNEL__: JSON.stringify(releaseChannel()),
     __PWA_DEFAULT__: JSON.stringify(process.env.VITE_PWA_DEFAULT === 'on' ? 'sw=1;queue=1' : 'sw=0;queue=0'),
   },
+  // The phone matcher's worker loads onnxruntime-web with dynamic imports, which need ES module workers (not the default IIFE).
+  worker: { format: 'es' },
   server: {
     proxy: {
       '/api': {

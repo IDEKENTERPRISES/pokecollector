@@ -1,7 +1,10 @@
 /** The request body for POST /card-match/phone-speed: JSON for the built-in sample (no image at all), multipart with the
- *  photo taken or picked on the page otherwise. Only timings, device facts and the phone's answer go in the JSON. */
+ *  photo taken or picked on the page otherwise. Only timings, device facts and the phone's answer go in the JSON
+ *  (for the full matcher also its `matcher` block: decision, top 20, what it read, stage times). */
 export function speedRunRequest(outcome, photoFile) {
-  const data = { timings: outcome.timings, device: outcome.device, answer: outcome.answer, ...(outcome.runId ? { client_id: outcome.runId } : {}) }
+  const data = {
+    timings: outcome.timings, device: outcome.device, answer: outcome.answer, ...(outcome.matcher ? { matcher: outcome.matcher } : {}), ...(outcome.runId ? { client_id: outcome.runId } : {}),
+  }
   if (!photoFile) return { body: data, multipart: false }
   const form = new FormData()
   form.append('data', JSON.stringify(data))
