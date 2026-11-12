@@ -38,11 +38,11 @@ export function describeIos(device) {
 
 /**
  * The phases of a run, in the order they run. Everything on WebAssembly comes first (the photo, preprocessing, the model, the
- * index search and OCR), then WebGPU fp16, and the 8-bit model on WebGPU only when the switch is on, as the very last step:
- * it crashed an iPhone page, and a WebGPU crash must not cost the WebAssembly numbers.
+ * index search and OCR), then WebGPU fp16 as the last step, so a WebGPU crash cannot cost the WebAssembly numbers. The 8-bit
+ * model on WebGPU is not tried at all: it crashes Safari on iOS 26.6 (found on the owner's iPhone, even behind a switch).
  */
-export function phaseOrder({ webgpu = true, uint8Gpu = false } = {}) {
-  return ['photo', 'preprocess', 'wasm', 'index', 'ocr', ...(webgpu ? ['webgpu_fp16'] : []), ...(webgpu && uint8Gpu ? ['webgpu_uint8'] : [])]
+export function phaseOrder({ webgpu = true } = {}) {
+  return ['photo', 'preprocess', 'wasm', 'index', 'ocr', ...(webgpu ? ['webgpu_fp16'] : [])]
 }
 
 // -- the crash flag and the partial results (sessionStorage, injectable for tests) -----------------------------------

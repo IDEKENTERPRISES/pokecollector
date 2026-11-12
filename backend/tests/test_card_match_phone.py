@@ -287,6 +287,8 @@ class BundleTests(unittest.TestCase):
         self.assertIn("ConvInteger (uint8)", manifest["model"]["operators"])
         self.assertIn("MatMulInteger (uint8)", manifest["model"]["operators"])
         self.assertEqual(manifest["model"]["webgpu_candidate"]["name"], "dinov2-small-fp16")
+        self.assertIn("crashes Safari on iOS 26.6", manifest["model"]["runtime_note"])  # the uint8 model is not for WebGPU
+        self.assertIn("fp16 on WebGPU and uint8 on WebAssembly", manifest["model"]["runtime_note"])
         self.assertFalse(manifest["model"]["webgpu_candidate"]["in_bundle"])  # no fp16 file in this test
         self.assertEqual(manifest["index"]["whole_count"], 12)
         self.assertEqual(manifest["index"]["sets"]["sv1"], {"whole": 4, "art": 4})

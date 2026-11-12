@@ -30,15 +30,15 @@ describe('device facts', () => {
 })
 
 describe('step order', () => {
-  it('runs every WebAssembly step before WebGPU, with fp16 on WebGPU last and the 8-bit model not at all by default', () => {
+  it('runs every WebAssembly step before WebGPU, with fp16 on WebGPU last', () => {
     expect(phaseOrder({ webgpu: true })).toEqual(['photo', 'preprocess', 'wasm', 'index', 'ocr', 'webgpu_fp16'])
-    expect(phaseOrder()).not.toContain('webgpu_uint8')
+    expect(phaseOrder()).toEqual(phaseOrder({ webgpu: true }))
+    expect(phaseOrder({ webgpu: false })).toEqual(['photo', 'preprocess', 'wasm', 'index', 'ocr'])
   })
 
-  it('adds the 8-bit model on WebGPU only behind the switch, as the very last step', () => {
-    expect(phaseOrder({ webgpu: true, uint8Gpu: true }).at(-1)).toBe('webgpu_uint8')
-    expect(phaseOrder({ webgpu: true, uint8Gpu: true }).slice(-2)).toEqual(['webgpu_fp16', 'webgpu_uint8'])
-    expect(phaseOrder({ webgpu: false, uint8Gpu: true })).toEqual(['photo', 'preprocess', 'wasm', 'index', 'ocr']) // no WebGPU at all
+  it('never runs the 8-bit model on WebGPU, which crashes Safari on iOS 26.6, whatever options are passed', () => {
+    expect(phaseOrder({ webgpu: true, uint8Gpu: true })).not.toContain('webgpu_uint8')
+    expect(phaseOrder({ webgpu: true, uint8Gpu: true }).at(-1)).toBe('webgpu_fp16')
   })
 })
 

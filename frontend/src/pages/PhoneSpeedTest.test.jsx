@@ -25,16 +25,12 @@ describe('Phone speed test visibility', () => {
     expect(html).toContain('cannot be read on iOS')
   })
 
-  it('offers the 8-bit WebGPU model only as an unchecked switch, and only where WebGPU exists', () => {
+  it('has no switch for the 8-bit model on WebGPU, with or without WebGPU (it crashes Safari on iOS 26.6)', () => {
     vi.stubGlobal('navigator', { gpu: {}, userAgent: '' })
     const withGpu = render(<PhoneSpeedTest />)
     vi.unstubAllGlobals()
-    expect(withGpu).toContain('Also try the 8-bit model on WebGPU (may crash)')
-    expect(withGpu).toMatch(/<input type="checkbox"(?![^>]*checked)/)
-    vi.stubGlobal('navigator', { userAgent: '' })
-    const without = render(<PhoneSpeedTest />)
-    vi.unstubAllGlobals()
-    expect(without).not.toContain('8-bit model on WebGPU')
+    expect(withGpu).not.toContain('8-bit model on WebGPU')
+    expect(withGpu).not.toContain('type="checkbox"')
   })
 
   it('shows nothing to a trainer (it sends them back to Settings)', () => {

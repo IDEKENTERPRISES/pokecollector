@@ -66,7 +66,6 @@ export default function PhoneSpeedTest() {
   const fileInput = useRef(null)
   const [photoName, setPhotoName] = useState(null)
   const [crash, setCrash] = useState(null)
-  const [uint8Gpu, setUint8Gpu] = useState(false) // the 8-bit model on WebGPU crashed an iPhone page: off unless asked for
   const crashHandled = useRef(false)
   const postGuard = useRef(createPostGuard()) // one post per run id: the final post and a partial or crash post never both go out
   const hasGpu = Boolean(globalThis.navigator?.gpu)
@@ -158,7 +157,6 @@ export default function PhoneSpeedTest() {
         photoSource: photo.current || SAMPLE_URL,
         onRow: (id, row) => setRows(current => ({ ...current, [id]: row })),
         onPhase: setPhase,
-        options: { uint8Gpu },
       })
       outcome.device.crashedBefore = Boolean(wasCrash)
       outcome.device.crashedStep = wasCrash || null
@@ -251,12 +249,6 @@ export default function PhoneSpeedTest() {
       </Section>
 
       <Section title="3. Run">
-        {hasGpu && (
-          <label className="flex items-start gap-2 text-footnote" data-testid="phone-speed-uint8-switch">
-            <input type="checkbox" checked={uint8Gpu} onChange={event => setUint8Gpu(event.target.checked)} disabled={busy} />
-            <span>Also try the 8-bit model on WebGPU (may crash). It runs last, after everything else.</span>
-          </label>
-        )}
         <button type="button" className={button} disabled={busy || !ready || !runtime} onClick={run} data-testid="phone-speed-run"><Play size={14} aria-hidden="true" /> Run the test</button>
         {busy && phase && <p className="text-footnote" aria-live="polite">Running: {phase}</p>}
         {message && <p className="text-footnote" aria-live="polite">{message}</p>}
@@ -265,7 +257,7 @@ export default function PhoneSpeedTest() {
           <div className="space-y-1 text-footnote" data-testid="phone-speed-estimate">
             <p className="font-semibold">Estimated time per card (kept option set)</p>
             <p>WebAssembly: {ms(estimates.wasm)}</p>
-            {hasGpu && <p>With the fp16 model on WebGPU: {ms(estimates.webgpu_fp16)} · with the uint8 model on WebGPU: {ms(estimates.webgpu_uint8)}</p>}
+            {hasGpu && <p>With the fp16 model on WebGPU: {ms(estimates.webgpu_fp16)} (the 8-bit model is not tried on WebGPU: it crashes Safari on iOS 26.6)</p>}
             <p className="text-text-secondary">
               {`7 pre-processings + 7 embeddings + 4 whole-card and 3 artwork searches + ${runtime.OCR_ASSUMPTION.detections} detections and ${runtime.OCR_ASSUMPTION.recognitions} line recognitions (OCR on WebAssembly). A rough guess: the real reader ladder comes in step 3.`}
             </p>

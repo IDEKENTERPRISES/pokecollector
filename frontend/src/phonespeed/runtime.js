@@ -120,7 +120,6 @@ function wantsHalf(session) {
 export const STEP_IDS = [
   ['session_wasm', 'Model session, uint8 on WebAssembly'],
   ['session_webgpu_fp16', 'Model session, fp16 on WebGPU'],
-  ['session_webgpu_uint8', 'Model session, uint8 on WebGPU'],
   ['photo', 'Photo decode and guide crop (once)'],
   ['preprocess', 'Preprocess to the 224×224 tensor'],
   ['embed_wasm', 'One embedding, WebAssembly'],
@@ -129,9 +128,6 @@ export const STEP_IDS = [
   ['embed_webgpu_fp16', 'One embedding, WebGPU fp16'],
   ['embed_art_webgpu_fp16', 'One artwork-window embedding, WebGPU fp16'],
   ['card_webgpu_fp16', `One card, ${VIEWS_PER_CARD.total} embeddings, WebGPU fp16`],
-  ['embed_webgpu_uint8', 'One embedding, WebGPU uint8'],
-  ['embed_art_webgpu_uint8', 'One artwork-window embedding, WebGPU uint8'],
-  ['card_webgpu_uint8', `One card, ${VIEWS_PER_CARD.total} embeddings, WebGPU uint8`],
   ['index_load', 'Index files into memory (once)'],
   ['search_whole', 'Whole-card top-20 search, one query'],
   ['search_art', 'Artwork top-20 search, one query'],
@@ -162,8 +158,8 @@ export function estimateCard(medians, backend) {
 /**
  * Run every step in `phaseOrder` (WebAssembly first, WebGPU last). `files` = {manifest, read(path) -> ArrayBuffer}.
  * `onRow(id, row)` gets {first, median, runs, note} or {error}. Every finished step is saved at once (`recordStep`), so a crash
- * or an early end keeps what is done: the page posts the partial run. `options.webgpu` false skips WebGPU; `options.uint8Gpu`
- * (off by default) adds the 8-bit model on WebGPU as the very last step. Returns {timings, device, ...} for the server.
+ * or an early end keeps what is done: the page posts the partial run. `options.webgpu` false skips WebGPU. The 8-bit model on
+ * WebGPU is never run (it crashes Safari on iOS 26.6). Returns {timings, device, ...} for the server.
  */
 export async function runSpeedTest({ files, photoSource, onRow, onPhase, options = {}, storage }) {
   const device = readDevice()
@@ -365,27 +361,18 @@ export async function runSpeedTest({ files, photoSource, onRow, onPhase, options
       await searchRows('webgpu_fp16')
       addTopk('webgpu_fp16')
     },
-    async webgpu_uint8() {
-      await guard('session_webgpu_uint8', async () => {
-        const ort = await loadGpuRuntime()
-        await modelSteps('webgpu_uint8', ort, int8Path, ['webgpu'], 'session_webgpu_uint8', 'embed_webgpu_uint8', 'card_webgpu_uint8')
-      })
-      addTopk('webgpu_uint8')
-    },
   }
 
-  for (const phase of phaseOrder({ webgpu: hasGpu, uint8Gpu: Boolean(options.uint8Gpu) })) {
+  for (const phase of phaseOrder({ webgpu: hasGpu })) {
     await phases[phase]()
     if (phase === 'photo' && !card) return finish(rows, device, {}, answer, storage, runId) // nothing else can run without the photo
   }
   if (!hasGpu) {
     for (const id of ['session_webgpu_fp16']) set(id, { error: options.webgpu === false ? 'skipped' : 'navigator.gpu does not exist here' })
   }
-  if (hasGpu && !options.uint8Gpu) set('session_webgpu_uint8', { error: 'off (switch it on to try the 8-bit model on WebGPU)' })
-  if (!hasGpu) set('session_webgpu_uint8', { error: 'navigator.gpu does not exist here' })
 
   const values = medians()
-  const estimates = { wasm: estimateCard(values, 'wasm'), webgpu_fp16: estimateCard(values, 'webgpu_fp16'), webgpu_uint8: estimateCard(values, 'webgpu_uint8') }
+  const estimates = { wasm: estimateCard(values, 'wasm'), webgpu_fp16: estimateCard(values, 'webgpu_fp16') }
   return finish(rows, device, estimates, answer, storage, runId)
 }
 

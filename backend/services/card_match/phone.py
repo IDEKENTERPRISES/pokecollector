@@ -243,7 +243,7 @@ def build_bundle(
                 "file": f"model/{spec['filename']}", "name": variants.PHONE_MODEL, "dim": spec["dim"], "input_size": spec["input_size"],
                 "mean": list(spec["mean"]), "std": list(spec["std"]), "output": spec["output"], "source": spec["source"], "license": spec["license"],
                 "weights": "uint8 (onnx/model_quantized.onnx)", "operators": spec.get("operators", []),
-                "runtime_note": "ConvInteger and MatMulInteger are implemented for uint8 only in ONNX Runtime's CPU kernels, which onnxruntime-web's WebAssembly backend uses; WebGPU has no integer kernels",
+                "runtime_note": "ConvInteger and MatMulInteger are implemented for uint8 only in ONNX Runtime's CPU kernels, which onnxruntime-web's WebAssembly backend uses; WebGPU has no integer kernels, and running the uint8 model on WebGPU crashes Safari on iOS 26.6 (measured on an iPhone, also behind a switch): the phone uses fp16 on WebGPU and uint8 on WebAssembly as the fallback",
                 "webgpu_candidate": {"file": f"model/{webgpu_spec['filename']}", "name": variants.FP16_MODEL, "weights": "float16", "size": webgpu_spec["size_bytes"],
                                      "sha256": webgpu_spec["sha256"], "in_bundle": has_webgpu, "input": "float32 pixels (the model casts)"},
             },
