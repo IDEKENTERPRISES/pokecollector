@@ -26,6 +26,7 @@ import { scoreNames as defaultScoreNames } from '../decide/names'
 import { resolveThresholds } from '../decide/thresholds'
 import { combineScores, maxInto, searchArt, searchWhole } from './pictureIndex'
 import { MATCHER_VERSION } from './guard'
+import { ladderSummary } from './ocrStats'
 
 export { MATCHER_VERSION }
 
@@ -77,12 +78,13 @@ const better = (a, b) => (a[0] !== b[0] ? a[0] > b[0] : a[1] > b[1])
  *   getDecideIndexes   async () -> catalogue indexes (buildDecideIndexes result) or null when the card database is not on the phone
  *   thresholds    the manifest (or its thresholds)
  *   budgets       {number, name, secondRead} seconds
+ *   ocr           {maxSteps, acceptConfidence}: a leaner number ladder (null: the server's ladder, which the parity tests check)
  *   detectMaxSide the long side of the copy the finder searches the quad on (null: the server's 900, which parity needs)
  *   now           clock in ms (injectable)
  *   parts         replacements for the ported pieces (tests): findCard, augmentedViews, artCrop, rotate180, isGuidePicture, wholeCard,
  *                 readCard, readName, secondRead, decideCard, scoreNames
  */
-export function createPhoneMatcher({ embedder, index, sessions = null, getDecideIndexes = async () => null, thresholds = null, budgets = {}, now = defaultNow, parts = {}, detectMaxSide = null }) {
+export function createPhoneMatcher({ embedder, index, sessions = null, getDecideIndexes = async () => null, thresholds = null, budgets = {}, now = defaultNow, parts = {}, detectMaxSide = null, ocr = {} }) {
   const p = {
     findCard: defaultFindCard, augmentedViews: defaultAugmentedViews, artCrop: defaultArtCrop, rotate180: defaultRotate180, isGuidePicture: defaultIsGuide,
     wholeCard: defaultWholeCard, readCard: defaultReadCard, readName: defaultReadName, secondRead: defaultSecondRead, decideCard: defaultDecideCard, scoreNames: defaultScoreNames,
@@ -91,14 +93,26 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
   const t = resolveThresholds(thresholds)
   const limits = { ...DEFAULT_BUDGETS, ...budgets }
 
-  async function match(photo, { onStage = null, useText = true, signal = null } = {}) {
+  const OCR_STAGES = new Set(['ocr_number', 'name', 'second_read'])
+
+  /**
+   * options: onStage(name, info) at the start of a stage (info null) and at its end (info {ms}); useText; signal; overlap: start reading the
+   * text (upright, speculatively) while the embeddings run, which only pays when the model runs on another thread (the main thread's WebGPU).
+   */
+  async function match(photo, { onStage = null, useText = true, signal = null, overlap = false } = {}) {
     const clock = timer(now)
     const started = now()
     const notes = []
-    const stage = (name, fn) => {
+    const stage = async (name, fn) => {
       if (signal?.aborted) throw new Error('aborted')
-      onStage?.(name)
-      return clock.run(name, fn)
+      if (OCR_STAGES.has(name)) sessions?.mark?.(name)
+      onStage?.(name, null)
+      const began = now()
+      try {
+        return await clock.run(name, fn)
+      } finally {
+        onStage?.(name, { ms: roundMs(now() - began) })
+      }
     }
 
     // 1. the card
@@ -108,15 +122,9 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
     const upright = found.card
     const textCard = found.hires || upright
 
-    // 2. the two orientations against the whole-card index
-    const turnedCard = await stage('views', () => p.rotate180(upright))
-    const first = await stage('embed', () => embedder.embed([upright, turnedCard]))
-    const main = await stage('search', () => searchWhole(index, first))
-    const margin = main.viewMax[1] - main.viewMax[0]
-    const pictureFlipped = index.count > 0 && margin >= t.orient_margin
-    const best = main.best
-
-    // 3. the rest of the picture views for the oriented card
+    // 2 and 3. the two orientations against the whole-card index, then the rest of the picture views for the oriented card
+    let turnedCard = null
+    let best = null
     const scoresFor = async flipped => {
       const oriented = flipped ? turnedCard : upright
       const extra = await stage('views', () => {
@@ -132,7 +140,38 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
         return combineScores(index, whole, artBest)
       })
     }
-    let picture = await scoresFor(pictureFlipped)
+    const pictureChain = async () => {
+      turnedCard = await stage('views', () => p.rotate180(upright))
+      const first = await stage('embed', () => embedder.embed([upright, turnedCard]))
+      const main = await stage('search', () => searchWhole(index, first))
+      const margin = main.viewMax[1] - main.viewMax[0]
+      const pictureFlipped = index.count > 0 && margin >= t.orient_margin
+      best = main.best
+      return { margin, pictureFlipped, picture: await scoresFor(pictureFlipped) }
+    }
+
+    const canRead = Boolean(useText && sessions)
+    const overlapping = Boolean(overlap && canRead && embedder.where === 'main thread')
+    const wholeEligible = found.source !== 'whole' && p.isGuidePicture(photo)
+    const ocrLimits = { maxSteps: ocr.maxSteps ?? null, acceptConfidence: ocr.acceptConfidence ?? undefined }
+    const attemptFor = names => async isFlipped => {
+      const result = await stage('ocr_number', () => p.readCard(sessions, textCard, {
+        fast: true, flipped: isFlipped, readHp: false, stage: wholeEligible ? 'first' : 'all', budget: limits.number, ...ocrLimits,
+      }))
+      const name = names ? await stage('name', () => p.readName(sessions, textCard, { flipped: isFlipped, budget: limits.name })) : null
+      return { result, name }
+    }
+    // Overlap: the upright read (what the server does first unless the picture says "turned") starts now, beside the embeddings. When the
+    // picture does say "turned" the speculative read is thrown away and the card is read turned, so the answer is the sequential one.
+    let loading = null
+    let speculative = null
+    if (overlapping) {
+      loading = getDecideIndexes()
+      speculative = loading.then(found2 => (found2 ? attemptFor(found2.names ?? null)(false) : null))
+      speculative.catch(() => {})
+    }
+    const { margin, pictureFlipped, picture: firstPicture } = await pictureChain()
+    let picture = firstPicture
 
     // 4. the text
     let read = null
@@ -140,24 +179,19 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
     let flipped = pictureFlipped
     let how = 'picture'
     let wholeread = null
-    const indexes = useText && sessions ? await getDecideIndexes() : null // no card database on the phone: nothing to read the text against
+    const indexes = canRead ? await (loading ?? getDecideIndexes()) : null // no card database on the phone: nothing to read the text against
     const names = indexes?.names ?? null
-    const wholeEligible = found.source !== 'whole' && p.isGuidePicture(photo)
     let ocrResult = null
-    if (useText && sessions && indexes) {
+    let firstRead = null
+    if (canRead && indexes) {
       const secondReadApplies = wholeEligible
-      const attempt = async isFlipped => {
-        const result = await stage('ocr_number', () => p.readCard(sessions, textCard, {
-          fast: true, flipped: isFlipped, readHp: false, stage: secondReadApplies ? 'first' : 'all', budget: limits.number,
-        }))
-        const name = names ? await stage('name', () => p.readName(sessions, textCard, { flipped: isFlipped, budget: limits.name })) : null
-        return { result, name }
-      }
+      const attempt = attemptFor(names)
+      const early = speculative ? await speculative.catch(() => null) : null
       if (pictureFlipped) {
         ;({ result: ocrResult, name: nameRead } = await attempt(true))
         how = 'picture'
       } else {
-        const upper = await attempt(false)
+        const upper = early ?? await attempt(false)
         const upperUsable = usable(upper.result, upper.name, names, p.scoreNames)
         if (fallback !== null || anyUsable(upperUsable)) {
           ;({ result: ocrResult, name: nameRead } = upper)
@@ -174,6 +208,8 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
           }
         }
       }
+
+      firstRead = ocrResult
 
       // 5. the whole-picture second read
       if (secondReadApplies && !isComplete(ocrResult)) {
@@ -248,6 +284,13 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
       wholeread,
       stages: clock.trace,
       timings_ms,
+      overlapped: overlapping,
+      ocrStats: canRead ? {
+        calls: sessions?.take?.() ?? null,
+        number: ladderSummary(firstRead, limits.number),
+        name: nameRead ? { budget: limits.name, steps: (nameRead.strips || []).map(strip => ({ label: strip.label, variant: strip.variant, zoom: strip.zoom, ms: strip.ms })) } : null,
+        options: { maxSteps: ocrLimits.maxSteps, acceptConfidence: ocrLimits.acceptConfidence ?? null },
+      } : null,
     }
   }
 

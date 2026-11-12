@@ -14,9 +14,14 @@ import { checkManifest } from './guard'
 import { ortEmbedder, remoteEmbedder } from './embedder'
 import { createPhoneMatcher } from './matcher'
 import { createOcrSessions } from './ocrSessions'
+import { recordSessions } from './ocrStats'
+import { characterTable } from '../ocr'
 import { pictureIndexFromBuffers } from './pictureIndex'
 
 export const MODES = ['auto', 'worker-webgpu', 'main-webgpu', 'wasm']
+export const OCR_BACKENDS = ['wasm', 'webgpu-main']
+/** The reader's ladder: 'server' is the server's (parity-checked); 'lean' stops after the first three steps (see docs/phone-scanner/integration.md for its cost). */
+export const OCR_PROFILES = { server: {}, lean: { maxSteps: 3 } }
 
 /**
  * createMatcherHost({post, files, loadWasm, loadGpu, probeGpu, cardDb, create...}) -> {handle(message), state}
@@ -92,23 +97,45 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
     throw new Error('no embedding backend could start')
   }
 
+  /** The reader's sessions: WebAssembly in this worker (default), or the two OCR models on the main thread's WebGPU, called over rpc. */
+  async function chooseOcr(manifest, ocrBackend, tried) {
+    if (ocrBackend === 'webgpu-main') {
+      try {
+        await rpc('ocr-load', {})
+        const characters = characterTable(new TextDecoder().decode(await files.read('ocr/characters.txt')))
+        const call = kind => async tensor => {
+          const data = tensor.data.byteOffset === 0 && tensor.data.byteLength === tensor.data.buffer.byteLength ? tensor.data : tensor.data.slice()
+          return rpc('ocr-run', { kind, data, dims: Array.from(tensor.dims) }, [data.buffer])
+        }
+        tried.push({ step: 'ocr webgpu (main thread)', ok: true })
+        return { characters, detect: call('det'), recognise: call('rec'), where: 'main thread WebGPU', release: () => rpc('ocr-release', {}).catch(() => {}) }
+      } catch (error) {
+        tried.push({ step: 'ocr webgpu (main thread)', ok: false, note: String(error?.message || error).slice(0, 200) })
+        await rpc('ocr-release', {}).catch(() => {})
+      }
+    }
+    const buffers = await readAll(manifest, 'ocr/')
+    const sessions = await make.createOcrSessions({ ort: await loadWasm(), det: buffers['ocr/det.onnx'], rec: buffers['ocr/rec.onnx'], characters: buffers['ocr/characters.txt'] })
+    tried.push({ step: 'ocr wasm (worker)', ok: true })
+    return { ...sessions, where: 'worker WebAssembly' }
+  }
+
   async function release() {
     const { embedder, sessions } = state
     state.embedder = state.sessions = state.matcher = state.index = state.getIndexes = null
     state.ready = false
     await embedder?.release?.()
     await sessions?.release?.()
-    if (embedder?.where === 'main thread') await rpc('release-model', {}).catch(() => {})
+    if (embedder?.where === 'main thread' || sessions?.inner?.where === 'main thread WebGPU') await rpc('release-model', {}).catch(() => {})
   }
 
-  async function init({ manifest, mode = 'auto', mainGpu = false, budgets = {} }) {
+  async function init({ manifest, mode = 'auto', mainGpu = false, budgets = {}, ocrBackend = 'wasm', ocrProfile = 'server', detectMaxSide = null }) {
     const guard = checkManifest(manifest)
     if (!guard.ok) return { fail: guard }
     await release() // a second init replaces the first: one embedding model at a time
     const tried = []
     const began = now()
-    const sessionsBuffers = await readAll(manifest, 'ocr/')
-    state.sessions = await make.createOcrSessions({ ort: await loadWasm(), det: sessionsBuffers['ocr/det.onnx'], rec: sessionsBuffers['ocr/rec.onnx'], characters: sessionsBuffers['ocr/characters.txt'] })
+    state.sessions = recordSessions(await chooseOcr(manifest, ocrBackend, tried), now)
     state.index = make.pictureIndexFromBuffers(await readAll(manifest, 'index/'))
     state.embedder = await chooseEmbedder(manifest, mode, mainGpu, tried)
     const lazy = cardDb ? make.createLazyIndexes({ source: cardDb, restrictToIds: state.index.ids }) : null
@@ -119,10 +146,10 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
     state.manifest = manifest
     state.matcher = make.createPhoneMatcher({
       embedder: state.embedder, index: state.index, sessions: state.sessions, getDecideIndexes: state.getIndexes,
-      thresholds: thresholdsFromManifest(manifest), budgets, now,
+      thresholds: thresholdsFromManifest(manifest), budgets, now, detectMaxSide, ocr: OCR_PROFILES[ocrProfile] ?? {},
     })
     state.info = {
-      backend: state.embedder.backend, where: state.embedder.where, mode, tried, loadMs: Math.round(now() - began),
+      backend: state.embedder.backend, where: state.embedder.where, mode, ocrBackend: state.sessions.inner.where, ocrProfile, detectMaxSide, tried, loadMs: Math.round(now() - began),
       pictures: state.index.count, artPictures: state.index.artCount, thresholds: 'manifest',
       cardDb: cardDb ? Boolean(await cardDb.getMeta('en')) : false,
     }
@@ -133,7 +160,7 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
   async function match({ photo, options = {} }, id) {
     if (!state.ready) throw new Error('The matcher is not loaded')
     const picture = { data: photo.data instanceof Uint8ClampedArray ? photo.data : new Uint8ClampedArray(photo.data), width: photo.width, height: photo.height }
-    const result = await state.matcher.match(picture, { ...options, onStage: stage => post({ type: 'progress', id, stage }) })
+    const result = await state.matcher.match(picture, { ...options, onStage: (stage, info) => post({ type: 'progress', id, stage, ...(info ? { done: true, ms: info.ms } : {}) }) })
     const indexes = await state.getIndexes()
     result.catalogue = indexes ? { present: true, cards: indexes.count, printedTotalMissing: indexes.stats?.printedTotalMissing ?? null, buildMs: indexes.stats?.buildMs ?? null } : { present: false }
     return result
