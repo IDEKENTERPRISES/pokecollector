@@ -53,8 +53,19 @@ export function buildNameIndex(rows) {
   return index
 }
 
+// One decision asks for the close names of the same read name three times (the candidate merge, "is this name known",
+// the per-card scores): the last answer is kept, which changes no result and saves two full passes over the catalogue's names.
+let lastScoring = { index: null, name: null, result: null }
+
 /** (score, name key) of the catalogue names close to the read name, best first. */
 export function scoreNames(index, readName) {
+  if (lastScoring.index === index && lastScoring.name === readName) return lastScoring.result
+  const result = computeScoreNames(index, readName)
+  lastScoring = { index, name: readName, result }
+  return result
+}
+
+function computeScoreNames(index, readName) {
   const readKey = nameKey(readName)
   const readBase = baseKey(readName)
   if (!readKey) return []
