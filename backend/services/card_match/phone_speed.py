@@ -101,6 +101,87 @@ def _clean_answer(answer) -> dict:
     return out
 
 
+MATCHER_STAGES = ("finder", "views", "embed", "search", "ocr_number", "name", "second_read", "decide", "total")
+
+
+def _short(value, where: str, limit: int = MAX_STRING):
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > limit:
+        raise SpeedRunError(f"{where} must be a short text")
+    return value
+
+
+def _flag(value, where: str):
+    if not isinstance(value, bool):
+        raise SpeedRunError(f"{where} must be true or false")
+    return value
+
+
+def _small_object(value, where: str, shape: dict):
+    """An object with only the named fields (``shape``: name -> "text" | "flag" | "number"), each optional, null allowed."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) - set(shape):
+        raise SpeedRunError(f"{where} holds unknown fields")
+    out = {}
+    for key, kind in shape.items():
+        if key not in value or value[key] is None:
+            out[key] = None
+        elif kind == "text":
+            out[key] = _short(value[key], f"{where}.{key}", 80)
+        elif kind == "flag":
+            out[key] = _flag(value[key], f"{where}.{key}")
+        else:
+            out[key] = _number(value[key], f"{where}.{key}")
+    return out
+
+
+def _clean_matcher(matcher) -> dict:
+    """What the phone's full matcher answered for the photo (step 3d): the decision, the top 20, what it read and its stage times."""
+    if not isinstance(matcher, dict):
+        raise SpeedRunError("matcher must be an object")
+    allowed = {"version", "backend", "mode", "runs", "stable", "decided", "card", "mechanism", "reason", "similarity", "picture_only", "top20", "read",
+               "orientation", "detection", "wholeread", "catalogue", "photo", "timings"}
+    if set(matcher) - allowed:
+        raise SpeedRunError("matcher holds unknown fields")
+    out: dict = {}
+    for key in ("version", "runs", "similarity"):
+        out[key] = None if matcher.get(key) is None else _number(matcher[key], f"matcher.{key}")
+    for key, limit in (("backend", 80), ("mode", 24), ("card", 64), ("mechanism", 40), ("reason", 80)):
+        out[key] = _short(matcher.get(key), f"matcher.{key}", limit)
+    if out["card"] is not None and not CARD_ID.match(out["card"]):
+        raise SpeedRunError("matcher.card is not a card id")
+    for key in ("stable", "decided", "picture_only"):
+        out[key] = _flag(matcher.get(key, False), f"matcher.{key}")
+    picks = matcher.get("top20", [])
+    if not isinstance(picks, list) or len(picks) > MAX_TOP:
+        raise SpeedRunError("matcher.top20 holds at most 20 cards")
+    out["top20"] = []
+    for pick in picks:
+        if not isinstance(pick, list) or len(pick) != 2 or not isinstance(pick[0], str) or not CARD_ID.match(pick[0]):
+            raise SpeedRunError("A matcher pick is [card id, similarity]")
+        score = _number(pick[1], "similarity")
+        if abs(score) > 2:
+            raise SpeedRunError("similarity is out of range")
+        out["top20"].append([pick[0], round(float(score), 4)])
+    out["read"] = _small_object(matcher.get("read"), "matcher.read", {"number": "text", "total": "text", "name": "text", "source": "text"})
+    out["orientation"] = _small_object(matcher.get("orientation"), "matcher.orientation", {"by": "text", "flipped": "flag"})
+    out["detection"] = _small_object(matcher.get("detection"), "matcher.detection", {"source": "text", "found": "flag"})
+    out["wholeread"] = _small_object(matcher.get("wholeread"), "matcher.wholeread", {"tried": "flag", "rescued": "flag"})
+    out["catalogue"] = _small_object(matcher.get("catalogue"), "matcher.catalogue", {"present": "flag", "cards": "number"})
+    out["photo"] = _small_object(matcher.get("photo"), "matcher.photo", {"width": "number", "height": "number", "bytes": "number"})
+    timings = matcher.get("timings") or {}
+    if not isinstance(timings, dict) or set(timings) - set(MATCHER_STAGES):
+        raise SpeedRunError("matcher.timings holds unknown stages")
+    out["timings"] = {}
+    for stage, pair in timings.items():
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise SpeedRunError("A stage time is [first, median]")
+        out["timings"][stage] = [None if value is None else _number(value, f"matcher.timings.{stage}") for value in pair]
+    return out
+
+
 def clean(body) -> dict:
     """Validate one run and return what is stored. Raises SpeedRunError."""
     if not isinstance(body, dict):
@@ -136,7 +217,7 @@ def clean(body) -> dict:
             out_device[key] = value
         else:
             raise SpeedRunError(f"{key} must be a number, a boolean or a short text")
-    if set(body) - {"timings", "device", "answer", "crashed_step", "client_id"}:
+    if set(body) - {"timings", "device", "answer", "crashed_step", "client_id", "matcher"}:
         raise SpeedRunError("Unknown field")
     out = {"timings": out_timings, "device": out_device}
     client_id = body.get("client_id")
@@ -148,6 +229,8 @@ def clean(body) -> dict:
         out["crashed_step"] = crashed
     if body.get("answer") is not None:
         out["answer"] = _clean_answer(body["answer"])
+    if body.get("matcher") is not None:
+        out["matcher"] = _clean_matcher(body["matcher"])
     return out
 
 
@@ -286,6 +369,32 @@ def compare_summary(run: dict) -> dict | None:
     return out or None
 
 
+def compare_matcher(run: dict) -> dict | None:
+    """The phone's full matcher against the server's kept set on the phone's model and index (``server["phone8"]``), for the stored photo:
+    the same decided / undecided, the same card, the same mechanism, and how many of the top 20 are shared."""
+    matcher = run.get("matcher")
+    if not isinstance(matcher, dict):
+        return None
+    server = run.get("server") or {}
+    entry = server.get("phone8")
+    phone_card = _norm(matcher.get("card")) if matcher.get("decided") and matcher.get("card") else None
+    if not isinstance(entry, dict) or entry.get("status") == "error" or "outcome" not in entry:
+        return {"status": server.get("status") or "pending", "phone": phone_card, "picture_only": bool(matcher.get("picture_only"))}
+    decision = entry.get("decision")
+    server_card = _norm(decision.get("id")) if isinstance(decision, dict) and decision.get("id") else None
+    same_decided = (phone_card is None) == (server_card is None)
+    same_card = same_decided and phone_card == server_card
+    same_mechanism = bool(same_card and (phone_card is None or matcher.get("mechanism") == (decision or {}).get("mechanism")))
+    phone_ids = {_norm(item[0]) for item in matcher.get("top20") or []}
+    server_ids = {_norm(item.get("id")) for item in entry.get("top20") or []}
+    return {
+        "status": "compared", "phone": phone_card, "server": server_card, "agree": same_card, "same_decided": same_decided, "same_card": same_card,
+        "same_mechanism": same_mechanism, "overlap": len(phone_ids & server_ids), "picture_only": bool(matcher.get("picture_only")),
+        "phone_mechanism": matcher.get("mechanism"), "server_mechanism": (decision or {}).get("mechanism"),
+        "phone_reason": matcher.get("reason"), "server_reason": entry.get("unsure_reason"),
+    }
+
+
 def latest(count: int = 10, data_dir: Path | None = None) -> list[dict]:
     """The last ``count`` runs, newest first, with the phone/server agreement worked out."""
     runs = []
@@ -294,6 +403,7 @@ def latest(count: int = 10, data_dir: Path | None = None) -> list[dict]:
         if run is None:
             continue
         run["compare"] = compare_summary(run)
+        run["matcher_compare"] = compare_matcher(run)
         runs.append(run)
     return runs
 
