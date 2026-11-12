@@ -852,6 +852,8 @@ export default function ScannerLabSection() {
     const done = progress.indexed ?? progress.done
     const total = progress.todo ? progress.total : progress.total
     jobLine = `Running: ${job.kind}${done != null && total ? ` · ${number(done)} of ${number(total)}` : ''}`
+  } else if (data.phone_error) {
+    jobLine = `Phone steps failed: ${data.phone_error}${job.error && !data.phone_error.includes(job.error) ? ` · Last job failed: ${job.error}` : ''}`
   } else if (job.error) {
     jobLine = `Last job failed: ${job.error}`
   }
