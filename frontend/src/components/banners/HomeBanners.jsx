@@ -5,13 +5,28 @@ import BannerView, { MAX_VISIBLE_BANNERS, overflowCount } from './BannerView'
 
 export const ACTIVE_BANNERS_QUERY_KEY = ['banners', 'active']
 
+// Stays at the top of the screen while Home scrolls, just under the sticky nav bar (as PullToRefresh's
+// indicator does), on a blurred page background so cards scrolling underneath don't show through.
+export const STICKY_STYLE = {
+  top: 'calc(var(--safe-top) + var(--navbar-height))',
+  zIndex: 'calc(var(--z-navbar) - 1)',
+  background: 'color-mix(in srgb, var(--color-bg) 88%, transparent)',
+  backdropFilter: 'blur(12px)',
+  WebkitBackdropFilter: 'blur(12px)',
+}
+
 /** Pure view of the stack, so it can be unit-tested without a query client. */
 export function BannerStack({ banners, onDismiss }) {
   const { t } = useSettings()
   if (!banners.length) return null
   const more = overflowCount(banners)
   return (
-    <section className="space-y-2" data-testid="home-banners" aria-label={t('banners.homeLabel')}>
+    <section
+      className="sticky -mx-4 space-y-2 px-4 pb-2 pt-1"
+      style={STICKY_STYLE}
+      data-testid="home-banners"
+      aria-label={t('banners.homeLabel')}
+    >
       {banners.slice(0, MAX_VISIBLE_BANNERS).map(banner => (
         <BannerView key={banner.id} banner={banner} onDismiss={onDismiss} />
       ))}
