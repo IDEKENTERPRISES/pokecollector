@@ -32,8 +32,7 @@ LIST_LIMIT = 100
 
 class BannerRequest(BaseModel):
     message: str = Field(max_length=2000)
-    sender_mode: Literal["me", "custom"] = "me"
-    sender_name: str | None = Field(default=None, max_length=200)
+    sender_name: str = Field(max_length=200)
     avatar_mode: Literal["me", "pokemon"] = "me"
     avatar_id: int | None = None
     style: str = "info"
@@ -127,12 +126,11 @@ def _apply(payload: BannerRequest, row: Banner, current_user: User, db: Session)
     if route is not None and route not in notifications.ANNOUNCEMENT_ROUTES:
         raise HTTPException(status_code=422, detail="Unknown page to open")
 
-    if payload.sender_mode == "me":
-        sender_name = current_user.username
-    else:
-        sender_name = payload.sender_name or ""
-        if not sender_name or len(sender_name) > MAX_NAME:
-            raise HTTPException(status_code=422, detail=f"Name is required and at most {MAX_NAME} characters")
+    sender_name = payload.sender_name or ""
+    if not sender_name or len(sender_name) > MAX_NAME:
+        raise HTTPException(status_code=422, detail=f"Name is required and at most {MAX_NAME} characters")
+    # "me" when the name is the admin's own username, otherwise a custom name (drives the Admin/System label).
+    sender_mode = "me" if sender_name == current_user.username else "custom"
 
     if payload.avatar_mode == "me":
         avatar_id = current_user.avatar_id
@@ -155,7 +153,7 @@ def _apply(payload: BannerRequest, row: Banner, current_user: User, db: Session)
     if ends_at is not None and ends_at <= datetime.utcnow():
         raise HTTPException(status_code=422, detail="The end time must be in the future")
 
-    row.sender_mode, row.sender_name = payload.sender_mode, sender_name
+    row.sender_mode, row.sender_name = sender_mode, sender_name
     row.avatar_mode, row.avatar_id = payload.avatar_mode, avatar_id
     row.message, row.style, row.route = payload.message, payload.style, route
     row.audience = payload.audience
@@ -168,10 +166,9 @@ def _audit_details(row: Banner) -> dict:
     details = {
         "banner_id": row.id,
         "sender_mode": row.sender_mode,
+        "sender_name": row.sender_name,
         "audience": "all" if row.audience == "all" else _audience_ids(row),
     }
-    if row.sender_mode == "custom":
-        details["sender_name"] = row.sender_name
     return details
 
 

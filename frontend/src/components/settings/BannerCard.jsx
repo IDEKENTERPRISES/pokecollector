@@ -15,10 +15,11 @@ import { ANNOUNCEMENT_ROUTES } from './SendNotificationCard'
 export const MAX_MESSAGE = 280
 export const MAX_NAME = 40
 
-export const EMPTY_FORM = {
-  message: '', senderMode: 'me', senderName: '', avatarMode: 'me', avatarId: null,
+/** A blank form; the sender name starts as the admin's own username. */
+export const emptyForm = user => ({
+  message: '', senderName: user?.username || '', avatarMode: 'me', avatarId: null,
   style: 'info', route: '', audience: 'all', chosen: [], endsAt: '', dismissible: true,
-}
+})
 
 const clean = text => String(text ?? '').split(/\s+/).filter(Boolean).join(' ')
 
@@ -26,10 +27,8 @@ const clean = text => String(text ?? '').split(/\s+/).filter(Boolean).join(' ')
 export function canSave(form) {
   const message = clean(form.message)
   if (!message || message.length > MAX_MESSAGE) return false
-  if (form.senderMode === 'custom') {
-    const name = clean(form.senderName)
-    if (!name || name.length > MAX_NAME) return false
-  }
+  const name = clean(form.senderName)
+  if (!name || name.length > MAX_NAME) return false
   if (form.avatarMode === 'pokemon' && !(form.avatarId >= 1 && form.avatarId <= 151)) return false
   if (form.audience === 'some' && form.chosen.length === 0) return false
   return true
@@ -39,8 +38,7 @@ export function canSave(form) {
 export function buildPayload(form) {
   return {
     message: clean(form.message),
-    sender_mode: form.senderMode,
-    sender_name: form.senderMode === 'custom' ? clean(form.senderName) : null,
+    sender_name: clean(form.senderName),
     avatar_mode: form.avatarMode,
     avatar_id: form.avatarMode === 'pokemon' ? form.avatarId : null,
     style: form.style,
@@ -66,8 +64,7 @@ export function toLocalInput(iso) {
 export function formFromBanner(banner) {
   return {
     message: banner.message,
-    senderMode: banner.sender_mode,
-    senderName: banner.sender_mode === 'custom' ? banner.sender_name : '',
+    senderName: banner.sender_name,
     avatarMode: banner.avatar_mode,
     avatarId: banner.avatar_mode === 'pokemon' ? banner.avatar_id : null,
     style: banner.style,
@@ -83,8 +80,8 @@ export function formFromBanner(banner) {
 export function previewBanner(form, user) {
   return {
     id: 0,
-    label: form.senderMode === 'custom' ? 'system' : 'admin',
-    sender_name: form.senderMode === 'custom' ? clean(form.senderName) || '...' : user?.username || '',
+    label: clean(form.senderName) === user?.username ? 'admin' : 'system',
+    sender_name: clean(form.senderName) || '...',
     avatar_id: form.avatarMode === 'pokemon' ? form.avatarId : user?.avatar_id ?? null,
     message: clean(form.message) || '...',
     style: form.style,
@@ -133,7 +130,7 @@ export default function BannerCard() {
   const { t } = useSettings()
   const { user } = useAuth()
   const queryClient = useQueryClient()
-  const [form, setForm] = useState(EMPTY_FORM)
+  const [form, setForm] = useState(() => emptyForm(user))
   const [editingId, setEditingId] = useState(null)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [deleting, setDeleting] = useState(null)
@@ -157,7 +154,7 @@ export default function BannerCard() {
     mutationFn: () => (editingId ? updateBanner(editingId, buildPayload(form)) : createBanner(buildPayload(form))),
     onSuccess: () => {
       toast.success(t(editingId ? 'banners.saved' : 'banners.created'))
-      setForm(EMPTY_FORM)
+      setForm(emptyForm(user))
       setEditingId(null)
       refresh()
     },
@@ -188,22 +185,14 @@ export default function BannerCard() {
           <span className="block text-right text-caption-1 text-text-muted" data-testid="banner-counter">{form.message.length}/{MAX_MESSAGE}</span>
         </label>
 
-        <div className="space-y-2">
+        <label className="block space-y-1">
           <span className="text-subheadline font-semibold">{t('banners.senderLabel')}</span>
-          <SegmentedControl
-            ariaLabel={t('banners.senderLabel')} value={form.senderMode} onChange={value => set({ senderMode: value })}
-            options={[
-              { value: 'me', label: t('banners.senderMe').replace('{name}', user?.username || '') },
-              { value: 'custom', label: t('banners.senderCustom') },
-            ]}
+          <input
+            className="input w-full" value={form.senderName} maxLength={MAX_NAME} placeholder={t('banners.senderPlaceholder')}
+            data-testid="banner-name-input" onChange={event => set({ senderName: event.target.value })}
           />
-          {form.senderMode === 'custom' && (
-            <input
-              className="input w-full" value={form.senderName} maxLength={MAX_NAME} placeholder={t('banners.senderPlaceholder')}
-              data-testid="banner-name-input" onChange={event => set({ senderName: event.target.value })}
-            />
-          )}
-        </div>
+          <span className="block text-right text-caption-1 text-text-muted" data-testid="banner-name-counter">{form.senderName.length}/{MAX_NAME}</span>
+        </label>
 
         <div className="space-y-2">
           <span className="text-subheadline font-semibold">{t('banners.pictureLabel')}</span>
@@ -283,7 +272,7 @@ export default function BannerCard() {
 
         <div className="flex gap-3">
           {editingId && (
-            <button type="button" className="btn-secondary flex-1 justify-center" onClick={() => { setForm(EMPTY_FORM); setEditingId(null) }}>
+            <button type="button" className="btn-secondary flex-1 justify-center" onClick={() => { setForm(emptyForm(user)); setEditingId(null) }}>
               {t('banners.cancelEdit')}
             </button>
           )}

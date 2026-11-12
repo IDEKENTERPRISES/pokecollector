@@ -60,7 +60,7 @@ class BannerTests(unittest.TestCase):
         return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
     def create(self, **body):
-        body = {"message": "Hello trainers", **body}
+        body = {"message": "Hello trainers", "sender_name": "admin", **body}
         return self.client.post("/api/admin/banners", json=body, headers=self.login("admin"))
 
     def actions(self):
@@ -78,9 +78,9 @@ class BannerTests(unittest.TestCase):
 
     def test_admin_endpoints_refuse_trainers(self):
         headers = self.login("misty")
-        self.assertEqual(self.client.post("/api/admin/banners", json={"message": "x"}, headers=headers).status_code, 403)
+        self.assertEqual(self.client.post("/api/admin/banners", json={"message": "x", "sender_name": "n"}, headers=headers).status_code, 403)
         self.assertEqual(self.client.get("/api/admin/banners", headers=headers).status_code, 403)
-        self.assertEqual(self.client.put("/api/admin/banners/1", json={"message": "x"}, headers=headers).status_code, 403)
+        self.assertEqual(self.client.put("/api/admin/banners/1", json={"message": "x", "sender_name": "n"}, headers=headers).status_code, 403)
         self.assertEqual(self.client.post("/api/admin/banners/1/end", headers=headers).status_code, 403)
         self.assertEqual(self.client.delete("/api/admin/banners/1", headers=headers).status_code, 403)
 
@@ -90,9 +90,10 @@ class BannerTests(unittest.TestCase):
         body = response.json()
         self.assertEqual((body["sender_name"], body["avatar_id"], body["status"]), ("admin", 25, "active"))
         self.assertEqual(self.active("misty")[0]["label"], "admin")
+        self.assertEqual(body["sender_mode"], "me")
 
     def test_custom_name_and_pokemon(self):
-        body = self.create(sender_mode="custom", sender_name="Professor Oak", avatar_mode="pokemon", avatar_id=151).json()
+        body = self.create(sender_name="Professor Oak", avatar_mode="pokemon", avatar_id=151).json()
         self.assertEqual((body["sender_name"], body["avatar_id"]), ("Professor Oak", 151))
         self.assertEqual(self.active("misty")[0]["label"], "system")
 
@@ -100,8 +101,9 @@ class BannerTests(unittest.TestCase):
         bad = [
             {"message": ""},
             {"message": "x" * 281},
-            {"sender_mode": "custom", "sender_name": ""},
-            {"sender_mode": "custom", "sender_name": "n" * 41},
+            {"sender_name": ""},
+            {"sender_name": "   "},
+            {"sender_name": "n" * 41},
             {"avatar_mode": "pokemon", "avatar_id": 0},
             {"avatar_mode": "pokemon", "avatar_id": 152},
             {"avatar_mode": "pokemon"},
@@ -149,10 +151,10 @@ class BannerTests(unittest.TestCase):
         self.assertEqual(len(self.active("misty")), 1)
 
     def test_edit_end_delete_and_audit(self):
-        banner_id = self.create(sender_mode="custom", sender_name="Prof").json()["id"]
+        banner_id = self.create(sender_name="Prof").json()["id"]
         edited = self.client.put(
             f"/api/admin/banners/{banner_id}",
-            json={"message": "changed", "style": "warning", "sender_mode": "custom", "sender_name": "Prof"},
+            json={"message": "changed", "style": "warning", "sender_name": "Prof"},
             headers=self.login("admin"),
         )
         self.assertEqual(edited.status_code, 200, edited.text)
@@ -168,6 +170,7 @@ class BannerTests(unittest.TestCase):
         db = self.Session()
         created = db.query(AuditLog).filter(AuditLog.action == "banner.created").one()
         self.assertIn("Prof", created.details)
+        self.assertIn("sender_name", created.details)
         self.assertEqual(db.query(Banner).count(), 0)
         db.close()
 

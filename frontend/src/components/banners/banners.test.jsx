@@ -11,7 +11,7 @@ vi.mock('../../contexts/SettingsContext', () => ({ useSettings: () => ({ t }) })
 const { default: BannerView, MAX_VISIBLE_BANNERS, overflowCount, spriteUrl } = await import('./BannerView')
 const { BannerStack } = await import('./HomeBanners')
 const {
-  BannerList, EMPTY_FORM, MAX_MESSAGE, MAX_NAME, buildPayload, canSave, formFromBanner, previewBanner, toLocalInput,
+  BannerList, MAX_MESSAGE, MAX_NAME, buildPayload, canSave, emptyForm, formFromBanner, previewBanner, toLocalInput,
 } = await import('../settings/BannerCard')
 const { auditActionLabel, auditDetailText } = await import('../settings/AuditLogSheet')
 
@@ -60,7 +60,8 @@ describe('Home banner stack', () => {
 })
 
 describe('admin banner form', () => {
-  const ok = { ...EMPTY_FORM, message: 'Hello' }
+  const user = { username: 'admin', avatar_id: 25 }
+  const ok = { ...emptyForm(user), message: 'Hello' }
 
   it('needs a message within the limit', () => {
     expect(canSave(ok)).toBe(true)
@@ -68,10 +69,13 @@ describe('admin banner form', () => {
     expect(canSave({ ...ok, message: 'x'.repeat(MAX_MESSAGE + 1) })).toBe(false)
   })
 
-  it('needs a custom name within the limit', () => {
-    expect(canSave({ ...ok, senderMode: 'custom', senderName: '' })).toBe(false)
-    expect(canSave({ ...ok, senderMode: 'custom', senderName: 'n'.repeat(MAX_NAME + 1) })).toBe(false)
-    expect(canSave({ ...ok, senderMode: 'custom', senderName: 'Professor Oak' })).toBe(true)
+  it('prefills the sender name with the username and needs a name within the limit', () => {
+    expect(ok.senderName).toBe('admin')
+    expect(canSave({ ...ok, senderName: '' })).toBe(false)
+    expect(canSave({ ...ok, senderName: '   ' })).toBe(false)
+    expect(canSave({ ...ok, senderName: 'n'.repeat(MAX_NAME + 1) })).toBe(false)
+    expect(canSave({ ...ok, senderName: 'n'.repeat(MAX_NAME) })).toBe(true)
+    expect(canSave({ ...ok, senderName: 'Professor Oak' })).toBe(true)
   })
 
   it('needs a Pokemon when choosing one, and trainers when choosing some', () => {
@@ -84,14 +88,14 @@ describe('admin banner form', () => {
 
   it('builds the API payload', () => {
     const payload = buildPayload({
-      ...ok, message: '  Hi   there ', senderMode: 'custom', senderName: ' Prof  Oak ', avatarMode: 'pokemon', avatarId: 1,
+      ...ok, message: '  Hi   there ', senderName: ' Prof  Oak ', avatarMode: 'pokemon', avatarId: 1,
       route: '/sets', audience: 'some', chosen: [2, 3], dismissible: false,
     })
     expect(payload).toMatchObject({
-      message: 'Hi there', sender_mode: 'custom', sender_name: 'Prof Oak', avatar_mode: 'pokemon', avatar_id: 1,
+      message: 'Hi there', sender_name: 'Prof Oak', avatar_mode: 'pokemon', avatar_id: 1,
       route: '/sets', audience: 'some', user_ids: [2, 3], ends_at: null, dismissible: false,
     })
-    expect(buildPayload(ok)).toMatchObject({ sender_name: null, avatar_id: null, route: null, user_ids: [] })
+    expect(buildPayload(ok)).toMatchObject({ sender_name: 'admin', avatar_id: null, route: null, user_ids: [] })
   })
 
   it('round-trips an end time and an existing banner', () => {
@@ -99,17 +103,16 @@ describe('admin banner form', () => {
     expect(toLocalInput(iso)).toBe('2030-01-02T03:04')
     expect(toLocalInput(null)).toBe('')
     const form = formFromBanner({
-      message: 'm', sender_mode: 'me', sender_name: 'admin', avatar_mode: 'me', avatar_id: 25, style: 'warning',
+      message: 'm', sender_name: 'Professor Oak', avatar_mode: 'me', avatar_id: 25, style: 'warning',
       route: null, audience: 'all', user_ids: [], ends_at: iso, dismissible: true,
     })
-    expect(form).toMatchObject({ senderName: '', avatarId: null, style: 'warning', endsAt: '2030-01-02T03:04' })
+    expect(form).toMatchObject({ senderName: 'Professor Oak', avatarId: null, style: 'warning', endsAt: '2030-01-02T03:04' })
     expect(new Date(buildPayload(form).ends_at).toISOString()).toBe(iso)
   })
 
   it('previews as me or as a custom sender', () => {
-    const user = { username: 'admin', avatar_id: 25 }
     expect(previewBanner(ok, user)).toMatchObject({ label: 'admin', sender_name: 'admin', avatar_id: 25 })
-    expect(previewBanner({ ...ok, senderMode: 'custom', senderName: 'Oak', avatarMode: 'pokemon', avatarId: 7 }, user))
+    expect(previewBanner({ ...ok, senderName: 'Oak', avatarMode: 'pokemon', avatarId: 7 }, user))
       .toMatchObject({ label: 'system', sender_name: 'Oak', avatar_id: 7 })
   })
 
