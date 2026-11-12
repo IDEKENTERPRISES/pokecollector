@@ -78,6 +78,10 @@ class PhoneOptionTests(unittest.TestCase):
         self.assertIn(IN_USE + "+phone8+index8", labels)
         self.assertIn("names+number+art+fastread+numberonce+corners+wholepic+phone8+index8", labels)
         self.assertIn(IN_USE + "+fp16+index8", labels)
+        self.assertIn(IN_USE + "+wholeread+wholestrict+phone8+index8", labels)  # step 2: the kept set with the whole-picture read, phone settings
+        whole = variants.parse(variants.PHONE_LITE_WHOLE_LABEL)
+        self.assertTrue(whole.wholeread and whole.wholestrict and whole.phone8 and not whole.tta and not whole.text)
+        self.assertEqual(variants.parse(variants.PHONE_KEPT_LABEL).label, variants.PHONE_KEPT_LABEL)
         self.assertIn(IN_USE, labels)  # the existing rows stay
         for label in labels:
             self.assertEqual(variants.parse(label).label, label)  # every label is already in canonical order

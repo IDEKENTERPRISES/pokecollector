@@ -1,6 +1,7 @@
 """Scanner lab (admins): the picture matcher's index, benchmark, shadow comparison and picture-first counts."""
 
 import base64
+import json
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -13,7 +14,7 @@ from api.auth import get_current_user
 from database import get_db
 from models import Card, User
 from services import scan_trace, trace_sources
-from services.card_match import MATCHER_VERSION, benchmark, config, embed, index as index_module, jobs as jobs_module, misses as misses_module, phone as phone_module, shadow as shadow_module, variants
+from services.card_match import MATCHER_VERSION, benchmark, config, embed, index as index_module, jobs as jobs_module, misses as misses_module, phone as phone_module, phone_speed as phone_speed_module, shadow as shadow_module, variants
 from services.card_match.model_specs import DEFAULT_MODEL, MODEL_SPECS
 
 router = APIRouter()
@@ -229,6 +230,30 @@ def phone_bundle_file(path: str, request: Request, current_user: User = Depends(
     if _not_modified(request, etag):
         return Response(status_code=304, headers={"ETag": etag, "Cache-Control": _BUNDLE_CACHE})
     return FileResponse(full, media_type="application/octet-stream", headers={"ETag": etag, "Cache-Control": _BUNDLE_CACHE})
+
+
+@router.post("/phone-speed")
+async def post_phone_speed(request: Request, current_user: User = Depends(get_current_user)):
+    """Step 2: one phone speed-test run (admins). Numbers and device facts only, size-limited; nothing else is kept."""
+    _require_admin(current_user)
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > phone_speed_module.MAX_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Too large")
+    raw = await request.body()
+    if len(raw) > phone_speed_module.MAX_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Too large")
+    try:
+        body = json.loads(raw)
+        run = phone_speed_module.record(body, current_user.username)
+    except (ValueError, phone_speed_module.SpeedRunError) as error:  # SpeedRunError is a ValueError; so is bad JSON
+        raise HTTPException(status_code=422, detail=str(error)[:200])
+    return {"saved": True, "run": run}
+
+
+@router.get("/phone-speed")
+def get_phone_speed(current_user: User = Depends(get_current_user)):
+    _require_admin(current_user)
+    return {"runs": phone_speed_module.latest(10)}
 
 
 class BenchmarkRequest(BaseModel):
