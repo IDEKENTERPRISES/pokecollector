@@ -196,9 +196,10 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
     const overlapping = Boolean(overlap && canRead && !lowMemory && embedder.where === 'main thread')
     const wholeEligible = found.source !== 'whole' && p.isGuidePicture(photo)
     const ocrLimits = { maxSteps: ocr.maxSteps ?? null, acceptConfidence: ocr.acceptConfidence ?? undefined }
+    const heldBack = wholeEligible || Boolean(ocr.noLastResort) // 'first': the last-resort band does not run in the first read
     const attemptFor = names => async isFlipped => {
       const result = await stage('ocr_number', () => p.readCard(reader, textCard, {
-        fast: true, flipped: isFlipped, readHp: false, stage: wholeEligible ? 'first' : 'all', budget: limits.number, ...ocrLimits,
+        fast: true, flipped: isFlipped, readHp: false, stage: heldBack ? 'first' : 'all', budget: limits.number, maxSteps: ocrLimits.maxSteps, acceptConfidence: ocrLimits.acceptConfidence,
       }))
       const name = names ? await stage('name', () => p.readName(reader, textCard, { flipped: isFlipped, budget: limits.name })) : null
       return { result, name }
@@ -347,7 +348,7 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
         calls: ocrCalls,
         number: ladderSummary(firstRead, limits.number, ocrResult),
         name: nameRead ? { budget: limits.name, steps: stepsOf(nameRead.strips) } : null,
-        options: { maxSteps: ocrLimits.maxSteps, acceptConfidence: ocrLimits.acceptConfidence ?? null },
+        options: { maxSteps: ocrLimits.maxSteps, acceptConfidence: ocrLimits.acceptConfidence ?? null, noLastResort: Boolean(ocr.noLastResort) },
       } : null,
     }
   }

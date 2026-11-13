@@ -523,3 +523,14 @@ describe('honest totals, overlap reasons, ladder steps and the decided card rank
     expect(result.decisionRank).toMatchObject({ picture_rank: 1, similarity: expect.any(Number) })
   })
 })
+
+describe('the lean ladder skips the last-resort band too (round 2)', () => {
+  it('reads with only the first steps and holds the last-resort band back even when the second read does not apply', async () => {
+    const lean = harness({ guide: false, ocr: { maxSteps: 3, noLastResort: true } })
+    await lean.matcher.match(photo)
+    expect(lean.calls.read[0]).toMatchObject({ maxSteps: 3, stage: 'first' })
+    const server = harness({ guide: false })
+    await server.matcher.match(photo)
+    expect(server.calls.read[0].stage).toBe('all')
+  })
+})

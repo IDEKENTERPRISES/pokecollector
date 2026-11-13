@@ -22,8 +22,8 @@ import { pictureIndexFromBuffers } from './pictureIndex'
 
 export const MODES = ['auto', 'worker-webgpu', 'main-webgpu', 'main-wasm', 'wasm']
 export const OCR_BACKENDS = ['wasm', 'webgpu-main']
-/** The reader's ladder: 'server' is the server's (parity-checked); 'lean' stops after the first three steps (see docs/phone-scanner/integration.md for its cost). */
-export const OCR_PROFILES = { server: {}, lean: { maxSteps: 3 } }
+/** The reader's ladder: 'server' is the server's (parity-checked); 'lean' stops after the first three steps and skips the last-resort band (see docs/phone-scanner/integration.md for its cost: a number that only that band finds is lost). */
+export const OCR_PROFILES = { server: {}, lean: { maxSteps: 3, noLastResort: true } }
 
 /**
  * createMatcherHost({post, files, loadWasm, loadGpu, probeGpu, cardDb, create...}) -> {handle(message), state}
