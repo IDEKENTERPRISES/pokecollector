@@ -101,7 +101,7 @@ def _clean_answer(answer) -> dict:
     return out
 
 
-MATCHER_STAGES = ("finder", "views", "embed", "search", "ocr_number", "name", "second_read", "decide", "total")
+MATCHER_STAGES = ("finder", "views", "embed", "search", "ocr_number", "name", "second_read", "catalogue", "decide", "other", "total", "warm", "saved")
 
 
 def _short(value, where: str, limit: int = MAX_STRING):
@@ -137,12 +137,48 @@ def _small_object(value, where: str, shape: dict):
     return out
 
 
+def _clean_steps(steps, where: str):
+    """The reader's ladder as a short list: label, ms, how many text lines it found, what they said, and the number it held after the step."""
+    if steps is None:
+        return None
+    if not isinstance(steps, list) or len(steps) > 10:
+        raise SpeedRunError(f"{where} holds at most 10 steps")
+    return [_small_object(step, where, {"label": "text", "ms": "number", "lines": "number", "text": "text", "after": "text"}) for step in steps]
+
+
+def _read_of(ocr) -> dict | None:
+    """What the server's reader read, in the shape the phone posts: the number, total, name, source, and each ladder step (label, ms, lines found, what
+    they said, the number held after it), so Scanner lab can put the two side by side."""
+    if not isinstance(ocr, dict) or not ocr:
+        return None
+
+    def pack(strip):
+        lines = [str(line.get("text", "")) for line in strip.get("lines") or []]
+        after = strip.get("after") or {}
+        held = None
+        if "number" in after:
+            held = f"{after.get('number') or '-'}/{after.get('total') or '-'}"
+        elif "name" in after:
+            held = after.get("name")
+        return {"label": str(strip.get("label", ""))[:24], "ms": strip.get("ms"), "lines": len(lines), "text": " | ".join(lines)[:70], "after": (str(held)[:40] if held else None)}
+
+    strips = [item for item in ocr.get("strips") or [] if isinstance(item, dict) and item.get("label") != "hp"]
+    is_name = lambda item: str(item.get("label", "")).startswith(("name", "top-"))  # noqa: E731
+    text_input = ocr.get("text_input") or {}
+    return {
+        "number": ocr.get("number_local"), "total": ocr.get("number_total"), "name": ocr.get("name"), "source": ocr.get("number_source"),
+        "confidence": ocr.get("number_confidence"), "tokens": [str(token) for token in (ocr.get("tokens") or [])[:6]], "flipped": ocr.get("flipped"),
+        "text_input": {"source": text_input.get("source"), "width": text_input.get("width"), "height": text_input.get("height")} if text_input else None,
+        "name_steps": [pack(item) for item in strips if is_name(item)][:10], "number_steps": [pack(item) for item in strips if not is_name(item)][:10],
+    }
+
+
 def _clean_matcher(matcher) -> dict:
     """What the phone's full matcher answered for the photo (step 3d): the decision, the top 20, what it read and its stage times."""
     if not isinstance(matcher, dict):
         raise SpeedRunError("matcher must be an object")
     allowed = {"version", "backend", "mode", "runs", "stable", "decided", "card", "mechanism", "reason", "similarity", "picture_only", "top20", "read",
-               "orientation", "detection", "wholeread", "catalogue", "photo", "timings", "variant", "ocr", "ladder"}
+               "orientation", "detection", "wholeread", "catalogue", "photo", "timings", "variant", "ocr", "ladder", "name_steps", "number_steps", "text_input", "decision_rank", "overlap", "setup"}
     if set(matcher) - allowed:
         raise SpeedRunError("matcher holds unknown fields")
     out: dict = {}
@@ -169,7 +205,7 @@ def _clean_matcher(matcher) -> dict:
     out["orientation"] = _small_object(matcher.get("orientation"), "matcher.orientation", {"by": "text", "flipped": "flag"})
     out["detection"] = _small_object(matcher.get("detection"), "matcher.detection", {"source": "text", "found": "flag"})
     out["wholeread"] = _small_object(matcher.get("wholeread"), "matcher.wholeread", {"tried": "flag", "rescued": "flag"})
-    out["catalogue"] = _small_object(matcher.get("catalogue"), "matcher.catalogue", {"present": "flag", "cards": "number"})
+    out["catalogue"] = _small_object(matcher.get("catalogue"), "matcher.catalogue", {"present": "flag", "cards": "number", "printed_total_missing": "number"})
     out["photo"] = _small_object(matcher.get("photo"), "matcher.photo", {"width": "number", "height": "number", "bytes": "number"})
     out["ladder"] = _small_object(matcher.get("ladder"), "matcher.ladder", {"stopped": "text", "attempts": "number", "seconds": "number", "budget": "number"})
     reader = matcher.get("ocr")
@@ -179,6 +215,12 @@ def _clean_matcher(matcher) -> dict:
         out["ocr"] = {stage: _small_object(entry, f"matcher.ocr.{stage}", {"det_calls": "number", "det_ms": "number", "rec_calls": "number", "rec_ms": "number"}) for stage, entry in reader.items()}
     else:
         out["ocr"] = None
+    out["name_steps"] = _clean_steps(matcher.get("name_steps"), "matcher.name_steps")
+    out["number_steps"] = _clean_steps(matcher.get("number_steps"), "matcher.number_steps")
+    out["text_input"] = _small_object(matcher.get("text_input"), "matcher.text_input", {"source": "text", "width": "number", "height": "number"})
+    out["decision_rank"] = _small_object(matcher.get("decision_rank"), "matcher.decision_rank", {"picture_rank": "number", "similarity": "number", "lead": "number"})
+    out["overlap"] = _small_object(matcher.get("overlap"), "matcher.overlap", {"asked": "flag", "used": "flag", "why": "text"})
+    out["setup"] = _small_object(matcher.get("setup"), "matcher.setup", {"load_ms": "number", "transfer_ms": "number", "restarted": "flag"})
     timings = matcher.get("timings") or {}
     if not isinstance(timings, dict) or set(timings) - set(MATCHER_STAGES):
         raise SpeedRunError("matcher.timings holds unknown stages")
@@ -400,6 +442,13 @@ def compare_matcher(run: dict) -> dict | None:
         "same_mechanism": same_mechanism, "overlap": len(phone_ids & server_ids), "picture_only": bool(matcher.get("picture_only")),
         "phone_mechanism": matcher.get("mechanism"), "server_mechanism": (decision or {}).get("mechanism"),
         "phone_reason": matcher.get("reason"), "server_reason": entry.get("unsure_reason"),
+        "phone_rank": (matcher.get("decision_rank") or {}).get("picture_rank"), "server_rank": (decision or {}).get("picture_rank"),
+        "phone_similarity": matcher.get("similarity"), "server_similarity": (decision or {}).get("similarity"),
+        "phone_read": matcher.get("read"), "server_read": entry.get("read"),
+        "phone_name_steps": matcher.get("name_steps"), "server_name_steps": (entry.get("read") or {}).get("name_steps"),
+        "phone_number_steps": matcher.get("number_steps"), "server_number_steps": (entry.get("read") or {}).get("number_steps"),
+        "phone_text_input": matcher.get("text_input"), "server_text_input": (entry.get("read") or {}).get("text_input"),
+        "name_agrees": (matcher.get("read") or {}).get("name") == (entry.get("read") or {}).get("name"),
     }
 
 
@@ -462,8 +511,11 @@ def _answer_of(result, label: str, milliseconds: float) -> dict:
     return {
         "status": "ok", "label": label, "ms": round(milliseconds),
         "outcome": result.status, "unsure_reason": result.unsure_reason,
-        "decision": ({"id": result.decision.get("tcg_card_id"), "mechanism": result.decision.get("mechanism"), "similarity": round(float(result.decision.get("similarity") or 0), 4)}
+        "decision": ({"id": result.decision.get("tcg_card_id"), "mechanism": result.decision.get("mechanism"), "similarity": round(float(result.decision.get("similarity") or 0), 4),
+                      "picture_rank": next((match.get("picture_rank") for match in (result.matches or []) if match.get("tcg_card_id") == result.decision.get("tcg_card_id")), None),
+                      "lead": result.decision.get("lead")}
                      if result.decision else None),
+        "read": _read_of(getattr(result, "ocr", None)),
         "top20": [{"id": match.get("tcg_card_id"), "similarity": round(float(match.get("similarity") or 0), 4)} for match in (result.matches or [])[:MAX_TOP]],
     }
 
