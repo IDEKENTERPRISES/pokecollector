@@ -19,7 +19,7 @@ describe('the three runs', () => {
     expect(MATCHER_RUNS).toBe(3)
     expect(stageTimes(results, 'total')).toEqual({ first: 2500, median: 2100 })
     expect(stageTimes(results, 'embed')).toEqual({ first: 800, median: 720 })
-    expect(Object.keys(summariseTimings(results))).toEqual(['finder', 'views', 'embed', 'search', 'ocr_number', 'name', 'second_read', 'decide', 'total'])
+    expect(Object.keys(summariseTimings(results))).toEqual(['finder', 'views', 'embed', 'search', 'ocr_number', 'name', 'second_read', 'catalogue', 'decide', 'other', 'total', 'warm', 'saved'])
   })
   it('with a single run the median is that run, and a stage nobody timed is null', () => {
     expect(stageTimes([result(2500)], 'total')).toEqual({ first: 2500, median: 2500 })

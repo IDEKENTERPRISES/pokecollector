@@ -26,7 +26,7 @@ import { scoreNames as defaultScoreNames } from '../decide/names'
 import { resolveThresholds } from '../decide/thresholds'
 import { combineScores, maxInto, searchArt, searchWhole } from './pictureIndex'
 import { MATCHER_VERSION } from './guard'
-import { ladderSummary } from './ocrStats'
+import { ladderSummary, stepsOf } from './ocrStats'
 
 export { MATCHER_VERSION }
 
@@ -36,7 +36,7 @@ export const DEFAULT_BUDGETS = Object.freeze({ number: 0.9, name: 0.9, secondRea
 /** The in-use + wholeread + wholestrict option set as `decideCard` options (the server's kept set). */
 export const KEPT_OPTIONS = Object.freeze({ numberOnce: true, wholeStrict: true, reprint: false, useNames: true, useNumber: true, useText: true })
 
-export const STAGES = ['finder', 'views', 'embed', 'search', 'ocr_number', 'name', 'second_read', 'decide']
+export const STAGES = ['finder', 'views', 'embed', 'search', 'ocr_number', 'name', 'second_read', 'catalogue', 'decide']
 
 const defaultNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now())
 
@@ -187,13 +187,19 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
       return { margin, pictureFlipped, picture: await scoresFor(pictureFlipped) }
     }
 
+    // building the card-database indexes (once per worker, a second or more) used to hide between the stages: it is its own row now
+    const loadCatalogue = async () => {
+      const began = now()
+      try { return await getDecideIndexes() } finally { clock.timings.catalogue += now() - began }
+    }
     const canRead = Boolean(useText && (sessions || (lowMemory && resources.openReader)))
     const overlapping = Boolean(overlap && canRead && !lowMemory && embedder.where === 'main thread')
     const wholeEligible = found.source !== 'whole' && p.isGuidePicture(photo)
     const ocrLimits = { maxSteps: ocr.maxSteps ?? null, acceptConfidence: ocr.acceptConfidence ?? undefined }
+    const heldBack = wholeEligible || Boolean(ocr.noLastResort) // 'first': the last-resort band does not run in the first read
     const attemptFor = names => async isFlipped => {
       const result = await stage('ocr_number', () => p.readCard(reader, textCard, {
-        fast: true, flipped: isFlipped, readHp: false, stage: wholeEligible ? 'first' : 'all', budget: limits.number, ...ocrLimits,
+        fast: true, flipped: isFlipped, readHp: false, stage: heldBack ? 'first' : 'all', budget: limits.number, maxSteps: ocrLimits.maxSteps, acceptConfidence: ocrLimits.acceptConfidence,
       }))
       const name = names ? await stage('name', () => p.readName(reader, textCard, { flipped: isFlipped, budget: limits.name })) : null
       return { result, name }
@@ -203,7 +209,7 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
     let loading = null
     let speculative = null
     if (overlapping) {
-      loading = getDecideIndexes()
+      loading = loadCatalogue()
       speculative = loading.then(found2 => (found2 ? attemptFor(found2.names ?? null)(false) : null))
       speculative.catch(() => {})
     }
@@ -216,7 +222,7 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
     let flipped = pictureFlipped
     let how = 'picture'
     let wholeread = null
-    const indexes = canRead ? await (loading ?? getDecideIndexes()) : null // no card database on the phone: nothing to read the text against
+    const indexes = canRead ? await (loading ?? loadCatalogue()) : null // no card database on the phone: nothing to read the text against
     if (lowMemory && indexes && canRead) reader = await resources.openReader()
     const names = indexes?.names ?? null
     let ocrCalls = null
@@ -297,6 +303,13 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
     const total = now() - started
     const timings_ms = Object.fromEntries(STAGES.map(name => [name, roundMs(clock.timings[name])]))
     timings_ms.total = roundMs(total)
+    const sum = STAGES.reduce((acc, name) => acc + clock.timings[name], 0)
+    timings_ms.other = roundMs(Math.max(0, total - sum)) // time between the stages (cloning, ranking...), so the rows add up to the total
+    timings_ms.warm = roundMs(Math.max(0, total - clock.timings.catalogue)) // the per-card time of a warm worker: without the one-off index build
+    timings_ms.saved = roundMs(Math.max(0, sum - total)) // what overlap saved: the stages ran side by side, so they add up to more than the total
+    const overlapWhy = overlapping ? null : !overlap ? null : !canRead ? 'no text reading' : lowMemory ? 'low memory is on (it loads things one at a time)' : embedder.where !== 'main thread' ? 'the model runs in the worker (one thread), so there is nothing to run beside' : 'unknown'
+    const finalStrips = stepsOf((ocrResult?.strips) || [])
+    const decidedCandidate = (decided.candidates || []).find(candidate => candidate.id === decided.cardId)
     return {
       version: MATCHER_VERSION,
       backend: embedder.backend ?? null,
@@ -327,12 +340,15 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
       stages: clock.trace,
       timings_ms,
       overlapped: overlapping,
+      overlap: { asked: Boolean(overlap), used: overlapping, why: overlapWhy },
+      textInput: { source: found.hires ? (detectionFound ? 'photo' : 'guide_crop_sharp') : 'crop', width: textCard.width, height: textCard.height },
+      decisionRank: decidedCandidate ? { picture_rank: decidedCandidate.pictureRank, similarity: decidedCandidate.score, lead: decided.lead ?? null } : null,
       lowMemory,
       ocrStats: canRead ? {
         calls: ocrCalls,
-        number: ladderSummary(firstRead, limits.number),
-        name: nameRead ? { budget: limits.name, steps: (nameRead.strips || []).map(strip => ({ label: strip.label, variant: strip.variant, zoom: strip.zoom, ms: strip.ms })) } : null,
-        options: { maxSteps: ocrLimits.maxSteps, acceptConfidence: ocrLimits.acceptConfidence ?? null },
+        number: ladderSummary(firstRead, limits.number, ocrResult),
+        name: nameRead ? { budget: limits.name, steps: stepsOf(nameRead.strips) } : null,
+        options: { maxSteps: ocrLimits.maxSteps, acceptConfidence: ocrLimits.acceptConfidence ?? null, noLastResort: Boolean(ocr.noLastResort) },
       } : null,
     }
   }

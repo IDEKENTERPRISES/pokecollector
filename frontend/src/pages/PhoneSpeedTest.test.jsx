@@ -8,7 +8,7 @@ vi.mock('../navigation/useNavBar', () => ({ useNavBar: () => {} }))
 vi.mock('../api/client', () => ({ default: { get: vi.fn(() => new Promise(() => {})), post: vi.fn() } }))
 
 const { default: PhoneSpeedTest, ResultsTable, MatcherResults, OcrStats, GpuDiagnosis } = await import('./PhoneSpeedTest')
-const { PhoneSpeedRuns, matcherAgreementText, matcherTimingText } = await import('../components/settings/ScannerLabSection')
+const { PhoneSpeedRuns, matcherAgreementText, matcherTimingText, matcherReadLines, gpuDiagText } = await import('../components/settings/ScannerLabSection')
 
 const render = element => renderToStaticMarkup(<MemoryRouter>{element}</MemoryRouter>)
 
@@ -109,7 +109,8 @@ describe('the full phone matcher section (step 3d)', () => {
   it('shows the stage times (first and median of the next two), the backend, the decision and the top 5 with names', () => {
     const html = render(<MatcherResults results={[result(), result({ timings_ms: { ...result().timings_ms, total: 2000 } }), result({ timings_ms: { ...result().timings_ms, total: 2200 } })]} sent="Numbers saved." />)
     expect(html).toContain('Find the card')
-    expect(html).toContain('Total per card')
+    expect(html).toContain('Total of this run')
+    expect(html).toContain('warm worker')
     expect(html).toContain('Median of 2')
     expect(html).toContain('2,510 ms')
     expect(html).toContain('2,100 ms')
@@ -167,7 +168,7 @@ describe('the matcher options and statistics on the page (iPhone fix)', () => {
     const stats = {
       calls: { ocr_number: { det: { n: 3, ms: 420, perCall: 140, inputs: ['1x3x128x704', '1x3x128x704'] }, rec: { n: 4, ms: 130, perCall: 32.5, inputs: ['1x3x48x320'] } } },
       number: { attempts: 3, steps: [{ label: 'number-left-tight', variant: 'plain', ms: 300 }], stopped: 'budget', budget: 0.9, seconds: 0.95 },
-      name: { steps: [{ label: 'name-line', ms: 120 }] },
+      name: { steps: [{ label: 'name-line', ms: 120, lines: 0, text: '' }] },
     }
     const html = render(<OcrStats stats={stats} />)
     expect(html).toContain('3 × 140 ms')
@@ -175,7 +176,7 @@ describe('the matcher options and statistics on the page (iPhone fix)', () => {
     expect(html).toContain('4 × 32.5 ms')
     expect(html).toContain('3 of 6 steps ran')
     expect(html).toContain('stopped by the 0.9 s budget')
-    expect(html).toContain('name-line 120 ms')
+    expect(html).toContain('name-line 120 ms, 0 line(s)')
     expect(render(<OcrStats stats={null} />)).toBe('')
     const memory = { rows: [['Picture indexes', 60], ['Embedding model', 42]], total: 102 }
     const withMemory = render(<MatcherResults results={[{ decided: false, candidates: [], timings_ms: {}, ocrStats: stats }]} memory={memory} />)
@@ -192,5 +193,90 @@ describe('the WebGPU test on the page (iPhone fix)', () => {
     expect(html).toContain('✓ adapter · 12 ms · apple / common-3')
     expect(html).toContain('✗ session · 900 ms · RangeError: out of memory')
     expect(html).toContain('text-red-500')
+  })
+})
+
+describe('honest totals, presets and warnings on the page (round 2)', () => {
+  const base = {
+    version: 11, backend: 'uint8 on WebAssembly (main thread)', decided: false, mechanism: null, unsure_reason: 'rules_choice_not_close_in_picture', candidates: [], pictureOnly: false,
+    timings_ms: { finder: 300, views: 150, embed: 2000, search: 45, ocr_number: 1400, name: 370, second_read: 0, catalogue: 1200, decide: 9, other: 20, total: 5500, warm: 4300, saved: 0 },
+  }
+
+  it('shows the card database index build, the in-between time and the warm per-card time as their own rows, and where the rest of the time went', () => {
+    const html = render(<MatcherResults results={[{ ...base, transferMs: 60 }]} info={{ loadMs: 786 }} />)
+    expect(html).toContain('Card database indexes (built once per worker)')
+    expect(html).toContain('1,200 ms')
+    expect(html).toContain('Between the stages')
+    expect(html).toContain('Per card with a warm worker')
+    expect(html).toContain('4,300 ms')
+    expect(html).toContain('(786 ms)')
+    expect(html).toContain('(60 ms this run)')
+    expect(html).not.toContain('Saved by overlap') // nothing was saved
+  })
+
+  it('shows what overlap saved when it ran, and says why when it did not', () => {
+    const saved = render(<MatcherResults results={[{ ...base, timings_ms: { ...base.timings_ms, saved: 1300, other: 0 }, overlap: { asked: true, used: true, why: null } }]} />)
+    expect(saved).toContain('Saved by overlap')
+    expect(saved).toContain('Overlap: used')
+    const not = render(<MatcherResults results={[{ ...base, overlap: { asked: true, used: false, why: 'low memory is on (it loads things one at a time)' } }]} />)
+    expect(not).toContain('Overlap: NOT used, because low memory is on')
+  })
+
+  it('warns, in red, when cards in the phone\'s database lack their printed total (the server compares them with it)', () => {
+    const html = render(<MatcherResults results={[{ ...base, catalogue: { present: true, cards: 19659, printedTotalMissing: 19659 } }]} />)
+    expect(html).toContain('19,659 cards in this phone')
+    expect(html).toContain('Sync the card database again')
+    expect(render(<MatcherResults results={[{ ...base, catalogue: { present: true, cards: 19659, printedTotalMissing: 0 } }]} />)).not.toContain('no printed set total')
+  })
+
+  it('has one-click presets for the safe, warm, fast WebGPU-in-the-worker and parallel combinations', () => {
+    const html = render(<PhoneSpeedTest />)
+    for (const id of ['safe', 'warm', 'gpu', 'parallel']) expect(html).toContain(`data-testid="phone-preset-${id}"`)
+    expect(html).toContain('Fast: fp16 WebGPU in the worker, one warm worker')
+  })
+})
+
+describe('Scanner lab: the server read beside the phone read, and the WebGPU test rows (round 2)', () => {
+  const compare = {
+    status: 'compared', phone: null, server: '30th-061', agree: false, overlap: 18,
+    phone_read: { number: '061', total: '128', name: null, source: 'finder_card' }, server_read: { number: '061', total: '128', name: 'Morpeko', source: 'finder_card' }, name_agrees: false,
+    phone_name_steps: [{ label: 'name-line', lines: 0, text: '' }, { label: 'top-wide', lines: 0, text: '' }],
+    server_name_steps: [{ label: 'name-line', lines: 1, text: 'Morpeko', after: 'Morpeko' }],
+    phone_number_steps: [{ label: 'number-left-tight', lines: 1, text: '061', after: '061/-' }], server_number_steps: [{ label: 'number-left-tight', lines: 1, text: '061/128', after: '061/128' }],
+    phone_text_input: { source: 'photo', width: 1008, height: 1408 }, server_text_input: { source: 'photo', width: 1008, height: 1408 },
+    phone_rank: 9, phone_similarity: 0.609, server_rank: 3, server_similarity: 0.65, phone_reason: 'rules_choice_not_close_in_picture', server_reason: null,
+  }
+  const run = { id: 'x', at: '2026-11-13T09:15:00', by: 'oak', has_photo: true, server: { status: 'done' }, device: { ios: '26.6', gpu: true }, timings: {}, matcher: { decided: false, card: null, backend: 'uint8 on WebAssembly (worker)', timings: { total: [5500, 5500], warm: [4300, 4300], catalogue: [1200, 1200] }, setup: { load_ms: 786 }, catalogue: { printed_total_missing: 100 } }, matcher_compare: compare }
+
+  it('puts the phone read and the server read, name strips, number steps and picture rank side by side', () => {
+    const lines = matcherReadLines(run)
+    expect(lines[0]).toBe('reads: phone 061/128 · no name · finder_card / server 061/128 · Morpeko · finder_card · NAME DIFFERS')
+    expect(lines[1]).toBe('name strips: phone name-line 0 line(s), top-wide 0 line(s) / server name-line 1 line(s) "Morpeko" → Morpeko')
+    expect(lines[2]).toContain('phone number-left-tight 1 line(s) "061" → 061/-')
+    expect(lines[2]).toContain('server number-left-tight 1 line(s) "061/128" → 061/128')
+    expect(lines[3]).toBe('text read from: phone photo 1008x1408 / server photo 1008x1408')
+    expect(lines[4]).toContain('phone 9 (similarity 0.609) / server 3 (similarity 0.65)')
+    expect(lines[5]).toBe('reasons: phone rules_choice_not_close_in_picture / server decided')
+    expect(matcherReadLines({ ...run, matcher_compare: { status: 'pending' } })).toEqual([])
+    expect(matcherReadLines({ ...run, matcher: null })).toEqual([])
+  })
+
+  it('shows the warm per-card time, the index build, the setup and the missing printed totals in the timing line', () => {
+    const text = matcherTimingText(run)
+    expect(text).toContain('index build 1,200')
+    expect(text).toContain('warm per card 4,300 ms')
+    expect(text).toContain('setup 786 ms (not per card)')
+    expect(text).toContain('100 cards lack a printed total')
+  })
+
+  it('lists a WebGPU step test with its step times (not as a speed run with empty numbers), and shows GPU trouble in red', () => {
+    const diag = { id: 'y', at: '2026-11-13T09:20:00', by: 'oak', has_photo: false, device: { ios: '26.6', gpuDiag: 'worker: navigator.gpu ok · session ok', gpuEvents: 'device lost (unknown): The GPU process crashed' }, timings: { gpudiag_worker_session_ms: 1918, gpudiag_worker_first_embedding_ms: 87 } }
+    expect(gpuDiagText(diag)).toBe('WebGPU test, worker: navigator.gpu ok · session ok (session 1,918 ms · first embedding 87 ms)')
+    const html = render(<PhoneSpeedRuns runs={[diag]} />)
+    expect(html).toContain('WebGPU step test')
+    expect(html).toContain('session 1,918 ms')
+    expect(html).toContain('GPU trouble: device lost (unknown): The GPU process crashed')
+    expect(html).not.toContain('embed – ms')
+    expect(gpuDiagText({ device: {} })).toBeNull()
   })
 })

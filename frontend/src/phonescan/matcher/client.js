@@ -2,7 +2,7 @@
 // model for the case where the worker has no WebGPU (the host asks for it by `rpc`). A worker that cannot be created (or that
 // dies) is reported as an error; `loopbackWorker` runs the same host in this scope, which the tests use.
 import { serveEmbeddings } from './embedder'
-import { SESSION_OPTIONS } from './ort'
+import { SESSION_OPTIONS, watchGpu } from './ort'
 import { diagnoseWebGpu } from './gpuDiag'
 
 export class MatcherError extends Error {
@@ -18,13 +18,14 @@ export const defaultWorker = () => new Worker(new URL('./worker.js', import.meta
  *   readFile(path)   -> ArrayBuffer | null   (for the fp16 model when it has to run on this thread)
  *   loadGpu()        -> the ORT WebGPU build (this thread)
  */
-export function createMatcherClient({ createWorker = defaultWorker, readFile = async () => null, loadGpu = null, loadWasm = null } = {}) {
+export function createMatcherClient({ createWorker = defaultWorker, readFile = async () => null, loadGpu = null, loadWasm = null, onGpuEvent = null } = {}) {
   let worker = null
   let nextId = 1
   const pending = new Map()
   const stageListeners = new Map()
   const models = new Map() // main-thread sessions by name: 'embed', 'det', 'rec'
-  const client = { info: null }
+  const client = { info: null, gpuEvents: [] }
+  const gpuEvent = text => { client.gpuEvents.push(text); if (client.gpuEvents.length > 10) client.gpuEvents.shift(); onGpuEvent?.(text, client.gpuEvents) }
 
   const dead = error => {
     for (const { reject } of pending.values()) reject(error)
@@ -37,14 +38,19 @@ export function createMatcherClient({ createWorker = defaultWorker, readFile = a
     const buffer = await readFile(path)
     if (!buffer) throw new Error(`${path} is not downloaded`)
     const session = await ort.InferenceSession.create(new Uint8Array(buffer), { executionProviders: [provider], ...SESSION_OPTIONS })
+    if (provider === 'webgpu') await watchGpu(ort, gpuEvent)
     models.set(name, { path, provider, session, ort, run: name === 'embed' ? await serveEmbeddings({ ort, session }) : null })
   }
 
+  // WebGPU sessions are never released while the page lives (and the worker that holds one is never terminated before it released it): destroying GPU buffers
+  // and sessions during a run, or at the end of one, is the prime suspect of the page going black on the owner's iPhone. They are reused by the next run instead.
   async function dropModels(names) {
     for (const name of names) {
       const old = models.get(name)
+      if (!old) continue
+      if (old.provider === 'webgpu') continue // kept for the page's lifetime
       models.delete(name)
-      await old?.session?.release?.()
+      await old.session?.release?.()
     }
   }
 
@@ -53,6 +59,7 @@ export function createMatcherClient({ createWorker = defaultWorker, readFile = a
       const wanted = payload.provider || 'webgpu'
       if (models.get('embed')?.path === payload.path && models.get('embed')?.provider === wanted) return true // a restarted worker finds the model still loaded here
       await dropModels(['embed'])
+      if (models.get('embed')?.provider === 'webgpu' && wanted !== 'webgpu') models.delete('embed') // not released (see above): it just stops being used
       await openModel('embed', payload.path, wanted)
       return true
     }
@@ -100,6 +107,7 @@ export function createMatcherClient({ createWorker = defaultWorker, readFile = a
         )
         return
       }
+      if (message.type === 'gpu-event') { gpuEvent(`worker: ${message.text}`); return }
       if (message.type === 'progress') { stageListeners.get(message.id)?.(message.stage, message.done ? { ms: message.ms, ok: message.ok, note: message.note } : null); return }
       const entry = pending.get(message.id)
       if (!entry) return
@@ -122,6 +130,8 @@ export function createMatcherClient({ createWorker = defaultWorker, readFile = a
     target.postMessage({ ...message, id }, transfer)
   })
 
+  const holdsGpu = () => Boolean(client.info && client.info.where === 'here' && /WebGPU/.test(client.info.backend || ''))
+
   return Object.assign(client, {
     /** Loads the models and indexes in the worker. Rejects with `code: 'matcher_version'` for a bundle of another version. */
     async init({ manifest, mode = 'auto', mainGpu = false, budgets = {}, ocrBackend = 'wasm', ocrProfile = 'server', detectMaxSide = null, lowMemory = false }) {
@@ -131,7 +141,11 @@ export function createMatcherClient({ createWorker = defaultWorker, readFile = a
     },
     /** `photo` = {data: Uint8ClampedArray RGBA, width, height}; its buffer is moved to the worker. */
     async match(photo, { onStage = null, useText = true, overlap = false } = {}) {
+      const began = typeof performance !== 'undefined' ? performance.now() : Date.now()
       const reply = await send({ type: 'match', photo, options: { useText, overlap } }, [photo.data.buffer], onStage)
+      const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - began
+      // what is not the matcher's own time: moving the photo to the worker and the answer back, and waiting for the worker to be free
+      reply.result.transferMs = Math.max(0, Math.round((elapsed - (reply.result.timings_ms?.total ?? 0)) * 10) / 10)
       return reply.result
     },
     async release() { await send({ type: 'release' }); await serve('release-model') },
@@ -144,11 +158,23 @@ export function createMatcherClient({ createWorker = defaultWorker, readFile = a
     diagnoseMain: ({ path, onStep = null }) => diagnoseWebGpu({ loadGpu, readFile, path, onStep }),
     /** Stops the worker (its wasm heaps and indexes go) but keeps the models on this thread: the next `init` starts a fresh worker. */
     restartWorker() {
+      if (holdsGpu()) return false // a worker that holds a GPU device is never terminated: it is reused
       try { worker?.terminate() } catch { /* already gone */ }
       dead(new MatcherError('The matcher worker was restarted', 'terminated'))
+      return true
+    },
+    /** True while the worker itself holds the WebGPU model (then it must release and wait before it may end). */
+    holdsGpu: () => holdsGpu(),
+    /** Leaving the page: a worker with a GPU device releases first and is stopped only after it answered (or after 3 s); otherwise it is stopped at once. */
+    async shutdown() {
+      if (holdsGpu() && worker) {
+        try { await Promise.race([send({ type: 'release' }), new Promise(resolve => setTimeout(resolve, 3000))]) } catch { /* it is going away anyway */ }
+      }
+      try { worker?.terminate() } catch { /* already gone */ }
+      dead(new MatcherError('The matcher worker was stopped', 'terminated'))
     },
     terminate() {
-      serve('release-model').catch(() => {})
+      serve('release-model').catch(() => {}) // WebAssembly models only: WebGPU ones stay (see dropModels)
       try { worker?.terminate() } catch { /* already gone */ }
       dead(new MatcherError('The matcher worker was stopped', 'terminated'))
     },

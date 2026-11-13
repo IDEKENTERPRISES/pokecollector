@@ -5,7 +5,9 @@ import { median, round } from './stats'
 export const MATCHER_RUNS = 3
 export const STAGE_ROWS = [
   ['finder', 'Find the card'], ['views', 'Build the views'], ['embed', 'Embeddings'], ['search', 'Picture search'],
-  ['ocr_number', 'Read the number'], ['name', 'Read the name'], ['second_read', 'Second read of the whole picture'], ['decide', 'Decide'], ['total', 'Total per card'],
+  ['ocr_number', 'Read the number'], ['name', 'Read the name'], ['second_read', 'Second read of the whole picture'],
+  ['catalogue', 'Card database indexes (built once per worker)'], ['decide', 'Decide'], ['other', 'Between the stages'],
+  ['total', 'Total of this run'], ['warm', 'Per card with a warm worker (total without the index build)'], ['saved', 'Saved by overlap (stages ran side by side)'],
 ]
 
 /** One stage's first run and the median of the runs after it ({first, median}); with one run only, the median is that run. */
@@ -72,8 +74,11 @@ export function estimateMemory({ manifest, info, photo = null }) {
  * The `matcher` block of a posted run, from the results (the first one's answer is the answer: the runs are the same photo, so the
  * answers agree unless something is nondeterministic, which `stable` says).
  */
-export function matcherBlock(results, { photo = null, info = null, variant = null } = {}) {
+const stepsBlock = steps => (steps ? steps.slice(0, 10).map(step => ({ label: trim(step.label, 24), ms: step.ms ?? null, lines: step.lines ?? null, text: trim(step.text, 70), after: trim(step.after, 40) })) : null)
+
+export function matcherBlock(results, { photo = null, info = null, variant = null, restarted = false } = {}) {
   const first = results[0]
+  const transfers = results.map(result => result.transferMs).filter(value => Number.isFinite(value))
   const summary = summariseTimings(results)
   const key = result => `${result.tcgCardId ?? 'unsure'}|${result.mechanism ?? ''}`
   return {
@@ -84,6 +89,12 @@ export function matcherBlock(results, { photo = null, info = null, variant = nul
     variant: trim(variant, 120),
     ocr: ocrCounts(first.ocrStats),
     ladder: ladderOf(first.ocrStats),
+    number_steps: stepsBlock(first.ocrStats?.number?.steps),
+    name_steps: stepsBlock(first.ocrStats?.name?.steps),
+    text_input: first.textInput ? { source: trim(first.textInput.source, 20), width: first.textInput.width, height: first.textInput.height } : null,
+    decision_rank: first.decisionRank ? { picture_rank: first.decisionRank.picture_rank, similarity: round(first.decisionRank.similarity, 4), lead: first.decisionRank.lead === null || first.decisionRank.lead === undefined ? null : round(first.decisionRank.lead, 4) } : null,
+    overlap: first.overlap ? { asked: Boolean(first.overlap.asked), used: Boolean(first.overlap.used), why: trim(first.overlap.why, 80) } : null,
+    setup: { load_ms: info?.loadMs ?? null, transfer_ms: transfers.length ? round(median(transfers)) : null, restarted: Boolean(restarted) },
     stable: results.every(result => key(result) === key(first)),
     decided: Boolean(first.decided),
     card: first.decided ? trim(first.tcgCardId, 64) : null,
@@ -96,7 +107,7 @@ export function matcherBlock(results, { photo = null, info = null, variant = nul
     orientation: first.orientation ? { by: trim(first.orientation.by, 12), flipped: Boolean(first.orientation.flipped) } : null,
     detection: first.detection ? { source: trim(first.detection.source, 12), found: Boolean(first.detection.found) } : null,
     wholeread: first.wholeread ? { tried: Boolean(first.wholeread.tried), rescued: Boolean(first.wholeread.rescued) } : null,
-    catalogue: first.catalogue ? { present: Boolean(first.catalogue.present), cards: first.catalogue.cards ?? null } : null,
+    catalogue: first.catalogue ? { present: Boolean(first.catalogue.present), cards: first.catalogue.cards ?? null, printed_total_missing: first.catalogue.printedTotalMissing ?? null } : null,
     photo: photo ? { width: photo.width, height: photo.height, bytes: photo.bytes ?? null } : null,
     timings: Object.fromEntries(Object.entries(summary).map(([stage, value]) => [stage, [value.first, value.median]])),
   }
@@ -118,8 +129,8 @@ export async function runMatcherRuns({ client, copy, runs = MATCHER_RUNS, onStag
 }
 
 /** The speed-test run body for a matcher run: flat stage timings + device + the `matcher` block. */
-export function matcherOutcome({ results, device, runId, photo, info, variant = null }) {
-  const block = matcherBlock(results, { photo, info, variant })
+export function matcherOutcome({ results, device, runId, photo, info, variant = null, restarted = false }) {
+  const block = matcherBlock(results, { photo, info, variant, restarted })
   const summary = summariseTimings(results)
   return { timings: flatTimings(summary), device, matcher: block, runId, summary }
 }

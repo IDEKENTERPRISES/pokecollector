@@ -17,12 +17,13 @@ import { createOcrSessions } from './ocrSessions'
 import { recordSessions } from './ocrStats'
 import { characterTable } from '../ocr'
 import { diagnoseWebGpu } from './gpuDiag'
+import { watchGpu } from './ort'
 import { pictureIndexFromBuffers } from './pictureIndex'
 
 export const MODES = ['auto', 'worker-webgpu', 'main-webgpu', 'main-wasm', 'wasm']
 export const OCR_BACKENDS = ['wasm', 'webgpu-main']
-/** The reader's ladder: 'server' is the server's (parity-checked); 'lean' stops after the first three steps (see docs/phone-scanner/integration.md for its cost). */
-export const OCR_PROFILES = { server: {}, lean: { maxSteps: 3 } }
+/** The reader's ladder: 'server' is the server's (parity-checked); 'lean' stops after the first three steps and skips the last-resort band (see docs/phone-scanner/integration.md for its cost: a number that only that band finds is lost). */
+export const OCR_PROFILES = { server: {}, lean: { maxSteps: 3, noLastResort: true } }
 
 /**
  * createMatcherHost({post, files, loadWasm, loadGpu, probeGpu, cardDb, create...}) -> {handle(message), state}
@@ -79,6 +80,7 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
           const buffer = await files.read(fp16)
           if (!buffer) throw new Error('the fp16 model is not downloaded')
           const embedder = await make.ortEmbedder({ ort, buffer, provider: 'webgpu', backend: 'fp16 on WebGPU (worker)' })
+          await watchGpu(ort, text => post({ type: 'gpu-event', text }))
           tried.push({ step: way, ok: true })
           return embedder
         }
@@ -145,6 +147,8 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
     const tried = []
     const began = now()
     state.lowMemory = Boolean(lowMemory)
+    state.catalogueStats = null
+    const remember = indexes => { state.catalogueStats = { present: true, cards: indexes.count, printedTotalMissing: indexes.stats?.printedTotalMissing ?? null, buildMs: indexes.stats?.buildMs ?? null }; return indexes }
     let resources = null
     if (lowMemory) {
       // Strictly one thing at a time: only the embedding model is loaded now. The picture index, the reader and the card-database indexes are
@@ -162,7 +166,7 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
       state.getIndexes = async () => {
         if (!cardDb || !(await cardDb.getMeta('en'))) return null
         lazyNow = lazyNow || make.createLazyIndexes({ source: cardDb, restrictToIds: ids })
-        return lazyNow()
+        return remember(await lazyNow())
       }
     } else {
       state.embedder = await chooseEmbedder(manifest, mode, mainGpu, tried) // first: the GPU session is made before the other models fill the memory
@@ -171,7 +175,7 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
       const lazy = cardDb ? make.createLazyIndexes({ source: cardDb, restrictToIds: state.index.ids }) : null
       state.getIndexes = async () => {
         if (!lazy || !(await cardDb.getMeta('en'))) return null // the offline card database is not downloaded on this phone
-        return lazy()
+        return remember(await lazy())
       }
     }
     state.manifest = manifest
@@ -192,10 +196,8 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
     if (!state.ready) throw new Error('The matcher is not loaded')
     const picture = { data: photo.data instanceof Uint8ClampedArray ? photo.data : new Uint8ClampedArray(photo.data), width: photo.width, height: photo.height }
     const result = await state.matcher.match(picture, { ...options, lowMemory: state.lowMemory, onStage: (stage, info) => post({ type: 'progress', id, stage, ...(info ? { done: true, ms: info.ms } : {}) }) })
-    // low memory: asking again would build the card-database indexes just to count them, so only say whether the database is there
-    const indexes = state.lowMemory ? null : await state.getIndexes()
-    if (state.lowMemory) { result.catalogue = { present: Boolean(cardDb && await cardDb.getMeta('en')), cards: null }; return result }
-    result.catalogue = indexes ? { present: true, cards: indexes.count, printedTotalMissing: indexes.stats?.printedTotalMissing ?? null, buildMs: indexes.stats?.buildMs ?? null } : { present: false }
+    const present = Boolean(cardDb && await cardDb.getMeta('en'))
+    result.catalogue = state.catalogueStats ?? (present ? { present: true, cards: null } : { present: false })
     return result
   }
 

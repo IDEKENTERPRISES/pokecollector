@@ -20,7 +20,9 @@ const manifest = (over = {}) => ({
 function setup({ workerGpu = false, mainGpu = false, cardDb = true, failGpu = false, files = null, ocrFails = false } = {}) {
   const log = []
   const reads = []
-  const ort = name => ({ name, Tensor: class { constructor(type, data, dims) { this.type = type; this.data = data; this.dims = dims } }, InferenceSession: {
+  const gpuDevice = { listeners: {}, lostResolve: null, lost: null, addEventListener(type, fn) { this.listeners[type] = fn } }
+  gpuDevice.lost = new Promise(resolve => { gpuDevice.lostResolve = resolve })
+  const ort = name => ({ name, env: { webgpu: { device: Promise.resolve(gpuDevice) } }, Tensor: class { constructor(type, data, dims) { this.type = type; this.data = data; this.dims = dims } }, InferenceSession: {
     async create(buffer, options) {
       if (ocrFails && name === 'main-gpu' && buffer.byteLength === 4) throw new Error('Unsupported op: HardSwish')
       log.push(`session:${name}:${options.executionProviders[0]}`)
@@ -64,13 +66,15 @@ function setup({ workerGpu = false, mainGpu = false, cardDb = true, failGpu = fa
     },
   })
   const created = []
+  const gpuEvents = []
   const client = createMatcherClient({
+    onGpuEvent: text => gpuEvents.push(text),
     createWorker: () => { const worker = loopbackWorker(host); created.push(worker); return worker },
     readFile: async path => new ArrayBuffer(path.startsWith('ocr/') ? 4 : 8),
     loadGpu: async () => ort('main-gpu'),
     loadWasm: async () => ort('main-wasm'),
   })
-  return { client, log, reads, created, ocrCalls }
+  return { client, log, reads, created, ocrCalls, gpuEvents, gpuDevice }
 }
 
 describe('the version guard', () => {
@@ -215,11 +219,14 @@ describe('matching through the worker', () => {
     expect(log).toContain('release-ocr')
   })
 
-  it('releases the main-thread model with the rest', async () => {
+  it('never releases a WebGPU session on the main thread (destroying GPU buffers is the prime suspect of the black screen): it stays for the page\'s lifetime and is reused', async () => {
     const { client, log } = setup()
     await client.init({ manifest: manifest(), mode: 'auto', mainGpu: true })
     await client.release()
-    expect(log).toContain('release:main-gpu')
+    client.terminate()
+    expect(log).not.toContain('release:main-gpu')
+    await client.init({ manifest: manifest(), mode: 'auto', mainGpu: true })
+    expect(log.filter(entry => entry === 'session:main-gpu:webgpu')).toHaveLength(1) // the next init found it still loaded
   })
 })
 
@@ -303,7 +310,7 @@ describe('low memory mode (step 3d fix)', () => {
     expect(reads.filter(path => path.startsWith('index/'))).toHaveLength(2) // read when the search needed them
     expect(reads).toContain('ocr/det.onnx')
     expect(log).toContain('release-ocr') // the reader was released after the read
-    expect(result.catalogue).toEqual({ present: true, cards: null })
+    expect(result.catalogue).toEqual({ present: true, cards: 2, printedTotalMissing: 0, buildMs: 5 }) // the stats are kept when the indexes are built, so the run can report them
   })
 })
 
@@ -331,5 +338,35 @@ describe('the main-thread WebAssembly model and the WebGPU test (iPhone fix)', (
     const rows = await client.diagnoseWorker({ manifest: manifest(), path: 'model/model_fp16.onnx', onStep: (step, row) => seen.push(row ? `${step}:${row.ok}` : `${step}:start`) })
     expect(rows[0]).toMatchObject({ step: 'navigator.gpu', ok: false }) // the test runtime has no WebGPU
     expect(seen).toEqual(['navigator.gpu:start', 'navigator.gpu:false'])
+  })
+})
+
+describe('keeping the GPU alive and writing down its trouble (round 2)', () => {
+  it('writes "device lost" and uncaptured errors of the main-thread GPU into the events the page saves', async () => {
+    const { client, gpuEvents, gpuDevice } = setup()
+    await client.init({ manifest: manifest(), mode: 'auto', mainGpu: true })
+    gpuDevice.listeners.uncapturederror({ error: { message: 'Out of memory in buffer allocation' } })
+    gpuDevice.lostResolve({ reason: 'unknown', message: 'The GPU process crashed' })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(gpuEvents).toContain('uncaptured GPU error: Out of memory in buffer allocation')
+    expect(gpuEvents).toContain('device lost (unknown): The GPU process crashed')
+    expect(client.gpuEvents).toHaveLength(2)
+  })
+
+  it('does not restart a worker that holds the WebGPU model, and releases it before stopping it on shutdown', async () => {
+    const { client, log, created } = setup({ workerGpu: true })
+    await client.init({ manifest: manifest(), mode: 'worker-webgpu', mainGpu: true })
+    expect(client.holdsGpu()).toBe(true)
+    expect(client.restartWorker()).toBe(false) // never terminate a worker that holds a GPU device
+    expect(created).toHaveLength(1)
+    await client.shutdown()
+    expect(log.indexOf('release-embedder:webgpu')).toBeGreaterThan(-1) // released first
+  })
+
+  it('restarts a worker that holds no GPU model', async () => {
+    const { client } = setup()
+    await client.init({ manifest: manifest(), mode: 'wasm' })
+    expect(client.holdsGpu()).toBe(false)
+    expect(client.restartWorker()).toBe(true)
   })
 })

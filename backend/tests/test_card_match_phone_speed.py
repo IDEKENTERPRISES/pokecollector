@@ -248,7 +248,7 @@ class PhoneSpeedStorageTests(unittest.TestCase):
 
         result = phone_speed.compare_server(run["id"], self.dir, matcher_factory=factory)
         self.assertEqual(labels, [variants.active_label(), variants.PHONE_KEPT_LABEL])
-        self.assertEqual(result["in_use"]["decision"], {"id": "sv1-1", "mechanism": "number", "similarity": 0.93})
+        self.assertEqual(result["in_use"]["decision"], {"id": "sv1-1", "mechanism": "number", "similarity": 0.93, "picture_rank": None, "lead": None})
         self.assertEqual(result["phone8"]["status"], "error")  # a missing index is a stored result, not a crash
         stored = phone_speed.latest(1, self.dir)[0]
         self.assertEqual(stored["server"]["in_use"]["top20"][0]["id"], "sv1-1")
@@ -389,9 +389,15 @@ MATCHER = {
     "top20": [["sv1-1", 0.9312], ["sv1-9_en", 0.51], ["sv2-4", 0.4]],
     "read": {"number": "001", "total": "198", "name": "Pikachu", "source": "finder_card"},
     "orientation": {"by": "default", "flipped": False}, "detection": {"source": "quad", "found": True},
-    "wholeread": None, "catalogue": {"present": True, "cards": 19659}, "photo": {"width": 1536, "height": 2048, "bytes": 412345},
-    "timings": {"finder": [610.2, 590.1], "embed": [820.0, 790.5], "total": [2210.4, 2100.0]},
+    "wholeread": None, "catalogue": {"present": True, "cards": 19659, "printed_total_missing": 0}, "photo": {"width": 1536, "height": 2048, "bytes": 412345},
+    "timings": {"finder": [610.2, 590.1], "embed": [820.0, 790.5], "catalogue": [1200.0, 0.0], "other": [10.0, 8.0], "total": [2210.4, 2100.0], "warm": [1010.4, 2100.0], "saved": [0.0, 0.0]},
     "variant": "restart=1 overlap=0 ocr=wasm ladder=server runs=3",
+    "name_steps": [{"label": "name-line", "ms": 74, "lines": 0, "text": "", "after": None}, {"label": "top-wide", "ms": 192, "lines": 2, "text": "BASIC | Morpeko", "after": "Morpeko"}],
+    "number_steps": [{"label": "number-left-tight", "ms": 88, "lines": 1, "text": "061", "after": "061/-"}],
+    "text_input": {"source": "photo", "width": 1008, "height": 1408},
+    "decision_rank": {"picture_rank": 7, "similarity": 0.609, "lead": None},
+    "overlap": {"asked": True, "used": False, "why": "low memory"},
+    "setup": {"load_ms": 786, "transfer_ms": 40, "restarted": True},
     "ocr": {"ocr_number": {"det_calls": 3, "det_ms": 420.5, "rec_calls": 4, "rec_ms": 130}, "name": {"det_calls": 1, "det_ms": 90, "rec_calls": 1, "rec_ms": 30}},
     "ladder": {"stopped": "accepted", "attempts": 2, "seconds": 0.62, "budget": 0.9},
 }
@@ -432,6 +438,11 @@ class MatcherBlockTests(unittest.TestCase):
             {**MATCHER, "ocr": {"name": {"det_calls": "many"}}},
             {**MATCHER, "ladder": {"stopped": "x" * 200}},
             {**MATCHER, "variant": "x" * 300},
+            {**MATCHER, "number_steps": [{"label": "a"}] * 11},
+            {**MATCHER, "name_steps": [{"label": "a", "pixels": "AAAA"}]},
+            {**MATCHER, "name_steps": "none"},
+            {**MATCHER, "text_input": {"source": "x" * 200}},
+            {**MATCHER, "overlap": {"used": "yes"}},
             "not an object",
         ]
         for matcher in bad:
@@ -463,6 +474,48 @@ class MatcherBlockTests(unittest.TestCase):
         self.assertEqual((out["agree"], out["same_decided"], out["server"]), (False, False, None))
         unsure = {**MATCHER, "decided": False, "card": None, "mechanism": None, "reason": "number_not_among_picture_matches"}
         self.assertFalse(self._compare(unsure, self.entry())["agree"])
+
+    def test_the_servers_read_is_packed_with_each_ladder_step_and_set_beside_the_phones(self):
+        ocr = {
+            "number_local": "061", "number_total": "128", "name": "Morpeko", "number_source": "finder_card", "number_confidence": 0.93, "tokens": ["30C", "EN"], "flipped": False,
+            "text_input": {"source": "photo", "width": 1008, "height": 1408},
+            "strips": [
+                {"label": "number-left-tight", "ms": 80, "lines": [{"text": "061/128", "score": 0.9}], "after": {"number": "061", "total": "128"}},
+                {"label": "hp", "ms": 5, "lines": [{"text": "70 HP", "score": 0.9}]},
+                {"label": "name-line", "ms": 70, "lines": [{"text": "Morpeko", "score": 0.95}], "after": {"name": "Morpeko"}},
+                {"label": "top-wide", "ms": 190, "lines": []},
+            ],
+        }
+        read = phone_speed._read_of(ocr)
+        self.assertEqual((read["number"], read["total"], read["name"], read["source"]), ("061", "128", "Morpeko", "finder_card"))
+        self.assertEqual([step["label"] for step in read["number_steps"]], ["number-left-tight"])  # the HP strip is not a ladder step
+        self.assertEqual([step["label"] for step in read["name_steps"]], ["name-line", "top-wide"])
+        self.assertEqual(read["name_steps"][0], {"label": "name-line", "ms": 70, "lines": 1, "text": "Morpeko", "after": "Morpeko"})
+        self.assertEqual(read["number_steps"][0]["after"], "061/128")
+        self.assertEqual(read["name_steps"][1]["lines"], 0)
+        self.assertIsNone(phone_speed._read_of({}))
+        self.assertIsNone(phone_speed._read_of(None))
+        entry = {**self.entry(), "read": read}
+        phone = {**MATCHER, "read": {"number": "061", "total": "128", "name": None, "source": "finder_card"}}
+        out = self._compare({**phone}, entry)
+        self.assertFalse(out["name_agrees"])  # the phone found no name where the server read Morpeko
+        self.assertEqual(out["server_read"]["name"], "Morpeko")
+        self.assertEqual(out["phone_name_steps"][0]["label"], "name-line")
+        self.assertEqual(out["server_name_steps"][1]["label"], "top-wide")
+        self.assertEqual((out["phone_rank"], out["phone_text_input"]["width"]), (7, 1008))
+
+    def test_the_decided_cards_picture_rank_is_in_the_servers_answer(self):
+        class Outcome:
+            status = "decided"
+            unsure_reason = None
+            decision = {"tcg_card_id": "sv1-1", "mechanism": "number_and_picture", "similarity": 0.61, "lead": 0.07}
+            matches = [{"tcg_card_id": "sv9-9", "similarity": 0.7, "picture_rank": 1}, {"tcg_card_id": "sv1-1", "similarity": 0.61, "picture_rank": 4}]
+            ocr = {"number_local": "1", "number_total": "198", "name": "X", "strips": []}
+
+        answer = phone_speed._answer_of(Outcome(), "label", 5)
+        self.assertEqual(answer["decision"]["picture_rank"], 4)
+        self.assertEqual(answer["decision"]["lead"], 0.07)
+        self.assertEqual(answer["read"]["name"], "X")
 
     def test_both_unsure_agree(self):
         unsure = {**MATCHER, "decided": False, "card": None, "mechanism": None, "reason": "number_not_among_picture_matches"}

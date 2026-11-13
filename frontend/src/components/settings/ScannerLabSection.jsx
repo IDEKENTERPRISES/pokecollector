@@ -434,16 +434,43 @@ export function matcherAgreementText(run) {
   return `full matcher: phone ${phone} / server ${server} · agree ${compare.agree ? 'yes' : 'no'} · ${compare.overlap}/20${mechanism}`
 }
 
+const readText = read => (read ? [read.number && `${read.number}${read.total ? `/${read.total}` : ''}`, read.name || 'no name', read.source || read.numberSource].filter(Boolean).join(' · ') : 'no read')
+const stepText = steps => (steps && steps.length ? steps.map(step => `${step.label} ${step.lines ?? '?'} line(s)${step.text ? ` "${step.text}"` : ''}${step.after ? ` → ${step.after}` : ''}`).join(', ') : 'none')
+
+/** The phone's read next to the server's for the same photo, strip by strip, and the decided card's picture rank on each side (what explains "unsure / decided"). */
+export function matcherReadLines(run) {
+  const compare = run.matcher_compare
+  if (!run.matcher || compare?.status !== 'compared') return []
+  const lines = [`reads: phone ${readText(compare.phone_read)} / server ${readText(compare.server_read)}${compare.name_agrees ? '' : ' · NAME DIFFERS'}`]
+  lines.push(`name strips: phone ${stepText(compare.phone_name_steps)} / server ${stepText(compare.server_name_steps)}`)
+  lines.push(`number steps: phone ${stepText(compare.phone_number_steps)} / server ${stepText(compare.server_number_steps)}`)
+  const input = value => (value ? `${value.source ?? '?'} ${value.width}x${value.height}` : '?')
+  lines.push(`text read from: phone ${input(compare.phone_text_input)} / server ${input(compare.server_text_input)}`)
+  if (compare.phone_rank != null || compare.server_rank != null) {
+    lines.push(`decided card's picture rank: phone ${compare.phone_rank ?? '–'} (similarity ${compare.phone_similarity ?? '–'}) / server ${compare.server_rank ?? '–'} (similarity ${compare.server_similarity ?? '–'})`)
+  }
+  if (!compare.agree && (compare.phone_reason || compare.server_reason)) lines.push(`reasons: phone ${compare.phone_reason || 'decided'} / server ${compare.server_reason || 'decided'}`)
+  return lines
+}
+
+/** A WebGPU step test posted by the speed-test page: "worker: adapter 5 ms · device 20 ms · session 1,918 ms · ...", with the step times. */
+export function gpuDiagText(run) {
+  const text = run.device?.gpuDiag
+  if (!text) return null
+  const times = Object.entries(run.timings || {}).filter(([key]) => key.startsWith('gpudiag_') && key.endsWith('_ms')).map(([key, value]) => `${key.replace(/^gpudiag_(worker|main)_/, '').replace(/_ms$/, '').replace(/_/g, ' ')} ${number(value)} ms`)
+  return `WebGPU test, ${text}${times.length ? ` (${times.join(' · ')})` : ''}`
+}
+
 /** The stage times of a matcher run: "finder 600 · embed 800 · … total 2,100 ms (first 2,500)". */
 export function matcherTimingText(run) {
   const timings = run.matcher?.timings
   if (!timings) return null
-  const stages = [['finder', 'finder'], ['views', 'views'], ['embed', 'embed'], ['search', 'search'], ['ocr_number', 'number'], ['name', 'name'], ['second_read', 'second read'], ['decide', 'decide']]
+  const stages = [['finder', 'finder'], ['views', 'views'], ['embed', 'embed'], ['search', 'search'], ['ocr_number', 'number'], ['name', 'name'], ['second_read', 'second read'], ['catalogue', 'index build'], ['decide', 'decide'], ['other', 'between']]
   const parts = stages.filter(([key]) => timings[key]).map(([key, label]) => `${label} ${number(timings[key][1])}`)
   const total = timings.total
   const reader = run.matcher.ocr ? Object.entries(run.matcher.ocr).map(([stage, c]) => `${stage.replace('ocr_', '')} ${c.det_calls} det / ${c.rec_calls} rec`).join(', ') : null
   const ladder = run.matcher.ladder ? `ladder ${run.matcher.ladder.attempts} steps, stopped by ${run.matcher.ladder.stopped}` : null
-  return `${run.matcher.backend || '?'} · ${parts.join(' · ')}${total ? ` · total ${number(total[1])} ms (first ${number(total[0])})` : ''}${reader ? ` · reader calls: ${reader}` : ''}${ladder ? ` · ${ladder}` : ''}${run.matcher.variant ? ` · ${run.matcher.variant}` : ''}`
+  return `${run.matcher.backend || '?'} · ${parts.join(' · ')}${total ? ` · total ${number(total[1])} ms (first ${number(total[0])})` : ''}${timings.warm ? ` · warm per card ${number(timings.warm[1])} ms` : ''}${timings.saved && timings.saved[1] > 0 ? ` · overlap saved ${number(timings.saved[1])} ms` : ''}${run.matcher.setup?.load_ms != null ? ` · setup ${number(run.matcher.setup.load_ms)} ms (not per card)` : ''}${run.matcher.catalogue?.printed_total_missing > 0 ? ` · ${number(run.matcher.catalogue.printed_total_missing)} cards lack a printed total` : ''}${reader ? ` · reader calls: ${reader}` : ''}${ladder ? ` · ${ladder}` : ''}${run.matcher.variant ? ` · ${run.matcher.variant}` : ''}`
 }
 
 /** The last phone speed-test runs (numbers, device facts, the photo thumbnail, agreement with the server) and the way to the test page. Admins only: the section is. */
@@ -465,15 +492,20 @@ export function PhoneSpeedRuns({ runs, onDelete }) {
           <div key={run.id || run.at + run.by} className="flex items-start gap-2" data-testid="scanner-lab-phone-speed-run">
             {run.has_photo && run.id && <RunThumb id={run.id} />}
             <p className="min-w-0 flex-1 text-footnote tabular-nums">
-              {run.matcher
+              {d.gpuDiag
+                ? <>{when(run.at)} · {describeIos(d)} · WebGPU step test</>
+                : run.matcher
                 ? <>{when(run.at)} · {describeIos(d)} · {d.gpu ? 'WebGPU' : 'no WebGPU'} · full phone matcher</>
                 : <>{when(run.at)} · {describeIos(d)} · {d.gpu ? 'WebGPU' : 'no WebGPU'} · embed {number(t.embed_wasm_median_ms)} ms · card ×7 {number(t.card_wasm_median_ms)} ms
                   {' '}· est. {number(t.estimate_card_wasm_ms)} ms{t.estimate_card_webgpu_fp16_ms != null ? ` (GPU ${number(t.estimate_card_webgpu_fp16_ms)} ms)` : ''}</>}
               {d.crashedBefore && !run.crashed_step ? ' · crashed before' : ''}
               {run.crashed_step && <span className="block font-semibold text-red-500" data-testid="scanner-lab-phone-speed-crashed">Crashed during {run.crashed_step}</span>}
+              {d.gpuDiag && <span className="block" data-testid="scanner-lab-phone-gpu-diag">{gpuDiagText(run)}</span>}
+              {d.gpuEvents && <span className="block text-red-500" data-testid="scanner-lab-phone-gpu-events">GPU trouble: {d.gpuEvents}</span>}
               {run.matcher && <span className="block" data-testid="scanner-lab-phone-matcher-agreement">{matcherAgreementText(run)}</span>}
+              {matcherReadLines(run).map(line => <span key={line} className="block text-text-secondary" data-testid="scanner-lab-phone-matcher-read">{line}</span>)}
               {run.matcher && <span className="block text-text-secondary" data-testid="scanner-lab-phone-matcher-timing">{matcherTimingText(run)}</span>}
-              {!run.matcher && <span className="block text-text-secondary" data-testid="scanner-lab-phone-speed-agreement">{agreementText(run)}</span>}
+              {!run.matcher && !d.gpuDiag && <span className="block text-text-secondary" data-testid="scanner-lab-phone-speed-agreement">{agreementText(run)}</span>}
             </p>
             {onDelete && run.id && (
               <button type="button" className="flex-shrink-0 text-footnote text-red-500 ios-press" onClick={() => { if (window.confirm('Delete this run and its photo from the server?')) onDelete(run.id) }} data-testid="scanner-lab-phone-speed-delete">Delete</button>

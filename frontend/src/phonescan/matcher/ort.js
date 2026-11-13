@@ -49,3 +49,22 @@ export async function probeWebGpu(nav = globalThis.navigator) {
 }
 
 export const SESSION_OPTIONS = { graphOptimizationLevel: 'all', enableCpuMemArena: false, enableMemPattern: false }
+
+const watched = new WeakSet()
+
+/**
+ * Writes the WebGPU device's own trouble to `emit(text)`: "device lost" (with its reason) and uncaptured errors. ORT shares one device between sessions, so each device
+ * is watched once. Returns true when a device was found. Used on both threads so a run that dies leaves a reason behind, not only a stage.
+ */
+export async function watchGpu(ort, emit) {
+  try {
+    const device = await ort.env?.webgpu?.device
+    if (!device || watched.has(device)) return Boolean(device)
+    watched.add(device)
+    device.lost?.then(info => emit(`device lost (${info?.reason ?? '?'}): ${String(info?.message ?? '').slice(0, 120)}`))
+    device.addEventListener?.('uncapturederror', event => emit(`uncaptured GPU error: ${String(event?.error?.message || event?.error || '').slice(0, 120)}`))
+    return true
+  } catch {
+    return false
+  }
+}
