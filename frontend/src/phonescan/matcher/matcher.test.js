@@ -43,8 +43,9 @@ const complete = (number, total, over = {}) => reading({ number, total, source: 
 /** Tagged pictures instead of pixels: every finder piece returns a labelled object the stubbed embedder understands. */
 function harness({
   source = 'quad', guide = true, found = {}, embedVector = () => query({ [idOf('Pikachu')]: 1 }), read = () => complete('25', '198'), nameRead = () => ({ name: 'Pikachu', lines: [], confidence: 0.9 }),
-  second = null, decide = null, cardDb = true, useIndex = unitIndex(), budgets, where = 'here', sessions = { stub: true }, ocr, resources = null,
+  second = null, decide = null, cardDb = true, useIndex = unitIndex(), budgets, where = 'here', sessions = { stub: true }, ocr, resources = null, catalogueMs = 0,
 } = {}) {
+  const clockTime = { value: 0 }
   const calls = { embed: [], read: [], name: [], second: [], decide: [], views: [], rotate: 0 }
   const upright = { tag: 'upright', width: 630, height: 880 }
   const hires = { tag: 'hires', width: 1008, height: 1408 }
@@ -68,8 +69,8 @@ function harness({
     async embed(images) { order.push('embed-start'); calls.embed.push(images.map(image => image.tag)); await new Promise(resolve => setTimeout(resolve, 5)); order.push('embed-end'); return images.map((image, n) => embedVector(image, n, calls.embed.length)) },
   }
   const matcher = createPhoneMatcher({
-    embedder, index: useIndex, sessions, ocr, resources, getDecideIndexes: async () => (cardDb ? indexes : null), parts, budgets,
-    now: (() => { let t = 0; return () => (t += 1) })(),
+    embedder, index: useIndex, sessions, ocr, resources, getDecideIndexes: async () => { clockTime.value += catalogueMs; return cardDb ? indexes : null }, parts, budgets,
+    now: () => (clockTime.value += 1),
   })
   return { matcher, calls, upright, turned, order }
 }
@@ -88,7 +89,7 @@ describe('the order of the stages', () => {
     expect(result.decided).toBe(true)
     expect(result.tcgCardId).toBe('sv1-25')
     expect(result.mechanism).toMatch(/number/)
-    expect(Object.keys(result.timings_ms)).toEqual(['finder', 'views', 'embed', 'search', 'ocr_number', 'name', 'second_read', 'decide', 'total'])
+    expect(Object.keys(result.timings_ms)).toEqual(['finder', 'views', 'embed', 'search', 'ocr_number', 'name', 'second_read', 'catalogue', 'decide', 'total', 'other', 'warm', 'saved'])
     expect(result.timings_ms.second_read).toBe(0)
     expect(result.backend).toBe('stub')
   })
@@ -483,5 +484,42 @@ describe('low memory mode (step 3d fix)', () => {
     const { matcher } = harness()
     const result = await matcher.match(photo, { lowMemory: true })
     expect(result.lowMemory).toBe(false)
+  })
+})
+
+describe('honest totals, overlap reasons, ladder steps and the decided card rank (round 2)', () => {
+  it('times the card database index build as its own stage and gives the warm per-card time without it', async () => {
+    const result = await harness({ catalogueMs: 1000 }).matcher.match(photo)
+    expect(result.timings_ms.catalogue).toBeGreaterThanOrEqual(1000)
+    expect(result.timings_ms.warm).toBeCloseTo(result.timings_ms.total - result.timings_ms.catalogue, 0)
+    expect(result.timings_ms.other).toBeGreaterThanOrEqual(0)
+    expect(result.timings_ms.saved).toBe(0)
+  })
+
+  it('says why overlap was not used: low memory, a model in the worker, or no text reading', async () => {
+    const worker = await harness({ where: 'here' }).matcher.match(photo, { overlap: true })
+    expect(worker.overlap).toEqual({ asked: true, used: false, why: expect.stringMatching(/the model runs in the worker/) })
+    const none = await harness({ where: 'main thread' }).matcher.match(photo, { overlap: true, useText: false })
+    expect(none.overlap.why).toBe('no text reading')
+    const used = await harness({ where: 'main thread' }).matcher.match(photo, { overlap: true })
+    expect(used.overlap).toEqual({ asked: true, used: true, why: null })
+    const quiet = await harness().matcher.match(photo)
+    expect(quiet.overlap).toEqual({ asked: false, used: false, why: null })
+  })
+
+  it('reports each ladder step with the lines it found and the number held after it, the text input size, and the decided card picture rank', async () => {
+    const strips = [
+      { label: 'number-left-tight', variant: 'plain', zoom: 2, ms: 88, lines: [{ text: '061', score: 0.9 }], after: { number: '061', total: null } },
+      { label: 'bottom-wide', variant: 'clahe', zoom: 2, ms: 771, lines: [{ text: '061/128', score: 0.8 }], after: { number: '061', total: '128' } },
+    ]
+    const named = { name: null, lines: [], confidence: null, strips: [{ label: 'name-line', variant: 'plain', zoom: 2, ms: 74, lines: [], after: { name: null } }] }
+    const { matcher } = harness({ read: () => complete('25', '198', { strips }), nameRead: () => named })
+    const result = await matcher.match(photo)
+    expect(result.ocrStats.number.steps[0]).toMatchObject({ label: 'number-left-tight', lines: 1, text: '061', after: '061/-' })
+    expect(result.ocrStats.number.steps[1]).toMatchObject({ label: 'bottom-wide', after: '061/128' })
+    expect(result.ocrStats.name.steps[0]).toMatchObject({ label: 'name-line', lines: 0, text: '', after: null })
+    expect(result.textInput).toEqual({ source: 'photo', width: 1008, height: 1408 })
+    expect(result.decided).toBe(true)
+    expect(result.decisionRank).toMatchObject({ picture_rank: 1, similarity: expect.any(Number) })
   })
 })

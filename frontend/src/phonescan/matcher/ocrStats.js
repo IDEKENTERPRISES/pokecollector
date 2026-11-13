@@ -38,11 +38,20 @@ export function recordSessions(inner, now = () => performance.now()) {
   }
 }
 
-/** One reading's ladder as the page shows it: the steps that ran and why it stopped. */
-export function ladderSummary(reading, budget) {
+/** The ladder steps as the page and the server comparison show them: label, ms, how many text lines it found, what they said, and the number (or name) held after it. */
+export function stepsOf(strips) {
+  return (strips || []).filter(strip => strip.label !== 'hp').map(strip => {
+    const lines = (strip.lines || []).map(line => String(line.text ?? ''))
+    const after = strip.after
+    let held = null
+    if (after && 'number' in after) held = `${after.number || '-'}/${after.total || '-'}`
+    else if (after && 'name' in after) held = after.name || null
+    return { label: String(strip.label ?? '').slice(0, 24), variant: strip.variant ?? null, zoom: strip.zoom ?? null, ms: strip.ms ?? null, lines: lines.length, text: lines.join(' | ').slice(0, 70), after: held ? String(held).slice(0, 40) : null, source: strip.source ?? null }
+  })
+}
+
+/** One reading's ladder as the page shows it: why it stopped, the budget and the seconds used, and the steps that ran (`steps` = every step of the final reading, second read included). */
+export function ladderSummary(reading, budget, final = reading) {
   if (!reading) return null
-  return {
-    budget, seconds: reading.seconds ?? null, attempts: reading.attempts ?? null, stopped: reading.stopped ?? null,
-    steps: (reading.strips || []).filter(strip => strip.label !== 'hp').map(strip => ({ label: strip.label, variant: strip.variant, zoom: strip.zoom, ms: strip.ms, source: strip.source ?? null })),
-  }
+  return { budget, seconds: reading.seconds ?? null, attempts: reading.attempts ?? null, stopped: reading.stopped ?? null, steps: stepsOf((final || reading).strips) }
 }

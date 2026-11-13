@@ -9,7 +9,7 @@ import { checkManifest } from '../phonescan/matcher/guard'
 import { summariseDiagnosis } from '../phonescan/matcher/gpuDiag'
 import { prepareMatchPhoto } from '../phonespeed/matchPhoto'
 import { describeDecision, estimateMemory, matcherOutcome, runMatcherRuns, STAGE_ROWS, summariseTimings, variantText } from '../phonespeed/matcherRun'
-import { clearPartial, crashedRunBody, describeIos, loadPartial, markStep, newPartial, previousCrash, recordStep, reportPreviousCrash } from '../phonespeed/plan'
+import { clearPartial, crashedRunBody, describeIos, loadPartial, markStep, newPartial, previousCrash, recordStep, reportPreviousCrash, savePartial } from '../phonespeed/plan'
 import {
   CACHE_NAME, cacheState, downloadMissing, megabytes, networkHelpers, readCached, removeTestFiles, testFiles, totalBytes, MANIFEST_PATH,
 } from '../phonespeed/bundleCache'
@@ -89,6 +89,7 @@ export default function PhoneSpeedTest() {
   const [matcherSent, setMatcherSent] = useState(null)
   const [cardDb, setCardDb] = useState(null) // {present} once checked
   const matcherClient = useRef(null)
+  const activePartial = useRef(null) // the saved partial run of the run in progress: GPU trouble is written into it at once
 
   const isAdmin = user?.role === 'admin'
 
@@ -133,7 +134,8 @@ export default function PhoneSpeedTest() {
     return () => { live = false }
   }, [isAdmin])
 
-  useEffect(() => () => { matcherClient.current?.terminate?.() }, []) // leaving the page frees the worker and its models
+  // Leaving the page: a worker that holds the WebGPU model releases it first and is stopped after it answered; WebGPU sessions on this thread are never released.
+  useEffect(() => () => { matcherClient.current?.shutdown?.() }, [])
 
   useEffect(() => { if (String(crash || '').startsWith('matcher')) setMatcherMode('wasm') }, [crash]) // the last matcher run crashed: start on the safe backend
 
@@ -222,12 +224,52 @@ export default function PhoneSpeedTest() {
 
   const guard = manifest ? checkManifest(manifest) : null
 
+  /** One click sets the whole combination: backend, low memory, fresh worker, overlap, reader, ladder. */
+  const applyPreset = name => {
+    const preset = {
+      safe: { mode: 'wasm', low: true, restart: true, overlap: false },
+      warm: { mode: 'wasm', low: false, restart: false, overlap: false },
+      gpu: { mode: 'worker-webgpu', low: false, restart: false, overlap: false },
+      parallel: { mode: 'main-wasm', low: false, restart: false, overlap: true },
+    }[name]
+    setMatcherMode(preset.mode)
+    setMatcherLow(preset.low)
+    setMatcherRestart(preset.restart)
+    setMatcherOverlap(preset.overlap)
+    setMatcherOcr('wasm')
+    setMatcherLadder('server')
+    setMatcherRuns(3)
+  }
+  const chooseOverlap = on => { setMatcherOverlap(on); if (on) setMatcherLow(false) } // overlap needs the model on the main thread and Low memory off
+  const chooseLow = on => { setMatcherLow(on); if (on) setMatcherOverlap(false) }
+  const workerHoldsGpu = matcherMode === 'worker-webgpu' // a worker that holds a GPU device is never restarted
+
+  const getClient = async () => {
+    if (matcherClient.current) return matcherClient.current
+    const cache = await caches.open(CACHE_NAME)
+    const { createMatcherClient } = await import('../phonescan/matcher/client')
+    const ort = await import('../phonescan/matcher/ort')
+    matcherClient.current = createMatcherClient({
+      readFile: path => readCached(cache, entries.find(item => item.path === path) || { path, sha256: '', size: -1 }),
+      loadGpu: ort.loadGpuRuntime,
+      loadWasm: ort.loadWasmRuntime,
+      // the GPU's own trouble (device lost, uncaptured errors) goes into the saved run at once, so a page that dies leaves a reason behind
+      onGpuEvent: (text, all) => {
+        const partial = activePartial.current
+        if (!partial) return
+        partial.device.gpuEvents = all.join(' | ').slice(0, 190)
+        savePartial(partial)
+      },
+    })
+    return matcherClient.current
+  }
+
   const releaseMatcher = async () => {
     try { await matcherClient.current?.release() } catch { /* nothing loaded */ }
-    matcherClient.current?.terminate?.()
+    await matcherClient.current?.shutdown?.()
     matcherClient.current = null
     setMatcherInfo(null)
-    setMessage('The matcher was released: its models and indexes are out of memory.')
+    setMessage('The matcher was released: its worker, indexes and WebAssembly models are out of memory. A WebGPU model on the main thread stays until the page is closed (releasing it is what may crash the page).')
   }
 
   const runMatcher = async () => {
@@ -246,33 +288,29 @@ export default function PhoneSpeedTest() {
     try {
       markStep('matcher_init')
       recordStep(partial, 'matcher_init', { first: 0, median: 0 })
-      const cache = await caches.open(CACHE_NAME)
-      const { createMatcherClient } = await import('../phonescan/matcher/client')
       const ort = await import('../phonescan/matcher/ort')
-      if (!matcherClient.current) {
-        matcherClient.current = createMatcherClient({
-          readFile: path => readCached(cache, entries.find(item => item.path === path) || { path, sha256: '', size: -1 }),
-          loadGpu: ort.loadGpuRuntime,
-          loadWasm: ort.loadWasmRuntime,
-        })
-      }
+      const client = await getClient()
+      activePartial.current = partial
       const prepared = await prepareMatchPhoto(photo.current || SAMPLE_URL)
       const mainGpu = (await ort.probeWebGpu()).available
       const initOptions = { manifest, mode: matcherMode, mainGpu, ocrBackend: matcherOcr, ocrProfile: matcherLadder, lowMemory: matcherLow }
       setMatcherState({ status: 'loading', stage: 'loading the models and indexes' })
-      let info = await matcherClient.current.init(initOptions)
+      let info = await client.init(initOptions)
       setMatcherInfo(info)
       let handed = 0
+      let restarted = false
       const results = await runMatcherRuns({
-        client: matcherClient.current,
+        client,
         runs: matcherRuns,
         overlap: matcherOverlap,
         beforeRun: async n => {
           if (n > 1 && matcherRestart) {
             setMatcherState({ status: 'loading', stage: `run ${n}: restarting the worker` })
-            matcherClient.current.restartWorker()
-            info = await matcherClient.current.init(initOptions)
-            setMatcherInfo(info)
+            if (client.restartWorker()) { // false: the worker holds a GPU device and is reused
+              restarted = true
+              info = await client.init(initOptions)
+              setMatcherInfo(info)
+            }
           }
         },
         // every run but the last gets its own copy; the last one gets the page's own pixels (moved to the worker, so no second copy stays here)
@@ -288,8 +326,9 @@ export default function PhoneSpeedTest() {
       })
       markStep(null)
       clearPartial()
-      const device = { ...base, photoWidth: prepared.photo.width, photoHeight: prepared.photo.height }
-      const outcome = matcherOutcome({ results, device, runId, photo: { width: prepared.photo.width, height: prepared.photo.height, bytes: prepared.bytes }, info, variant })
+      activePartial.current = null
+      const device = { ...base, photoWidth: prepared.photo.width, photoHeight: prepared.photo.height, ...(client.gpuEvents.length ? { gpuEvents: client.gpuEvents.join(' | ').slice(0, 190) } : {}) }
+      const outcome = matcherOutcome({ results, device, runId, photo: { width: prepared.photo.width, height: prepared.photo.height, bytes: prepared.bytes }, info, variant, restarted })
       setMatcherState({ status: 'done', memory: estimateMemory({ manifest, info, photo: prepared.photo }) })
       const request = speedRunRequest(outcome, photo.current ? new File([prepared.upload], 'photo.jpg', { type: 'image/jpeg' }) : null)
       try {
@@ -318,15 +357,7 @@ export default function PhoneSpeedTest() {
     setGpuDiag({ where, rows: [], running: true })
     const partial = newPartial({ ...runtime.readDevice(), gpuDiag: where })
     try {
-      const cache = await caches.open(CACHE_NAME)
-      const { createMatcherClient } = await import('../phonescan/matcher/client')
-      const ort = await import('../phonescan/matcher/ort')
-      const client = matcherClient.current || createMatcherClient({
-        readFile: file => readCached(cache, entries.find(item => item.path === file) || { path: file, sha256: '', size: -1 }),
-        loadGpu: ort.loadGpuRuntime,
-        loadWasm: ort.loadWasmRuntime,
-      })
-      matcherClient.current = client
+      const client = await getClient()
       const onStep = (step, row) => {
         if (!row) { markStep(`gpudiag_${where}_${step.replace(/\W+/g, '_')}`); return }
         recordStep(partial, `gpudiag_${where}_${step.replace(/\W+/g, '_')}`, { first: row.ms, median: row.ms })
@@ -452,14 +483,20 @@ export default function PhoneSpeedTest() {
             <option value="main-webgpu">fp16 on WebGPU on the main thread</option>
           </select>
         </label>
+        <div className="flex flex-wrap gap-2" data-testid="phone-matcher-presets">
+          <button type="button" className={button} disabled={busy} onClick={() => applyPreset('safe')} data-testid="phone-preset-safe">Safe: WebAssembly, low memory</button>
+          <button type="button" className={button} disabled={busy} onClick={() => applyPreset('warm')} data-testid="phone-preset-warm">Warm worker: WebAssembly, one worker kept</button>
+          <button type="button" className={button} disabled={busy} onClick={() => applyPreset('gpu')} data-testid="phone-preset-gpu">Fast: fp16 WebGPU in the worker, one warm worker</button>
+          <button type="button" className={button} disabled={busy} onClick={() => applyPreset('parallel')} data-testid="phone-preset-parallel">Parallel: model on the main thread, reading beside it</button>
+        </div>
         <div className="space-y-1 text-footnote" data-testid="phone-matcher-options">
           <label className="flex items-center gap-2"><span className="text-text-secondary">Runs</span>
             <select value={matcherRuns} onChange={event => setMatcherRuns(Number(event.target.value))} disabled={busy} className="rounded bg-card-secondary px-2 py-1" data-testid="phone-matcher-runs">
               <option value={3}>3 (first, and the median of the next two)</option><option value={1}>1 run only</option>
             </select></label>
-          <label className="flex items-center gap-2"><input type="checkbox" checked={matcherLow} onChange={event => setMatcherLow(event.target.checked)} disabled={busy} data-testid="phone-matcher-low" /> Low memory: one thing at a time. Embeds first with nothing else loaded, then opens and releases the picture index, then the reader (slower: every run reloads them)</label>
-          <label className="flex items-center gap-2"><input type="checkbox" checked={matcherRestart} onChange={event => setMatcherRestart(event.target.checked)} disabled={busy} data-testid="phone-matcher-restart" /> Start a fresh worker for every run (frees its memory; the model on the main thread stays)</label>
-          <label className="flex items-center gap-2"><input type="checkbox" checked={matcherOverlap} onChange={event => setMatcherOverlap(event.target.checked)} disabled={busy} data-testid="phone-matcher-overlap" /> Overlap: read the text while the embeddings run (needs the model on the main thread and Low memory off)</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={matcherLow} onChange={event => chooseLow(event.target.checked)} disabled={busy} data-testid="phone-matcher-low" /> Low memory: one thing at a time. Embeds first with nothing else loaded, then opens and releases the picture index, then the reader (slower: every run reloads them)</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={matcherRestart && !workerHoldsGpu} onChange={event => setMatcherRestart(event.target.checked)} disabled={busy || workerHoldsGpu} data-testid="phone-matcher-restart" /> Start a fresh worker for every run (frees its memory and rebuilds the card database indexes every run; the model on the main thread stays; never done for a worker that holds the WebGPU model)</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={matcherOverlap} onChange={event => chooseOverlap(event.target.checked)} disabled={busy} data-testid="phone-matcher-overlap" /> Overlap: read the text while the embeddings run (needs the model on the main thread and Low memory off)</label>
           <label className="flex items-center gap-2"><span className="text-text-secondary">Reader</span>
             <select value={matcherOcr} onChange={event => setMatcherOcr(event.target.value)} disabled={busy} className="min-w-0 rounded bg-card-secondary px-2 py-1" data-testid="phone-matcher-ocr">
               <option value="wasm">WebAssembly in the worker</option><option value="webgpu-main">WebGPU on the main thread (fp32; names an unsupported operator if it fails)</option>
@@ -488,14 +525,14 @@ export default function PhoneSpeedTest() {
           </p>
         )}
         <GpuDiagnosis diag={gpuDiag} />
-        <MatcherResults results={matcherResults} sent={matcherSent} memory={matcherState.memory} />
+        <MatcherResults results={matcherResults} sent={matcherSent} memory={matcherState.memory} info={matcherInfo} />
       </Section>
     </div>
   )
 }
 
 /** The full-matcher results: stage times, the answer, the top 5 with names from the card database. */
-export function MatcherResults({ results, sent, memory = null }) {
+export function MatcherResults({ results, sent, memory = null, info = null }) {
   if (!results.length) return null
   const first = results[0]
   const summary = summariseTimings(results)
@@ -503,7 +540,17 @@ export function MatcherResults({ results, sent, memory = null }) {
   const read = first.read
   return (
     <div className="space-y-2" data-testid="phone-matcher-results">
-      <ResultsTable steps={STAGE_ROWS} rows={rows} medianLabel={results.length > 1 ? `Median of ${results.length - 1}` : 'Median'} testId="phone-matcher-stages" />
+      <ResultsTable steps={STAGE_ROWS.filter(([stage]) => !['saved', 'catalogue', 'other'].includes(stage) || (summary[stage]?.first ?? 0) > 0)} rows={rows} medianLabel={results.length > 1 ? `Median of ${results.length - 1}` : 'Median'} testId="phone-matcher-stages" />
+      <p className="text-footnote text-text-secondary" data-testid="phone-matcher-setup">
+        Not counted per card: starting the worker and loading the model, sessions and picture indexes{info?.loadMs !== undefined ? ` (${ms(info.loadMs)})` : ''}, and moving the photo to the worker and the answer back{first.transferMs !== undefined ? ` (${ms(first.transferMs)} this run)` : ''}.
+        The row "per card with a warm worker" is the number to compare with the 1.5 s goal: a scanner keeps one worker and builds the card database indexes once.
+      </p>
+      {first.overlap?.asked && (
+        <p className="text-footnote" data-testid="phone-matcher-overlap-note">{first.overlap.used ? 'Overlap: used (the reading ran while the embeddings ran, so the stages add up to more than the total).' : `Overlap: NOT used, because ${first.overlap.why || 'unknown'}.`}</p>
+      )}
+      {first.catalogue?.printedTotalMissing > 0 && (
+        <p className="text-footnote text-red-500" data-testid="phone-matcher-total-missing">{first.catalogue.printedTotalMissing.toLocaleString()} cards in this phone's card database have no printed set total, so number-and-total decisions cannot match the server. Sync the card database again (Settings), then re-run.</p>
+      )}
       <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-footnote">
         <dt className="text-text-secondary">Backend</dt><dd data-testid="phone-matcher-result-backend">{first.backend}</dd>
         <dt className="text-text-secondary">Decision</dt><dd data-testid="phone-matcher-decision">{describeDecision(first)}</dd>
@@ -555,10 +602,10 @@ export function OcrStats({ stats }) {
       </table>
       {number && (
         <p data-testid="phone-matcher-ladder-note">
-          Number ladder: {number.attempts} of 6 steps ran ({(number.steps || []).map(step => `${step.label} ${step.variant} ${step.ms} ms`).join(' · ') || 'none'}); stopped by {number.stopped === 'budget' ? `the ${number.budget} s budget` : number.stopped === 'accepted' ? 'a complete, sure number' : 'the end of the ladder'}; {number.seconds} s used.
+          Number ladder: {number.attempts} of 6 steps ran ({(number.steps || []).map(step => `${step.label} ${step.variant ?? ''} ${step.ms} ms, ${step.lines} line(s)${step.after ? ` → ${step.after}` : ''}`).join(' · ') || 'none'}); stopped by {number.stopped === 'budget' ? `the ${number.budget} s budget` : number.stopped === 'accepted' ? 'a complete, sure number' : 'the end of the ladder'}; {number.seconds} s used.
         </p>
       )}
-      {stats.name && <p>Name ladder: {(stats.name.steps || []).map(step => `${step.label} ${step.ms} ms`).join(' · ') || 'none'}.</p>}
+      {stats.name && <p data-testid="phone-matcher-name-steps">Name ladder: {(stats.name.steps || []).map(step => `${step.label} ${step.ms} ms, ${step.lines} line(s)${step.text ? ` (${step.text})` : ''}`).join(' · ') || 'none'}.</p>}
     </div>
   )
 }
