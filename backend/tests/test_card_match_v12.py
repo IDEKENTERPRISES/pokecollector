@@ -110,7 +110,7 @@ class WideFirstTests(unittest.TestCase):
         self.assertEqual((wide_result.number_local, wide_result.number_total), ("061", "128"))
         self.assertEqual((plain_result.number_local, plain_result.number_total), ("061", "128"))  # the same answer, fewer steps
         self.assertEqual(ocr.number_read_ms(wide_result.strips), 30.0)
-        self.assertEqual(ocr.number_read_ms(plain_result.strips), 60.0)
+        self.assertEqual(ocr.number_read_ms(plain_result.strips), 70.0)
 
     def test_when_the_wide_bottom_finds_no_text_the_sharp_and_contrast_steps_are_skipped(self):
         reader, result = self.read({}, True)

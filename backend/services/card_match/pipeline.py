@@ -499,9 +499,9 @@ class CardMatcher:
         one orientation only, so this read takes no longer than a normal one (it used to run the whole ladder both ways up)."""
 
         fast = {"fast": True} if (self.fastread or light) else {}  # only passed when on, so a reader without the option still works
-        wide = {"widefirst": True} if self.widefirst else {}
+        wide = {"widefirst": True} if getattr(self, "widefirst", False) else {}
         first = {**fast, **wide, "stage": "first"} if defer_last_resort else {**fast, **wide}  # the last-resort band waits behind the whole-picture read
-        name_extra = {**fast, "topname": self.names.score_names} if (self.topname and self.names is not None) else fast
+        name_extra = {**fast, "topname": self.names.score_names} if (getattr(self, "topname", False) and self.names is not None) else fast
 
         def attempt(flipped: bool):
             result = self.ocr_reader.read(card, read_hp=self.read_hp, flipped=flipped, **first)
