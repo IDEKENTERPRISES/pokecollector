@@ -380,7 +380,7 @@ class CardMatcher:
         extra_signals=(), tta: bool = False, names=None, label: str = "baseline",
         lookup=None, use_number: bool = False, use_text: bool = False, reprint: bool = False, fastread: bool = False,
         number_once: bool = False, corners: bool = False, wholepic: bool = False, trustrejected: bool = False,
-        wholeread: bool = False, wholestrict: bool = False,
+        wholeread: bool = False, wholestrict: bool = False, widefirst: bool = False, topname: bool = False,
     ) -> None:
         self.index = index
         self.embedder = embedder
@@ -401,6 +401,8 @@ class CardMatcher:
         self.trustrejected = trustrejected  # a refused quad with the guide crop used is decided by the normal rules, not the strict fallback ones
         self.wholeread = wholeread  # version 9: a guide picture whose number was not read from the finder's card is read once more from the whole picture
         self.wholestrict = wholestrict  # version 10: a number read only from the whole picture decides only under ``whole_number_problem``'s rules
+        self.widefirst = widefirst  # version 12 test: no text in the tight number strips -> read the whole bottom band next
+        self.topname = topname  # version 12 test: no line in the name strips -> the name from the top band's lines (needs ``names``)
         self.reprint = reprint  # break ties between reprints by the artwork-only similarity
         self._row_maps: dict[int, np.ndarray] = {}
 
@@ -497,11 +499,13 @@ class CardMatcher:
         one orientation only, so this read takes no longer than a normal one (it used to run the whole ladder both ways up)."""
 
         fast = {"fast": True} if (self.fastread or light) else {}  # only passed when on, so a reader without the option still works
-        first = {**fast, "stage": "first"} if defer_last_resort else fast  # the last-resort band waits behind the whole-picture read
+        wide = {"widefirst": True} if self.widefirst else {}
+        first = {**fast, **wide, "stage": "first"} if defer_last_resort else {**fast, **wide}  # the last-resort band waits behind the whole-picture read
+        name_extra = {**fast, "topname": self.names.score_names} if (self.topname and self.names is not None) else fast
 
         def attempt(flipped: bool):
             result = self.ocr_reader.read(card, read_hp=self.read_hp, flipped=flipped, **first)
-            name_read = self.ocr_reader.read_name(card, flipped=flipped, **fast) if use_names else None
+            name_read = self.ocr_reader.read_name(card, flipped=flipped, **name_extra) if use_names else None
             return result, name_read
 
         if picture_flipped:

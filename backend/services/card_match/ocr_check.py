@@ -174,6 +174,54 @@ def summarise_steps(acc: dict) -> dict:
     return out
 
 
+# ── Which sets find their number only late (version 12 test) ─────────────────
+
+SET_STEP_KINDS = ("tight", "bottom_band", "narrow_wide", "bottom_wide", "other", "never")
+SET_STEPS_MIN_SCANS = 3
+SET_STEPS_MAX_SETS = 15
+
+
+def step_kind(label) -> str:
+    """Where in the number ladder a step sits: the two tight strips, the bottom band, the two wide strips, the last-resort whole bottom."""
+    label = str(label or "")
+    if label.endswith("-tight"):
+        return "tight"
+    if label == "bottom-band":
+        return "bottom_band"
+    if label.startswith("number-") and label.endswith("-wide"):
+        return "narrow_wide"
+    if label == "bottom-wide":
+        return "bottom_wide"
+    return "other"
+
+
+def add_set_steps(acc: dict, set_name, strips: list[dict], is_right: Callable[[dict], bool], flipped: bool | None = None) -> str:
+    """Count one scan under its set by the kind of the first step that had the right number (``never`` when none did). Counts only."""
+    kind = "never"
+    for strip in strips:
+        after = strip.get("after")
+        if after is None or (flipped is not None and bool(strip.get("flipped")) != bool(flipped)):
+            continue
+        if is_right(after):
+            kind = step_kind(strip.get("label"))
+            break
+    row = acc.setdefault(str(set_name or "?"), {key: 0 for key in ("scans",) + SET_STEP_KINDS})
+    row["scans"] += 1
+    row[kind] += 1
+    return kind
+
+
+def summarise_set_steps(acc: dict) -> dict:
+    """Per set (at least ``SET_STEPS_MIN_SCANS`` scans, the ones that needed the last-resort whole bottom most often first), and in all."""
+    total = {key: 0 for key in ("scans",) + SET_STEP_KINDS}
+    for row in acc.values():
+        for key in total:
+            total[key] += row[key]
+    sets = [{"set": name, **row} for name, row in acc.items() if row["scans"] >= SET_STEPS_MIN_SCANS]
+    sets.sort(key=lambda item: (-item["bottom_wide"], -item["never"], -item["scans"], item["set"]))
+    return {"all": total, "sets": sets[:SET_STEPS_MAX_SETS], "min_scans": SET_STEPS_MIN_SCANS}
+
+
 # ── Why a number was never right ─────────────────────────────────────────────
 
 NEVER_BUCKETS = {
@@ -422,7 +470,7 @@ def run_ocr_check(
             break
         report_progress({"phase": "ocr-check", "done": position - 1, "total": len(traces)})
         group = trace_sources.group_of(data)
-        tally = tallies.setdefault(group, {"buckets": {}, "steps": {}, "never": {}, "capture": {}, "whole": {}})
+        tally = tallies.setdefault(group, {"buckets": {}, "steps": {}, "never": {}, "capture": {}, "whole": {}, "by_set": {}})
         buckets, steps, never, capture, whole_counts = tally["buckets"], tally["steps"], tally["never"], tally["capture"], tally["whole"]
 
         def bucket_for(resolution: str, key: str, _buckets=buckets) -> dict:
@@ -479,6 +527,9 @@ def run_ocr_check(
                     "read": {"name": name, "number": result.number_local, "total": result.number_total, "confidence": result.number_confidence},
                     "right": rights[mode], "lines": result.lines[:8],
                 })
+        detect_result = detect_read[0]
+        add_set_steps(tally["by_set"], truth.get("set_abbreviation") or truth.get("set"), detect_result.strips,
+                      lambda after: bool(after.get("number") and _numbers_equal(after["number"], truth.get("number"))), flipped=detect_result.flipped)
         for variant in variants:
             got = read_variant(reader, card, variant)
             if got is None:
@@ -493,9 +544,10 @@ def run_ocr_check(
             "never_right": {res: summarise_never(acc) for res, acc in sorted(tally["never"].items())},
             "capture": {res: summarise_capture(acc) for res, acc in sorted(tally["capture"].items())},
             "wholeread": {res: counts for res, counts in sorted(tally["whole"].items())},
+            "number_by_set": summarise_set_steps(tally.get("by_set", {})),
         }
 
-    local = view(tallies.get(trace_sources.GROUP_LOCAL, {"buckets": {}, "steps": {}, "never": {}, "capture": {}, "whole": {}}))
+    local = view(tallies.get(trace_sources.GROUP_LOCAL, {"buckets": {}, "steps": {}, "never": {}, "capture": {}, "whole": {}, "by_set": {}}))
     report = {
         "kind": "ocr-check", "matcher_version": MATCHER_VERSION, "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "traces": len(traces), "skipped": skipped,
@@ -508,6 +560,8 @@ def run_ocr_check(
         "steps_note": "Per reading step of the full ladder, in order: scans that first had the right number (name) at that step, and the time it used.",
         "capture": local["capture"],
         "capture_note": "Typical (median) sharpness, brightness and blown-out share of the flat card that was read, where the number was read right and where it was not, per group and per set.",
+        "number_by_set": local["number_by_set"],
+        "number_by_set_note": "Version 12 test: per set, the scans by the kind of the first number step that had the right number: the two tight strips, the bottom band, the two wide strips, the last-resort whole bottom (bottom-wide), or never. Counts only; no photo is kept.",
         "wholeread": local["wholeread"],
         "wholeread_note": "Version 9: scans whose number the normal read did not complete and that were read once more from the whole picture (the first steps only), and how many of those it completed. The 'wholeread' row beside 'detect' is the number read after it.",
         # Scans read from a read-only source (prod), apart from the owner's own: the top-level tables above are the owner's scans only.

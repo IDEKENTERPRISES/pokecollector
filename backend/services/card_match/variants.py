@@ -27,6 +27,10 @@ Options (all measured side by side by the labelled benchmark, "Compare options" 
   - ``index8`` (version 11): the index is searched the way the phone's is stored: int8 per row with a scale, dequantised;
   - ``fp16`` (version 11): the half-precision model (44 MB) embeds the query and the server's own fp32 indexes are searched
     (an fp16 index would differ from the fp32 one by far less than the query does; no extra build). ``phone8`` wins over ``fp16``.
+  - ``widefirst`` (version 12 test): a card whose two tight number strips detect no text at all reads the whole bottom band next
+    (``ocr.OcrReader.read``), and skips the sharp / contrast steps when that finds nothing either;
+  - ``topname`` (version 12 test): when the name-line and name-band reads detect no line, the name is taken from the top band's lines
+    (``names.pick_top_line``: name-like and known to the catalogue). Both are off by default and only comparison rows.
   The three are PHONE words: a label that holds one is only a comparison row and is never the server's own set (``is_phone_label``).
 A label is the options joined by ``+``: ``baseline`` (none), ``names``, ``names+number``, ``names+number+text+tta`` ...
 
@@ -55,6 +59,7 @@ PHONE_INDEX = PHONE_MODEL  # its whole-card index
 PHONE_ART_INDEX = f"{PHONE_MODEL}-art"  # its artwork-window index
 FP16_MODEL = f"{DEFAULT_MODEL}-fp16"
 PHONE_WORDS = ("phone8", "index8", "fp16")
+V12_WORDS = ("widefirst", "topname")  # version 12 test options: read by the server only, off by default, not part of the phone manifest
 BEST_V8 = "names+number+text+art+tta+fastread+corners+wholepic"
 IN_USE = "names+number+text+art+tta+fastread+numberonce+corners+wholepic"  # picked on the server with version 9: 67.4% decided, 0 wrong, p95 1,431 ms
 DEFAULT_LABEL = IN_USE  # an unbuilt artwork index is left out, see ``usable``
@@ -67,12 +72,15 @@ PHONE_LABEL = IN_USE + "+phone8+index8"
 PHONE_LITE_LABEL = "names+number+art+fastread+numberonce+corners+wholepic+phone8+index8"
 # Step 2 rows: the same two with the whole-picture second read (``wholeread+wholestrict``, +4.6 points on the full model);
 # the phone rows above were measured before those two options existed.
+KEPT_LABEL = IN_USE + "+wholeread+wholestrict"  # the kept set: 72.1% decided, 0 wrong on the real photos
 PHONE_KEPT_LABEL = IN_USE + "+wholeread+wholestrict+phone8+index8"
 PHONE_LITE_WHOLE_LABEL = "names+number+art+fastread+numberonce+corners+wholepic+wholeread+wholestrict+phone8+index8"
 COMPARE_LABELS = (
     "baseline", "names", "names+number", "names+number+text", "names+number+text+art",
     "names+number+text+art+tta+fastread", "names+number+text+art+tta+fastread+corners", IN_USE,
     IN_USE + "+wholeread", IN_USE + "+wholeread+wholestrict",
+    # Version 12 test: the kept set with each new reading option, and both (the phone does not run these yet).
+    KEPT_LABEL + "+widefirst", KEPT_LABEL + "+topname", KEPT_LABEL + "+widefirst+topname",
     # Version 11, phone settings (read-only rows: never picked, never chosen.json): what the iPhone would score.
     # PHONE_LITE drops tta (two more embeddings), text (body-text OCR), wholeread and wholestrict (a second read of the whole picture).
     PHONE_LABEL, PHONE_LITE_LABEL, IN_USE + "+fp16+index8",
@@ -103,13 +111,15 @@ class Options:
     trustrejected: bool = False  # a refused quad: the guide-crop card is decided by the normal rules (needs corners)
     wholeread: bool = False  # version 9: a guide picture without a complete number is read once more from the whole picture
     wholestrict: bool = False  # version 10: a number read only from the whole picture decides only under stricter rules (needs wholeread)
+    widefirst: bool = False  # version 12 test: no text in the tight number strips -> read the whole bottom band next
+    topname: bool = False  # version 12 test: no line in the name strips -> take the name from the top band's lines
     fp16: bool = False  # version 11: the half-precision model embeds the query, the fp32 indexes are searched (phone word)
     phone8: bool = False  # version 11: the int8 model and its own int8 indexes, whole card and artwork (phone word)
     index8: bool = False  # version 11: the index is searched as the phone stores it, int8 rows with a scale (phone word)
 
     @property
     def label(self) -> str:
-        parts = [name for name in ORDER if getattr(self, name)]
+        parts = [name for name in ORDER + V12_WORDS if getattr(self, name)]
         return "+".join(parts) or "baseline"
 
 
@@ -124,7 +134,7 @@ def parse(label: str | None) -> Options:
         words.discard("fp16")  # one model at a time: the 8-bit one wins
     if "wholepic" in words or "trustrejected" in words:
         words.add("corners")  # both act on a quad the finder refused
-    return Options(**{name: name in words for name in ORDER})
+    return Options(**{name: name in words for name in ORDER + V12_WORDS})
 
 
 def is_phone_label(label: str | None) -> bool:
@@ -263,7 +273,7 @@ def _build_matcher(options: Options, session_factory, *, data_dir: Path | None =
         index, embedder, pipeline.db_candidate_loader(session_factory), ocr_reader or get_reader(),
         read_hp=read_hp, extra_signals=signals, tta=options.tta, names=names, label=options.label, fastread=options.fastread, number_once=options.numberonce,
         corners=options.corners, wholepic=options.wholepic, trustrejected=options.trustrejected,
-        wholeread=options.wholeread, wholestrict=options.wholestrict,
+        wholeread=options.wholeread, wholestrict=options.wholestrict, widefirst=options.widefirst, topname=options.topname,
         lookup=lookup, use_number=options.number, use_text=options.text, reprint=options.reprint,
     )
 

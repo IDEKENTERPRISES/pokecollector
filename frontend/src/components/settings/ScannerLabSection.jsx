@@ -340,7 +340,7 @@ export function Report({ report, title }) {
   )
 }
 
-const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused', wholeread: 'second read of the whole picture', wholestrict: 'stricter rules for a number read only from the whole picture', phone8: 'phone: 8-bit model', index8: 'phone: 8-bit index', fp16: 'phone: 16-bit model' }
+const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused', wholeread: 'second read of the whole picture', wholestrict: 'stricter rules for a number read only from the whole picture', widefirst: 'wide bottom read first (test)', topname: 'name from the top band (test)', phone8: 'phone: 8-bit model', index8: 'phone: 8-bit index', fp16: 'phone: 16-bit model' }
 const isPhoneLabel = label => /(^|\+)(phone8|index8|fp16)(\+|$)/.test(label || '')
 const megabytes = bytes => (bytes == null ? '–' : `${(bytes / 1048576).toFixed(1)} MB`)
 const describeOptions = label => (label === 'baseline' ? OPTION_NAMES.baseline : label.split('+').map(word => OPTION_NAMES[word] || word).join(' + '))
@@ -540,7 +540,7 @@ export function CompareTable({ report, title, phone }) {
           <thead>
             <tr className="text-left text-text-secondary">
               <th className="pr-2 font-normal">Options</th><th className="pr-2 font-normal">Top 1</th><th className="pr-2 font-normal">Top 20</th>
-              <th className="pr-2 font-normal">Number</th><th className="pr-2 font-normal">Decided</th><th className="pr-2 font-normal">Wrong</th><th className="font-normal">p95</th>
+              <th className="pr-2 font-normal">Number</th><th className="pr-2 font-normal">Name</th><th className="pr-2 font-normal">Number time</th><th className="pr-2 font-normal">Decided</th><th className="pr-2 font-normal">Wrong</th><th className="font-normal">p95</th>
             </tr>
           </thead>
           <tbody>
@@ -550,6 +550,8 @@ export function CompareTable({ report, title, phone }) {
                 {row.status === 'ok' ? (
                   <>
                     <td className="pr-2">{percent(row.top1)}</td><td className="pr-2">{percent(row.top20)}</td><td className="pr-2">{percent(row.number_exact)}</td>
+                    <td className="pr-2" data-testid="scanner-lab-row-name-read">{percent(row.name_read)}</td>
+                    <td className="pr-2" data-testid="scanner-lab-row-number-ms">{row.number_ms_mean != null ? `${number(row.number_ms_mean)} ms` : '–'}</td>
                     <td className="pr-2">{percent(row.decided)}</td>
                     <td className="pr-2">
                       {row.decided_wrong > 0 ? (
@@ -561,7 +563,7 @@ export function CompareTable({ report, title, phone }) {
                     <td>{row.p95_ms != null ? `${number(row.p95_ms)} ms` : '–'}</td>
                   </>
                 ) : (
-                  <td colSpan={6} className="text-text-secondary">{row.error ? `could not run here: ${row.error}` : `needs the ${(row.missing_indexes || []).join(', ')} index`}</td>
+                  <td colSpan={8} className="text-text-secondary">{row.error ? `could not run here: ${row.error}` : `needs the ${(row.missing_indexes || []).join(', ')} index`}</td>
                 )}
               </tr>
             ))}
@@ -569,6 +571,7 @@ export function CompareTable({ report, title, phone }) {
               <tr className="tabular-nums text-text-secondary" data-testid="scanner-lab-held-back-row">
                 <td className="pr-2">Held back, with {describeOptions(report.held_back.label)} ({number(report.held_back.n)} scans)</td>
                 <td className="pr-2">{percent(report.held_back.top1)}</td><td className="pr-2">{percent(report.held_back.top20)}</td><td className="pr-2">{percent(report.held_back.number_exact)}</td>
+                <td className="pr-2">{percent(report.held_back.name_read)}</td><td className="pr-2">{report.held_back.number_ms_mean != null ? `${number(report.held_back.number_ms_mean)} ms` : '–'}</td>
                 <td className="pr-2">{percent(report.held_back.decided)}</td><td className="pr-2">{number(report.held_back.decided_wrong)}</td><td>{report.held_back.p95_ms != null ? `${number(report.held_back.p95_ms)} ms` : '–'}</td>
               </tr>
             )}
@@ -744,6 +747,21 @@ export function WholeReadSummary({ data }) {
   )
 }
 
+/** Version 12 test: per set, which number step first had the right number (the sets that only read in the whole bottom band come first). */
+export function NumberBySet({ data }) {
+  if (!data || !data.all?.scans) return null
+  const where = row => `${row.tight} tight · ${row.bottom_band} bottom band · ${row.narrow_wide} wide strips · ${row.bottom_wide} whole bottom · ${row.never} never`
+  return (
+    <div className="space-y-1" data-testid="scanner-lab-number-by-set">
+      <h4 className="text-footnote font-semibold">Where each set’s number is first read right</h4>
+      <p className="text-footnote text-text-secondary">All {number(data.all.scans)} scans: {where(data.all)}. Sets with at least {data.min_scans} scans:</p>
+      <ul className="space-y-0.5 text-footnote text-text-secondary">
+        {(data.sets || []).map(row => <li key={row.set} data-testid="scanner-lab-number-by-set-row">{row.set} ({row.scans}): {where(row)}</li>)}
+      </ul>
+    </div>
+  )
+}
+
 /** The OCR check: the text reader alone on the confirmed real photos, split by the resolution it read from. */
 export function OcrCheckView({ report }) {
   const groups = Object.entries(report.by_resolution || {})
@@ -767,6 +785,7 @@ export function OcrCheckView({ report }) {
       })}
       <NeverRight data={report.never_right} capture={report.capture} />
       <WholeReadSummary data={report.wholeread} />
+      <NumberBySet data={report.number_by_set} />
       <OcrSteps steps={report.steps} />
       {Object.entries(report.groups || {}).map(([name, group]) => {
         const rows = Object.entries(group.by_resolution?.all || {})
