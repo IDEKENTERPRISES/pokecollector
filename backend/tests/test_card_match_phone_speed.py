@@ -389,7 +389,7 @@ MATCHER = {
     "top20": [["sv1-1", 0.9312], ["sv1-9_en", 0.51], ["sv2-4", 0.4]],
     "read": {"number": "001", "total": "198", "name": "Pikachu", "source": "finder_card"},
     "orientation": {"by": "default", "flipped": False}, "detection": {"source": "quad", "found": True},
-    "wholeread": None, "catalogue": {"present": True, "cards": 19659, "printed_total_missing": 0}, "photo": {"width": 1536, "height": 2048, "bytes": 412345},
+    "wholeread": None, "catalogue": {"present": True, "cards": 19659, "printed_total_missing": 0, "state": "cached"}, "photo": {"width": 1536, "height": 2048, "bytes": 412345},
     "timings": {"finder": [610.2, 590.1], "embed": [820.0, 790.5], "catalogue": [1200.0, 0.0], "other": [10.0, 8.0], "total": [2210.4, 2100.0], "warm": [1010.4, 2100.0], "saved": [0.0, 0.0]},
     "variant": "restart=1 overlap=0 ocr=wasm ladder=server runs=3",
     "name_steps": [{"label": "name-line", "ms": 74, "lines": 0, "text": "", "after": None}, {"label": "top-wide", "ms": 192, "lines": 2, "text": "BASIC | Morpeko", "after": "Morpeko"}],
@@ -398,6 +398,8 @@ MATCHER = {
     "decision_rank": {"picture_rank": 7, "similarity": 0.609, "lead": None},
     "overlap": {"asked": True, "used": False, "why": "low memory"},
     "setup": {"load_ms": 786, "transfer_ms": 40, "restarted": True},
+    "heap": {"worker": [310.5, 340.0, 340.0], "main": [120.0, 120.0, 120.0]},
+    "reader": {"backend": "worker WebAssembly", "fallback": None},
     "ocr": {"ocr_number": {"det_calls": 3, "det_ms": 420.5, "rec_calls": 4, "rec_ms": 130}, "name": {"det_calls": 1, "det_ms": 90, "rec_calls": 1, "rec_ms": 30}},
     "ladder": {"stopped": "accepted", "attempts": 2, "seconds": 0.62, "budget": 0.9},
 }
@@ -419,6 +421,9 @@ class MatcherBlockTests(unittest.TestCase):
         self.assertEqual(run["matcher"]["timings"]["total"], [2210.4, 2100.0])
         self.assertEqual(run["matcher"]["ocr"]["ocr_number"]["det_calls"], 3)
         self.assertEqual(run["matcher"]["ladder"]["stopped"], "accepted")
+        self.assertEqual(run["matcher"]["heap"], {"worker": [310.5, 340.0, 340.0], "main": [120.0, 120.0, 120.0]})
+        self.assertEqual(run["matcher"]["reader"]["backend"], "worker WebAssembly")
+        self.assertEqual(run["matcher"]["catalogue"]["state"], "cached")
         self.assertIn("restart=1", run["matcher"]["variant"])
         self.assertEqual(phone_speed.get(run["id"], self.dir)["matcher"]["top20"][0], ["sv1-1", 0.9312])
 
@@ -438,6 +443,10 @@ class MatcherBlockTests(unittest.TestCase):
             {**MATCHER, "ocr": {"name": {"det_calls": "many"}}},
             {**MATCHER, "ladder": {"stopped": "x" * 200}},
             {**MATCHER, "variant": "x" * 300},
+            {**MATCHER, "heap": {"worker": [1, 2, 3, 4, 5]}},
+            {**MATCHER, "heap": {"gpu": [1]}},
+            {**MATCHER, "heap": {"worker": ["big"]}},
+            {**MATCHER, "reader": {"backend": "x" * 200}},
             {**MATCHER, "number_steps": [{"label": "a"}] * 11},
             {**MATCHER, "name_steps": [{"label": "a", "pixels": "AAAA"}]},
             {**MATCHER, "name_steps": "none"},

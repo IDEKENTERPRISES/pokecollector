@@ -7,7 +7,7 @@ vi.mock('../contexts/AuthContext', () => ({ useAuth: () => auth }))
 vi.mock('../navigation/useNavBar', () => ({ useNavBar: () => {} }))
 vi.mock('../api/client', () => ({ default: { get: vi.fn(() => new Promise(() => {})), post: vi.fn() } }))
 
-const { default: PhoneSpeedTest, ResultsTable, MatcherResults, OcrStats, GpuDiagnosis } = await import('./PhoneSpeedTest')
+const { default: PhoneSpeedTest, ResultsTable, MatcherResults, OcrStats, GpuDiagnosis, HeapLog } = await import('./PhoneSpeedTest')
 const { PhoneSpeedRuns, matcherAgreementText, matcherTimingText, matcherReadLines, gpuDiagText } = await import('../components/settings/ScannerLabSection')
 
 const render = element => renderToStaticMarkup(<MemoryRouter>{element}</MemoryRouter>)
@@ -278,5 +278,46 @@ describe('Scanner lab: the server read beside the phone read, and the WebGPU tes
     expect(html).toContain('GPU trouble: device lost (unknown): The GPU process crashed')
     expect(html).not.toContain('embed – ms')
     expect(gpuDiagText({ device: {} })).toBeNull()
+  })
+})
+
+describe('round 3 on the page: heap sizes, the reader backend, new presets', () => {
+  const base = { version: 11, backend: 'uint8 on WebAssembly (worker)', decided: false, unsure_reason: 'x', candidates: [], timings_ms: { total: 4000, warm: 3900 } }
+
+  it('shows the WebAssembly heap after each run and after each stage of the first run', () => {
+    const html = render(<HeapLog log={[{ run: 1, worker: 310.5, main: 120 }, { run: 2, worker: 340, main: 120 }]} trail={[['finder', 200], ['embed', 310.5]]} />)
+    expect(html).toContain('run 1: worker 310.5, main 120')
+    expect(html).toContain('run 2: worker 340, main 120')
+    expect(html).toContain('finder 200 · embed 310.5')
+    expect(render(<HeapLog log={[]} trail={null} />)).toBe('')
+  })
+
+  it('shows the real reader backend and why it fell back, and whether the card database indexes were cached', () => {
+    const ok = render(<MatcherResults results={[{ ...base, reader: { backend: 'main thread WebGPU', fallback: null }, catalogue: { present: true, state: 'cached' } }]} />)
+    expect(ok).toContain('main thread WebGPU')
+    expect(ok).toContain('cached (no rebuild)')
+    const fell = render(<MatcherResults results={[{ ...base, reader: { backend: 'worker WebAssembly', fallback: 'Unsupported op: HardSwish' } }]} />)
+    expect(fell).toContain('fell back to WebAssembly: Unsupported op: HardSwish')
+    expect(render(<MatcherResults results={[{ ...base, catalogue: { present: true, state: 'built' } }]} />)).toContain('built in this run')
+  })
+
+  it('has the Fast + Parallel presets (fp16 WebGPU on the main thread, reading beside it), with and without a fresh worker', () => {
+    const html = render(<PhoneSpeedTest />)
+    expect(html).toContain('data-testid="phone-preset-gpu-parallel"')
+    expect(html).toContain('data-testid="phone-preset-gpu-parallel-fresh"')
+    expect(html).toContain('Fast + Parallel: fp16 WebGPU on the main thread, reading beside it')
+  })
+})
+
+describe('Scanner lab after a failed run (round 3)', () => {
+  it('lists an out-of-memory failure as such, with the error text, and the heap and reader of a finished run', async () => {
+    const failed = { id: 'x', at: '2026-11-17T09:15:00', by: 'oak', has_photo: false, device: { ios: '26.6', oom: true, matcherError: 'Aborted(OOM)' }, timings: { matcher_failed: 1 } }
+    const html = render(<PhoneSpeedRuns runs={[failed]} />)
+    expect(html).toContain('matcher run failed')
+    expect(html).toContain('OUT OF MEMORY: Aborted(OOM)')
+    const done = { id: 'y', at: '2026-11-17T09:20:00', by: 'oak', has_photo: true, server: { status: 'done' }, device: { ios: '26.6' }, timings: {}, matcher: { decided: true, card: 'a', backend: 'fp16', timings: { total: [3000, 3000] }, heap: { worker: [310, 340], main: [120, 120] }, reader: { backend: 'main thread WebGPU', fallback: 'HardSwish' } } }
+    const text = matcherTimingText(done)
+    expect(text).toContain('reader main thread WebGPU (fell back: HardSwish)')
+    expect(text).toContain('heap MB after each run: worker 310, 340, main 120, 120')
   })
 })

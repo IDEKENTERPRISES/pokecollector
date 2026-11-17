@@ -178,7 +178,7 @@ def _clean_matcher(matcher) -> dict:
     if not isinstance(matcher, dict):
         raise SpeedRunError("matcher must be an object")
     allowed = {"version", "backend", "mode", "runs", "stable", "decided", "card", "mechanism", "reason", "similarity", "picture_only", "top20", "read",
-               "orientation", "detection", "wholeread", "catalogue", "photo", "timings", "variant", "ocr", "ladder", "name_steps", "number_steps", "text_input", "decision_rank", "overlap", "setup"}
+               "orientation", "detection", "wholeread", "catalogue", "photo", "timings", "variant", "ocr", "ladder", "name_steps", "number_steps", "text_input", "decision_rank", "overlap", "setup", "heap", "reader"}
     if set(matcher) - allowed:
         raise SpeedRunError("matcher holds unknown fields")
     out: dict = {}
@@ -205,7 +205,7 @@ def _clean_matcher(matcher) -> dict:
     out["orientation"] = _small_object(matcher.get("orientation"), "matcher.orientation", {"by": "text", "flipped": "flag"})
     out["detection"] = _small_object(matcher.get("detection"), "matcher.detection", {"source": "text", "found": "flag"})
     out["wholeread"] = _small_object(matcher.get("wholeread"), "matcher.wholeread", {"tried": "flag", "rescued": "flag"})
-    out["catalogue"] = _small_object(matcher.get("catalogue"), "matcher.catalogue", {"present": "flag", "cards": "number", "printed_total_missing": "number"})
+    out["catalogue"] = _small_object(matcher.get("catalogue"), "matcher.catalogue", {"present": "flag", "cards": "number", "printed_total_missing": "number", "state": "text"})
     out["photo"] = _small_object(matcher.get("photo"), "matcher.photo", {"width": "number", "height": "number", "bytes": "number"})
     out["ladder"] = _small_object(matcher.get("ladder"), "matcher.ladder", {"stopped": "text", "attempts": "number", "seconds": "number", "budget": "number"})
     reader = matcher.get("ocr")
@@ -220,6 +220,19 @@ def _clean_matcher(matcher) -> dict:
     out["text_input"] = _small_object(matcher.get("text_input"), "matcher.text_input", {"source": "text", "width": "number", "height": "number"})
     out["decision_rank"] = _small_object(matcher.get("decision_rank"), "matcher.decision_rank", {"picture_rank": "number", "similarity": "number", "lead": "number"})
     out["overlap"] = _small_object(matcher.get("overlap"), "matcher.overlap", {"asked": "flag", "used": "flag", "why": "text"})
+    heap = matcher.get("heap")
+    if heap is not None:  # the WebAssembly heap (MB) of the worker and of the main thread after each run: it only grows
+        if not isinstance(heap, dict) or set(heap) - {"worker", "main"}:
+            raise SpeedRunError("matcher.heap holds unknown fields")
+        out["heap"] = {}
+        for side in ("worker", "main"):
+            values = heap.get(side) or []
+            if not isinstance(values, list) or len(values) > 4:
+                raise SpeedRunError("matcher.heap lists at most 4 runs")
+            out["heap"][side] = [_number(value, f"matcher.heap.{side}") for value in values]
+    else:
+        out["heap"] = None
+    out["reader"] = _small_object(matcher.get("reader"), "matcher.reader", {"backend": "text", "fallback": "text"})
     out["setup"] = _small_object(matcher.get("setup"), "matcher.setup", {"load_ms": "number", "transfer_ms": "number", "restarted": "flag"})
     timings = matcher.get("timings") or {}
     if not isinstance(timings, dict) or set(timings) - set(MATCHER_STAGES):

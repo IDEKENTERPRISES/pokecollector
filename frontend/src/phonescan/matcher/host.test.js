@@ -34,6 +34,7 @@ function setup({ workerGpu = false, mainGpu = false, cardDb = true, failGpu = fa
     },
   } })
   const ocrCalls = []
+  const metaCalls = { n: 0 }
   const embedderFactory = async ({ provider, backend }) => {
     log.push(`embedder:${provider}`)
     return { backend, where: 'here', embed: async images => images.map(() => Float32Array.of(1, 0)), release: async () => log.push(`release-embedder:${provider}`) }
@@ -44,7 +45,7 @@ function setup({ workerGpu = false, mainGpu = false, cardDb = true, failGpu = fa
     loadWasm: async () => ort('wasm'),
     loadGpu: async () => { if (failGpu) throw new Error('webgpu is not here'); return ort('gpu') },
     probeGpu: async () => (workerGpu ? { available: true, reason: null } : { available: false, reason: 'navigator.gpu does not exist here' }),
-    cardDb: cardDb ? { getMeta: async () => ({ hash: 'h1', sets: 3 }) } : { getMeta: async () => null },
+    cardDb: cardDb ? { getMeta: async () => { metaCalls.n += 1; return { hash: 'h1', sets: 3 } } } : { getMeta: async () => null },
     now: (() => { let t = 0; return () => (t += 10) })(),
     build: {
       ortEmbedder: embedderFactory,
@@ -74,7 +75,7 @@ function setup({ workerGpu = false, mainGpu = false, cardDb = true, failGpu = fa
     loadGpu: async () => ort('main-gpu'),
     loadWasm: async () => ort('main-wasm'),
   })
-  return { client, log, reads, created, ocrCalls, gpuEvents, gpuDevice }
+  return { client, log, reads, created, ocrCalls, gpuEvents, gpuDevice, metaCalls }
 }
 
 describe('the version guard', () => {
@@ -368,5 +369,71 @@ describe('keeping the GPU alive and writing down its trouble (round 2)', () => {
     await client.init({ manifest: manifest(), mode: 'wasm' })
     expect(client.holdsGpu()).toBe(false)
     expect(client.restartWorker()).toBe(true)
+  })
+})
+
+describe('round 3: warm card database, real release, out of memory', () => {
+  const photo = () => ({ data: new Uint8ClampedArray(16), width: 2, height: 2 })
+
+  it('does not ask IndexedDB again once the card-database indexes are built (a warm run has no round trip to wait on)', async () => {
+    const { client, metaCalls } = setup()
+    await client.init({ manifest: manifest(), mode: 'wasm' })
+    const first = await client.match(photo())
+    expect(first.catalogue.state).toBe('built')
+    const askedAfterFirst = metaCalls.n
+    const second = await client.match(photo())
+    const third = await client.match(photo())
+    expect(second.catalogue.state).toBe('cached')
+    expect(third.catalogue.state).toBe('cached')
+    expect(metaCalls.n).toBe(askedAfterFirst) // not once more across the warm runs
+  })
+
+  it('reports the heap of the worker after each stage and at the end of a run, and the reader backend with no fallback', async () => {
+    const { client } = setup()
+    await client.init({ manifest: manifest(), mode: 'wasm' })
+    const result = await client.match(photo())
+    expect(result.heap.workerEnd).toMatchObject({ total: expect.any(Number), each: expect.any(Array) })
+    expect(result.reader).toEqual({ backend: 'worker WebAssembly', fallback: null })
+  })
+
+  it('says why the reader fell back to WebAssembly (the unsupported operator) in the result', async () => {
+    const { client } = setup({ ocrFails: true })
+    const info = await client.init({ manifest: manifest(), mode: 'wasm', mainGpu: true, ocrBackend: 'webgpu-main' })
+    expect(info.ocrFallback).toMatch(/Unsupported op: HardSwish/)
+    const result = await client.match(photo())
+    expect(result.reader.backend).toBe('worker WebAssembly')
+    expect(result.reader.fallback).toMatch(/HardSwish/)
+  })
+
+  it('releaseAll waits for the worker, stops it, releases every session here (the WebGPU one too) and destroys the GPU device', async () => {
+    const { client, log, gpuDevice } = setup()
+    let destroyed = false
+    gpuDevice.destroy = () => { destroyed = true }
+    await client.init({ manifest: manifest(), mode: 'auto', mainGpu: true })
+    expect(client.mainHoldsModels()).toBe(true)
+    const freed = await client.releaseAll()
+    expect(log).toContain('release:main-gpu')
+    expect(log).toContain('release-ocr') // the worker released its reader first
+    expect(destroyed).toBe(true)
+    expect(client.mainHoldsModels()).toBe(false)
+    expect(freed).toHaveProperty('mainHeapStays')
+    // and a fresh start afterwards works: a new worker, a new session
+    const info = await client.init({ manifest: manifest(), mode: 'auto', mainGpu: true })
+    expect(info.backend).toBe('fp16 on WebGPU (main thread)')
+    expect(log.filter(entry => entry === 'session:main-gpu:webgpu')).toHaveLength(2)
+  })
+
+  it('may restart a worker that holds the GPU model when forced (the recovery from out of memory)', async () => {
+    const { client, created } = setup({ workerGpu: true })
+    await client.init({ manifest: manifest(), mode: 'worker-webgpu', mainGpu: true })
+    expect(client.restartWorker()).toBe(false)
+    expect(client.restartWorker({ force: true })).toBe(true)
+    await client.init({ manifest: manifest(), mode: 'wasm' })
+    expect(created).toHaveLength(2)
+  })
+
+  it('marks an out-of-memory failure in the worker with the code oom', async () => {
+    const { client } = setup({ files: path => { if (path.startsWith('index/')) throw new Error('RangeError: Array buffer allocation failed'); return new ArrayBuffer(8) } })
+    await expect(client.init({ manifest: manifest(), mode: 'wasm' })).rejects.toMatchObject({ code: 'oom' })
   })
 })
