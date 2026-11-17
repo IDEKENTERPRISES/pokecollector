@@ -143,7 +143,7 @@ class OfflineCardDbTests(unittest.TestCase):
         self.assertEqual(again.content, b"")
 
     def test_the_set_row_carries_the_printed_total_and_a_change_of_it_changes_only_that_sets_hash(self):
-        # The phone matcher's number-and-total rules need the set's official printed total (``total`` counts secret rares).
+        # The scanner's number-and-total rules need the set's official printed total (``total`` counts secret rares).
         body = self.client.get("/api/offline/carddb/sets/en/pbl_en").json()
         self.assertEqual(body["set"]["printed_total"], 1)
         self.assertEqual(body["set"]["total"], 2)

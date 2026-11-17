@@ -53,7 +53,7 @@ def card():
 @skip
 class OptionTests(unittest.TestCase):
     def test_the_version_and_the_default_do_not_move(self):
-        self.assertEqual(str(MATCHER_VERSION), "11")  # the phone matcher on nonprod refuses any other version
+        self.assertEqual(str(MATCHER_VERSION), "11")
         options = variants.parse(variants.DEFAULT_LABEL)
         self.assertFalse(options.widefirst or options.topname)
         self.assertEqual(variants.DEFAULT_LABEL, variants.IN_USE)
