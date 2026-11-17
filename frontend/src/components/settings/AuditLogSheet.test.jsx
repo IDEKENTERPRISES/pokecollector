@@ -54,3 +54,12 @@ describe('scanner audit entries', () => {
     expect(auditDetailLines({ action: 'invite.revoked', details: {} }, t)).toEqual([])
   })
 })
+
+describe('confirmed card correction audit entries', () => {
+  it('has readable labels and says which card became which', () => {
+    expect(auditActionLabel('scan_trace.ground_truth_corrected', t)).toBe('Scan’s confirmed card corrected')
+    expect(auditActionLabel('scan_trace.ground_truth_restored', t)).toBe('Scan’s confirmed card restored')
+    const line = auditDetailText({ action: 'scan_trace.ground_truth_corrected', details: { from_card_id: 'sv9-26', to_card_id: 'me2-32', note: 'The scanner was right' } }, t)
+    expect(line).toBe('Confirmed card: sv9-26 → me2-32 · “The scanner was right”')
+  })
+})

@@ -46,7 +46,7 @@ function setAndNumber(view) {
 }
 
 // The app's card search (GET /cards/search), as a one-pick list.
-function CardSearchPicker({ onPick, onBack, backLabel, t, autoFocus = true }) {
+export function CardSearchPicker({ onPick, onBack, backLabel, t, autoFocus = true }) {
   const [text, setText] = useState('')
   const debounced = useDebouncedValue(text.trim(), 300)
   const { data, isFetching } = useQuery({

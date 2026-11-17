@@ -147,7 +147,7 @@ def card_match_trace_correct(key: str, body: CorrectionRequest, request: Request
         raise HTTPException(status_code=exc.status, detail=str(exc))
     record_audit(
         db, "scan_trace.ground_truth_corrected", request=request, actor=current_user, target_type="scan_trace", target_id=key,
-        details={"from_card_id": result["from"], "to_card_id": result["to"], "reason": (body.reason or "").strip()[:200]},
+        details={"from_card_id": result["from"], "to_card_id": result["to"], "note": (body.reason or "").strip()[:200]},
     )
     return {**result, "card": _card_summary(card)}
 
