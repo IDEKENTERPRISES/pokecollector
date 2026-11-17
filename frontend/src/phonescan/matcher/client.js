@@ -2,7 +2,7 @@
 // model for the case where the worker has no WebGPU (the host asks for it by `rpc`). A worker that cannot be created (or that
 // dies) is reported as an error; `loopbackWorker` runs the same host in this scope, which the tests use.
 import { serveEmbeddings } from './embedder'
-import { SESSION_OPTIONS, watchGpu } from './ort'
+import { SESSION_OPTIONS, destroyGpuDevice, watchGpu, wasmHeapMB } from './ort'
 import { diagnoseWebGpu } from './gpuDiag'
 
 export class MatcherError extends Error {
@@ -44,13 +44,14 @@ export function createMatcherClient({ createWorker = defaultWorker, readFile = a
 
   // WebGPU sessions are never released while the page lives (and the worker that holds one is never terminated before it released it): destroying GPU buffers
   // and sessions during a run, or at the end of one, is the prime suspect of the page going black on the owner's iPhone. They are reused by the next run instead.
-  async function dropModels(names) {
+  async function dropModels(names, { force = false } = {}) {
     for (const name of names) {
       const old = models.get(name)
       if (!old) continue
-      if (old.provider === 'webgpu') continue // kept for the page's lifetime
+      if (old.provider === 'webgpu' && !force) continue // kept for the page's lifetime (force: an explicit release or a recovery from out of memory)
       models.delete(name)
-      await old.session?.release?.()
+      try { await old.session?.release?.() } catch { /* a spent session */ }
+      if (old.provider === 'webgpu' && force) await destroyGpuDevice(old.ort) // the device and its buffers go with it
     }
   }
 
@@ -103,7 +104,7 @@ export function createMatcherClient({ createWorker = defaultWorker, readFile = a
       if (message.type === 'rpc') {
         serve(message.method, message.payload).then(
           result => worker?.postMessage({ type: 'rpc-result', callId: message.callId, result }),
-          error => worker?.postMessage({ type: 'rpc-result', callId: message.callId, error: String(error?.message || error) }),
+          error => worker?.postMessage({ type: 'rpc-result', callId: message.callId, error: `main thread: ${String(error?.message || error)}` }), // tagged: the page must know WHICH side ran out
         )
         return
       }
@@ -157,8 +158,8 @@ export function createMatcherClient({ createWorker = defaultWorker, readFile = a
     /** The same steps on this (the main) thread. */
     diagnoseMain: ({ path, onStep = null }) => diagnoseWebGpu({ loadGpu, readFile, path, onStep }),
     /** Stops the worker (its wasm heaps and indexes go) but keeps the models on this thread: the next `init` starts a fresh worker. */
-    restartWorker() {
-      if (holdsGpu()) return false // a worker that holds a GPU device is never terminated: it is reused
+    restartWorker({ force = false } = {}) {
+      if (holdsGpu() && !force) return false // a worker that holds a GPU device is never terminated: it is reused
       try { worker?.terminate() } catch { /* already gone */ }
       dead(new MatcherError('The matcher worker was restarted', 'terminated'))
       return true
@@ -172,6 +173,26 @@ export function createMatcherClient({ createWorker = defaultWorker, readFile = a
       }
       try { worker?.terminate() } catch { /* already gone */ }
       dead(new MatcherError('The matcher worker was stopped', 'terminated'))
+    },
+    /** True while this (main) thread holds an ORT session: its WebAssembly heap cannot shrink, only a reload frees it. */
+    mainHoldsModels: () => models.size > 0,
+    /** The WebAssembly heaps of this thread in MB. */
+    mainHeap: () => wasmHeapMB(),
+    /**
+     * Really frees what can be freed, on both threads: the worker releases its sessions and is waited for (3 s at most), then terminated (its wasm heaps go);
+     * every session here is released, WebGPU ones too, and the WebGPU device is destroyed. What cannot be freed is a WebAssembly heap of THIS thread (they never
+     * shrink): `mainHeapStays` says whether one exists, and then only reopening the app gives that memory back.
+     */
+    async releaseAll() {
+      if (worker) {
+        try { await Promise.race([send({ type: 'release' }), new Promise(resolve => setTimeout(resolve, 3000))]) } catch { /* it may already be dead (out of memory) */ }
+        try { worker.terminate() } catch { /* already gone */ }
+        dead(new MatcherError('The matcher worker was stopped', 'terminated'))
+      }
+      const hadMain = models.size > 0
+      await dropModels([...models.keys()], { force: true })
+      client.info = null
+      return { mainHeapStays: hadMain || wasmHeapMB().total > 0, mainHeapMB: wasmHeapMB().total }
     },
     terminate() {
       serve('release-model').catch(() => {}) // WebAssembly models only: WebGPU ones stay (see dropModels)

@@ -60,6 +60,18 @@ function timer(now) {
 
 const roundMs = value => Math.round(value * 10) / 10
 
+/**
+ * The per-card time of a warm worker. Sequential run: the total without the one-off card-database index build. Overlapped run (the reading ran beside the embeddings): that
+ * subtraction would be wrong (the build ran in parallel, inside the branch that was not the longest), so it is the critical path of the stage times:
+ *   finder + views + max(embedding branch, reading branch) + search + decide      with reading branch = number + name + second read.
+ */
+export function warmPerCard(timings, { overlapped = false, total = 0 } = {}) {
+  const at = name => Number(timings[name]) || 0
+  if (!overlapped) return roundMs(Math.max(0, total - at('catalogue')))
+  const reading = at('ocr_number') + at('name') + at('second_read')
+  return roundMs(at('finder') + at('views') + Math.max(at('embed'), reading) + at('search') + at('decide'))
+}
+
 /** Picks the better reading of a card read upright and read turned: (completeness, name found) compared as the server does. */
 const usable = (read, nameRead, names, scoreNames) => [
   completeness(read),
@@ -305,7 +317,7 @@ export function createPhoneMatcher({ embedder, index, sessions = null, getDecide
     timings_ms.total = roundMs(total)
     const sum = STAGES.reduce((acc, name) => acc + clock.timings[name], 0)
     timings_ms.other = roundMs(Math.max(0, total - sum)) // time between the stages (cloning, ranking...), so the rows add up to the total
-    timings_ms.warm = roundMs(Math.max(0, total - clock.timings.catalogue)) // the per-card time of a warm worker: without the one-off index build
+    timings_ms.warm = warmPerCard(clock.timings, { overlapped: overlapping, total }) // the per-card time of a warm worker (the critical path when the reading ran beside the embeddings)
     timings_ms.saved = roundMs(Math.max(0, sum - total)) // what overlap saved: the stages ran side by side, so they add up to more than the total
     const overlapWhy = overlapping ? null : !overlap ? null : !canRead ? 'no text reading' : lowMemory ? 'low memory is on (it loads things one at a time)' : embedder.where !== 'main thread' ? 'the model runs in the worker (one thread), so there is nothing to run beside' : 'unknown'
     const finalStrips = stepsOf((ocrResult?.strips) || [])

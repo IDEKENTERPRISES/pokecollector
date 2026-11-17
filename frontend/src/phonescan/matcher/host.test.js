@@ -184,7 +184,7 @@ describe('matching through the worker', () => {
     expect(stages).toEqual(['finder:start', 'finder:5', 'decide:start'])
     expect(result.photoSize).toEqual([2, 3])
     expect(result.hasCatalogue).toBe(true)
-    expect(result.catalogue).toEqual({ present: true, cards: 2, printedTotalMissing: 0, buildMs: 5 })
+    expect(result.catalogue).toMatchObject({ present: true, cards: 2, printedTotalMissing: 0, buildMs: 5, state: 'built' })
   })
 
   it('says plainly that the card database is not on the phone (picture-only run)', async () => {
@@ -310,7 +310,7 @@ describe('low memory mode (step 3d fix)', () => {
     expect(reads.filter(path => path.startsWith('index/'))).toHaveLength(2) // read when the search needed them
     expect(reads).toContain('ocr/det.onnx')
     expect(log).toContain('release-ocr') // the reader was released after the read
-    expect(result.catalogue).toEqual({ present: true, cards: 2, printedTotalMissing: 0, buildMs: 5 }) // the stats are kept when the indexes are built, so the run can report them
+    expect(result.catalogue).toMatchObject({ present: true, cards: 2, printedTotalMissing: 0, buildMs: 5, state: 'built' }) // the stats are kept when the indexes are built, so the run can report them
   })
 })
 

@@ -17,7 +17,7 @@ import { createOcrSessions } from './ocrSessions'
 import { recordSessions } from './ocrStats'
 import { characterTable } from '../ocr'
 import { diagnoseWebGpu } from './gpuDiag'
-import { watchGpu } from './ort'
+import { isOutOfMemory, watchGpu, wasmHeapMB } from './ort'
 import { pictureIndexFromBuffers } from './pictureIndex'
 
 export const MODES = ['auto', 'worker-webgpu', 'main-webgpu', 'main-wasm', 'wasm']
@@ -121,7 +121,9 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
         tried.push({ step: 'ocr webgpu (main thread)', ok: true })
         return { characters, detect: call('det'), recognise: call('rec'), where: 'main thread WebGPU', release: () => rpc('ocr-release', {}).catch(() => {}) }
       } catch (error) {
-        tried.push({ step: 'ocr webgpu (main thread)', ok: false, note: String(error?.message || error).slice(0, 200) })
+        const note = String(error?.message || error).slice(0, 200)
+        tried.push({ step: 'ocr webgpu (main thread)', ok: false, note })
+        state.ocrFallback = note // the reader fell back to WebAssembly, and this is why
         await rpc('ocr-release', {}).catch(() => {})
       }
     }
@@ -148,7 +150,10 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
     const began = now()
     state.lowMemory = Boolean(lowMemory)
     state.catalogueStats = null
-    const remember = indexes => { state.catalogueStats = { present: true, cards: indexes.count, printedTotalMissing: indexes.stats?.printedTotalMissing ?? null, buildMs: indexes.stats?.buildMs ?? null }; return indexes }
+    state.decideCached = null
+    state.ocrFallback = null
+    state.cardDbPresent = cardDb ? Boolean(await cardDb.getMeta('en')) : false // asked once per init: IndexedDB is not asked again while the matcher is warm
+    const remember = (indexes, how = 'built') => { state.catalogueStats = { present: true, cards: indexes.count, printedTotalMissing: indexes.stats?.printedTotalMissing ?? null, buildMs: indexes.stats?.buildMs ?? null, state: how }; return indexes }
     let resources = null
     if (lowMemory) {
       // Strictly one thing at a time: only the embedding model is loaded now. The picture index, the reader and the card-database indexes are
@@ -159,7 +164,7 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
       resources = {
         openIndex: async () => { const opened = make.pictureIndexFromBuffers(await readAll(manifest, 'index/')); ids = opened.ids; state.info && (state.info.pictures = opened.count); return opened },
         closeIndex: async () => {},
-        openReader: async () => (state.sessions = recordSessions(await chooseOcr(manifest, ocrBackend, []), now)),
+        openReader: async () => { const how = []; const opened = recordSessions(await chooseOcr(manifest, ocrBackend, how), now); state.sessions = opened; return opened },
         closeReader: async () => { const old = state.sessions; state.sessions = null; await old?.release?.(); },
         closeDecide: async () => { lazyNow = null },
       }
@@ -174,8 +179,12 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
       state.index = make.pictureIndexFromBuffers(await readAll(manifest, 'index/'))
       const lazy = cardDb ? make.createLazyIndexes({ source: cardDb, restrictToIds: state.index.ids }) : null
       state.getIndexes = async () => {
-        if (!lazy || !(await cardDb.getMeta('en'))) return null // the offline card database is not downloaded on this phone
-        return remember(await lazy())
+        // Warm: no IndexedDB round trip at all. (A lookup used to wait on it for as long as the main thread was busy embedding, which showed up as a 2.2 s
+        // "index build" on every run of the parallel mode; the signature is checked when the matcher is initialised, which is when a card sync is noticed.)
+        if (state.decideCached) { remember(state.decideCached, 'cached'); return state.decideCached }
+        if (!lazy || !state.cardDbPresent) return null // the offline card database is not downloaded on this phone
+        state.decideCached = await lazy()
+        return remember(state.decideCached, 'built')
       }
     }
     state.manifest = manifest
@@ -186,7 +195,7 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
     state.info = {
       backend: state.embedder.backend, where: state.embedder.where, mode, ocrBackend: lowMemory ? `${ocrBackend === 'webgpu-main' ? 'main thread WebGPU' : 'worker WebAssembly'} (opened per run)` : state.sessions.inner.where, ocrProfile, detectMaxSide, lowMemory: Boolean(lowMemory), tried, loadMs: Math.round(now() - began),
       pictures: state.index ? state.index.count : (manifest.index?.whole_count ?? null), artPictures: state.index ? state.index.artCount : (manifest.index?.art_count ?? null), thresholds: 'manifest',
-      cardDb: cardDb ? Boolean(await cardDb.getMeta('en')) : false,
+      cardDb: state.cardDbPresent, ocrFallback: state.ocrFallback, heapMB: wasmHeapMB(),
     }
     state.ready = true
     return { info: state.info }
@@ -195,13 +204,22 @@ export function createMatcherHost({ post, files, loadWasm, loadGpu, probeGpu, ca
   async function match({ photo, options = {} }, id) {
     if (!state.ready) throw new Error('The matcher is not loaded')
     const picture = { data: photo.data instanceof Uint8ClampedArray ? photo.data : new Uint8ClampedArray(photo.data), width: photo.width, height: photo.height }
-    const result = await state.matcher.match(picture, { ...options, lowMemory: state.lowMemory, onStage: (stage, info) => post({ type: 'progress', id, stage, ...(info ? { done: true, ms: info.ms } : {}) }) })
-    const present = Boolean(cardDb && await cardDb.getMeta('en'))
-    result.catalogue = state.catalogueStats ?? (present ? { present: true, cards: null } : { present: false })
+    const trail = []
+    const result = await state.matcher.match(picture, {
+      ...options, lowMemory: state.lowMemory,
+      onStage: (stage, info) => {
+        const heap = info ? wasmHeapMB().total : undefined // the WebAssembly heap of this worker after each stage: it only grows
+        if (info) trail.push([stage, heap])
+        post({ type: 'progress', id, stage, ...(info ? { done: true, ms: info.ms, heap } : {}) })
+      },
+    })
+    result.catalogue = state.catalogueStats ?? (state.cardDbPresent ? { present: true, cards: null } : { present: false })
+    result.heap = { worker: trail, workerEnd: wasmHeapMB() }
+    result.reader = { backend: state.sessions?.inner?.where ?? state.info?.ocrBackend ?? null, fallback: state.ocrFallback }
     return result
   }
 
-  const fail = (id, error) => post({ type: 'error', id, code: error?.code ?? 'failed', message: String(error?.message || error).slice(0, 300) })
+  const fail = (id, error) => post({ type: 'error', id, code: isOutOfMemory(error) ? 'oom' : (error?.code ?? 'failed'), message: String(error?.message || error).slice(0, 300) })
 
   /** One client message. Matches run one at a time, in the order they arrived. */
   function handle(message) {
