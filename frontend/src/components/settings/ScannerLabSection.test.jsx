@@ -529,3 +529,30 @@ describe('Scanner lab phone settings', () => {
     expect(html).not.toContain('Phone settings')
   })
 })
+
+describe('Scanner lab matcher version 12 test rows', () => {
+  const kept = 'names+number+text+art+tta+fastread+numberonce+corners+wholepic+wholeread+wholestrict'
+  const rows = [
+    { label: kept, status: 'ok', n: 280, top1: 60, top5: 80, top20: 99.6, number_exact: 60.1, name_read: 71.4, number_ms_mean: 812.3, decided: 72.1, decided_wrong: 0, p95_ms: 1420 },
+    { label: `${kept}+widefirst+topname`, status: 'ok', n: 280, top1: 60, top5: 80, top20: 99.6, number_exact: 61, name_read: 80.2, number_ms_mean: 540.8, decided: 73, decided_wrong: 0, p95_ms: 1300 },
+    { label: 'baseline', status: 'ok', n: 280, top1: 40, top5: 60, top20: 70, number_exact: 10, decided: 5, decided_wrong: 0, p95_ms: 300 },
+  ]
+
+  it('shows the name-read rate and the mean number time, and names the new options', () => {
+    const html = renderToStaticMarkup(<CompareTable title="t" report={{ kind: 'compare-labelled', n: 280, rows, winner: null }} />)
+    expect(html).toContain('>Name<')
+    expect(html).toContain('Number time')
+    expect(html).toContain('71.4%')
+    expect(html).toContain('812.3 ms')
+    expect(html).toContain('540.8')
+    expect(html).toContain('wide bottom read first (test) + name from the top band (test)')
+    expect(html).toContain('–') // a row from an older report has no name or number time
+  })
+
+  it('shows where each set first reads its number in the OCR check', () => {
+    const row = { tight: 5, bottom_band: 1, narrow_wide: 0, bottom_wide: 9, never: 2 }
+    const check = renderToStaticMarkup(<OcrCheckView report={{ traces: 100, skipped: 0, by_resolution: {}, steps: {}, number_by_set: { all: { scans: 17, ...row }, min_scans: 3, sets: [{ set: '30C', scans: 17, ...row }] } }} />)
+    expect(check).toContain('scanner-lab-number-by-set')
+    expect(check).toContain('30C (17): 5 tight · 1 bottom band · 0 wide strips · 9 whole bottom · 2 never')
+  })
+})

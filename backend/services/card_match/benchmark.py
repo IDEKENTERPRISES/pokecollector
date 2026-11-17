@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from . import MATCHER_VERSION, config, misses as misses_module, shadow as shadow_module
+from . import MATCHER_VERSION, config, misses as misses_module, ocr as ocr_module, shadow as shadow_module
 from .index import CardIndex, get_index, index_status, tcg_card_id
 
 logger = logging.getLogger(__name__)
@@ -183,6 +183,8 @@ def _finish_report(kind: str, started: float, index: CardIndex, matcher, results
     top5 = sum(1 for r in results if r["rank"] and r["rank"] <= 5)
     top20 = sum(1 for r in results if r["rank"])
     number_exact = sum(1 for r in results if r["number_exact"])
+    name_known = [r for r in results if r.get("name_read") is not None]
+    number_times = [r["number_ms"] for r in results if r.get("number_ms") is not None]
     total_exact = sum(1 for r in results if r.get("total_exact"))
     decided = [r for r in results if r["decided"]]
     decided_right = sum(1 for r in decided if r["decided_right"])
@@ -214,7 +216,10 @@ def _finish_report(kind: str, started: float, index: CardIndex, matcher, results
     metrics = {
         "n": n, "card_found_pct": pct(found, n), "card_found_accurate_pct": pct(found_ok, n) if kind == "synthetic" else None,
         "top1_pct": pct(top1, n), "top5_pct": pct(top5, n), "top20_pct": pct(top20, n),
-        "number_exact_pct": pct(number_exact, n), "total_exact_pct": pct(total_exact, n) if kind == "synthetic" else None,
+        "number_exact_pct": pct(number_exact, n),
+        "name_read_pct": pct(sum(1 for r in name_known if r["name_read"]), len(name_known)),  # version 12 test: the confirmed card's name read right
+        "number_ms_mean": round(statistics.fmean(number_times), 1) if number_times else None,  # mean time the number steps took per photo
+        "total_exact_pct": pct(total_exact, n) if kind == "synthetic" else None,
         "decided_pct": pct(len(decided), n), "decided_right_pct": pct(decided_right, len(decided)),
         "decided_wrong": len(decided) - decided_right,
         "mechanisms": {m: {"used": c, "right": mechanism_right[m]} for m, c in mechanisms.items()},
@@ -381,6 +386,15 @@ def run_synthetic(
     return report
 
 
+def _name_read(outcome, truth_name: str | None) -> bool | None:
+    """Whether the name the reader read is the confirmed card's name (None when the name was not asked for or the truth is unknown)."""
+    from .ocr_check import names_match
+
+    if "name" not in (outcome.ocr or {}) or not truth_name:
+        return None
+    return bool(names_match(outcome.ocr.get("name"), truth_name))
+
+
 def _score(outcome, entry: dict, settings: dict, corners, card_width: float) -> dict:
     from . import synthetic
 
@@ -401,6 +415,7 @@ def _score(outcome, entry: dict, settings: dict, corners, card_width: float) -> 
         "decided": decision is not None, "decided_right": bool(decision and decision["card_id"] == truth),
         "mechanism": decision["mechanism"] if decision else None, "unsure_reason": outcome.unsure_reason,
         "timings_ms": outcome.timings_ms,
+        "name_read": _name_read(outcome, entry["name"]), "number_ms": ocr_module.number_read_ms(outcome.ocr.get("strips")),
     }
 
 
@@ -569,6 +584,8 @@ def run_labelled(
             "card_id": truth_id, "trace": path.name, "group": group, "user": (trace_sources.source_of(data), data.get("user_id")), "tags": [], "found": outcome.detection["found"], "rank": rank,
             "resolution": resolution, "batch": scan_batch(data), "fallback": outcome.detection.get("fallback"),
             "number_exact": bool(number_local and truth_number and _numbers_equal(number_local, truth_number)),
+            "name_read": _name_read(outcome, next((m["name"] for m in outcome.matches if m["card_id"] == truth_id), None)),
+            "number_ms": ocr_module.number_read_ms(outcome.ocr.get("strips")),
             "decided": decision is not None, "decided_right": bool(decision and decision["card_id"] == truth_id),
             "mechanism": decision["mechanism"] if decision else None, "unsure_reason": outcome.unsure_reason,
             "top_match": outcome.matches[0]["card_id"] if outcome.matches else None, "timings_ms": outcome.timings_ms,
@@ -648,7 +665,7 @@ def compare_row(label: str, report: dict | None, *, missing: list[str] | None = 
     timings = report.get("timings_ms", {}).get("total", {})
     return {
         "label": label, "status": "ok", "n": m["n"], "top1": m["top1_pct"], "top5": m["top5_pct"], "top20": m["top20_pct"],
-        "number_exact": m["number_exact_pct"], "decided": m["decided_pct"], "decided_right": m["decided_right_pct"],
+        "number_exact": m["number_exact_pct"], "name_read": m.get("name_read_pct"), "number_ms_mean": m.get("number_ms_mean"), "decided": m["decided_pct"], "decided_right": m["decided_right_pct"],
         "decided_wrong": m["decided_wrong"], "median_ms": timings.get("median"), "p95_ms": timings.get("p95"),
         "extra_mb": report.get("memory", {}).get("extra_mb"),
         "wrong_scans": list(report.get("wrong_scans") or []),  # version 10: each wrong decision of this row, as text (see ``misses.wrong_record``)
