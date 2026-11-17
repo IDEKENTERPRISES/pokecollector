@@ -53,7 +53,7 @@ def card():
 @skip
 class OptionTests(unittest.TestCase):
     def test_the_version_and_the_default_do_not_move(self):
-        self.assertEqual(str(MATCHER_VERSION), "11")  # the phone matcher on nonprod refuses any other version
+        self.assertEqual(str(MATCHER_VERSION), "11")
         options = variants.parse(variants.DEFAULT_LABEL)
         self.assertFalse(options.widefirst or options.topname)
         self.assertEqual(variants.DEFAULT_LABEL, variants.IN_USE)
@@ -67,16 +67,11 @@ class OptionTests(unittest.TestCase):
         self.assertFalse(variants.parse(KEPT + "+widefirst").topname)
         self.assertEqual(variants.parse("baseline").label, "baseline")
 
-    def test_new_words_are_not_phone_words_and_not_in_the_phone_manifest_order(self):
-        self.assertFalse(variants.is_phone_label(KEPT + "+widefirst+topname"))
-        self.assertNotIn("widefirst", variants.ORDER)  # phone.py writes ORDER into the bundle manifest: it must not change
-        self.assertNotIn("topname", variants.ORDER)
-
     def test_the_comparison_rows(self):
         rows = variants.COMPARE_LABELS
         for label in (KEPT, KEPT + "+widefirst", KEPT + "+topname", KEPT + "+widefirst+topname"):
             self.assertIn(label, rows)
-        for label in ("baseline", variants.IN_USE, variants.IN_USE + "+wholeread", variants.PHONE_LABEL, variants.PHONE_KEPT_LABEL):  # the old rows stay
+        for label in ("baseline", variants.IN_USE, variants.IN_USE + "+wholeread"):  # the old rows stay
             self.assertIn(label, rows)
         self.assertEqual(len(rows), len(set(rows)))
         for label in rows:  # every row round-trips through parse

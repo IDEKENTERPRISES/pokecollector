@@ -2,7 +2,7 @@
 
 ``Embedder`` is the interface; ``OnnxEmbedder`` runs any model listed in ``model_specs.py`` on ONNX
 Runtime's CPU provider with the thread count capped. A second model (MobileCLIP, SigLIP, ...) is one
-more entry in ``MODEL_SPECS``; the phone can load the same ``.onnx`` file with onnxruntime-web later.
+more entry in ``MODEL_SPECS``.
 Tests use ``FakeEmbedder`` (no model file).
 """
 
@@ -52,7 +52,7 @@ def model_available(name: str = DEFAULT_MODEL) -> bool:
 
 def preprocess(image: np.ndarray, size: int, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
     """RGB uint8 image (any size) -> the model's input tensor (3, size, size): resize (INTER_AREA when shrinking, INTER_CUBIC
-    when enlarging), scale to 0..1, subtract the mean, divide by the std. Pure; the phone's JavaScript port is tested against it."""
+    when enlarging), scale to 0..1, subtract the mean, divide by the std."""
     import cv2
 
     resized = cv2.resize(image, (size, size), interpolation=cv2.INTER_AREA if min(image.shape[:2]) > size else cv2.INTER_CUBIC)
@@ -86,7 +86,6 @@ class OnnxEmbedder:
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         self.session = ort.InferenceSession(str(self.path), sess_options=options, providers=["CPUExecutionProvider"])
         self.input_name = self.session.get_inputs()[0].name
-        self.input_half = "float16" in str(self.session.get_inputs()[0].type)  # the fp16 export (version 11) takes half-precision pixels
 
     def prepare(self, image: np.ndarray) -> np.ndarray:
         return preprocess(image, self.size, self.mean, self.std)
@@ -95,8 +94,6 @@ class OnnxEmbedder:
         out = []
         for start in range(0, len(images), batch_size):
             batch = np.stack([self.prepare(image) for image in images[start:start + batch_size]])
-            if self.input_half:
-                batch = batch.astype(np.float16)
             hidden = self.session.run(None, {self.input_name: batch})[0]
             out.append(np.asarray(hidden[:, 0, :], dtype=np.float32))  # the CLS token
         if not out:

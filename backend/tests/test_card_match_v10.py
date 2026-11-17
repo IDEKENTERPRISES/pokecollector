@@ -45,7 +45,7 @@ class OptionAndRowTests(unittest.TestCase):
 
     def test_the_comparison_rows(self):
         labels = variants.COMPARE_LABELS
-        self.assertLessEqual(len(labels), 18)  # version 11 added the three phone rows, step 2 two more, the version 12 test three
+        self.assertLessEqual(len(labels), 13)  # the ten rows of version 10 and the version 12 test three
         self.assertEqual(len(set(labels)), len(labels))
         for wanted in (IN_USE, IN_USE + "+wholeread", IN_USE + "+wholeread+wholestrict"):
             self.assertIn(wanted, labels)

@@ -1,10 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
-import { FlaskConical, GitCompare, Hammer, Smartphone } from 'lucide-react'
+import { FlaskConical, GitCompare, Hammer } from 'lucide-react'
 import api from '../../api/client'
 import Misses, { DecidedWrong } from './ScannerLabMisses'
-import { describeIos } from '../../phonespeed/plan'
 
 const QUERY_KEY = ['card-match-status']
 const SHADOW_KEY = ['card-match-shadow']
@@ -340,9 +338,7 @@ export function Report({ report, title }) {
   )
 }
 
-const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused', wholeread: 'second read of the whole picture', wholestrict: 'stricter rules for a number read only from the whole picture', widefirst: 'wide bottom read first (test)', topname: 'name from the top band (test)', phone8: 'phone: 8-bit model', index8: 'phone: 8-bit index', fp16: 'phone: 16-bit model' }
-const isPhoneLabel = label => /(^|\+)(phone8|index8|fp16)(\+|$)/.test(label || '')
-const megabytes = bytes => (bytes == null ? '–' : `${(bytes / 1048576).toFixed(1)} MB`)
+const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused', wholeread: 'second read of the whole picture', wholestrict: 'stricter rules for a number read only from the whole picture', widefirst: 'wide bottom read first (test)', topname: 'name from the top band (test)' }
 const describeOptions = label => (label === 'baseline' ? OPTION_NAMES.baseline : label.split('+').map(word => OPTION_NAMES[word] || word).join(' + '))
 
 /** The scans one comparison row decided wrong, in the same plain wording as Misses > Decided wrong (text only: no pictures are kept for these). */
@@ -362,167 +358,7 @@ export function WrongList({ row }) {
 }
 
 /** The option sets side by side on the same photos: pick the row with the best top 20 and decided rate with 0 wrong. */
-export function PhoneNote({ phone, rows }) {
-  if (!phone || !(rows || []).some(row => isPhoneLabel(row.label))) return null
-  const indexes = Object.values(phone.indexes || {})
-  const built = indexes.filter(item => item.built)
-  return (
-    <p className="text-footnote text-text-secondary" data-testid="scanner-lab-phone-note">
-      Phone settings: rows marked "phone" run the matcher the way the iPhone will and are never picked as the server's own set.
-      The 8-bit model is {megabytes(phone.model?.size_bytes)} (full {megabytes(phone.model?.fp32_size_bytes)}, 16-bit {megabytes(phone.model?.fp16_size_bytes)}).
-      {built.length > 0 ? ` Its indexes on the server: ${built.map(item => `${number(item.count)} pictures, ${megabytes(item.size_bytes)}`).join(' and ')} (the phone stores them as 8-bit numbers, about a quarter of that).` : ' Its indexes are not built yet.'}
-      {phone.bundle?.built ? ` Phone bundle: ${megabytes(phone.bundle.total_bytes)} in ${number(phone.bundle.files)} files.` : ' The phone bundle is not built yet.'}
-    </p>
-  )
-}
-
-const SPEED_KEY = ['card-match-phone-speed']
-
-/** The photo of a speed-test run as a small thumbnail. Admin-only: fetched with the sign-in token, never a public URL. */
-function RunThumb({ id }) {
-  const [url, setUrl] = useState(null)
-  useEffect(() => {
-    let live = true
-    let made = null
-    api.get(`/card-match/phone-speed/${id}/photo`, { responseType: 'blob' }).then(response => {
-      if (!live) return
-      made = URL.createObjectURL(response.data)
-      setUrl(made)
-    }).catch(() => {})
-    return () => { live = false; if (made) URL.revokeObjectURL(made) }
-  }, [id])
-  if (!url) return <span className="inline-block h-12 w-9 flex-shrink-0 rounded bg-separator" aria-hidden="true" />
-  return <img src={url} alt="Speed-test photo (admins only)" className="h-12 w-auto flex-shrink-0 rounded" draggable={false} data-testid="scanner-lab-phone-speed-thumb" />
-}
-
-/** "Phone and server agree" for one run, from the server's comparison (the numbers the API worked out). */
-export function agreementText(run) {
-  const server = run.server || {}
-  if (!run.has_photo) return 'no photo (built-in sample)'
-  if (server.status === 'pending') return 'server comparison running…'
-  const compare = run.compare
-  if (!compare) return server.in_use?.status === 'error' ? `server could not compare: ${server.in_use.error}` : 'no server comparison'
-  const parts = []
-  const way = compare.phone_way
-  if (way) {
-    const [backend, item] = Object.entries(way.backends || {})[0] || []
-    if (item) {
-      const lists = ['whole', 'art'].filter(kind => item[kind]).map(kind => `${kind} ${item[kind].overlap}/20 shared${item[kind].top1_agree ? ', top 1 agrees' : ''}`)
-      const way_up = way.orientation_agree === false ? ' · PHOTO TURNED DIFFERENTLY' : ''
-      parts.push(`like-for-like (${backend}): ${lists.join(' · ')}${way_up}`)
-    }
-  }
-  for (const [key, label] of [['in_use', 'in-use set'], ['phone8', 'phone8+index8']]) {
-    const backends = compare[key]
-    if (!backends) continue
-    const [backend, item] = Object.entries(backends)[0]
-    parts.push(`${label}: top 1 ${item.top1_agree ? 'agrees' : 'differs'} · phone's top 1 in server's top 20: ${item.phone_top1_in_server_top20 ? 'yes' : 'no'} · ${item.overlap}/20 shared (${backend})`)
-  }
-  return parts.join(' | ')
-}
-
-/** "full matcher: phone <card or unsure> / server <card or unsure> · agree yes/no · N/20" for a run that holds the phone's full-matcher answer (step 3d). */
-export function matcherAgreementText(run) {
-  const matcher = run.matcher
-  if (!matcher) return null
-  const phone = matcher.picture_only ? 'picture only' : (matcher.decided ? matcher.card : 'unsure')
-  const compare = run.matcher_compare
-  if (!run.has_photo) return `full matcher: phone ${phone} · no photo, so no server answer`
-  if (!compare || compare.status !== 'compared') return `full matcher: phone ${phone} · server answer ${run.server?.status === 'pending' || !run.server ? 'running…' : 'not available'}`
-  const server = compare.server || 'unsure'
-  const mechanism = compare.same_card && !compare.same_mechanism ? ` · mechanism differs (phone ${compare.phone_mechanism || '–'}, server ${compare.server_mechanism || '–'})` : ''
-  return `full matcher: phone ${phone} / server ${server} · agree ${compare.agree ? 'yes' : 'no'} · ${compare.overlap}/20${mechanism}`
-}
-
-const readText = read => (read ? [read.number && `${read.number}${read.total ? `/${read.total}` : ''}`, read.name || 'no name', read.source || read.numberSource].filter(Boolean).join(' · ') : 'no read')
-const stepText = steps => (steps && steps.length ? steps.map(step => `${step.label} ${step.lines ?? '?'} line(s)${step.text ? ` "${step.text}"` : ''}${step.after ? ` → ${step.after}` : ''}`).join(', ') : 'none')
-
-/** The phone's read next to the server's for the same photo, strip by strip, and the decided card's picture rank on each side (what explains "unsure / decided"). */
-export function matcherReadLines(run) {
-  const compare = run.matcher_compare
-  if (!run.matcher || compare?.status !== 'compared') return []
-  const lines = [`reads: phone ${readText(compare.phone_read)} / server ${readText(compare.server_read)}${compare.name_agrees ? '' : ' · NAME DIFFERS'}`]
-  lines.push(`name strips: phone ${stepText(compare.phone_name_steps)} / server ${stepText(compare.server_name_steps)}`)
-  lines.push(`number steps: phone ${stepText(compare.phone_number_steps)} / server ${stepText(compare.server_number_steps)}`)
-  const input = value => (value ? `${value.source ?? '?'} ${value.width}x${value.height}` : '?')
-  lines.push(`text read from: phone ${input(compare.phone_text_input)} / server ${input(compare.server_text_input)}`)
-  if (compare.phone_rank != null || compare.server_rank != null) {
-    lines.push(`decided card's picture rank: phone ${compare.phone_rank ?? '–'} (similarity ${compare.phone_similarity ?? '–'}) / server ${compare.server_rank ?? '–'} (similarity ${compare.server_similarity ?? '–'})`)
-  }
-  if (!compare.agree && (compare.phone_reason || compare.server_reason)) lines.push(`reasons: phone ${compare.phone_reason || 'decided'} / server ${compare.server_reason || 'decided'}`)
-  return lines
-}
-
-/** A WebGPU step test posted by the speed-test page: "worker: adapter 5 ms · device 20 ms · session 1,918 ms · ...", with the step times. */
-export function gpuDiagText(run) {
-  const text = run.device?.gpuDiag
-  if (!text) return null
-  const times = Object.entries(run.timings || {}).filter(([key]) => key.startsWith('gpudiag_') && key.endsWith('_ms')).map(([key, value]) => `${key.replace(/^gpudiag_(worker|main)_/, '').replace(/_ms$/, '').replace(/_/g, ' ')} ${number(value)} ms`)
-  return `WebGPU test, ${text}${times.length ? ` (${times.join(' · ')})` : ''}`
-}
-
-/** The stage times of a matcher run: "finder 600 · embed 800 · … total 2,100 ms (first 2,500)". */
-export function matcherTimingText(run) {
-  const timings = run.matcher?.timings
-  if (!timings) return null
-  const stages = [['finder', 'finder'], ['views', 'views'], ['embed', 'embed'], ['search', 'search'], ['ocr_number', 'number'], ['name', 'name'], ['second_read', 'second read'], ['catalogue', 'index build'], ['decide', 'decide'], ['other', 'between']]
-  const parts = stages.filter(([key]) => timings[key]).map(([key, label]) => `${label} ${number(timings[key][1])}`)
-  const total = timings.total
-  const reader = run.matcher.ocr ? Object.entries(run.matcher.ocr).map(([stage, c]) => `${stage.replace('ocr_', '')} ${c.det_calls} det / ${c.rec_calls} rec`).join(', ') : null
-  const heap = run.matcher.heap ? ` · heap MB after each run: worker ${(run.matcher.heap.worker || []).join(', ') || '–'}, main ${(run.matcher.heap.main || []).join(', ') || '–'}` : ''
-  const readerText = run.matcher.reader ? ` · reader ${run.matcher.reader.backend || '?'}${run.matcher.reader.fallback ? ` (fell back: ${run.matcher.reader.fallback})` : ''}` : ''
-  const ladder = run.matcher.ladder ? `ladder ${run.matcher.ladder.attempts} steps, stopped by ${run.matcher.ladder.stopped}` : null
-  return `${run.matcher.backend || '?'} · ${parts.join(' · ')}${total ? ` · total ${number(total[1])} ms (first ${number(total[0])})` : ''}${timings.warm ? ` · warm per card ${number(timings.warm[1])} ms` : ''}${timings.saved && timings.saved[1] > 0 ? ` · overlap saved ${number(timings.saved[1])} ms` : ''}${run.matcher.setup?.load_ms != null ? ` · setup ${number(run.matcher.setup.load_ms)} ms (not per card)` : ''}${run.matcher.catalogue?.printed_total_missing > 0 ? ` · ${number(run.matcher.catalogue.printed_total_missing)} cards lack a printed total` : ''}${reader ? ` · reader calls: ${reader}` : ''}${ladder ? ` · ${ladder}` : ''}${run.matcher.variant ? ` · ${run.matcher.variant}` : ''}${readerText}${heap}`
-}
-
-/** The last phone speed-test runs (numbers, device facts, the photo thumbnail, agreement with the server) and the way to the test page. Admins only: the section is. */
-export function PhoneSpeedRuns({ runs, onDelete }) {
-  const when = value => String(value || '').slice(0, 16).replace('T', ' ')
-  return (
-    <div className="space-y-2 border-t border-separator px-4 py-3" data-testid="scanner-lab-phone-speed">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-footnote text-text-secondary">Phone speed test (step 2)</span>
-        <Link to="/settings/phone-speed" className={button} data-testid="scanner-lab-phone-speed-link">
-          <Smartphone size={13} aria-hidden="true" /> Phone speed test
-        </Link>
-      </div>
-      {(runs || []).length === 0 && <p className="text-footnote text-text-secondary">No runs yet. Open it on the iPhone, in the Home Screen app, on Wi-Fi.</p>}
-      {(runs || []).map(run => {
-        const t = run.timings || {}
-        const d = run.device || {}
-        return (
-          <div key={run.id || run.at + run.by} className="flex items-start gap-2" data-testid="scanner-lab-phone-speed-run">
-            {run.has_photo && run.id && <RunThumb id={run.id} />}
-            <p className="min-w-0 flex-1 text-footnote tabular-nums">
-              {d.gpuDiag
-                ? <>{when(run.at)} · {describeIos(d)} · WebGPU step test</>
-                : run.timings?.matcher_failed
-                ? <>{when(run.at)} · {describeIos(d)} · matcher run failed</>
-                : run.matcher
-                ? <>{when(run.at)} · {describeIos(d)} · {d.gpu ? 'WebGPU' : 'no WebGPU'} · full phone matcher</>
-                : <>{when(run.at)} · {describeIos(d)} · {d.gpu ? 'WebGPU' : 'no WebGPU'} · embed {number(t.embed_wasm_median_ms)} ms · card ×7 {number(t.card_wasm_median_ms)} ms
-                  {' '}· est. {number(t.estimate_card_wasm_ms)} ms{t.estimate_card_webgpu_fp16_ms != null ? ` (GPU ${number(t.estimate_card_webgpu_fp16_ms)} ms)` : ''}</>}
-              {d.crashedBefore && !run.crashed_step ? ' · crashed before' : ''}
-              {run.crashed_step && <span className="block font-semibold text-red-500" data-testid="scanner-lab-phone-speed-crashed">Crashed during {run.crashed_step}</span>}
-              {d.gpuDiag && <span className="block" data-testid="scanner-lab-phone-gpu-diag">{gpuDiagText(run)}</span>}
-              {d.matcherError && <span className="block text-red-500" data-testid="scanner-lab-phone-matcher-error">{d.oom ? 'OUT OF MEMORY: ' : 'Matcher failed: '}{d.matcherError}</span>}
-              {d.gpuEvents && <span className="block text-red-500" data-testid="scanner-lab-phone-gpu-events">GPU trouble: {d.gpuEvents}</span>}
-              {run.matcher && <span className="block" data-testid="scanner-lab-phone-matcher-agreement">{matcherAgreementText(run)}</span>}
-              {matcherReadLines(run).map(line => <span key={line} className="block text-text-secondary" data-testid="scanner-lab-phone-matcher-read">{line}</span>)}
-              {run.matcher && <span className="block text-text-secondary" data-testid="scanner-lab-phone-matcher-timing">{matcherTimingText(run)}</span>}
-              {!run.matcher && !d.gpuDiag && !run.timings?.matcher_failed && <span className="block text-text-secondary" data-testid="scanner-lab-phone-speed-agreement">{agreementText(run)}</span>}
-            </p>
-            {onDelete && run.id && (
-              <button type="button" className="flex-shrink-0 text-footnote text-red-500 ios-press" onClick={() => { if (window.confirm('Delete this run and its photo from the server?')) onDelete(run.id) }} data-testid="scanner-lab-phone-speed-delete">Delete</button>
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-export function CompareTable({ report, title, phone }) {
+export function CompareTable({ report, title }) {
   const [openWrong, setOpenWrong] = useState(null)
   const opened = report.rows.find(row => row.label === openWrong)
   return (
@@ -551,7 +387,7 @@ export function CompareTable({ report, title, phone }) {
           <tbody>
             {report.rows.map(row => (
               <tr key={row.label} className={`tabular-nums ${row.label === report.winner ? 'font-semibold' : ''}`}>
-                <td className="pr-2">{describeOptions(row.label)}{isPhoneLabel(row.label) && <span className="ml-1 text-text-secondary" data-testid="scanner-lab-phone-row">(phone)</span>}</td>
+                <td className="pr-2">{describeOptions(row.label)}</td>
                 {row.status === 'ok' ? (
                   <>
                     <td className="pr-2">{percent(row.top1)}</td><td className="pr-2">{percent(row.top20)}</td><td className="pr-2">{percent(row.number_exact)}</td>
@@ -568,7 +404,7 @@ export function CompareTable({ report, title, phone }) {
                     <td>{row.p95_ms != null ? `${number(row.p95_ms)} ms` : '–'}</td>
                   </>
                 ) : (
-                  <td colSpan={8} className="text-text-secondary">{row.error ? `could not run here: ${row.error}` : `needs the ${(row.missing_indexes || []).join(', ')} index`}</td>
+                  <td colSpan={8} className="text-text-secondary">needs the {(row.missing_indexes || []).join(', ')} index</td>
                 )}
               </tr>
             ))}
@@ -584,7 +420,6 @@ export function CompareTable({ report, title, phone }) {
         </table>
       </div>
       {opened && <WrongList row={opened} />}
-      <PhoneNote phone={phone} rows={report.rows} />
     </div>
   )
 }
@@ -992,13 +827,6 @@ export default function ScannerLabSection() {
     refetchInterval: 60000,
     retry: false,
   })
-  const speed = useQuery({
-    queryKey: SPEED_KEY,
-    queryFn: () => api.get('/card-match/phone-speed').then(response => response.data.runs),
-    refetchInterval: query => ((query.state.data || []).some(run => run.server?.status === 'pending') ? 10000 : false),
-    retry: false,
-  })
-  const deleteRun = useMutation({ mutationFn: id => api.delete(`/card-match/phone-speed/${id}`), onSuccess: () => queryClient.invalidateQueries({ queryKey: SPEED_KEY }) })
   const [missTag, setMissTag] = useState(null)
   const openDecidedWrong = () => {
     setMissTag('decided_wrong')
@@ -1008,7 +836,6 @@ export default function ScannerLabSection() {
   const buildIndex = useMutation({ mutationFn: () => api.post('/card-match/index').then(r => r.data), onSuccess: refresh })
   const benchmark = useMutation({ mutationFn: kind => api.post('/card-match/benchmark', { kind }).then(r => r.data), onSuccess: refresh })
   const buildExtra = useMutation({ mutationFn: name => api.post('/card-match/index', { name }).then(r => r.data), onSuccess: refresh })
-  const buildBundle = useMutation({ mutationFn: () => api.post('/card-match/phone-bundle/build').then(r => r.data), onSuccess: refresh })
   const stop = useMutation({ mutationFn: () => api.post('/card-match/stop').then(r => r.data), onSuccess: refresh })
 
   if (isError || !data) return null
@@ -1017,8 +844,8 @@ export default function ScannerLabSection() {
   const running = Boolean(job.running)
   const ready = data.model?.available
   const progress = job.progress || {}
-  const errorText = buildIndex.error?.response?.data?.detail || benchmark.error?.response?.data?.detail || buildExtra.error?.response?.data?.detail || buildBundle.error?.response?.data?.detail
-  const busy = running || buildIndex.isPending || benchmark.isPending || buildExtra.isPending || buildBundle.isPending
+  const errorText = buildIndex.error?.response?.data?.detail || benchmark.error?.response?.data?.detail || buildExtra.error?.response?.data?.detail
+  const busy = running || buildIndex.isPending || benchmark.isPending || buildExtra.isPending
   const extras = Object.entries(data.extra_indexes || {})
 
   let jobLine = null
@@ -1026,8 +853,6 @@ export default function ScannerLabSection() {
     const done = progress.indexed ?? progress.done
     const total = progress.todo ? progress.total : progress.total
     jobLine = `Running: ${job.kind}${done != null && total ? ` · ${number(done)} of ${number(total)}` : ''}`
-  } else if (data.phone_error) {
-    jobLine = `Phone steps failed: ${data.phone_error}${job.error && !data.phone_error.includes(job.error) ? ` · Last job failed: ${job.error}` : ''}`
   } else if (job.error) {
     jobLine = `Last job failed: ${job.error}`
   }
@@ -1049,9 +874,6 @@ export default function ScannerLabSection() {
           {extras.map(([name, extra]) => (
             <Row key={name} label={`Index: ${extra.label}`} value={extra.built ? `${number(extra.count)} pictures` : 'not built'} />
           ))}
-          {data.phone && (
-            <Row testId="scanner-lab-phone-bundle" label="Phone bundle" value={data.phone.bundle?.built ? `built · ${megabytes(data.phone.bundle.total_bytes)} · ${number(data.phone.bundle.files)} files` : 'not built'} />
-          )}
           {!data.ocr_available && <p className="text-footnote text-red-500">The OCR library is not installed in this image.</p>}
           {jobLine && <p className="text-footnote" aria-live="polite" data-testid="scanner-lab-job">{jobLine}</p>}
           {errorText && <p className="text-footnote text-red-500">{errorText}</p>}
@@ -1079,25 +901,19 @@ export default function ScannerLabSection() {
                 <Hammer size={13} aria-hidden="true" /> {extra.built ? 'Update' : 'Build'} {extra.label} index
               </button>
             ))}
-            {data.phone && (
-              <button type="button" className={button} disabled={busy || !data.phone.indexes || !Object.values(data.phone.indexes).every(item => item.built) || !data.phone.model?.available} onClick={() => buildBundle.mutate()} data-testid="scanner-lab-build-phone-bundle">
-                <Hammer size={13} aria-hidden="true" /> {data.phone.bundle?.built ? 'Rebuild' : 'Build'} phone bundle
-              </button>
-            )}
             {running && (
               <button type="button" className={button} onClick={() => stop.mutate()}>Stop</button>
             )}
           </div>
         </div>
-        <PhoneSpeedRuns runs={speed.data} onDelete={id => deleteRun.mutate(id)} />
         {pictureFirst.data?.counts && <PictureFirstView data={pictureFirst.data} onOpenDecidedWrong={data.misses ? openDecidedWrong : undefined} />}
         {shadow.data?.report && (shadow.data.enabled || shadow.data.report.compared > 0) && <ShadowView data={shadow.data} />}
         <HowConfirmedView data={shadow.data?.report?.how_confirmed} />
         {data.reports?.synthetic && <Report report={data.reports.synthetic} title="Latest benchmark: synthetic photos" />}
         {data.reports?.labelled && <Report report={data.reports.labelled} title="Latest benchmark: real scans (diagnostics)" />}
         {data.reports?.['ocr-check'] && <OcrCheckView report={data.reports['ocr-check']} />}
-        {data.reports?.['compare-labelled'] && <CompareTable phone={data.phone} report={data.reports['compare-labelled']} title="Option comparison: real scans" />}
-        {data.reports?.['compare-synthetic'] && <CompareTable phone={data.phone} report={data.reports['compare-synthetic']} title="Option comparison: synthetic photos" />}
+        {data.reports?.['compare-labelled'] && <CompareTable report={data.reports['compare-labelled']} title="Option comparison: real scans" />}
+        {data.reports?.['compare-synthetic'] && <CompareTable report={data.reports['compare-synthetic']} title="Option comparison: synthetic photos" />}
         {data.misses && <Misses version={data.misses.created_at} tag={missTag} onTagChange={setMissTag} />}
         {!data.reports?.synthetic && !data.reports?.labelled && (
           <p className="border-t border-separator px-4 py-3 text-footnote text-text-secondary">No benchmark has run yet.</p>
