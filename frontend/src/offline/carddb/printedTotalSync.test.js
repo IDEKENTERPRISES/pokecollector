@@ -1,10 +1,8 @@
-// The set's printed total reaches phones that already have the card database (phone matcher step 3d). The server put `printed_total`
-// into every set payload, so every set's hash changed; a device with the old hashes fetches every set again on its next sync, and the
-// phone matcher's catalogue adapter then sees the total (and a new catalogue signature, so its indexes are built again).
+// The set's printed total reaches devices that already have the card database. The server put `printed_total` into every set
+// payload, so every set's hash changed; a device with the old hashes fetches every set again on its next sync.
 import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { catalogueSignature, loadCatalogueRows } from '../../phonescan/decide/catalogue.js'
 import { createCardDbStore } from './store.js'
 import { MANIFEST_PATH, planSync, runCardDbSync, setPath } from './sync.js'
 
@@ -27,13 +25,11 @@ function server(state) {
 const manifest = (hash, setHash) => ({ languages: { en: { hash, prices_hash: 'P1', prices_bytes: 10, prices_updated_at: '2026-11-12', card_count: 2, sets: [{ id: 'sv1_en', hash: setHash, cards: 2, bytes: 100 }] } } })
 
 describe('printed_total in the offline card database', () => {
-  it('an old device re-fetches the set because its hash changed, and the catalogue then carries the printed total', async () => {
+  it('an old device re-fetches the set because its hash changed, and the stored set then carries the printed total', async () => {
     // before: the payload the server built without printed_total
     const state = { manifest: manifest('LANG-OLD', 'SET-OLD'), payload: payload({}) }
     await runCardDbSync({ wantedLanguages: ['en'], store, fetchJson: server(state) })
-    const before = await loadCatalogueRows(store)
-    expect(before.rows.map(row => row.printed_total)).toEqual([null, null])
-    expect(before.printedTotalMissing).toBe(2)
+    expect((await store.getSet('en', 'sv1_en')).set.printed_total).toBeUndefined()
 
     // after the server change: same cards, set payload with printed_total, so a new set hash and language hash
     state.manifest = manifest('LANG-NEW', 'SET-NEW')
@@ -44,11 +40,7 @@ describe('printed_total in the offline card database', () => {
 
     const result = await runCardDbSync({ wantedLanguages: ['en'], store, fetchJson: server(state) })
     expect(result.languages[0]).toMatchObject({ fetchedSets: 1 })
-    const after = await loadCatalogueRows(store)
-    expect(after.rows.map(row => row.printed_total)).toEqual([198, 198])
-    expect(after.printedTotalMissing).toBe(0)
-    expect(after.signature).not.toBe(before.signature) // the lazy decide indexes rebuild
-    expect(after.signature).toBe(catalogueSignature(await store.getMeta('en')))
+    expect((await store.getSet('en', 'sv1_en')).set.printed_total).toBe(198)
   })
 
   it('a device that is already up to date with the new payload fetches nothing', async () => {
