@@ -11,7 +11,7 @@ import { artCrop, augmentedViews, findCard, isGuidePicture, rotate180 } from '..
 import { buildDecideIndexes } from '../decide/catalogue'
 import { decideCard } from '../decide/decideCard'
 import { buildPictureIndex } from './pictureIndex'
-import { createPhoneMatcher, DEFAULT_BUDGETS, pictureOnlyAnswer } from './matcher'
+import { createPhoneMatcher, DEFAULT_BUDGETS, pictureOnlyAnswer, warmPerCard } from './matcher'
 
 const indexes = buildDecideIndexes(catalogue.rows)
 const IDS = [...indexes.candidates.keys()]
@@ -532,5 +532,30 @@ describe('the lean ladder skips the last-resort band too (round 2)', () => {
     const server = harness({ guide: false })
     await server.matcher.match(photo)
     expect(server.calls.read[0].stage).toBe('all')
+  })
+})
+
+describe('the warm per-card time with and without overlap (round 3)', () => {
+  const stages = { finder: 200, views: 115, embed: 2100, search: 40, ocr_number: 1200, name: 390, second_read: 0, catalogue: 2200, decide: 10 }
+
+  it('is the total without the one-off index build for a sequential run', () => {
+    expect(warmPerCard(stages, { overlapped: false, total: 6300 })).toBe(4100)
+    expect(warmPerCard({ ...stages, catalogue: 0 }, { overlapped: false, total: 4055 })).toBe(4055)
+  })
+
+  it('is the critical path when the reading ran beside the embeddings: finder + views + the longer branch + search + decide', () => {
+    // 200 + 115 + max(2100, 1200 + 390) + 40 + 10 = 2465: not the 1.78 s that subtracting the index build from the shorter, parallel total gave
+    expect(warmPerCard(stages, { overlapped: true, total: 4100 })).toBe(2465)
+  })
+
+  it('follows the reading branch when that is the longer one', () => {
+    expect(warmPerCard({ ...stages, embed: 800 }, { overlapped: true, total: 3000 })).toBe(200 + 115 + 1590 + 40 + 10)
+    expect(warmPerCard({ ...stages, embed: 800, second_read: 500 }, { overlapped: true, total: 3000 })).toBe(200 + 115 + 2090 + 40 + 10)
+  })
+
+  it('is what the matcher puts in timings_ms.warm', async () => {
+    const result = await harness({ where: 'main thread' }).matcher.match(photo, { overlap: true })
+    const t = result.timings_ms
+    expect(t.warm).toBeCloseTo(t.finder + t.views + Math.max(t.embed, t.ocr_number + t.name + t.second_read) + t.search + t.decide, 0)
   })
 })

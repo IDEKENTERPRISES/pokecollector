@@ -469,8 +469,10 @@ export function matcherTimingText(run) {
   const parts = stages.filter(([key]) => timings[key]).map(([key, label]) => `${label} ${number(timings[key][1])}`)
   const total = timings.total
   const reader = run.matcher.ocr ? Object.entries(run.matcher.ocr).map(([stage, c]) => `${stage.replace('ocr_', '')} ${c.det_calls} det / ${c.rec_calls} rec`).join(', ') : null
+  const heap = run.matcher.heap ? ` · heap MB after each run: worker ${(run.matcher.heap.worker || []).join(', ') || '–'}, main ${(run.matcher.heap.main || []).join(', ') || '–'}` : ''
+  const readerText = run.matcher.reader ? ` · reader ${run.matcher.reader.backend || '?'}${run.matcher.reader.fallback ? ` (fell back: ${run.matcher.reader.fallback})` : ''}` : ''
   const ladder = run.matcher.ladder ? `ladder ${run.matcher.ladder.attempts} steps, stopped by ${run.matcher.ladder.stopped}` : null
-  return `${run.matcher.backend || '?'} · ${parts.join(' · ')}${total ? ` · total ${number(total[1])} ms (first ${number(total[0])})` : ''}${timings.warm ? ` · warm per card ${number(timings.warm[1])} ms` : ''}${timings.saved && timings.saved[1] > 0 ? ` · overlap saved ${number(timings.saved[1])} ms` : ''}${run.matcher.setup?.load_ms != null ? ` · setup ${number(run.matcher.setup.load_ms)} ms (not per card)` : ''}${run.matcher.catalogue?.printed_total_missing > 0 ? ` · ${number(run.matcher.catalogue.printed_total_missing)} cards lack a printed total` : ''}${reader ? ` · reader calls: ${reader}` : ''}${ladder ? ` · ${ladder}` : ''}${run.matcher.variant ? ` · ${run.matcher.variant}` : ''}`
+  return `${run.matcher.backend || '?'} · ${parts.join(' · ')}${total ? ` · total ${number(total[1])} ms (first ${number(total[0])})` : ''}${timings.warm ? ` · warm per card ${number(timings.warm[1])} ms` : ''}${timings.saved && timings.saved[1] > 0 ? ` · overlap saved ${number(timings.saved[1])} ms` : ''}${run.matcher.setup?.load_ms != null ? ` · setup ${number(run.matcher.setup.load_ms)} ms (not per card)` : ''}${run.matcher.catalogue?.printed_total_missing > 0 ? ` · ${number(run.matcher.catalogue.printed_total_missing)} cards lack a printed total` : ''}${reader ? ` · reader calls: ${reader}` : ''}${ladder ? ` · ${ladder}` : ''}${run.matcher.variant ? ` · ${run.matcher.variant}` : ''}${readerText}${heap}`
 }
 
 /** The last phone speed-test runs (numbers, device facts, the photo thumbnail, agreement with the server) and the way to the test page. Admins only: the section is. */
@@ -494,6 +496,8 @@ export function PhoneSpeedRuns({ runs, onDelete }) {
             <p className="min-w-0 flex-1 text-footnote tabular-nums">
               {d.gpuDiag
                 ? <>{when(run.at)} · {describeIos(d)} · WebGPU step test</>
+                : run.timings?.matcher_failed
+                ? <>{when(run.at)} · {describeIos(d)} · matcher run failed</>
                 : run.matcher
                 ? <>{when(run.at)} · {describeIos(d)} · {d.gpu ? 'WebGPU' : 'no WebGPU'} · full phone matcher</>
                 : <>{when(run.at)} · {describeIos(d)} · {d.gpu ? 'WebGPU' : 'no WebGPU'} · embed {number(t.embed_wasm_median_ms)} ms · card ×7 {number(t.card_wasm_median_ms)} ms
@@ -501,11 +505,12 @@ export function PhoneSpeedRuns({ runs, onDelete }) {
               {d.crashedBefore && !run.crashed_step ? ' · crashed before' : ''}
               {run.crashed_step && <span className="block font-semibold text-red-500" data-testid="scanner-lab-phone-speed-crashed">Crashed during {run.crashed_step}</span>}
               {d.gpuDiag && <span className="block" data-testid="scanner-lab-phone-gpu-diag">{gpuDiagText(run)}</span>}
+              {d.matcherError && <span className="block text-red-500" data-testid="scanner-lab-phone-matcher-error">{d.oom ? 'OUT OF MEMORY: ' : 'Matcher failed: '}{d.matcherError}</span>}
               {d.gpuEvents && <span className="block text-red-500" data-testid="scanner-lab-phone-gpu-events">GPU trouble: {d.gpuEvents}</span>}
               {run.matcher && <span className="block" data-testid="scanner-lab-phone-matcher-agreement">{matcherAgreementText(run)}</span>}
               {matcherReadLines(run).map(line => <span key={line} className="block text-text-secondary" data-testid="scanner-lab-phone-matcher-read">{line}</span>)}
               {run.matcher && <span className="block text-text-secondary" data-testid="scanner-lab-phone-matcher-timing">{matcherTimingText(run)}</span>}
-              {!run.matcher && !d.gpuDiag && <span className="block text-text-secondary" data-testid="scanner-lab-phone-speed-agreement">{agreementText(run)}</span>}
+              {!run.matcher && !d.gpuDiag && !run.timings?.matcher_failed && <span className="block text-text-secondary" data-testid="scanner-lab-phone-speed-agreement">{agreementText(run)}</span>}
             </p>
             {onDelete && run.id && (
               <button type="button" className="flex-shrink-0 text-footnote text-red-500 ios-press" onClick={() => { if (window.confirm('Delete this run and its photo from the server?')) onDelete(run.id) }} data-testid="scanner-lab-phone-speed-delete">Delete</button>

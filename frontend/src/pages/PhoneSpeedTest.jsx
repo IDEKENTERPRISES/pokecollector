@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { useNavBar } from '../navigation/useNavBar'
 import { createPostGuard, speedRunRequest } from '../phonespeed/upload'
 import { checkManifest } from '../phonescan/matcher/guard'
+import { isOutOfMemory } from '../phonescan/matcher/ort'
 import { summariseDiagnosis } from '../phonescan/matcher/gpuDiag'
 import { prepareMatchPhoto } from '../phonespeed/matchPhoto'
 import { describeDecision, estimateMemory, matcherOutcome, runMatcherRuns, STAGE_ROWS, summariseTimings, variantText } from '../phonespeed/matcherRun'
@@ -75,6 +76,9 @@ export default function PhoneSpeedTest() {
   const hasGpu = Boolean(globalThis.navigator?.gpu)
   // the "Full phone matcher" run (step 3d)
   const [matcherMode, setMatcherMode] = useState('wasm') // the safe default: the 8-bit model on WebAssembly (fp16 on WebGPU blacked the page out on the owner's iPhone)
+  const [needsReopen, setNeedsReopen] = useState(null) // set after an out-of-memory error that could not be recovered here: the message to show
+  const [heapLog, setHeapLog] = useState([]) // [{run, worker, main}] WebAssembly heap in MB after each run
+  const oomCount = useRef(0)
   const [gpuDiag, setGpuDiag] = useState(null) // {where, rows, running}
   // the safest combination first: three runs, a fresh worker for each (frees its memory), no overlap, the server's reader ladder on WebAssembly
   const [matcherRuns, setMatcherRuns] = useState(3)
@@ -231,6 +235,8 @@ export default function PhoneSpeedTest() {
       warm: { mode: 'wasm', low: false, restart: false, overlap: false },
       gpu: { mode: 'worker-webgpu', low: false, restart: false, overlap: false },
       parallel: { mode: 'main-wasm', low: false, restart: false, overlap: true },
+      gpuParallel: { mode: 'main-webgpu', low: false, restart: false, overlap: true }, // fp16 embeddings on the main thread's GPU, the reading in the worker at the same time
+      gpuParallelFresh: { mode: 'main-webgpu', low: false, restart: true, overlap: true }, // the same with a fresh worker for every run (its heaps are freed; the GPU model stays)
     }[name]
     setMatcherMode(preset.mode)
     setMatcherLow(preset.low)
@@ -264,12 +270,35 @@ export default function PhoneSpeedTest() {
     return matcherClient.current
   }
 
+  /** Really frees what can be freed on both threads: the worker releases and is stopped, every session here is released and the WebGPU device destroyed. */
   const releaseMatcher = async () => {
-    try { await matcherClient.current?.release() } catch { /* nothing loaded */ }
-    await matcherClient.current?.shutdown?.()
+    const client = matcherClient.current
     matcherClient.current = null
+    const freed = client ? await client.releaseAll() : { mainHeapStays: false, mainHeapMB: 0 }
     setMatcherInfo(null)
-    setMessage('The matcher was released: its worker, indexes and WebAssembly models are out of memory. A WebGPU model on the main thread stays until the page is closed (releasing it is what may crash the page).')
+    setMessage(freed.mainHeapStays
+      ? `Released: the worker was stopped, every session was released and the WebGPU device destroyed. This thread's own WebAssembly memory (${freed.mainHeapMB} MB) cannot shrink: if the next run runs out of memory, close and reopen the app.`
+      : 'Released: the worker was stopped and everything it held is free.')
+  }
+
+  /**
+   * After an out-of-memory error: the worker that hit the limit is stopped (its WebAssembly heap never shrinks and an aborted module stays aborted), every session is
+   * released and the GPU device destroyed, and the next run starts fresh. When the main thread itself ran out (or it happens twice) nothing here can free it: say so and
+   * block the run buttons until the app is reopened.
+   */
+  const recoverFromOom = async error => {
+    oomCount.current += 1
+    const fromMain = /^main thread:/.test(String(error?.message || ''))
+    const client = matcherClient.current
+    matcherClient.current = null
+    let freed = { mainHeapMB: 0 }
+    try { freed = client ? await client.releaseAll() : freed } catch { /* nothing more can be done from here */ }
+    setMatcherInfo(null)
+    if (fromMain || oomCount.current >= 2) {
+      setNeedsReopen(fromMain ? 'The main thread ran out of memory. Close and reopen the app to free memory.' : 'It ran out of memory again after a fresh start. Close and reopen the app to free memory.')
+    } else {
+      setMessage(`Ran out of memory in the worker. It was stopped and everything was released (this thread keeps ${freed.mainHeapMB} MB of WebAssembly memory that cannot shrink); the next run starts fresh. If it happens again, close and reopen the app.`)
+    }
   }
 
   const runMatcher = async () => {
@@ -299,6 +328,8 @@ export default function PhoneSpeedTest() {
       setMatcherInfo(info)
       let handed = 0
       let restarted = false
+      const mainHeaps = []
+      setHeapLog([])
       const results = await runMatcherRuns({
         client,
         runs: matcherRuns,
@@ -322,13 +353,17 @@ export default function PhoneSpeedTest() {
         onStage: (stage, n, stageInfo) => {
           if (!stageInfo) { markStep(`matcher_r${n}_${stage}`); setMatcherState({ status: 'running', stage: `run ${n}: ${stage}` }) } else recordStep(partial, `matcher_r${n}_${stage}`, { first: stageInfo.ms, median: stageInfo.ms })
         },
-        onRun: (n, result) => setMatcherResults(current => [...current, result]),
+        onRun: (n, result) => {
+          setMatcherResults(current => [...current, result])
+          mainHeaps.push(client.mainHeap().total)
+          setHeapLog(current => [...current, { run: n, worker: result.heap?.workerEnd?.total ?? null, main: client.mainHeap().total }])
+        },
       })
       markStep(null)
       clearPartial()
       activePartial.current = null
       const device = { ...base, photoWidth: prepared.photo.width, photoHeight: prepared.photo.height, ...(client.gpuEvents.length ? { gpuEvents: client.gpuEvents.join(' | ').slice(0, 190) } : {}) }
-      const outcome = matcherOutcome({ results, device, runId, photo: { width: prepared.photo.width, height: prepared.photo.height, bytes: prepared.bytes }, info, variant, restarted })
+      const outcome = matcherOutcome({ results, device, runId, photo: { width: prepared.photo.width, height: prepared.photo.height, bytes: prepared.bytes }, info, variant, restarted, mainHeaps })
       setMatcherState({ status: 'done', memory: estimateMemory({ manifest, info, photo: prepared.photo }) })
       const request = speedRunRequest(outcome, photo.current ? new File([prepared.upload], 'photo.jpg', { type: 'image/jpeg' }) : null)
       try {
@@ -341,7 +376,14 @@ export default function PhoneSpeedTest() {
       }
     } catch (error) {
       markStep(null)
-      setMatcherState({ status: 'error', code: error.code, message: error.message })
+      const oom = error?.code === 'oom' || isOutOfMemory(error)
+      setMatcherState({ status: 'error', code: oom ? 'oom' : error.code, message: error.message })
+      // the error is posted too, so the owner does not have to copy it: the stage that was running, the text, and whether it was memory
+      const device = { ...base, matcherError: String(error?.message || error).slice(0, 190), ...(oom ? { oom: true } : {}), ...(matcherClient.current?.gpuEvents?.length ? { gpuEvents: matcherClient.current.gpuEvents.join(' | ').slice(0, 190) } : {}) }
+      postGuard.current.once(`${runId}-error`, () => api.post('/card-match/phone-speed', { timings: { matcher_failed: 1 }, device, client_id: `${runId}-error`.slice(0, 64) })).catch(() => {})
+      clearPartial()
+      activePartial.current = null
+      if (oom) await recoverFromOom(error)
     } finally {
       setBusy(false)
     }
@@ -484,10 +526,12 @@ export default function PhoneSpeedTest() {
           </select>
         </label>
         <div className="flex flex-wrap gap-2" data-testid="phone-matcher-presets">
-          <button type="button" className={button} disabled={busy} onClick={() => applyPreset('safe')} data-testid="phone-preset-safe">Safe: WebAssembly, low memory</button>
-          <button type="button" className={button} disabled={busy} onClick={() => applyPreset('warm')} data-testid="phone-preset-warm">Warm worker: WebAssembly, one worker kept</button>
-          <button type="button" className={button} disabled={busy} onClick={() => applyPreset('gpu')} data-testid="phone-preset-gpu">Fast: fp16 WebGPU in the worker, one warm worker</button>
-          <button type="button" className={button} disabled={busy} onClick={() => applyPreset('parallel')} data-testid="phone-preset-parallel">Parallel: model on the main thread, reading beside it</button>
+          <button type="button" className={button} disabled={busy || Boolean(needsReopen)} onClick={() => applyPreset('safe')} data-testid="phone-preset-safe">Safe: WebAssembly, low memory</button>
+          <button type="button" className={button} disabled={busy || Boolean(needsReopen)} onClick={() => applyPreset('warm')} data-testid="phone-preset-warm">Warm worker: WebAssembly, one worker kept</button>
+          <button type="button" className={button} disabled={busy || Boolean(needsReopen)} onClick={() => applyPreset('gpu')} data-testid="phone-preset-gpu">Fast: fp16 WebGPU in the worker, one warm worker</button>
+          <button type="button" className={button} disabled={busy || Boolean(needsReopen)} onClick={() => applyPreset('parallel')} data-testid="phone-preset-parallel">Parallel: model on the main thread, reading beside it</button>
+          <button type="button" className={button} disabled={busy || Boolean(needsReopen)} onClick={() => applyPreset('gpuParallel')} data-testid="phone-preset-gpu-parallel">Fast + Parallel: fp16 WebGPU on the main thread, reading beside it</button>
+          <button type="button" className={button} disabled={busy || Boolean(needsReopen)} onClick={() => applyPreset('gpuParallelFresh')} data-testid="phone-preset-gpu-parallel-fresh">Fast + Parallel with a fresh worker per run</button>
         </div>
         <div className="space-y-1 text-footnote" data-testid="phone-matcher-options">
           <label className="flex items-center gap-2"><span className="text-text-secondary">Runs</span>
@@ -507,12 +551,13 @@ export default function PhoneSpeedTest() {
             </select></label>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" className={button} disabled={busy || !ready || !runtime || !guard?.ok} onClick={runMatcher} data-testid="phone-matcher-run"><Play size={14} aria-hidden="true" /> Run the full matcher</button>
-          <button type="button" className={button} disabled={busy || !ready || !runtime} onClick={() => diagnoseGpu('worker')} data-testid="phone-gpu-diag-worker">Test WebGPU in the worker</button>
-          <button type="button" className={button} disabled={busy || !ready || !runtime} onClick={() => diagnoseGpu('main')} data-testid="phone-gpu-diag-main">Test WebGPU on the main thread</button>
-          <button type="button" className={button} disabled={busy || !matcherInfo} onClick={releaseMatcher} data-testid="phone-matcher-release"><Trash2 size={14} aria-hidden="true" /> Release the matcher</button>
+          <button type="button" className={button} disabled={busy || Boolean(needsReopen) || !ready || !runtime || !guard?.ok} onClick={runMatcher} data-testid="phone-matcher-run"><Play size={14} aria-hidden="true" /> Run the full matcher</button>
+          <button type="button" className={button} disabled={busy || Boolean(needsReopen) || !ready || !runtime} onClick={() => diagnoseGpu('worker')} data-testid="phone-gpu-diag-worker">Test WebGPU in the worker</button>
+          <button type="button" className={button} disabled={busy || Boolean(needsReopen) || !ready || !runtime} onClick={() => diagnoseGpu('main')} data-testid="phone-gpu-diag-main">Test WebGPU on the main thread</button>
+          <button type="button" className={button} disabled={busy} onClick={releaseMatcher} data-testid="phone-matcher-release"><Trash2 size={14} aria-hidden="true" /> Release the matcher</button>
         </div>
         {(matcherState.status === 'loading' || matcherState.status === 'running') && <p className="text-footnote" aria-live="polite">Running: {matcherState.stage}</p>}
+        {needsReopen && <p className="text-footnote font-semibold text-red-500" data-testid="phone-matcher-reopen">{needsReopen}</p>}
         {matcherState.status === 'error' && (
           <p className="text-footnote text-red-500" data-testid="phone-matcher-error">
             {matcherState.code === 'matcher_version' ? `Phone matcher needs updating. ${matcherState.message}` : `The matcher stopped: ${matcherState.message}`}
@@ -525,14 +570,14 @@ export default function PhoneSpeedTest() {
           </p>
         )}
         <GpuDiagnosis diag={gpuDiag} />
-        <MatcherResults results={matcherResults} sent={matcherSent} memory={matcherState.memory} info={matcherInfo} />
+        <MatcherResults results={matcherResults} sent={matcherSent} memory={matcherState.memory} info={matcherInfo} heapLog={heapLog} />
       </Section>
     </div>
   )
 }
 
 /** The full-matcher results: stage times, the answer, the top 5 with names from the card database. */
-export function MatcherResults({ results, sent, memory = null, info = null }) {
+export function MatcherResults({ results, sent, memory = null, info = null, heapLog = [] }) {
   if (!results.length) return null
   const first = results[0]
   const summary = summariseTimings(results)
@@ -553,6 +598,8 @@ export function MatcherResults({ results, sent, memory = null, info = null }) {
       )}
       <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-footnote">
         <dt className="text-text-secondary">Backend</dt><dd data-testid="phone-matcher-result-backend">{first.backend}</dd>
+        <dt className="text-text-secondary">Reader</dt><dd data-testid="phone-matcher-reader">{first.reader?.backend || info?.ocrBackend || '?'}{first.reader?.fallback ? ` (fell back to WebAssembly: ${first.reader.fallback})` : ''}</dd>
+        <dt className="text-text-secondary">Card database indexes</dt><dd data-testid="phone-matcher-catalogue-state">{first.catalogue?.state === 'cached' ? 'cached (no rebuild)' : first.catalogue?.state === 'built' ? 'built in this run' : '–'}</dd>
         <dt className="text-text-secondary">Decision</dt><dd data-testid="phone-matcher-decision">{describeDecision(first)}</dd>
         <dt className="text-text-secondary">Mechanism</dt><dd>{first.mechanism || '–'}</dd>
         <dt className="text-text-secondary">Reason</dt><dd>{first.unsure_reason || '–'}</dd>
@@ -566,6 +613,7 @@ export function MatcherResults({ results, sent, memory = null, info = null }) {
           <li key={item.id}>{item.name ? `${item.name} #${item.number ?? '?'}` : item.tcgCardId}{item.set ? ` · ${item.set}` : ''} · {item.score.toFixed(3)}</li>
         ))}
       </ol>
+      <HeapLog log={heapLog} trail={first.heap?.worker} />
       <OcrStats stats={first.ocrStats} />
       {memory && (
         <div className="text-footnote" data-testid="phone-matcher-memory">
@@ -622,6 +670,18 @@ export function GpuDiagnosis({ diag }) {
         ))}
       </ul>
       {diag.error && <p className="text-red-500">{diag.error}</p>}
+    </div>
+  )
+}
+
+/** The WebAssembly heap after each run (worker and main thread) and after each stage of the first run: it only grows, so a climbing line is what runs out of memory. */
+export function HeapLog({ log = [], trail = null }) {
+  if (!log.length && !(trail || []).length) return null
+  return (
+    <div className="space-y-1 text-footnote" data-testid="phone-matcher-heap">
+      <p className="font-semibold">WebAssembly heap (MB, it only grows)</p>
+      {log.length > 0 && <p className="tabular-nums">After each run: {log.map(item => `run ${item.run}: worker ${item.worker ?? '–'}, main ${item.main ?? '–'}`).join(' · ')}</p>}
+      {(trail || []).length > 0 && <p className="tabular-nums text-text-secondary">Worker after each stage of the first run: {trail.map(([stage, mb]) => `${stage} ${mb}`).join(' · ')}</p>}
     </div>
   )
 }

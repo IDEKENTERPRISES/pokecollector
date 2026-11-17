@@ -51,6 +51,13 @@ export function ladderOf(stats) {
   return { stopped: trim(number.stopped, 12), attempts: number.attempts ?? null, seconds: number.seconds ?? null, budget: number.budget ?? null }
 }
 
+/** The WebAssembly heap (MB) of the worker at the end of each run, and of the main thread after each run: they only grow, so a line that keeps climbing is what runs out of memory. */
+export function heapBlock(results, mainHeaps = []) {
+  const worker = results.map(result => result.heap?.workerEnd?.total).filter(value => Number.isFinite(value)).slice(0, 4)
+  const main = (mainHeaps || []).filter(value => Number.isFinite(value)).slice(0, 4)
+  return worker.length || main.length ? { worker, main } : null
+}
+
 /** The settings of a run as one short text, e.g. "restart=1 overlap=0 ocr=wasm ladder=server runs=3". */
 export function variantText({ restart, overlap, ocrBackend, ladder, runs, lowMemory = false }) {
   return `restart=${restart ? 1 : 0} overlap=${overlap ? 1 : 0} ocr=${ocrBackend === 'webgpu-main' ? 'gpu' : 'wasm'} ladder=${ladder} runs=${runs}${lowMemory ? ' low=1' : ''}`
@@ -76,7 +83,7 @@ export function estimateMemory({ manifest, info, photo = null }) {
  */
 const stepsBlock = steps => (steps ? steps.slice(0, 10).map(step => ({ label: trim(step.label, 24), ms: step.ms ?? null, lines: step.lines ?? null, text: trim(step.text, 70), after: trim(step.after, 40) })) : null)
 
-export function matcherBlock(results, { photo = null, info = null, variant = null, restarted = false } = {}) {
+export function matcherBlock(results, { photo = null, info = null, variant = null, restarted = false, mainHeaps = [] } = {}) {
   const first = results[0]
   const transfers = results.map(result => result.transferMs).filter(value => Number.isFinite(value))
   const summary = summariseTimings(results)
@@ -89,6 +96,8 @@ export function matcherBlock(results, { photo = null, info = null, variant = nul
     variant: trim(variant, 120),
     ocr: ocrCounts(first.ocrStats),
     ladder: ladderOf(first.ocrStats),
+    heap: heapBlock(results, mainHeaps),
+    reader: first.reader ? { backend: trim(first.reader.backend, 40), fallback: trim(first.reader.fallback, 80) } : null,
     number_steps: stepsBlock(first.ocrStats?.number?.steps),
     name_steps: stepsBlock(first.ocrStats?.name?.steps),
     text_input: first.textInput ? { source: trim(first.textInput.source, 20), width: first.textInput.width, height: first.textInput.height } : null,
@@ -107,7 +116,7 @@ export function matcherBlock(results, { photo = null, info = null, variant = nul
     orientation: first.orientation ? { by: trim(first.orientation.by, 12), flipped: Boolean(first.orientation.flipped) } : null,
     detection: first.detection ? { source: trim(first.detection.source, 12), found: Boolean(first.detection.found) } : null,
     wholeread: first.wholeread ? { tried: Boolean(first.wholeread.tried), rescued: Boolean(first.wholeread.rescued) } : null,
-    catalogue: first.catalogue ? { present: Boolean(first.catalogue.present), cards: first.catalogue.cards ?? null, printed_total_missing: first.catalogue.printedTotalMissing ?? null } : null,
+    catalogue: first.catalogue ? { present: Boolean(first.catalogue.present), cards: first.catalogue.cards ?? null, printed_total_missing: first.catalogue.printedTotalMissing ?? null, state: trim(first.catalogue.state, 10) } : null,
     photo: photo ? { width: photo.width, height: photo.height, bytes: photo.bytes ?? null } : null,
     timings: Object.fromEntries(Object.entries(summary).map(([stage, value]) => [stage, [value.first, value.median]])),
   }
@@ -129,8 +138,8 @@ export async function runMatcherRuns({ client, copy, runs = MATCHER_RUNS, onStag
 }
 
 /** The speed-test run body for a matcher run: flat stage timings + device + the `matcher` block. */
-export function matcherOutcome({ results, device, runId, photo, info, variant = null, restarted = false }) {
-  const block = matcherBlock(results, { photo, info, variant, restarted })
+export function matcherOutcome({ results, device, runId, photo, info, variant = null, restarted = false, mainHeaps = [] }) {
+  const block = matcherBlock(results, { photo, info, variant, restarted, mainHeaps })
   const summary = summariseTimings(results)
   return { timings: flatTimings(summary), device, matcher: block, runId, summary }
 }
