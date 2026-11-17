@@ -3,17 +3,17 @@
 import base64
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
 from database import get_db
+from models import Card, User
 from services import scan_trace, trace_correction, trace_sources
-from services import scan_trace, trace_sources
+from services.audit import record_audit
 from services.card_match import MATCHER_VERSION, benchmark, config, embed, index as index_module, jobs as jobs_module, misses as misses_module, shadow as shadow_module, variants
-from services.card_match import MATCHER_VERSION, benchmark, config, embed, index as index_module, jobs as jobs_module, misses as misses_module, phone as phone_module, phone_speed as phone_speed_module, shadow as shadow_module, variants
 from services.card_match.model_specs import DEFAULT_MODEL, MODEL_SPECS
 
 router = APIRouter()
