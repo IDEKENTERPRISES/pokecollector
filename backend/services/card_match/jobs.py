@@ -182,16 +182,6 @@ def start_index(model: str = DEFAULT_MODEL) -> tuple[bool, dict]:
     return jobs.start("index", lambda: build_index_work(model))
 
 
-def start_phone_bundle() -> tuple[bool, dict]:
-    from . import phone
-
-    return jobs.start("phone-bundle", lambda: _bundle_summary(phone.build_bundle(progress=jobs._progress)))
-
-
-def _bundle_summary(manifest: dict) -> dict:
-    return {"version": manifest["matcher_version"], "files": manifest["totals"]["files"], "bytes": manifest["totals"]["bytes"], "by_kind": manifest["totals"]["by_kind"]}
-
-
 def start_benchmark(kind: str = "synthetic", model: str = DEFAULT_MODEL) -> tuple[bool, dict]:
     return jobs.start(f"benchmark-{kind}", lambda: benchmark_work(kind, model))
 
@@ -215,7 +205,7 @@ def index_after_warmup(warmer) -> None:
     threading.Thread(target=wait_then_build, name="card-match-after-sync", daemon=True).start()
 
 
-def autorun_plan(*, indexes_ready: bool, enough_real: bool, phone: bool = False, phone_ready: bool = False) -> list[str]:
+def autorun_plan(*, indexes_ready: bool, enough_real: bool) -> list[str]:
     """The autorun's steps, in order. What the owner decides from comes first: the OCR check, the real-photo
     benchmark and the real-photo comparison. The synthetic runs choose nothing and go last. When the indexes are already
     built the real-photo steps run before the picture warm-up and the index update (version 5 ran those first and the
@@ -223,37 +213,15 @@ def autorun_plan(*, indexes_ready: bool, enough_real: bool, phone: bool = False,
     real = ["ocr-check", "labelled", "compare-labelled"] if enough_real else []
     build = ["warm-up", "index", "art-index"]
     synthetic = ["synthetic", "compare-synthetic"]
-    if not phone:
-        return (real + build + synthetic) if indexes_ready else (build + real + synthetic)
-    # Version 11: the phone rows of the real-photo comparison need the int8 indexes, so they are built between the
-    # labelled benchmark and the comparison (the pictures are already cached when the other indexes are ready), and the
-    # bundle is written once they exist.
-    phone_build = [] if phone_ready else ["int8-index", "int8-art-index"]
-    if indexes_ready:
-        before = [step for step in real if step != "compare-labelled"]
-        compare = ["compare-labelled"] if enough_real else []
-        return before + phone_build + compare + build + ["phone-bundle"] + synthetic
-    return build + phone_build + real + ["phone-bundle"] + synthetic
+    return (real + build + synthetic) if indexes_ready else (build + real + synthetic)
 
 
-PHONE_STEPS = ("int8-index", "int8-art-index", "phone-bundle")
-
-
-def phone_error() -> str | None:
-    """Why the phone steps of this version's autorun failed (they never stop the server's own measuring), from ``autorun-log.json``."""
-    try:
-        log = json.loads((config.data_dir() / "autorun-log.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return log.get("phone_error") if str(log.get("matcher_version")) == str(MATCHER_VERSION) else None
-
-
-def _autorun_log(entries: list[dict], phone_failure: str | None = None) -> None:
+def _autorun_log(entries: list[dict]) -> None:
     """When each autorun step started and how long it took, so a slow rerun can be explained from the file."""
     try:
         path = config.data_dir() / "autorun-log.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"matcher_version": MATCHER_VERSION, "steps": entries, "phone_error": phone_failure}), encoding="utf-8")
+        path.write_text(json.dumps({"matcher_version": MATCHER_VERSION, "steps": entries}), encoding="utf-8")
     except OSError:
         logger.exception("Could not write the card-match autorun log")
 
@@ -287,26 +255,17 @@ def autorun_once(warmer=None, model: str = DEFAULT_MODEL, *, delay_seconds: floa
         try:
             ready = all(index_module.index_status(name).get("built") and index_module.index_status(name).get("count")
                         for name in (model, variants.ART_INDEX))
-            phone_ready = all(index_module.index_status(name).get("built") and index_module.index_status(name).get("count")
-                              for name in (variants.PHONE_INDEX, variants.PHONE_ART_INDEX))
         except Exception:
-            ready, phone_ready = False, False
+            ready = False
         actions = {
-            "int8-index": lambda: start_index(variants.PHONE_INDEX), "int8-art-index": lambda: start_index(variants.PHONE_ART_INDEX),
-            "phone-bundle": start_phone_bundle,
             "index": lambda: start_index(model), "art-index": lambda: start_index(variants.ART_INDEX),
             "ocr-check": lambda: start_benchmark("ocr-check", model), "labelled": lambda: start_benchmark("labelled", model),
             "compare-labelled": lambda: start_benchmark("compare-labelled", model),
             "synthetic": lambda: start_benchmark("synthetic", model), "compare-synthetic": lambda: start_benchmark("compare-synthetic", model),
         }
         log: list[dict] = []
-        phone_failure: str | None = None  # the first failed phone step: the other phone steps are skipped, the server's own steps go on
-        for name in autorun_plan(indexes_ready=ready, enough_real=enough, phone=True, phone_ready=phone_ready):
+        for name in autorun_plan(indexes_ready=ready, enough_real=enough):
             began, clock = _now(), time.monotonic()
-            if name in PHONE_STEPS and phone_failure:
-                log.append({"step": name, "started_at": began, "seconds": 0, "skipped": "an earlier phone step failed"})
-                _autorun_log(log, phone_failure)
-                continue
             if name == "warm-up":
                 if warmer is not None:
                     warmer.start()
@@ -314,7 +273,7 @@ def autorun_once(warmer=None, model: str = DEFAULT_MODEL, *, delay_seconds: floa
                     while warmer.is_running() and time.monotonic() < deadline:
                         time.sleep(10)
                 log.append({"step": name, "started_at": began, "seconds": round(time.monotonic() - clock, 1)})
-                _autorun_log(log, phone_failure)
+                _autorun_log(log)
                 continue
             step = actions[name]
             started, _status = step()
@@ -324,19 +283,14 @@ def autorun_once(warmer=None, model: str = DEFAULT_MODEL, *, delay_seconds: floa
             jobs.wait()
             error = jobs.status().get("error")
             log.append({"step": name, "started_at": began, "seconds": round(time.monotonic() - clock, 1), "error": error})
-            _autorun_log(log, phone_failure)
-            if error and name in PHONE_STEPS:  # a side product: its failure must not stop the server's own measuring
-                phone_failure = f"{name}: {error}"
-                logger.error("Card-match autorun: phone step failed, the other phone steps are skipped: %s", phone_failure)
-                _autorun_log(log, phone_failure)
-                continue
+            _autorun_log(log)
             if error:
                 logger.error("Card-match autorun stopped: %s", error)
                 return
         try:
             marker = _autorun_marker()
             marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(json.dumps({"matcher_version": MATCHER_VERSION, "model": model, "finished_at": _now(), "steps": log, "phone_error": phone_failure}), encoding="utf-8")
+            marker.write_text(json.dumps({"matcher_version": MATCHER_VERSION, "model": model, "finished_at": _now(), "steps": log}), encoding="utf-8")
         except OSError:
             logger.exception("Could not write the card-match autorun marker")
 

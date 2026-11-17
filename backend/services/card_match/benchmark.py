@@ -678,8 +678,7 @@ def pick_winner(rows: list[dict]) -> dict | None:
     least ``COMPARE_MIN_GAIN`` points of top 1, top 20 or decided, and loses no more than that on top 20 or decided."""
     from . import variants
 
-    # Phone-settings rows (version 11) only measure what the phone would score; they are never the server's own set.
-    ok = [row for row in rows if row["status"] == "ok" and not variants.is_phone_label(row["label"])]
+    ok = [row for row in rows if row["status"] == "ok"]
     if not ok:
         return None
     wrong_limit = min(row["decided_wrong"] for row in ok)
@@ -713,14 +712,7 @@ def run_compare(
         if missing:
             rows.append(compare_row(label, None, missing=missing))
             continue
-        try:
-            matcher = variants.build_matcher(options, session_factory, data_dir=data_dir, ocr_reader=ocr_reader)
-        except Exception as error:  # a phone row whose model cannot run here (for example fp16 on this CPU) must not stop the others
-            if not variants.is_phone_label(label):
-                raise
-            logger.exception("Card-match: cannot build the %s matcher", label)
-            rows.append({**compare_row(label, None), "error": f"{type(error).__name__}: {error}"[:300]})
-            continue
+        matcher = variants.build_matcher(options, session_factory, data_dir=data_dir, ocr_reader=ocr_reader)
 
         def step_progress(state: dict, _label=label, _position=position) -> None:
             (progress or (lambda _s: None))({**state, "compare": _label, "compare_step": _position, "compare_total": len(labels)})
