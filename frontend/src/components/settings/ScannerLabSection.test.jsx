@@ -1,8 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 import { CompareTable, WrongList, HowConfirmedView, OcrCheckView, PictureFirstView, Report, ShadowView, SourceGroups, TraceSources } from './ScannerLabSection'
-import { DecidedWrong, MissesView, StripRow } from './ScannerLabMisses'
+import { CorrectedNote, CorrectionBarView, CorrectionsProvider, DecidedWrong, MissesView, StripRow, correctionQuestion } from './ScannerLabMisses'
 
 const report = {
   kind: 'synthetic',
@@ -524,5 +525,65 @@ describe('Scanner lab matcher version 12 test rows', () => {
     const check = renderToStaticMarkup(<OcrCheckView report={{ traces: 100, skipped: 0, by_resolution: {}, steps: {}, number_by_set: { all: { scans: 17, ...row }, min_scans: 3, sets: [{ set: '30C', scans: 17, ...row }] } }} />)
     expect(check).toContain('scanner-lab-number-by-set')
     expect(check).toContain('30C (17): 5 tight · 1 bottom band · 0 wide strips · 9 whole bottom · 2 never')
+  })
+})
+
+describe('Correcting a confirmed card', () => {
+  const item = {
+    key: 'job3-item4-abc', source: 'local', mechanism: 'number_and_picture', rank: 2,
+    decided_card: { tcg_card_id: 'me2-32', name: 'N’s Darumaka', number: '032', printed_total: 217, set: 'Ascended Heroes' },
+    truth: { tcg_card_id: 'sv9-26', name: 'N’s Darumaka', number: '026', printed_total: 159, set: 'Journey Together' },
+    ocr: {},
+  }
+
+  it('words the question with the old and the decided card (name, set, number)', () => {
+    expect(correctionQuestion(item.truth, item.decided_card)).toBe(
+      'Change the confirmed card from N’s Darumaka · Journey Together #026/159 to N’s Darumaka · Ascended Heroes #032/217?',
+    )
+    const html = renderToStaticMarkup(<CorrectionBarView item={item} mode="confirm" target={item.decided_card} />)
+    expect(html).toContain('Journey Together #026/159')
+    expect(html).toContain('Ascended Heroes #032/217')
+  })
+
+  it('offers both buttons on a wrong decision and only "Pick the right card" on other misses', () => {
+    const wrong = renderToStaticMarkup(<CorrectionBarView item={item} />)
+    expect(wrong).toContain('The scanner was right')
+    expect(wrong).toContain('Pick the right card')
+    const other = renderToStaticMarkup(<CorrectionBarView item={{ ...item, decided_card: null }} />)
+    expect(other).not.toContain('The scanner was right')
+    expect(other).toContain('Pick the right card')
+  })
+
+  it('shows no button for a scan of a read-only source', () => {
+    expect(renderToStaticMarkup(<CorrectionBarView item={{ ...item, source: 'prod' }} />)).toBe('')
+  })
+
+  it('shows who corrected it, with Undo', () => {
+    const html = renderToStaticMarkup(<CorrectionBarView item={item} correction={{ by_username: 'oak', from: 'sv9-26', to: 'me2-32' }} />)
+    expect(html).toContain('Corrected by oak')
+    expect(html).toContain('Undo')
+    expect(html).not.toContain('The scanner was right')
+  })
+
+  it('puts the bar on every decided-wrong entry of a comparison row and in Misses once the lab provides corrections', () => {
+    const queryClient = new QueryClient()
+    const row = { label: 'names+wholeread', status: 'ok', decided_wrong: 1, wrong_scans: [item] }
+    const html = renderToStaticMarkup(<QueryClientProvider client={queryClient}><CorrectionsProvider><WrongList row={row} /></CorrectionsProvider></QueryClientProvider>)
+    expect(html).toContain('The scanner was right')
+    const misses = renderToStaticMarkup(
+      <QueryClientProvider client={queryClient}>
+        <CorrectionsProvider>
+          <MissesView data={{ available: true, created_at: '2026-11-10T01:00:00+00:00', scans: 5, misses: 1, decided_wrong: 1, total: 1, offset: 0, tags: { decided_wrong: 'Decided wrong' }, counts: { decided_wrong: 1 }, items: [{ ...item, kind: 'decided_wrong', decided_wrong: true, tags: ['decided_wrong'], top3: [] }] }} tag={null} onTag={() => {}} onMore={() => {}} />
+        </CorrectionsProvider>
+      </QueryClientProvider>,
+    )
+    expect(misses).toContain('The scanner was right')
+    expect(misses).toContain('Pick the right card')
+  })
+
+  it('says how many corrected labels the benchmarks use', () => {
+    expect(renderToStaticMarkup(<CorrectedNote count={1} />)).toContain('1 confirmed card corrected by an admin')
+    expect(renderToStaticMarkup(<CorrectedNote count={3} />)).toContain('3 confirmed cards corrected by an admin')
+    expect(renderToStaticMarkup(<CorrectedNote count={0} />)).toBe('')
   })
 })

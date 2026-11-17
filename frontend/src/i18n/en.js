@@ -222,6 +222,8 @@ const en = {
       banner_updated: 'Banner edited',
       banner_ended: 'Banner ended',
       banner_deleted: 'Banner deleted',
+      scan_trace_ground_truth_corrected: 'Scan’s confirmed card corrected',
+      scan_trace_ground_truth_restored: 'Scan’s confirmed card restored',
       banner_dismissed: 'Banner dismissed',
     },
     details: {
@@ -229,6 +231,7 @@ const en = {
       reason: 'Reason: {reason}',
       newUser: 'New user {name}',
       none: 'none',
+      confirmedCardChange: 'Confirmed card: {from} → {to}',
       bannerFrom: 'From {name}',
       bannerEveryone: 'Everyone',
       bannerTrainers: '{count} trainer(s)',

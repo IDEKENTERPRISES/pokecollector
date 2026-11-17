@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FlaskConical, GitCompare, Hammer } from 'lucide-react'
 import api from '../../api/client'
-import Misses, { DecidedWrong } from './ScannerLabMisses'
+import Misses, { CorrectedNote, CorrectionBar, CorrectionsProvider, DecidedWrong } from './ScannerLabMisses'
 
 const QUERY_KEY = ['card-match-status']
 const SHADOW_KEY = ['card-match-shadow']
@@ -350,7 +350,12 @@ export function WrongList({ row }) {
       {items.length === 0 ? (
         <p className="text-footnote text-text-secondary">{row.decided_wrong ? 'This run did not keep the details of its wrong decisions (it ran before they were kept).' : 'Nothing was decided wrong.'}</p>
       ) : (
-        items.map((item, position) => <DecidedWrong key={`${item.key}-${position}`} item={item} />)
+        items.map((item, position) => (
+          <div key={`${item.key}-${position}`} className="space-y-1">
+            <DecidedWrong item={item} />
+            <CorrectionBar item={item} />
+          </div>
+        ))
       )}
       {items.length > 0 && items.length < row.decided_wrong && <p className="text-footnote text-text-secondary">Showing the first {items.length} of {row.decided_wrong}.</p>}
     </div>
@@ -858,6 +863,7 @@ export default function ScannerLabSection() {
   }
 
   return (
+    <CorrectionsProvider>
     <section className="space-y-1" data-testid="scanner-lab">
       <h2 className="px-4 pb-1.5 text-footnote text-text-secondary">Scanner lab</h2>
       <div className="overflow-hidden rounded-xl bg-card">
@@ -871,6 +877,7 @@ export default function ScannerLabSection() {
           <Row label="Threads" value={`${data.threads}${data.autorun ? ' · runs by itself after a deploy' : ''}`} />
           <Row testId="scanner-lab-options" label="Matching options in use" value={describeOptions(data.options?.active || 'baseline')} />
           <TraceSources sources={data.trace_sources} />
+          <CorrectedNote count={data.corrected_labels} />
           {extras.map(([name, extra]) => (
             <Row key={name} label={`Index: ${extra.label}`} value={extra.built ? `${number(extra.count)} pictures` : 'not built'} />
           ))}
@@ -920,5 +927,6 @@ export default function ScannerLabSection() {
         )}
       </div>
     </section>
+    </CorrectionsProvider>
   )
 }

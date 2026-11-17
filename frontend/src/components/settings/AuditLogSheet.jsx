@@ -100,6 +100,9 @@ export function auditDetailText(entry, t) {
         : t('audit.details.bannerTrainers').replace('{count}', details.audience.length))
     }
   }
+  if (String(entry.action).startsWith('scan_trace.') && details.from_card_id && details.to_card_id) {
+    parts.unshift(t('audit.details.confirmedCardChange').replace('{from}', details.from_card_id).replace('{to}', details.to_card_id))
+  }
   return parts.join(' · ')
 }
 

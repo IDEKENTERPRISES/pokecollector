@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { createContext, useContext, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, X } from 'lucide-react'
 import api from '../../api/client'
 import { useDialogBehavior } from '../ui/dialogBehavior'
+import { CardSearchPicker } from '../ScanReviewFlow'
+import { useSettings } from '../../contexts/SettingsContext'
 
 const PAGE = 24
 
@@ -168,6 +170,133 @@ export function DecidedWrong({ item }) {
   )
 }
 
+// ── Correcting a confirmed card ─────────────────────────────────────────────────────────────────
+// "The scanner was right" sets the scan's confirmed card to the card the matcher decided; "Pick the right card" sets it to a
+// card found by search. Both keep the old value on the server so "Undo" puts it back. Scans from a read-only source (prod)
+// are never offered a button. The controller lives in ``CorrectionsProvider``; without it (static tests) nothing is shown.
+
+const CorrectionsContext = createContext(null)
+const CORRECTIONS_KEY = ['card-match-corrections']
+
+const cardText = card => `${card.name || card.tcg_card_id || card.tcgId}${card.set || card.setName ? ` · ${card.set || card.setName}` : ''}${card.number ? ` #${card.number}${card.printed_total ? `/${card.printed_total}` : ''}` : ''}`
+
+/** The question shown before a confirmed card is changed. */
+export const correctionQuestion = (from, to) => `Change the confirmed card from ${cardText(from)} to ${cardText(to)}?`
+
+export function CorrectionsProvider({ children }) {
+  const queryClient = useQueryClient()
+  const states = useQuery({
+    queryKey: CORRECTIONS_KEY,
+    queryFn: () => api.get('/card-match/traces/corrections').then(response => response.data),
+    staleTime: 30000,
+    retry: false,
+  })
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: CORRECTIONS_KEY })
+    queryClient.invalidateQueries({ queryKey: ['card-match'] })
+  }
+  const correct = useMutation({
+    mutationFn: ({ key, card_id, reason }) => api.post(`/card-match/traces/${encodeURIComponent(key)}/correct`, { card_id, reason }).then(response => response.data),
+    onSuccess: refresh,
+  })
+  const undo = useMutation({
+    mutationFn: ({ key }) => api.post(`/card-match/traces/${encodeURIComponent(key)}/undo-correct`).then(response => response.data),
+    onSuccess: refresh,
+  })
+  const value = { byKey: states.data?.by_key || {}, correct, undo }
+  return <CorrectionsContext.Provider value={value}>{children}</CorrectionsContext.Provider>
+}
+
+/** "N confirmed cards corrected by an admin": what the benchmarks below count as right. */
+export function CorrectedNote({ count }) {
+  if (!count) return null
+  return (
+    <p className="text-footnote text-text-secondary" data-testid="scanner-lab-corrected-note">
+      {count === 1 ? '1 confirmed card corrected by an admin' : `${count} confirmed cards corrected by an admin`}: the benchmarks use the corrected card.
+    </p>
+  )
+}
+
+/** The app’s card search, for picking the right card. */
+function CorrectionSearch({ onPick, onCancel }) {
+  const { t } = useSettings()
+  return <CardSearchPicker onPick={onPick} onBack={onCancel} backLabel="Cancel" t={t} />
+}
+
+const smallButton = 'ios-press rounded-full bg-accent/20 px-2.5 py-1 text-footnote font-semibold text-tint disabled:opacity-50'
+
+/** The bar for one scan, as pure markup: ``mode`` is idle, confirm (with ``target``), or search. */
+export function CorrectionBarView({ item, correction, mode = 'idle', target = null, busy = false, error = null, onAsk, onSearch, onPick, onConfirm, onCancel, onUndo }) {
+  if (correction) {
+    return (
+      <p className="flex flex-wrap items-center gap-1.5 text-footnote" data-testid="correction-done">
+        <span className="font-semibold text-green-600">Corrected by {correction.by_username || 'an admin'}</span>
+        <span aria-hidden="true">·</span>
+        <button type="button" className={smallButton} onClick={onUndo} disabled={busy} data-testid="correction-undo">Undo</button>
+        {error && <span className="text-red-500">{error}</span>}
+      </p>
+    )
+  }
+  if (item.source && item.source !== 'local') return null
+  if (mode === 'confirm' && target) {
+    return (
+      <div className="space-y-1.5 rounded-md bg-fill px-2 py-1.5 text-footnote" data-testid="correction-confirm">
+        <p>{correctionQuestion(item.truth || {}, target)}</p>
+        <div className="flex gap-2">
+          <button type="button" className={smallButton} onClick={onConfirm} disabled={busy} data-testid="correction-confirm-yes">Change it</button>
+          <button type="button" className="ios-press rounded-full bg-fill px-2.5 py-1 text-footnote" onClick={onCancel} disabled={busy}>Cancel</button>
+        </div>
+        {error && <p className="text-red-500">{error}</p>}
+      </div>
+    )
+  }
+  if (mode === 'search') {
+    return (
+      <div className="space-y-1.5 rounded-md bg-fill px-2 py-1.5" data-testid="correction-search">
+        <CorrectionSearch onPick={onPick} onCancel={onCancel} />
+      </div>
+    )
+  }
+  return (
+    <div className="flex flex-wrap gap-2" data-testid="correction-actions">
+      {item.decided_card?.tcg_card_id && (
+        <button type="button" className={smallButton} onClick={onAsk} data-testid="correction-scanner-right">The scanner was right</button>
+      )}
+      <button type="button" className={smallButton} onClick={onSearch} data-testid="correction-pick">Pick the right card</button>
+    </div>
+  )
+}
+
+/** The correction buttons of one miss or wrong decision (nothing when the lab is not set up for corrections). */
+export function CorrectionBar({ item, onlyWrong = false }) {
+  const controller = useContext(CorrectionsContext)
+  const [mode, setMode] = useState('idle')
+  const [target, setTarget] = useState(null)
+  const [error, setError] = useState(null)
+  if (!controller || !item?.key || (onlyWrong && !item.decided_card)) return null
+  const reset = () => { setMode('idle'); setTarget(null); setError(null) }
+  const fail = err => setError(err?.response?.data?.detail || 'Could not change the confirmed card.')
+  return (
+    <CorrectionBarView
+      item={item}
+      correction={controller.byKey[item.key]}
+      mode={mode}
+      target={target}
+      busy={controller.correct.isPending || controller.undo.isPending}
+      error={error}
+      onAsk={() => { setTarget(item.decided_card); setMode('confirm') }}
+      onSearch={() => setMode('search')}
+      onPick={view => { setTarget({ tcg_card_id: view.tcgId, name: view.name, set: view.setName, number: view.number }); setMode('confirm') }}
+      onCancel={reset}
+      onConfirm={() => controller.correct.mutate(
+        { key: item.key, card_id: target.tcg_card_id, reason: target === item.decided_card ? 'The scanner was right' : 'Picked by an admin' },
+        { onSuccess: reset, onError: fail },
+      )}
+      onUndo={() => controller.undo.mutate({ key: item.key }, { onSuccess: reset, onError: fail })}
+    />
+  )
+}
+
 function MissItem({ item, labels, onOpen }) {
   const truth = item.truth || {}
   return (
@@ -180,6 +309,7 @@ function MissItem({ item, labels, onOpen }) {
         {item.decided_wrong && <span className="font-semibold text-red-500">· decided wrong</span>}
       </div>
       {item.decided_card && <DecidedWrong item={item} />}
+      <CorrectionBar item={item} />
       <div className="flex flex-wrap gap-1.5">
         {item.tags.filter(tag => tag !== 'decided_wrong').map(tag => (
           <span key={tag} className="rounded-full bg-accent/15 px-2 py-0.5 text-[11px] text-tint">{labels[tag] || tag}</span>
