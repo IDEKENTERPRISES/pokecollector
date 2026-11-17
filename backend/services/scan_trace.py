@@ -763,6 +763,18 @@ def record_manual_trace(
     return True
 
 
+def rescore_label(data: dict, card_id: str) -> None:
+    """Recompute the fields scored against the confirmed card (``correct``, ``ground_truth_rank``, the shadow's)."""
+    selected = (data.get("decision") or {}).get("selected")
+    # A trace that deliberately abstained did not make a top-1 choice.
+    # Keep it labelled for retrieval analysis without counting it as an
+    # incorrect automatic decision.
+    data["correct"] = (selected == card_id) if selected else None
+    candidates = [candidate.get("tcg_card_id") for candidate in data.get("candidates") or []]
+    data["ground_truth_rank"] = candidates.index(card_id) + 1 if card_id in candidates else None
+    label_shadow(data)
+
+
 def record_ground_truth(
     user_id: int,
     job_id: int,
@@ -794,19 +806,7 @@ def record_ground_truth(
                     "source": classify_confirmation(data, card_id, manual=manual, had_matches=had_matches),
                     "lang": lang,
                 }
-                selected = (data.get("decision") or {}).get("selected")
-                # A trace that deliberately abstained did not make a top-1 choice.
-                # Keep it labelled for retrieval analysis without counting it as an
-                # incorrect automatic decision.
-                data["correct"] = (selected == card_id) if selected else None
-                candidates = [
-                    candidate.get("tcg_card_id")
-                    for candidate in data.get("candidates") or []
-                ]
-                data["ground_truth_rank"] = (
-                    candidates.index(card_id) + 1 if card_id in candidates else None
-                )
-                label_shadow(data)
+                rescore_label(data, card_id)
                 temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
                 _write_private(
                     temp,

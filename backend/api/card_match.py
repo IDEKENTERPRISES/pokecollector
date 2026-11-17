@@ -10,9 +10,10 @@ from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
 from database import get_db
-from models import Card, User
+from services import scan_trace, trace_correction, trace_sources
 from services import scan_trace, trace_sources
 from services.card_match import MATCHER_VERSION, benchmark, config, embed, index as index_module, jobs as jobs_module, misses as misses_module, shadow as shadow_module, variants
+from services.card_match import MATCHER_VERSION, benchmark, config, embed, index as index_module, jobs as jobs_module, misses as misses_module, phone as phone_module, phone_speed as phone_speed_module, shadow as shadow_module, variants
 from services.card_match.model_specs import DEFAULT_MODEL, MODEL_SPECS
 
 router = APIRouter()
@@ -59,6 +60,7 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
         "reports": benchmark.latest_reports(),
         "labelled_traces": benchmark.count_labelled_traces(trace_dir),
         "labelled_traces_local": benchmark.count_labelled_traces(trace_dir, source=trace_sources.LOCAL),
+        "corrected_labels": trace_correction.corrections_overview(trace_dir)["scans"],
         "trace_sources": _trace_sources(),
         "thresholds": benchmark.thresholds(),
     }
@@ -109,6 +111,60 @@ def card_match_miss_full(key: str, current_user: User = Depends(get_current_user
         return ("data:image/jpeg;base64," + base64.b64encode(data).decode("ascii")) if data else None
 
     return {"photo": inline(photo), "card": inline(card), "strips": misses_module.strip_views(key) or []}
+
+
+class CorrectionRequest(BaseModel):
+    card_id: str
+    reason: str = ""
+
+
+def _card_summary(card: Card) -> dict:
+    return {"tcg_card_id": card.tcg_card_id, "name": card.name, "set": card.set_id, "number": card.number}
+
+
+def _local_trace_root():
+    return scan_trace.trace_root() or scan_trace.trace_storage_root()
+
+
+@router.get("/traces/corrections")
+def card_match_trace_corrections(current_user: User = Depends(get_current_user)):
+    """The scans whose confirmed card an admin corrected on this server, by Misses key (for the lab's "Corrected by ... Undo")."""
+    _require_admin(current_user)
+    return trace_correction.corrections_overview(_local_trace_root())
+
+
+@router.post("/traces/{key}/correct")
+def card_match_trace_correct(key: str, body: CorrectionRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Set the confirmed card of a scan to another card (an English, physical catalogue card); the old value is kept for Undo."""
+    _require_admin(current_user)
+    card_id = (body.card_id or "").strip()
+    card = index_module.picture_query(db, "en").filter(Card.tcg_card_id == card_id).first() if card_id else None
+    if card is None:
+        raise HTTPException(status_code=422, detail="Unknown card: it must be an English, physical card in the catalogue")
+    try:
+        result = trace_correction.correct(key, card_id, by_user_id=current_user.id, by_username=current_user.username, reason=body.reason)
+    except trace_correction.CorrectionError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    record_audit(
+        db, "scan_trace.ground_truth_corrected", request=request, actor=current_user, target_type="scan_trace", target_id=key,
+        details={"from_card_id": result["from"], "to_card_id": result["to"], "reason": (body.reason or "").strip()[:200]},
+    )
+    return {**result, "card": _card_summary(card)}
+
+
+@router.post("/traces/{key}/undo-correct")
+def card_match_trace_undo_correct(key: str, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Put back the confirmed card the last correction replaced."""
+    _require_admin(current_user)
+    try:
+        result = trace_correction.undo(key, by_user_id=current_user.id, by_username=current_user.username)
+    except trace_correction.CorrectionError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    record_audit(
+        db, "scan_trace.ground_truth_restored", request=request, actor=current_user, target_type="scan_trace", target_id=key,
+        details={"from_card_id": result["from"], "to_card_id": result["to"]},
+    )
+    return result
 
 
 _SHADOW_REPORT_TTL_SECONDS = 20
