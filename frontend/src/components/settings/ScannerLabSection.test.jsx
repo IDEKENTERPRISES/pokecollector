@@ -638,6 +638,10 @@ describe('deviceText', () => {
   it('shows why it fell back to the CPU', () => {
     expect(deviceText({ loaded: true, device: 'cpu', label: 'CPU', reason: 'CUDA failed: out of memory' })).toBe('CPU (CUDA failed: out of memory)')
   })
+  it('shows warm or unloaded, and how many GPU runs fell back to the CPU', () => {
+    expect(deviceText({ loaded: true, device: 'cuda', label: 'GPU (Quadro P620)', state: 'warm', gpu_failures: 2 })).toBe('GPU (Quadro P620) · warm · 2 GPU runs rerun on the CPU')
+    expect(deviceText({ loaded: true, device: 'cuda', label: 'GPU (Quadro P620)', state: 'unloaded', unloaded_at: '2026-11-19T14:32:05+00:00' })).toBe('GPU (Quadro P620) · unloaded (idle since 14:32 UTC)')
+  })
   it('says so before the model is loaded', () => {
     expect(deviceText({ loaded: false })).toBe('not loaded yet')
   })

@@ -46,7 +46,7 @@ class DeviceTests(unittest.TestCase):
         self.assertEqual(info["device"], "cuda")
         provider, options = ort.calls[0][0]
         self.assertEqual(provider, device.CUDA)
-        self.assertEqual(options["gpu_mem_limit"], 300 * device.MB)
+        self.assertEqual(options["gpu_mem_limit"], 180 * device.MB)
         self.assertEqual(options["arena_extend_strategy"], "kSameAsRequested")
         self.assertEqual(ort.calls[0][1], device.CPU)
 
@@ -75,10 +75,10 @@ class DeviceTests(unittest.TestCase):
 
     def test_memory_budget_is_shared(self):
         ort = FakeOrt([device.CUDA, device.CPU])
-        results = [device.create_session(ort, "m.onnx", None, kind=f"embedder:{n}")[1]["device"] for n in ("a", "b", "c")]
-        self.assertEqual(results, ["cuda", "cuda", "cpu"])  # 300 + 300 = the 600 MB budget
+        results = [device.create_session(ort, "m.onnx", None, kind=f"embedder:{n}")[1]["device"] for n in ("a", "b", "c", "d")]
+        self.assertEqual(results, ["cuda", "cuda", "cuda", "cpu"])  # 3 x 180 MB fit in the 600 MB budget, a fourth does not
         device.drop("embedder:a")
-        self.assertEqual(device.create_session(ort, "m.onnx", None, kind="embedder:d")[1]["device"], "cuda")
+        self.assertEqual(device.create_session(ort, "m.onnx", None, kind="embedder:e")[1]["device"], "cuda")
 
     def test_report_names_the_gpu_and_warm_time(self):
         ort = FakeOrt([device.CUDA, device.CPU])
@@ -115,9 +115,9 @@ class OcrSessionTests(unittest.TestCase):
         return infos
 
     def test_shares_are_planned_to_fit(self):
-        self.assertEqual(device.ocr_share("/m/ch_PP-OCRv4_det_infer.onnx"), 0.2)
+        self.assertEqual(device.ocr_share("/m/ch_PP-OCRv4_det_infer.onnx"), 0.3)
         self.assertEqual(device.ocr_share("/m/ch_ppocr_mobile_v2.0_cls_infer.onnx"), 0.05)
-        self.assertEqual(device.ocr_share("/m/ch_PP-OCRv4_rec_infer.onnx"), 0.2)
+        self.assertEqual(device.ocr_share("/m/ch_PP-OCRv4_rec_infer.onnx"), 0.3)
         self.assertLessEqual(device.EMBEDDER_SHARE + sum(device.OCR_SHARES.values()), 1.0)
 
     def test_healthy_start_puts_embedder_and_all_three_ocr_parts_on_the_gpu_without_a_warning(self):

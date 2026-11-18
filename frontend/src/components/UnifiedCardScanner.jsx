@@ -6,6 +6,7 @@ import { Camera, Inbox, Loader2, Upload, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 import { enqueueScanJob, getScanJobs, getScannerConfiguration } from '../api/client'
+import { warmMatcher } from '../utils/warmMatcher'
 import { useSettings } from '../contexts/SettingsContext'
 import { MAX_PHOTO_BYTES } from '../offline/constants'
 import { submitScanBatch } from '../offline/ops/scanSubmit'
@@ -86,6 +87,7 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
     const mode = chooseCaptureMode()
     setCaptureMode(mode)
     setReviewOpen(mode === 'fallback')
+    warmMatcher()
   }, [isOpen])
 
   const appendFiles = fileList => {

@@ -25,7 +25,11 @@ export function deviceText(part) {
   if (!part || !part.loaded) return 'not loaded yet';
   const warm = part.warm_ms != null ? ` · warm-up ${part.warm_ms} ms` : '';
   const why = part.device === 'cpu' && part.reason ? ` (${part.reason})` : '';
-  return `${part.label}${warm}${why}`;
+  const state = part.state === 'unloaded'
+    ? ` · unloaded (idle since ${String(part.unloaded_at || '').slice(11, 16)} UTC)`
+    : part.state === 'warm' ? ' · warm' : '';
+  const fallbacks = part.gpu_failures ? ` · ${part.gpu_failures} GPU run${part.gpu_failures === 1 ? '' : 's'} rerun on the CPU` : '';
+  return `${part.label}${warm}${state}${fallbacks}${why}`;
 }
 
 function Row({ label, value, testId }) {

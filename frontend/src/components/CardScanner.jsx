@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { Camera, Upload, ImagePlus, Trash2, X, Check, Loader2, RefreshCw, Plus } from 'lucide-react'
 import { recognizeCard, addToCollection, enqueueScanJob, getScannerConfiguration } from '../api/client'
+import { warmMatcher } from '../utils/warmMatcher'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSettings } from '../contexts/SettingsContext'
 import { useConfirmDialog } from '../contexts/ConfirmDialogContext'
@@ -63,6 +64,9 @@ export function ScanAddModal({
     // The scan is fixed for the lifetime of the modal; load it once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // The scan screen opened: have the server's picture matcher loaded.
+  useEffect(() => { warmMatcher() }, [])
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow
