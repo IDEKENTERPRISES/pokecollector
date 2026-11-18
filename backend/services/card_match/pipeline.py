@@ -380,7 +380,7 @@ class CardMatcher:
         extra_signals=(), tta: bool = False, names=None, label: str = "baseline",
         lookup=None, use_number: bool = False, use_text: bool = False, reprint: bool = False, fastread: bool = False,
         number_once: bool = False, corners: bool = False, wholepic: bool = False, trustrejected: bool = False,
-        wholeread: bool = False, wholestrict: bool = False, widefirst: bool = False, topname: bool = False,
+        wholeread: bool = False, wholestrict: bool = False, widefirst: bool = False, topname: bool = False, edgeguard: bool = False,
     ) -> None:
         self.index = index
         self.embedder = embedder
@@ -401,6 +401,7 @@ class CardMatcher:
         self.trustrejected = trustrejected  # a refused quad with the guide crop used is decided by the normal rules, not the strict fallback ones
         self.wholeread = wholeread  # version 9: a guide picture whose number was not read from the finder's card is read once more from the whole picture
         self.wholestrict = wholestrict  # version 10: a number read only from the whole picture decides only under ``whole_number_problem``'s rules
+        self.edgeguard = edgeguard  # version 14 test: an outline touching 2+ frame edges or far bigger than the guide is not trusted
         self.widefirst = widefirst  # version 12 test: no text in the tight number strips -> read the whole bottom band next
         self.topname = topname  # version 12 test: no line in the name strips -> the name from the top band's lines (needs ``names``)
         self.reprint = reprint  # break ties between reprints by the artwork-only similarity
@@ -524,7 +525,8 @@ class CardMatcher:
         or full photo) is never judged as a guide crop."""
         if not self.corners:
             return {}
-        return {"check": True, "guide": False} if whole_frame else {"check": True, "whole": self.wholepic}
+        edge = {"edgeguard": True} if getattr(self, "edgeguard", False) else {}
+        return {"check": True, "guide": False, **edge} if whole_frame else {"check": True, "whole": self.wholepic, **edge}
 
     def _find_card(self, photo_rgb: np.ndarray, full_photo, review_photo=None) -> tuple[object, str | None]:
         """(detection, fallback). When no card is found on the recognition image, the stored whole review photo is tried

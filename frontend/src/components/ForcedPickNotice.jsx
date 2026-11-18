@@ -36,3 +36,17 @@ export function ForcedPickHint({ t }) {
     </p>
   )
 }
+
+/** True when the finder's outline was rejected as implausible (too big or touching the photo's edges): a framing tip applies. */
+export function hasRejectedOutline(recognized) {
+  return Boolean(recognized?._picture?.outline_rejected)
+}
+
+/** One short framing tip. Never blocks anything. */
+export function FramingTip({ t }) {
+  return (
+    <p role="note" data-testid="scan-framing-tip" className="rounded-xl bg-fill-tertiary px-3 py-2 text-subheadline text-text-secondary">
+      {t('scanner.framingTip')}
+    </p>
+  )
+}

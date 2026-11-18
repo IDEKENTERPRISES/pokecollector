@@ -2161,6 +2161,8 @@ const en = {
     clearBatch: 'Clear batch',
     clearBatchConfirm: 'Permanently remove all photos currently staged for scanning?',
     scanTitle: 'Scan',
+    framingGuide: 'Keep the whole card inside the frame with a little space around it.',
+    framingTip: 'Tip: scan the card on its own, not in a binder page or big sleeve, with a little space around it.',
     inbox: 'Inbox',
     clear: 'Clear',
     photosLibrary: 'Photos',

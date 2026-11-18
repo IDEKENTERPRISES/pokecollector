@@ -23,7 +23,7 @@ import ScanZoomViewer from './ScanZoomViewer'
 import TcgdexLanguageSelect from './TcgdexLanguageSelect'
 import Alert from './ios/Alert'
 import Button from './ios/Button'
-import { CheckThisCardBadge, ForcedPickHint, isForcedPick, isNoCandidate } from './ForcedPickNotice'
+import { CheckThisCardBadge, ForcedPickHint, FramingTip, hasRejectedOutline, isForcedPick, isNoCandidate } from './ForcedPickNotice'
 
 const stripLangSuffix = id => String(id || '').replace(/_[a-z]{2,3}(-[a-z]+)?$/i, '')
 
@@ -217,6 +217,7 @@ function ItemCard({ item, onAdded, onDismiss, onSkip, onWaited, t, overlayEl }) 
       </div>
 
       {forcedPick && !picked && !searching && <ForcedPickHint t={t} />}
+      {hasRejectedOutline(item.recognized) && !picked && !searching && <FramingTip t={t} />}
       {pictureUnsure && (
         <p role="status" data-testid="scan-picture-unsure" className="rounded-xl bg-fill-tertiary px-3 py-2 text-subheadline text-text-secondary">
           {t('scanner.pictureUnsure')}

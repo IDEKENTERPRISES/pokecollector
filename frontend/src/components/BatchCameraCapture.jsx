@@ -119,6 +119,9 @@ export default function BatchCameraCapture({
           {GUIDE_CORNERS.map(corner => (
             <span key={corner} className={`absolute h-8 w-8 border-yellow ${corner}`} />
           ))}
+          <p className="absolute inset-x-0 top-full mt-3 text-center text-footnote text-white/90" data-testid="scan-framing-guide">
+            {t('scanner.framingGuide')}
+          </p>
         </div>
       </div>
       {!ready && (
