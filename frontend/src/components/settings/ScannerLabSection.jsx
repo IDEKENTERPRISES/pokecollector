@@ -752,6 +752,13 @@ export function PictureFirstView({ data, onOpenDecidedWrong }) {
           )
         }
       />
+      {(data.matcher_only || counts.forced_shown > 0) && (
+        <Row
+          testId="scanner-lab-pf-forced"
+          label="Unsure picks shown"
+          value={`${number(counts.forced_shown || 0)} · kept as proposed: ${number(counts.forced_kept || 0)}`}
+        />
+      )}
       {onOpenDecidedWrong && (
         <p className="text-footnote text-text-secondary">Tap the figure to see the scans the matcher decided wrong when it was run again on the confirmed photos (Misses › Decided wrong).</p>
       )}

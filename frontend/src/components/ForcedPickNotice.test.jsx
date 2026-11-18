@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, expect, it, vi } from 'vitest'
 
 import en from '../i18n/en'
-import { CheckThisCardBadge, ForcedPickHint, isForcedPick, isNoCandidate } from './ForcedPickNotice'
+import { CheckThisCardBadge, ForcedPickHint, isForcedPick, isForcedResult, isNoCandidate } from './ForcedPickNotice'
 import { ScanItemPanel } from './ScanReview'
 
 vi.mock('./CardImage', () => ({ default: () => null }))
@@ -55,6 +55,13 @@ describe('Scan review: Matcher only', () => {
     const none = { ...base, matches: [], recognized: { _picture: { path: 'no_candidate', matcher_only: true, forced_pick: false } } }
     expect(isNoCandidate(none)).toBe(true)
     expect(isNoCandidate(forced)).toBe(false)
+  })
+
+  it('reads a direct /recognize result for the single-photo scanner', () => {
+    expect(isForcedResult({ recognized: { _picture: { path: 'forced', forced_pick: true } }, matches })).toBe(true)
+    expect(isForcedResult({ recognized: { name: 'Mon 1', _picture: { path: 'decided', forced_pick: false } }, matches })).toBe(false)
+    expect(isForcedResult({ recognized: { name: 'Mon 1' }, matches })).toBe(false)
+    expect(isForcedResult(null)).toBe(false)
   })
 
   it('renders the badge and hint on their own, in plain words', () => {

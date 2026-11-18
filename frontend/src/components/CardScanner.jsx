@@ -17,6 +17,7 @@ import { tcgdexLanguageLabel } from '../utils/tcgdexLanguages'
 import { isSupportedScannerImage, SCANNER_IMAGE_ACCEPT } from '../utils/scannerImages'
 import { attachCollectionPhoto } from '../utils/collectionPhoto'
 import OwnPhotoPicker from './OwnPhotoPicker'
+import { CheckThisCardBadge, ForcedPickHint, isForcedResult } from './ForcedPickNotice'
 import { useDialogBehavior } from './ui/dialogBehavior'
 import PrintingDetailSelector from './PrintingDetailSelector'
 
@@ -533,6 +534,12 @@ export default function CardScanner({ isOpen, onClose, onCardSelected }) {
 
                 {results.matches?.length > 0 ? (
                   <div>
+                    {isForcedResult(results) && (
+                      <div className="mb-3 space-y-2">
+                        <CheckThisCardBadge t={t} />
+                        <ForcedPickHint t={t} />
+                      </div>
+                    )}
                     <p className="mb-3 text-[10px] font-black uppercase tracking-[0.2em] text-text-muted">
                       {t('scanner.bestMatches')} ({results.matches.length})
                     </p>

@@ -264,10 +264,11 @@ def card_match_shadow(current_user: User = Depends(get_current_user)):
 def card_match_picture_first(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Picture match first: whether it is on, and what the last 7 days looked like (services/picture_first.py)."""
     _require_admin(current_user)
-    from services import picture_first
+    from services import matcher_only, picture_first
 
     return {
         "enabled": picture_first.enabled(db),
+        "matcher_only": matcher_only.enabled(db),
         "env_default": picture_first.env_default(),
         "timeout_seconds": picture_first.timeout_seconds(),
         "counts": picture_first.lab_counts(db),
