@@ -25,7 +25,7 @@ import { useConfirmDialog } from '../contexts/ConfirmDialogContext'
 import Modal from '../components/ui/Modal'
 import PasswordPromptDialog from '../components/ui/PasswordPromptDialog'
 import AvatarPicker from '../components/AvatarPicker'
-import ScannerSettingsCard from '../components/ScannerSettingsCard'
+import ScannerSetupSection from '../components/MatcherOnlyScannerCard'
 import NotificationsCard from '../components/pwa/NotificationsCard'
 import { formatDistanceToNow } from 'date-fns'
 import toast from 'react-hot-toast'
@@ -522,7 +522,7 @@ export default function Settings() {
   const { data: scannerConfiguration } = useQuery({
     queryKey: ['scanner-configuration'],
     queryFn: getScannerConfiguration,
-    enabled: section === 'scanner',
+    enabled: section === 'scanner' && settings.scan_matcher_only !== 'true',
   })
   const [cardPhotosDeleting, setCardPhotosDeleting] = useState(false)
 
@@ -1504,9 +1504,9 @@ export default function Settings() {
           {/* ── 6. KI / KARTEN-SCANNER ── */}
           {activeSection === 'scanner' && <section className="space-y-1">
             <SectionHeader title={t('settings.sectionAI')} />
-            <ScannerSettingsCard t={t} />
+            <ScannerSetupSection t={t} matcherOnly={settings.scan_matcher_only === 'true'} isAdmin={user?.role === 'admin'} />
             <SettingsCard>
-              {showGeminiFallback && (
+              {showGeminiFallback && settings.scan_matcher_only !== 'true' && (
                 <SettingsRow
                   label={t('settings.geminiFallback')}
                   description={scannerConfiguration?.scope === 'global'
