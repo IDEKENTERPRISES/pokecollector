@@ -5,7 +5,7 @@ import { Crown, RefreshCw, Download, Upload, Plus, Pencil, Trash2, User, UserChe
 import clsx from 'clsx'
 import {
   getSyncStatus, triggerSync, triggerPriceSync, triggerAllPriceSync, rescheduleFullSync, reschedulePriceSync,
-  downloadBackup, restoreBackup, getRestoreStatus, exportCSV,
+  downloadBackup, restoreBackup, restoreServerBackup, getRestoreStatus, exportCSV,
   getSetting, setSetting, getTelegramStatus, saveSettings, setAuthMode,
   getUsers, createUser, updateUser, deleteUser, deleteUserScanDiagnostics, changePassword, changeAvatar, changeUsername,
   getContributors, getSupporters, getCustomMatches, downloadDebugLog, logoutOtherDevices,
@@ -45,6 +45,7 @@ import { readShowDaily, writeShowDaily } from '../progress/daily'
 import SplashCacheSection from '../components/splash/SplashCacheSection'
 import AdminSection from '../components/settings/AdminSection'
 import ScannerLabSection from '../components/settings/ScannerLabSection'
+import ServerBackupsSection from '../components/settings/ServerBackupsSection'
 import { ServerPicturesSection } from '../components/settings/OfflineCardDbSection'
 import { requestTour } from '../welcome/tourControl'
 import { resetTourDone } from '../welcome/tourStorage'
@@ -1034,6 +1035,18 @@ export default function Settings() {
     await followRestore()
   }
 
+  const runServerRestore = async (filename, password) => {
+    setRestoring(true)
+    try {
+      await restoreServerBackup(filename, password)
+    } catch (err) {
+      toast.error(t('settings.errorPrefix') + (err.response?.data?.detail || err.message))
+      setRestoring(false)
+      return
+    }
+    await followRestore()
+  }
+
   // A page reload mid-restore picks the running job up again.
   useEffect(() => {
     if (user?.role !== 'admin') return undefined
@@ -1899,6 +1912,8 @@ export default function Settings() {
               <p className="px-4 pt-1.5 text-footnote text-text-secondary">{t('settings.restoreFooter')}</p>
             </section>
           )}
+
+          {user?.role === 'admin' && <ServerBackupsSection onRestore={runServerRestore} restoring={restoring} />}
 
           <section>
             <PasswordPromptDialog

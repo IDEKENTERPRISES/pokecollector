@@ -265,17 +265,42 @@ never sends an item stamped with a different epoch (or an unstamped one once the
 server has been wiped); it deletes it instead.
 
 **Restore from the pre-wipe backup.** The file is a plain dump (without image
-cache rows) that the normal restore accepts. Copy it out of the backups folder
-(`docker cp <backend container>:/app/backups/pre-wipe-<UTC>.sql .`) and upload it
-in Settings > Backup > Restore, or restore from the server as above:
+cache rows) that the restore's SQL guard accepts (tested). It is listed under
+Settings > Data & sync > **Server backups**, where an administrator can download
+it or restore it (see below). From the server instead:
 
 ```bash
-docker exec -i <postgres container> psql -U pokemon -d pokemon_tcg --single-transaction -v ON_ERROR_STOP=1 < pre-wipe-<UTC>.sql
+docker exec -i <postgres container> psql -U pokemon -d pokemon_tcg --single-transaction -v ON_ERROR_STOP=1 < /app/backups/pre-wipe-<UTC>.sql
 ```
 
 Restoring brings the old accounts back and also the old data epoch, so phones
 that already reset themselves will keep their reset state and simply sign in
 again. The scan upload folder is not in the backup; the scan traces were never deleted.
+
+## Server backups
+
+Settings > Data & sync > **Server backups** (administrators only) lists the `.sql`
+files in the backups folder (`/app/backups`), newest first, with name, kind, date
+and size: the `pre-wipe-<UTC>.sql` made by a wipe of all user data, the
+`pre_upgrade_*` files made before an upgrade, and earlier downloads. Hidden and
+temporary files, `restore_status.json` and anything that is not a `.sql` file are
+not listed.
+
+- **Download** streams the file.
+- **Restore this backup** needs the file name typed back (and the administrator's
+  password when logins are on) and then runs the same restore as an upload: the
+  same SQL guard, `RESTORE_TIMEOUT_SECONDS`, status polling and one-restore-at-a-time
+  lock. The file is copied first and the copy is what the job deletes, so the
+  backup itself stays.
+
+Only a bare file name is accepted: no path separators or `..`, the file must be a
+regular file directly inside the backups folder after resolving, and symlinks are
+refused. Download and restore are written to the audit log (a full restore then
+replaces the audit log with the backup's own copy).
+
+A restore also brings back the backup's `data_epoch`. Phones that had already seen
+a wipe (and reset) will see a changed epoch and reset again, which is intended;
+they only need to sign in again.
 
 ## Test stack (nonprod)
 
