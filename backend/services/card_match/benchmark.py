@@ -286,6 +286,32 @@ def batch_groups(results: list[dict]) -> dict:
     return {batch: _group_row([r for r in results if r.get("batch") == batch]) for batch in ("tuning", "new")}
 
 
+EVAL_GROUPS = ("tuned", "new", "held_back")
+HELD_OUT_MIN_SCANS = 20  # a ``learned`` row needs at least this many held-out scans measured before it may be picked
+
+
+def eval_group(group: str, batch: str) -> str:
+    """Version 13 test: which of the three honest groups a scan is in. ``tuned``: used for tuning (the owner's scans before
+    ``NEW_SCANS_FROM`` and a read-only source's scans that are not held back; the learned rule trains on exactly these);
+    ``new``: the owner's scans from ``NEW_SCANS_FROM`` on, never used for tuning; ``held_back``: a read-only source's held-back scans."""
+    if group.endswith("_held_back"):
+        return "held_back"
+    if group == "local":
+        return "new" if batch == "new" else "tuned"
+    return "tuned"
+
+
+def eval_group_rows(results: list[dict]) -> dict:
+    """``{tuned, new, held_back}`` -> ``{n, decided, wrong}`` (counts of scans; a group with no scans has n 0), for every comparison row."""
+    out = {}
+    for name in EVAL_GROUPS:
+        members = [r for r in results if eval_group(r.get("group", "local"), r.get("batch", "tuning")) == name]
+        decided = [r for r in members if r["decided"]]
+        out[name] = {"n": len(members), "decided": len(decided), "wrong": sum(1 for r in decided if not r["decided_right"]),
+                     "learned": sum(1 for r in decided if r.get("mechanism") == "learned")}
+    return out
+
+
 def undecided_first_right(results: list[dict]) -> dict:
     """Scans where the first pick is right but nothing was decided, counted by the reason, for all scans and per group:
     what is holding back "decided". Only counted, no threshold is touched."""
@@ -492,6 +518,7 @@ def corners_module_summary(rows: list[dict]) -> dict | None:
 def run_labelled(
     session_factory, matcher, *, trace_dir: Path, progress: Callable[[dict], None] | None = None,
     should_stop: Callable[[], bool] | None = None, collector=None, corners_check: bool | None = None, held_back: str = "separate",
+    only: Callable[[dict], bool] | None = None, feature_sink: list | None = None,
 ) -> dict | None:
     """The diagnostics traces with a confirmed answer, through the pipeline, next to today's Ollama path.
     Returns None when there are no usable traces. A ``misses.MissCollector`` gets every scan to keep the misses.
@@ -499,7 +526,9 @@ def run_labelled(
     version 8's corners check, see ``corners_check.py``; it adds about half a second a scan.
     Scans from a read-only source (prod) are in groups of their own (``by_group``); ``held_back``: ``separate`` (default: the
     held-back ones are measured and reported in their group but are not in the headline numbers), ``skip`` (not run at all:
-    the option comparison, which chooses) or ``only`` (only those: the headline is the held-back scans)."""
+    the option comparison, which chooses) or ``only`` (only those: the headline is the held-back scans).
+    Version 13 test: ``only`` (a function of the trace) keeps just the scans it accepts (training reads the tuning group alone);
+    ``feature_sink`` gets, per scan, the first candidate's features and whether it is the confirmed card (``learned.extract``)."""
     from .images import decode_rgb
 
     started = time.monotonic()
@@ -516,6 +545,8 @@ def run_labelled(
     eligible, not_english = [], 0
     for data, path in traces:
         held = trace_sources.is_held_back(data)
+        if only is not None and not only(data):
+            continue
         if (held and held_back == "skip") or (not held and held_back == "only"):
             continue
         if f"{data['ground_truth']}_en" in indexed:
@@ -571,6 +602,8 @@ def run_labelled(
                 logger.exception("Card-match: could not record a miss for %s", path.name)
         rank = next((m["rank"] for m in outcome.matches if m["card_id"] == truth_id), None)
         decision = outcome.decision
+        if feature_sink is not None and getattr(outcome, "features", None):
+            feature_sink.append({**outcome.features, "right": bool(outcome.matches and outcome.matches[0]["card_id"] == truth_id), "trace": path.name})
         if decision and decision["card_id"] != truth_id and not trace_sources.is_held_back(data) and len(wrong_scans) < MAX_WRONG_SCANS:
             try:  # what Misses keeps for a wrong decision, as text; held-back scans feed nothing that tunes, so none is kept
                 wrong_scans.append(misses_module.wrong_record(
@@ -628,6 +661,7 @@ def run_labelled(
         "labelled": {"scans_with_answer": len(traces), "traces_with_answer": len(traces), "english_in_index": len(eligible), "not_english_or_not_indexed": not_english},
         # Each group apart (the owner's own scans, each read-only source's scans for tuning and held back), with how many trainers.
         "by_group": group_rows(all_results),
+        "eval_groups": eval_group_rows(all_results),  # version 13 test: decided and wrong for the tuned, new and held-back groups
         "held_back_note": ("The held-back scans are measured in their own group and are not in the headline numbers." if held_back == "separate"
                            else "Only the held-back scans were run." if held_back == "only" else "The held-back scans were left out of this run."),
         "how_confirmed_by_source": {root.label: shadow_module.how_confirmed(root.path) for root in trace_sources.usable_roots(trace_dir)},
@@ -658,9 +692,9 @@ def run_labelled(
 COMPARE_MIN_GAIN = 0.5  # points of top-20 or decided a challenger must add to replace the plainer option set
 
 
-def compare_row(label: str, report: dict | None, *, missing: list[str] | None = None) -> dict:
+def compare_row(label: str, report: dict | None, *, missing: list[str] | None = None, train_first: bool = False) -> dict:
     if report is None:
-        return {"label": label, "status": "skipped", "missing_indexes": missing or []}
+        return {"label": label, "status": "skipped", "missing_indexes": missing or [], "train_first": train_first}
     m = report["metrics"]
     timings = report.get("timings_ms", {}).get("total", {})
     return {
@@ -668,8 +702,25 @@ def compare_row(label: str, report: dict | None, *, missing: list[str] | None = 
         "number_exact": m["number_exact_pct"], "name_read": m.get("name_read_pct"), "number_ms_mean": m.get("number_ms_mean"), "decided": m["decided_pct"], "decided_right": m["decided_right_pct"],
         "decided_wrong": m["decided_wrong"], "median_ms": timings.get("median"), "p95_ms": timings.get("p95"),
         "extra_mb": report.get("memory", {}).get("extra_mb"),
+        "eval_groups": report.get("eval_groups"),  # version 13 test: decided and wrong per group (tuned / new / held back)
         "wrong_scans": list(report.get("wrong_scans") or []),  # version 10: each wrong decision of this row, as text (see ``misses.wrong_record``)
     }
+
+
+def learned_refused(row: dict) -> str | None:
+    """Version 13 test: why a ``learned`` row may not be picked (None: it may, or it is not a learned row). It needs at least
+    ``HELD_OUT_MIN_SCANS`` held-out scans measured (the owner's newer scans and the held-back ones) and 0 wrong decisions in both."""
+    from . import variants
+
+    if not getattr(variants.parse(row.get("label")), "learned", False):
+        return None
+    groups = row.get("eval_groups") or {}
+    held_out = [groups.get(name) or {"n": 0, "wrong": 0} for name in ("new", "held_back")]
+    if sum(g["n"] for g in held_out) < HELD_OUT_MIN_SCANS:
+        return "too_few_held_out_scans"
+    if any(g["wrong"] for g in held_out):
+        return "wrong_on_held_out_scans"
+    return None
 
 
 def pick_winner(rows: list[dict]) -> dict | None:
@@ -678,7 +729,7 @@ def pick_winner(rows: list[dict]) -> dict | None:
     least ``COMPARE_MIN_GAIN`` points of top 1, top 20 or decided, and loses no more than that on top 20 or decided."""
     from . import variants
 
-    ok = [row for row in rows if row["status"] == "ok"]
+    ok = [row for row in rows if row["status"] == "ok" and not learned_refused(row)]
     if not ok:
         return None
     wrong_limit = min(row["decided_wrong"] for row in ok)
@@ -712,14 +763,18 @@ def run_compare(
         if missing:
             rows.append(compare_row(label, None, missing=missing))
             continue
+        if kind == "labelled" and variants.needs_training(options, data_dir):
+            rows.append(compare_row(label, None, train_first=True))  # shown as "train first"
+            continue
         matcher = variants.build_matcher(options, session_factory, data_dir=data_dir, ocr_reader=ocr_reader)
 
         def step_progress(state: dict, _label=label, _position=position) -> None:
             (progress or (lambda _s: None))({**state, "compare": _label, "compare_step": _position, "compare_total": len(labels)})
 
         if kind == "labelled":
-            # The held-back scans (a read-only source's, see ``trace_sources``) are left out: this run chooses.
-            report = run_labelled(session_factory, matcher, trace_dir=trace_dir, progress=step_progress, should_stop=should_stop, held_back="skip")
+            # The held-back scans (a read-only source's, see ``trace_sources``) are measured but never in the headline numbers the pick
+            # reads (``held_back="separate"``): each row shows them in their own group (version 13 test).
+            report = run_labelled(session_factory, matcher, trace_dir=trace_dir, progress=step_progress, should_stop=should_stop, held_back="separate")
         else:
             report = run_synthetic(session_factory, matcher, count=count, data_dir=data_dir, progress=step_progress, should_stop=should_stop)
         if report is None:
