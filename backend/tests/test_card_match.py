@@ -455,6 +455,36 @@ class AdminApiTests(unittest.TestCase):
         self.assertTrue(response.json()["started"])
         start.assert_called_once()
 
+    def test_a_comparison_with_an_unknown_row_is_refused_naming_it(self):
+        self.current = self.admin
+        response = self.client.post("/api/card-match/benchmark", json={"kind": "compare-labelled", "labels": ["names", "nope", "alsonot"]})
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("alsonot", response.json()["detail"])
+        self.assertIn("nope", response.json()["detail"])
+        self.assertEqual(self.client.post("/api/card-match/benchmark", json={"kind": "compare-synthetic", "labels": ["names"]}).status_code, 422)  # not in the short list
+
+    def test_the_chosen_rows_reach_the_job_and_no_rows_means_all(self):
+        self.current = self.admin
+        with patch.object(jobs, "start_benchmark", return_value=(True, {"running": True})) as start, patch("api.card_match._require_ready"):
+            self.assertEqual(self.client.post("/api/card-match/benchmark", json={"kind": "compare-labelled", "labels": ["names", "baseline"]}).status_code, 200)
+            self.assertEqual(start.call_args.args[2], ["names", "baseline"])
+            self.assertEqual(self.client.post("/api/card-match/benchmark", json={"kind": "compare-labelled"}).status_code, 200)
+            self.assertIsNone(start.call_args.args[2])
+            self.assertEqual(self.client.post("/api/card-match/benchmark", json={"kind": "compare-labelled", "labels": []}).status_code, 200)
+            self.assertIsNone(start.call_args.args[2])
+            self.assertEqual(self.client.post("/api/card-match/benchmark", json={"kind": "labelled", "labels": ["bogus"]}).status_code, 200)  # not a comparison: ignored
+            self.assertIsNone(start.call_args.args[2])
+
+    def test_status_lists_the_comparison_rows_for_the_picker(self):
+        self.current = self.admin
+        options = self.client.get("/api/card-match/status").json()["options"]
+        rows = options["compare_rows"]
+        self.assertEqual([row["label"] for row in rows], options["compare"])
+        self.assertTrue(all(row["title"] and row["group"] in ("history", "v10 kept", "v12", "v13 learned", "custom") for row in rows))
+        self.assertTrue(any(row["reference"] for row in rows))
+        self.assertTrue(all(row["seconds"] is None for row in rows))  # nothing measured here yet
+        self.assertTrue(options["compare_rows_synthetic"])
+
 
 MODEL_FILE = embed.model_path(embed.DEFAULT_MODEL) if DEPS_AVAILABLE else None
 
