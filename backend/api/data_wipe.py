@@ -19,8 +19,6 @@ router = APIRouter()
 class WipeRequest(BaseModel):
     phrase: str = ""
     password: str | None = None
-    delete_scan_diagnostics: bool = False
-    confirm_delete_scan_diagnostics: bool = False
 
 
 def _require_admin(user: User) -> None:
@@ -61,14 +59,11 @@ async def run_data_wipe(
         body.password and verify_password(body.password, current_user.hashed_password)
     ):
         raise HTTPException(status_code=403, detail="Enter your password to wipe the data.")
-    if body.delete_scan_diagnostics and not body.confirm_delete_scan_diagnostics:
-        raise HTTPException(status_code=400, detail="Confirm separately that scan photos and diagnostics are deleted too.")
     try:
         return await run_in_threadpool(
             data_wipe.wipe_all_user_data,
             db,
             current_user,
-            include_traces=body.delete_scan_diagnostics,
             request=request,
         )
     except data_wipe.WipeRefused as exc:

@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import secrets
 import shutil
 import subprocess
@@ -234,6 +233,12 @@ def get_data_epoch(db: Session) -> str:
     return row.value if row is not None else ""
 
 
+def read_data_epoch(db: Session) -> str | None:
+    """The current epoch without creating or committing anything (None when it was never created)."""
+    row = db.get(Setting, DATA_EPOCH_SETTING)
+    return row.value if row is not None and row.value else None
+
+
 def _set_data_epoch(db: Session) -> str:
     """Set a new epoch inside the caller's transaction."""
     epoch = _new_epoch()
@@ -285,28 +290,9 @@ def scan_upload_dir() -> Path | None:
     return Path(__file__).resolve().parent.parent / "data" / "scan-uploads"
 
 
-def trace_roots_for_wipe() -> list[Path]:
-    """Writable trace roots only: a read-only root (prod's, mounted on nonprod) is never touched."""
-    from services import scan_trace
-
-    try:
-        return list(scan_trace._cleanup_roots())
-    except Exception:
-        logger.warning("Could not resolve the scan diagnostics folders", exc_info=True)
-        return []
-
-
 def file_preview() -> dict:
-    uploads = _dir_stats(scan_upload_dir())
-    trace_files = {"files": 0, "bytes": 0}
-    for root in trace_roots_for_wipe():
-        if root.is_dir():
-            for child in root.iterdir():
-                if child.is_dir() and re.fullmatch(r"user-\d+", child.name):
-                    stats = _dir_stats(child)
-                    trace_files["files"] += stats["files"]
-                    trace_files["bytes"] += stats["bytes"]
-    return {"scan_uploads": uploads, "scan_diagnostics": trace_files}
+    """Only the scan upload folder is deleted. Scan traces (SCAN_TRACE_DIR) and /app/data/card-match are never touched."""
+    return {"scan_uploads": _dir_stats(scan_upload_dir())}
 
 
 # --- scanner settings carry-over --------------------------------------------------------------
@@ -378,6 +364,14 @@ def create_pre_wipe_backup(database_url: str | None = None, directory: Path | No
 
 # --- the wipe ---------------------------------------------------------------------------------
 
+
+def detach_photos(db: Session, current_epoch: str | None) -> dict:
+    """Seam for tests: see services/trace_photos.detach_review_photos."""
+    from services import trace_photos
+
+    return trace_photos.detach_review_photos(db, current_epoch)
+
+
 _wipe_lock = threading.Lock()
 
 
@@ -400,17 +394,16 @@ def _delete_wipe_tables(db: Session) -> None:
         db.execute(delete(table))
 
 
-def _clear_files(db_counts_files: dict, include_traces: bool) -> dict:
-    """After the commit: user files on disk. Best effort; returns what was removed and what failed."""
-    result = {"scan_uploads": 0, "scan_diagnostics": 0, "errors": []}
+def _clear_files() -> dict:
+    """After the commit: the scan upload folder. Best effort; returns what was removed and what failed.
+    Scan traces (photos, corrections, held-back marks) and the card-match folder are never touched."""
+    result = {"scan_uploads": 0, "errors": []}
 
-    def empty_dir(path: Path | None, pattern: str | None = None) -> int:
+    def empty_dir(path: Path | None) -> int:
         removed = 0
         if path is None or not path.is_dir() or path.is_symlink():
             return 0
         for child in list(path.iterdir()):
-            if pattern is not None and not re.fullmatch(pattern, child.name):
-                continue
             try:
                 if child.is_dir() and not child.is_symlink():
                     removed += sum(1 for item in child.rglob("*") if item.is_file())
@@ -423,17 +416,6 @@ def _clear_files(db_counts_files: dict, include_traces: bool) -> dict:
         return removed
 
     result["scan_uploads"] = empty_dir(scan_upload_dir())
-    if include_traces:
-        for root in trace_roots_for_wipe():
-            # user-N folders hold the photos, the traces and the admin corrections (inside the trace files);
-            # .revoked-user-N markers belong to deleted accounts. Nothing else in the folder is touched.
-            result["scan_diagnostics"] += empty_dir(root, r"user-\d+")
-            if root.is_dir():
-                for marker in root.glob(".revoked-user-*"):
-                    try:
-                        marker.unlink()
-                    except OSError as exc:
-                        result["errors"].append(f"{marker.name}: {exc.strerror or exc}")
     return result
 
 
@@ -441,7 +423,6 @@ def wipe_all_user_data(
     db: Session,
     actor: User,
     *,
-    include_traces: bool = False,
     request=None,
     env=None,
     backup=create_pre_wipe_backup,
@@ -466,6 +447,22 @@ def wipe_all_user_data(
         db.rollback()  # end the read transaction before the slow dump
 
         backup_path = backup()  # raises WipeBackupFailed: nothing has been deleted yet
+
+        # The kept scan traces read their review photo through the scan job rows and the upload folder, which are
+        # about to go. Copy the photos beside the traces first (idempotent); a failure aborts before any deletion.
+        from services import trace_photos
+
+        try:
+            detached = detach_photos(db, read_data_epoch(db))
+        except trace_photos.DetachError as exc:
+            logger.error("Wipe aborted: could not detach scan trace photos: %s", exc)
+            raise WipeRefused(
+                "The scan traces could not be made independent of the database (" + str(exc) + "). "
+                "Nothing was deleted. See the server log.",
+                status=500,
+                code="detach_failed",
+            ) from None
+        db.rollback()
 
         from services.auth import hash_password
 
@@ -500,7 +497,8 @@ def wipe_all_user_data(
                     "actor_id": actor_id,
                     "backup_file": backup_path.name,
                     "deleted_rows": counts,
-                    "scan_diagnostics_deleted": bool(include_traces),
+                    "scan_diagnostics": "kept",
+                    "trace_photos_detached": detached,
                     "scanner_settings_carried": sorted(scanner_settings),
                     "new_admin": username,
                 },
@@ -512,7 +510,7 @@ def wipe_all_user_data(
             db.rollback()
             raise
 
-        files = _clear_files(counts, include_traces)
+        files = _clear_files()
         logger.warning(
             "All user data wiped by %s; backup %s; new administrator %s", actor_name, backup_path.name, username
         )
@@ -520,6 +518,7 @@ def wipe_all_user_data(
             "backup_file": backup_path.name,
             "deleted_rows": counts,
             "files": files,
+            "trace_photos_detached": detached,
             "admin_username": username,
             "admin_id": admin_id,
             "data_epoch": new_epoch,

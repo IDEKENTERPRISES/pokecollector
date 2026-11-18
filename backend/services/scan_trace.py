@@ -513,7 +513,7 @@ def create_scan_trace(
     provider: str | None = None,
     model: str | None = None,
 ) -> ScanTrace:
-    return ScanTrace(
+    trace = ScanTrace(
         enabled=user_trace_enabled(db, user_id),
         user_id=user_id,
         mode=mode,
@@ -523,6 +523,18 @@ def create_scan_trace(
         provider=provider,
         model=model,
     )
+    if trace.enabled:
+        # The data epoch this scan was made in: after a wipe of all user data, an old trace's item id must not
+        # fetch a new trainer's scan (services/trace_photos.py).
+        try:
+            from services.data_wipe import read_data_epoch
+
+            epoch = read_data_epoch(db)
+            if epoch:
+                trace.data["data_epoch"] = epoch
+        except Exception:
+            logger.warning("Could not read the data epoch for a scan trace", exc_info=True)
+    return trace
 
 
 # ── Matcher shadow mode (docs/CARD_MATCH.md) ─────────────────────────────────

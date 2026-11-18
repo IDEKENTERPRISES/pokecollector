@@ -211,11 +211,12 @@ user.
   endpoint itself (`OPENAI_BASE_URL`) is an environment value and is unchanged.
   If the administrator had no scanner settings and `GEMINI_API_KEY` is set, it
   seeds the new account, as on a first start;
-- **scan diagnostics** (`SCAN_TRACE_DIR`: the photos, traces and admin
-  corrections that make up the matcher's real-photo test set). They are deleted
-  only when you tick *Also delete scan photos and diagnostics* and confirm it
-  separately. Read-only trace folders (prod's, mounted on nonprod) are never
-  touched.
+- **scan photos and diagnostics, always** (`SCAN_TRACE_DIR`: the traces, their
+  photos, admin corrections, misses and held-back marks that make up the
+  matcher's real-photo test set, and `/app/data/card-match`). The wipe never
+  deletes or rewrites them, apart from the detach step below, and there is no
+  option to delete them. Scanning and diagnostics keep working for the new
+  accounts as before (diagnostics consent is per user, so it starts fresh).
 
 **Safety checks.** To run it the administrator types `WIPE ALL DATA` and
 re-enters their password (no password is asked when the instance has no login
@@ -224,11 +225,28 @@ job is running, and for anyone who is not an administrator.
 
 **Order of operations.** (1) checks, (2) the administrator's scanner settings are
 read, (3) a `pre-wipe-<UTC>.sql` backup is written to the backups folder with
-`pg_dump`; if that fails the wipe stops and **nothing is deleted**, (4) one
-database transaction under a lock deletes the rows, recreates the administrator,
-writes the scanner settings back, stores a new data epoch and writes the audit
-entry (who ran it, when, the backup file and the row counts per table); a
-failure rolls all of it back, (5) only then the files are deleted. Rows are
+`pg_dump`; if that fails the wipe stops and **nothing is deleted**, (4) the scan
+traces are detached (below); if that fails for any trace the wipe stops and
+nothing is deleted, (5) one database transaction under a lock deletes the rows,
+recreates the administrator, writes the scanner settings back, stores a new data
+epoch and writes the audit entry (who ran it, when, the backup file and the row
+counts per table); a failure rolls all of it back, (6) only then the scan upload
+folder is emptied.
+
+**Detaching the scan traces.** A local scan trace names its scan only by
+`item_id`, and the Scanner lab's card finder reads the scan's whole review photo
+through the database (`ScanJobItem.image_path`) from the scan upload folder,
+both of which the wipe deletes. So before deleting anything, every local trace
+with an `item_id` gets a copy of its review photo next to it
+(`<trace>.review.jpg`, written atomically), recorded in the trace JSON as
+`review_photo_file`, and is stamped with the `data_epoch` it was made in
+(`data_epoch`, also written into every new trace). It is idempotent: a trace
+that is already done is skipped. The finder reads the trace's own copy first and
+goes to the database only for a trace of the current epoch, so an old trace can
+never fetch a new trainer's scan, even though ids are not reused. These are the
+only changes to the trace folder: files are added and the two keys are added to
+trace JSON files; nothing is removed.
+ Rows are
 deleted, not truncated, so ids are never reused.
 
 **Devices.** Every session ends. `GET /api/health` carries `data_epoch`; each
@@ -250,7 +268,7 @@ docker exec -i <postgres container> psql -U pokemon -d pokemon_tcg --single-tran
 
 Restoring brings the old accounts back and also the old data epoch, so phones
 that already reset themselves will keep their reset state and simply sign in
-again. Scan photos and diagnostics that the wipe deleted are not in the backup.
+again. The scan upload folder is not in the backup; the scan traces were never deleted.
 
 ## Test stack (nonprod)
 

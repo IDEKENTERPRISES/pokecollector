@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import io
 import json
 import os
 import re
@@ -23,6 +25,7 @@ try:
         CollectionItem,
         PriceHistory,
         ScanJob,
+        ScanJobItem,
         Set,
         Setting,
         User,
@@ -30,7 +33,11 @@ try:
         UserSetting,
         UserXpLedger,
     )
-    from services import data_wipe, scan_providers
+    import numpy as np
+    from PIL import Image
+
+    from services import data_wipe, scan_providers, trace_photos
+    from services.card_match import benchmark
     from services.auth import create_access_token, hash_password, verify_password
 
     DEPS = True
@@ -50,6 +57,21 @@ SCANNER = {
 }
 
 
+def jpeg(color):
+    buffer = io.BytesIO()
+    Image.new("RGB", (64, 48), color).save(buffer, "JPEG")
+    return buffer.getvalue()
+
+
+def snapshot(folder):
+    """{relative path: sha256} of every file under a folder."""
+    out = {}
+    for path in sorted(Path(folder).rglob("*")):
+        if path.is_file():
+            out[path.relative_to(folder).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return out
+
+
 def fake_backup(name="pre-wipe-20261118T000000Z.sql"):
     def run():
         return Path(name)
@@ -62,7 +84,8 @@ class DataWipeTests(unittest.TestCase):
     def setUp(self):
         engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
         Base.metadata.create_all(engine)
-        self.db = sessionmaker(bind=engine)()
+        self.Session = sessionmaker(bind=engine)
+        self.db = self.Session()
         self.admin = User(username="oldadmin", hashed_password=hash_password("old-pw"), role="admin", is_active=True)
         self.trainer = User(username="ash", hashed_password=hash_password("ash-pw"), role="trainer", is_active=True)
         self.db.add_all([self.admin, self.trainer])
@@ -94,12 +117,31 @@ class DataWipeTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         (self.root / "uploads").mkdir()
-        (self.root / "uploads" / "job-1.jpg").write_bytes(b"x")
-        (self.root / "traces" / "user-7" / "2026-11-01").mkdir(parents=True)
-        (self.root / "traces" / "user-7" / "2026-11-01" / "a.json").write_text("{}")
-        (self.root / "traces" / "user-7" / "2026-11-01" / "a.jpg").write_bytes(b"x")
+        (self.root / "uploads" / "job-1.jpg").write_bytes(jpeg("red"))
+        job = ScanJob(user_id=self.trainer_id, status="done", expires_at=datetime.utcnow() + timedelta(days=1))
+        self.db.add(job)
+        self.db.commit()
+        item = ScanJobItem(job_id=job.id, user_id=self.trainer_id, position=0, image_path="job-1.jpg", byte_size=1, status="done")
+        gone = ScanJobItem(job_id=job.id, user_id=self.trainer_id, position=1, image_path="missing.jpg", byte_size=1, status="done")
+        self.db.add_all([item, gone])
+        self.db.commit()
+        self.job_id, self.item_id, self.gone_id = job.id, item.id, gone.id
+        day = self.root / "traces" / "user-7" / "2026-11-01"
+        day.mkdir(parents=True)
+        self.trace_a = day / f"job{self.job_id}-item{self.item_id}-aaa.json"
+        self.trace_a.write_text(json.dumps({"trace_id": "aaa", "job_id": self.job_id, "item_id": self.item_id, "ground_truth": "sv1-1", "image_file": "a.jpg"}, indent=2))
+        self.trace_b = day / f"job{self.job_id}-item{self.gone_id}-bbb.json"
+        self.trace_b.write_text(json.dumps({"trace_id": "bbb", "job_id": self.job_id, "item_id": self.gone_id, "image_file": "b.jpg"}, indent=2))
+        (day / "a.jpg").write_bytes(b"trace photo a")
+        (day / "b.jpg").write_bytes(b"trace photo b")
+        (self.root / "traces" / "user-7" / "shadow").mkdir()
+        (self.root / "traces" / "user-7" / "shadow" / "job1-item1.shadow.json").write_text("{}")
+        (self.root / "traces" / ".revoked-user-3").write_text("")
         (self.root / "traces" / "keep-me").mkdir()
         (self.root / "traces" / "keep-me" / "note.txt").write_text("keep")
+        (self.root / "card-match" / "misses").mkdir(parents=True)
+        (self.root / "card-match" / "misses" / "run.json").write_text("{}")
+        (self.root / "card-match" / "index.bin").write_bytes(b"\x00\x01")
         self.env_patch = patch.dict(os.environ, {"SCAN_UPLOAD_DIR": str(self.root / "uploads"), "SCAN_TRACE_DIR": str(self.root / "traces")})
         self.env_patch.start()
         self.busy = patch.object(data_wipe, "busy_reason", return_value=None)
@@ -273,20 +315,98 @@ class DataWipeTests(unittest.TestCase):
         self.assertTrue(first)
         self.assertEqual(data_wipe.get_data_epoch(self.db), first)
 
-    def test_scan_uploads_go_and_traces_stay_by_default(self):
+    def test_scan_uploads_go(self):
         report = self.wipe()
         self.assertFalse((self.root / "uploads" / "job-1.jpg").exists())
-        self.assertTrue((self.root / "traces" / "user-7" / "2026-11-01" / "a.json").exists())
-        self.assertTrue((self.root / "traces" / "user-7" / "2026-11-01" / "a.jpg").exists())
-        self.assertEqual(report["files"]["scan_diagnostics"], 0)
+        self.assertGreaterEqual(report["files"]["scan_uploads"], 1)
 
-    def test_traces_go_when_ticked_and_other_folders_stay(self):
-        (self.root / "traces" / ".revoked-user-3").write_text("")
-        report = self.wipe(include_traces=True)
-        self.assertFalse((self.root / "traces" / "user-7").exists())
-        self.assertFalse((self.root / "traces" / ".revoked-user-3").exists())
-        self.assertTrue((self.root / "traces" / "keep-me" / "note.txt").exists())
-        self.assertEqual(report["files"]["scan_diagnostics"], 2)
+    def test_traces_and_card_match_are_never_deleted_or_changed_except_for_the_detach(self):
+        before_traces = snapshot(self.root / "traces")
+        before_match = snapshot(self.root / "card-match")
+        report = self.wipe()
+        # the matcher's data: byte for byte unchanged
+        self.assertEqual(snapshot(self.root / "card-match"), before_match)
+        after = snapshot(self.root / "traces")
+        added = set(after) - set(before_traces)
+        self.assertEqual(added, {f"user-7/2026-11-01/{self.trace_a.stem}.review.jpg"})
+        self.assertEqual(set(before_traces) - set(after), set())
+        changed = {name for name in before_traces if after[name] != before_traces[name]}
+        self.assertEqual(changed, {f"user-7/2026-11-01/{self.trace_a.name}", f"user-7/2026-11-01/{self.trace_b.name}"})
+        # the two trace files only gained the review photo path and the epoch stamp; everything else is as it was
+        for path, keep_photo in ((self.trace_a, True), (self.trace_b, False)):
+            data = json.loads(path.read_text())
+            self.assertEqual(data["data_epoch"], self.old_epoch)
+            self.assertEqual("review_photo_file" in data, keep_photo)
+        data_a = json.loads(self.trace_a.read_text())
+        self.assertEqual((data_a["ground_truth"], data_a["image_file"]), ("sv1-1", "a.jpg"))
+        self.assertEqual((self.root / "traces" / data_a["review_photo_file"]).read_bytes(), jpeg("red"))
+        self.assertTrue((self.root / "traces" / ".revoked-user-3").exists())
+        self.assertEqual(report["trace_photos_detached"]["copied"], 1)
+
+    def test_a_scan_trace_finds_the_same_photo_before_and_after_a_wipe(self):
+        data_a = json.loads(self.trace_a.read_text())
+        before = benchmark.review_photo_loader(self.Session, data_a)()
+        self.assertIsNotNone(before)
+        self.wipe()
+        # a new trainer's scan now owns the same item id with a different photo
+        self.db.add(ScanJob(id=self.job_id, user_id=99, status="done", expires_at=datetime.utcnow() + timedelta(days=1)))
+        self.db.flush()
+        self.db.add(ScanJobItem(id=self.item_id, job_id=self.job_id, user_id=99, position=0, image_path="stranger.jpg", byte_size=1, status="done"))
+        self.db.commit()
+        (self.root / "uploads" / "stranger.jpg").write_bytes(jpeg("blue"))
+        data_a = json.loads(self.trace_a.read_text())
+        after = benchmark.review_photo_loader(self.Session, data_a)()
+        self.assertTrue(np.array_equal(before, after))
+
+    def test_an_old_trace_without_a_photo_never_fetches_a_strangers_scan_after_a_wipe(self):
+        data_b = json.loads(self.trace_b.read_text())
+        self.assertIsNone(benchmark.review_photo_loader(self.Session, data_b)())  # its photo is already gone
+        self.wipe()
+        self.db.add(ScanJob(id=self.job_id, user_id=99, status="done", expires_at=datetime.utcnow() + timedelta(days=1)))
+        self.db.flush()
+        self.db.add(ScanJobItem(id=self.gone_id, job_id=self.job_id, user_id=99, position=1, image_path="stranger.jpg", byte_size=1, status="done"))
+        self.db.commit()
+        (self.root / "uploads" / "stranger.jpg").write_bytes(jpeg("blue"))
+        data_b = json.loads(self.trace_b.read_text())
+        self.assertIsNone(benchmark.review_photo_loader(self.Session, data_b)())
+
+    def test_a_trace_of_the_current_epoch_still_reads_through_the_database(self):
+        data_a = {**json.loads(self.trace_a.read_text()), "data_epoch": self.old_epoch}
+        self.assertIsNotNone(benchmark.review_photo_loader(self.Session, data_a)())
+        stale = {**data_a, "data_epoch": "some-older-epoch"}
+        self.assertIsNone(benchmark.review_photo_loader(self.Session, stale)())
+
+    def test_another_stacks_trace_is_not_looked_up_here(self):
+        foreign = {**json.loads(self.trace_a.read_text()), "_source": "prod"}
+        self.assertIsNone(benchmark.review_photo_loader(self.Session, foreign))
+
+    def test_detaching_twice_changes_nothing_the_second_time(self):
+        first = trace_photos.detach_review_photos(self.db, self.old_epoch)
+        self.assertEqual((first["copied"], first["no_photo"]), (1, 1))
+        snap = snapshot(self.root / "traces")
+        second = trace_photos.detach_review_photos(self.db, self.old_epoch)
+        self.assertEqual((second["copied"], second["already_done"]), (0, 1))
+        self.assertEqual(snapshot(self.root / "traces"), snap)
+
+    def test_a_failure_to_detach_aborts_before_anything_is_deleted(self):
+        with patch.object(trace_photos, "_atomic_write", side_effect=OSError("disk full")):
+            with self.assertRaises(data_wipe.WipeRefused) as ctx:
+                self.wipe()
+        self.assertEqual(ctx.exception.code, "detach_failed")
+        self.assertEqual(self.db.query(User).count(), 2)
+        self.assertEqual(self.db.query(CollectionItem).count(), 2)
+        self.assertEqual(self.db.query(ScanJobItem).count(), 2)
+        self.assertEqual(data_wipe.get_data_epoch(self.db), self.old_epoch)
+        self.assertTrue((self.root / "uploads" / "job-1.jpg").exists())
+
+    def test_new_traces_carry_the_data_epoch(self):
+        from services.scan_trace import create_scan_trace
+
+        self.db.add(UserSetting(user_id=self.trainer_id, key="scan_diagnostics_enabled", value="true"))
+        self.db.commit()
+        trace = create_scan_trace(self.db, self.trainer_id, mode="job", job_id=self.job_id, item_id=self.item_id)
+        self.assertTrue(trace.enabled)
+        self.assertEqual(trace.data["data_epoch"], self.old_epoch)
 
     def test_audit_entry_is_written_and_old_entries_stay_readable(self):
         report = self.wipe()
@@ -334,12 +454,6 @@ class DataWipeTests(unittest.TestCase):
             self.assertEqual(ctx.exception.status_code, 403)
         self.assertEqual(self.db.query(User).count(), 2)
 
-    def test_traces_need_their_own_confirmation(self):
-        with self.assertRaises(HTTPException) as ctx:
-            self.call(phrase="WIPE ALL DATA", password="old-pw", delete_scan_diagnostics=True)
-        self.assertEqual(ctx.exception.status_code, 400)
-        self.assertTrue((self.root / "traces" / "user-7").exists())
-
     def test_refused_without_environment_admin_through_the_endpoint(self):
         with patch.dict(os.environ, {"ADMIN_USERNAME": "", "ADMIN_PASSWORD": ""}):
             with self.assertRaises(HTTPException) as ctx:
@@ -354,7 +468,7 @@ class DataWipeTests(unittest.TestCase):
                 patch.object(data_wipe, "wipe_all_user_data", return_value={"ok": True}) as run:
             result = asyncio.run(wipe_api.run_data_wipe(payload, None, self.admin, self.db))
         self.assertEqual(result, {"ok": True})
-        self.assertEqual(run.call_args.kwargs["include_traces"], False)
+        self.assertNotIn("include_traces", run.call_args.kwargs)
 
     def test_preview_lists_counts_and_readiness(self):
         with patch.dict(os.environ, ENV), patch.object(wipe_api, "multi_user_enabled", return_value=True):

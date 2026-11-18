@@ -17,9 +17,9 @@ const preview = {
   busy_reason: null,
   delete: { users: 3, collection: 120, wishlist: 0, 'cards (custom cards)': 2 },
   keep: ['settings', 'cards'],
-  files: { scan_uploads: { files: 4, bytes: 2048 }, scan_diagnostics: { files: 10, bytes: 5 * 1024 * 1024 } },
+  files: { scan_uploads: { files: 4, bytes: 2048 } },
 }
-const filled = { phrase: 'WIPE ALL DATA', password: 'pw', deleteScan: false, confirmScan: false, busy: false }
+const filled = { phrase: 'WIPE ALL DATA', password: 'pw', busy: false }
 
 describe('wipeBlocker', () => {
   it('is open only when the phrase and password are right', () => {
@@ -39,18 +39,11 @@ describe('wipeBlocker', () => {
     expect(wipeBlocker({ preview: { ...preview, busy_reason: 'A scan job is still running.' }, ...filled })).toBe('busy')
     expect(wipeBlocker({ preview, ...filled, busy: true })).toBe('running')
   })
-
-  it('needs the separate confirmation when scan photos are ticked', () => {
-    expect(wipeBlocker({ preview, ...filled, deleteScan: true })).toBe('confirmScan')
-    expect(canWipe({ preview, ...filled, deleteScan: true, confirmScan: true })).toBe(true)
-  })
 })
 
 describe('wipeRequest', () => {
-  it('sends the diagnostics confirmation only with its tick', () => {
-    expect(wipeRequest(filled)).toEqual({ phrase: 'WIPE ALL DATA', password: 'pw', deleteScanDiagnostics: false, confirmDeleteScanDiagnostics: false })
-    expect(wipeRequest({ ...filled, deleteScan: true, confirmScan: true }).confirmDeleteScanDiagnostics).toBe(true)
-    expect(wipeRequest({ ...filled, deleteScan: false, confirmScan: true }).confirmDeleteScanDiagnostics).toBe(false)
+  it('sends only the phrase and the password: there is no option to delete scan photos or diagnostics', () => {
+    expect(wipeRequest(filled)).toEqual({ phrase: 'WIPE ALL DATA', password: 'pw' })
   })
 })
 
@@ -102,14 +95,10 @@ describe('the confirmation form', () => {
     expect(html).toMatch(/disabled=""/)
   })
 
-  it('shows the second confirmation only after the scan tick', () => {
-    expect(render()).not.toContain('data-wipe-scan-confirm-row')
-    expect(render({ state: { ...filled, deleteScan: true } })).toContain('data-wipe-scan-confirm-row')
-  })
-
-  it('keeps the scan diagnostics tick off by default', () => {
-    expect(render()).toMatch(/data-testid="data-wipe-scan"/)
-    expect(render()).not.toMatch(/checked=""[^>]*data-testid="data-wipe-scan"/)
+  it('offers no way to delete scan photos or diagnostics, and says they are kept', () => {
+    const html = render()
+    expect(html).not.toContain('data-wipe-scan')
+    expect(html).toContain('never deleted')
   })
 })
 

@@ -27,14 +27,13 @@ export function deleteRows(preview) {
 }
 
 /** Why the Wipe button is still off, or null when everything needed is filled in. The server checks all of it again. */
-export function wipeBlocker({ preview, phrase, password, deleteScan, confirmScan, busy }) {
+export function wipeBlocker({ preview, phrase, password, busy }) {
   if (!preview) return 'loading'
   if (!preview.env_admin_ready) return 'env'
   if (preview.busy_reason) return 'busy'
   if (busy) return 'running'
   if (phrase !== (preview.phrase || CONFIRM_PHRASE)) return 'phrase'
   if (preview.requires_password && !password) return 'password'
-  if (deleteScan && !confirmScan) return 'confirmScan'
   return null
 }
 
@@ -42,14 +41,9 @@ export function canWipe(state) {
   return wipeBlocker(state) === null
 }
 
-/** The request body: the diagnostics tick is only sent together with its own confirmation. */
-export function wipeRequest({ phrase, password, deleteScan, confirmScan }) {
-  return {
-    phrase,
-    password,
-    deleteScanDiagnostics: Boolean(deleteScan),
-    confirmDeleteScanDiagnostics: Boolean(deleteScan && confirmScan),
-  }
+/** The request body. */
+export function wipeRequest({ phrase, password }) {
+  return { phrase, password }
 }
 
 /** The form: what goes, what stays, the confirmation fields. Pure (state comes in through props). */
@@ -99,29 +93,6 @@ export function DataWipeForm({ preview, state, onChange, onSubmit, t, error }) {
           <p className="text-footnote text-text-secondary">{fill(t('adminWipe.envAdmin'), { name: preview.env_admin_username })}</p>
         )}
       </div>
-
-      <label className="flex items-start gap-2 text-footnote">
-        <input
-          type="checkbox" checked={state.deleteScan} data-testid="data-wipe-scan"
-          onChange={event => onChange({ deleteScan: event.target.checked, confirmScan: false })}
-        />
-        <span>
-          <span className="block font-semibold">{t('adminWipe.alsoScan')}</span>
-          <span className="block text-text-secondary">
-            {t('adminWipe.alsoScanHint')}
-            {files?.scan_diagnostics?.files ? ` ${fill(t('adminWipe.alsoScanSize'), { n: files.scan_diagnostics.files, size: formatBytes(files.scan_diagnostics.bytes) })}` : ''}
-          </span>
-        </span>
-      </label>
-      {state.deleteScan && (
-        <label className="flex items-start gap-2 rounded-xl bg-fill-tertiary p-3 text-footnote text-red-400" data-testid="data-wipe-scan-confirm-row">
-          <input
-            type="checkbox" checked={state.confirmScan} data-testid="data-wipe-scan-confirm"
-            onChange={event => onChange({ confirmScan: event.target.checked })}
-          />
-          <span>{t('adminWipe.confirmScan')}</span>
-        </label>
-      )}
 
       <label className="block space-y-1">
         <span className="text-subheadline font-semibold">{fill(t('adminWipe.typePhrase'), { phrase: preview?.phrase || CONFIRM_PHRASE })}</span>
@@ -182,7 +153,7 @@ function errorText(error, t) {
 /** Settings > Administrator > Danger zone. */
 export default function DataWipeCard() {
   const { t } = useSettings()
-  const [state, setState] = useState({ phrase: '', password: '', deleteScan: false, confirmScan: false })
+  const [state, setState] = useState({ phrase: '', password: '' })
   const [result, setResult] = useState(null)
   const preview = useQuery({ queryKey: ['admin-data-wipe-preview'], queryFn: getDataWipePreview, staleTime: 0, gcTime: 0, enabled: !result })
   const mutation = useMutation({

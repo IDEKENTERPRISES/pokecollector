@@ -462,35 +462,11 @@ def load_stored_card(trace_path: Path, data: dict):
 
 def review_photo_loader(session_factory, data: dict):
     """A function that reads the scan's whole stored review photo (the 2048 px one) for the card finder, or None when the trace
-    does not say which scan it is. The photo is read only when the card is not found on the recognition image. Read-only; the
-    photo stays on the server (a scan older than the retention period has none, and the finder then goes to the guide frame)."""
-    from services import trace_sources
+    does not say which scan it is. The photo is read only when the card is not found on the recognition image. Read-only.
+    The trace's own copy comes first; the database lookup is only for a scan of the current data epoch (see services/trace_photos.py)."""
+    from services import trace_photos
 
-    item_id = data.get("item_id")
-    if trace_sources.source_of(data) != trace_sources.LOCAL:
-        return None  # another stack's scan: its item id means nothing in this database (it would fetch an unrelated scan)
-    if not item_id or session_factory is None:
-        return None
-
-    def load():
-        from models import ScanJobItem
-        from services import scan_storage
-        from .images import decode_rgb
-
-        db = session_factory()
-        try:
-            row = db.get(ScanJobItem, item_id)
-            path = row.image_path if row is not None else None
-        finally:
-            db.close()
-        if not path:
-            return None
-        try:
-            return decode_rgb(scan_storage.read_review_photo(path), max_side=2048)
-        except Exception:
-            return None
-
-    return load
+    return trace_photos.review_photo_loader(session_factory, data)
 
 
 def trace_relpath(path: Path) -> str:
