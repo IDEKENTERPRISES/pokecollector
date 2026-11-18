@@ -23,6 +23,7 @@ import ScanZoomViewer from './ScanZoomViewer'
 import TcgdexLanguageSelect from './TcgdexLanguageSelect'
 import Alert from './ios/Alert'
 import Button from './ios/Button'
+import { CheckThisCardBadge, ForcedPickHint, isForcedPick, isNoCandidate } from './ForcedPickNotice'
 
 const stripLangSuffix = id => String(id || '').replace(/_[a-z]{2,3}(-[a-z]+)?$/i, '')
 
@@ -139,6 +140,8 @@ function ItemCard({ item, onAdded, onDismiss, onSkip, onWaited, t, overlayEl }) 
   const picture = item.recognized?._picture
   const pictureUnsure = item.status === 'done' && !item.resolved && picture?.path === 'unsure_inbox'
   const matchedByPicture = isAdmin && picture?.path === 'decided'
+  const forcedPick = isForcedPick(item)
+  const noCandidate = isNoCandidate(item)
   const [waiting, setWaiting] = useState(false)
 
   const chosen = picked || toView(matches[index])
@@ -209,9 +212,11 @@ function ItemCard({ item, onAdded, onDismiss, onSkip, onWaited, t, overlayEl }) 
           {chosen && !searching && <p className="text-subheadline text-text-secondary" data-testid="scan-flow-chosen">{setAndNumber(chosen)}</p>}
           {!searching && picked && <p className="mt-1 text-footnote text-text-secondary">{t('scanner.flowFoundBySearch')}</p>}
           {matchedByPicture && <p className="mt-1 text-caption-1 text-text-tertiary" data-testid="scan-matched-by-picture">{t('scanner.matchedByPicture')}</p>}
+          {forcedPick && !picked && !searching && <p className="mt-1"><CheckThisCardBadge t={t} /></p>}
         </div>
       </div>
 
+      {forcedPick && !picked && !searching && <ForcedPickHint t={t} />}
       {pictureUnsure && (
         <p role="status" data-testid="scan-picture-unsure" className="rounded-xl bg-fill-tertiary px-3 py-2 text-subheadline text-text-secondary">
           {t('scanner.pictureUnsure')}
@@ -224,7 +229,7 @@ function ItemCard({ item, onAdded, onDismiss, onSkip, onWaited, t, overlayEl }) 
       )}
       {noResult && (
         <p role="status" className="rounded-xl bg-fill-tertiary px-3 py-2 text-subheadline text-text-secondary">
-          {item.error || t('scanner.flowNoResult')}
+          {item.error || (noCandidate ? t('scanner.matcherNoCandidate') : t('scanner.flowNoResult'))}
         </p>
       )}
 

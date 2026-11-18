@@ -687,6 +687,9 @@ async def post_openai_chat(
 ) -> httpx.Response:
     """Call a compatible endpoint and normalize its errors for the shared queue."""
     import asyncio
+    from services.matcher_only import assert_provider_allowed
+
+    assert_provider_allowed()  # Matcher only: no request leaves the server (safety net)
     from services.provider_rate_limit import (
         ProviderScopeBlockedError,
         penalize_provider_scope,
@@ -923,6 +926,9 @@ class ScanProvider:
         Usage is whatever the provider reports, or None. Callers record it for
         diagnostics and must not depend on its shape.
         """
+        from services.matcher_only import assert_provider_allowed
+
+        assert_provider_allowed()  # Matcher only: no request leaves the server (safety net)
         if self.is_gemini:
             from api.recognize import build_gemini_generate_url, post_gemini_generate
 

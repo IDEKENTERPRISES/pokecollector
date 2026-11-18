@@ -25,13 +25,14 @@ from services.idempotency import (
     has_idempotency_key,
     replay_response,
 )
-from services import picture_first
+from services import matcher_only, picture_first
 from services.scan_candidate_images import fetch_and_cache_candidate_image
 from services.scanner_reachability import WAITING_REASON, endpoint_reachable
 from services.scan_providers import OPENAI, openai_base_url, openai_is_self_hosted
 from services.scan_queue import (
     drain_scan_queue,
     job_progress,
+    release_waiting_scans,
     resolve_scan_item,
     retry_scan_item,
 )
@@ -44,6 +45,18 @@ from services.scan_storage import (
 )
 
 router = APIRouter()
+
+
+def _release_waiting_if_matcher_only(db: Session, background_tasks: BackgroundTasks) -> None:
+    """Matcher only: a scan that was waiting for the scanner when the switch went on is finished by the matcher on
+    the next poll (the once-a-minute sweep does the same when nobody polls)."""
+    if not matcher_only.enabled(db):
+        return
+    try:
+        if release_waiting_scans(db):
+            background_tasks.add_task(drain_scan_queue, max_items=50)
+    except Exception:
+        db.rollback()
 
 
 class ResolveScanItemRequest(BaseModel):
@@ -181,15 +194,18 @@ async def enqueue_scan_job(
 
     from services.scan_providers import user_scan_error
 
-    provider = get_provider(db, current_user.id)
-    require_scanner_capability_mode(
-        db, current_user.id, provider.name, provider.model()
-    )
-    if provider.requires_credential() and not provider.credential(db, current_user.id):
-        raise HTTPException(
-            status_code=400,
-            detail=user_scan_error(db, current_user.id, provider.missing_credential_message()),
+    only_matcher = matcher_only.enabled(db)
+    provider = None
+    if not only_matcher:  # Matcher only needs no provider, credential or capability check
+        provider = get_provider(db, current_user.id)
+        require_scanner_capability_mode(
+            db, current_user.id, provider.name, provider.model()
         )
+        if provider.requires_credential() and not provider.credential(db, current_user.id):
+            raise HTTPException(
+                status_code=400,
+                detail=user_scan_error(db, current_user.id, provider.missing_credential_message()),
+            )
     if idem is None:
         requested_individual = _requested_individual_positions(individual_positions, len(files))
 
@@ -211,7 +227,7 @@ async def enqueue_scan_job(
             before_commit=before_commit,
             # Only a self-hosted model is sent the guide-frame crop; Gemini and
             # OpenAI proper keep receiving the whole photo.
-            crop_for_recognition=(provider.name == OPENAI and openai_is_self_hosted()),
+            crop_for_recognition=(provider is not None and provider.name == OPENAI and openai_is_self_hosted()),
         )
     except ScanUploadError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -250,6 +266,7 @@ QUEUE_STATUS_ORDER = {"done": 0, "failed": 0, "pending": 1, "processing": 1, "re
 
 @router.get("/recognize/queue")
 def list_scan_queue(
+    background_tasks: BackgroundTasks,
     limit: int | None = Query(None, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -261,6 +278,7 @@ def list_scan_queue(
     implementation detail: the review flow and the inbox read this flat list instead. No fixed cap;
     ``limit``/``offset`` page it when a client wants to.
     """
+    _release_waiting_if_matcher_only(db, background_tasks)
     query = (
         db.query(ScanJobItem)
         .join(ScanJob, ScanJob.id == ScanJobItem.job_id)
@@ -294,6 +312,7 @@ def list_scan_queue(
 @router.get("/recognize/jobs/{job_id}")
 def get_scan_job(
     job_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -306,6 +325,7 @@ def get_scan_job(
     confirmed. `GET /recognize/jobs` is the separate "still needs attention"
     inbox listing and keeps filtering resolved items out of *that* count.
     """
+    _release_waiting_if_matcher_only(db, background_tasks)
     job = _get_own_job(db, job_id, current_user)
     items = (
         db.query(ScanJobItem)
@@ -517,7 +537,7 @@ async def retry_scan_job_item(
     current_user: User = Depends(get_current_user),
 ):
     item = _get_own_item(db, job_id, item_id, current_user)
-    if item.status == "retrying" and item.retry_reason == WAITING_REASON:
+    if item.status == "retrying" and item.retry_reason == WAITING_REASON and not matcher_only.enabled(db):
         # "Try now": look again right away rather than waiting for the minute tick.
         if not await endpoint_reachable(openai_base_url(), force=True):
             return _item_payload(item)
@@ -537,6 +557,8 @@ def wait_for_scanner(
     current_user: User = Depends(get_current_user),
 ):
     """"Wait for the scanner": a scan the picture sent to the inbox unsure goes back to the waiting state."""
+    if matcher_only.enabled(db):
+        raise HTTPException(status_code=409, detail=matcher_only.MESSAGE)
     item = _get_own_item(db, job_id, item_id, current_user, for_update=True)
     if not picture_first.can_wait(item):
         raise HTTPException(status_code=409, detail="This scan cannot wait for the scanner.")

@@ -51,6 +51,9 @@ def known_down(url: str) -> bool:
 
 async def endpoint_reachable(url: str, *, force: bool = False) -> bool:
     """True when something answers at ``url``; any HTTP status counts as an answer."""
+    from services.matcher_only import assert_provider_allowed
+
+    assert_provider_allowed()  # Matcher only: not even a reachability probe
     if not force:
         cached = _cached(url)
         if cached is not None:
