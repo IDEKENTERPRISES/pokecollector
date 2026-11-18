@@ -25,9 +25,11 @@ CPU = "CPUExecutionProvider"
 CUDA = "CUDAExecutionProvider"
 MB = 1024 * 1024
 
-# Share of the budget per session: the picture model once, and each of RapidOCR's two sessions (detector, recogniser).
+# Share of the budget per session, planned so a healthy start fits: picture model 0.5, OCR detector 0.2, recogniser 0.2,
+# direction classifier 0.05 (RapidOCR loads it even with use_cls=False; it is tiny) = 0.95. The rest is headroom.
 EMBEDDER_SHARE = 0.5
-OCR_SHARE = 0.25
+OCR_SHARES = {"det": 0.2, "rec": 0.2, "cls": 0.05}
+OCR_DEFAULT_SHARE = 0.2
 MAX_GPU_BATCH = 16  # a bigger batch on the card could exceed the cap; the index build uses 16
 
 _lock = threading.Lock()
@@ -103,8 +105,21 @@ def _record(kind: str, info: dict) -> None:
         _status[kind] = {**_status.get(kind, {}), **info}
 
 
-def create_session(ort, path: str, options, *, kind: str, share: float = EMBEDDER_SHARE) -> tuple[Any, dict]:
-    """An InferenceSession on CUDA when possible, else the CPU. Returns (session, info)."""
+def ocr_share(path) -> float:
+    """The budget share for one of RapidOCR's model files, by its name (..._det_..., ..._cls_..., ..._rec_...)."""
+    name = os.path.basename(str(path)).lower()
+    for part, share in OCR_SHARES.items():
+        if f"_{part}" in name or name.startswith(part):
+            return share
+    return OCR_DEFAULT_SHARE
+
+
+def create_session(ort, path: str, options, *, kind: str, share: float = EMBEDDER_SHARE, session_class=None) -> tuple[Any, dict]:
+    """An InferenceSession on CUDA when possible, else the CPU. Returns (session, info).
+
+    ``session_class`` is always the real ``InferenceSession``: while RapidOCR is being built ``ort.InferenceSession`` is
+    swapped for a factory that calls back into here, so using that attribute would recurse forever."""
+    build = session_class or ort.InferenceSession
     mb = budget_mb() * share
     providers, reason = select_providers(ort, int(mb * MB))
     granted = 0.0
@@ -115,7 +130,7 @@ def create_session(ort, path: str, options, *, kind: str, share: float = EMBEDDE
             reason = "GPU memory budget used by other models"
     if reason is None:
         try:
-            session = ort.InferenceSession(path, sess_options=options, providers=providers)
+            session = build(path, sess_options=options, providers=providers)
             used = list(session.get_providers())
             if used and used[0] == CUDA:
                 info = {"device": "cuda", "reason": None, "granted_mb": granted}
@@ -129,7 +144,7 @@ def create_session(ort, path: str, options, *, kind: str, share: float = EMBEDDE
             granted, reason = 0.0, "CUDA failed: " + (text[0][:200] if text else type(exc).__name__)
     if requested() != "cpu":
         _log_fallback(kind, reason)
-    session = ort.InferenceSession(path, sess_options=options, providers=[CPU])
+    session = build(path, sess_options=options, providers=[CPU])
     info = {"device": "cpu", "reason": reason, "granted_mb": 0.0}
     _record(kind, info)
     return session, info
@@ -153,20 +168,26 @@ def ocr_sessions(ort):
     cap itself. Yields a list that collects each session's info."""
     infos: list[dict] = []
     real = ort.InferenceSession
+    real = getattr(real, "real_session", real)  # never build on a leftover factory from an interrupted swap
     targets = [ort]
     for name, module in list(sys.modules.items()):
         if name.startswith("rapidocr_onnxruntime") and getattr(module, "InferenceSession", None) is real:
             targets.append(module)
 
     def factory(path, sess_options=None, providers=None, **kwargs):
-        session, info = create_session(ort, str(path), sess_options, kind="ocr-part", share=OCR_SHARE)
+        session, info = create_session(ort, str(path), sess_options, kind="ocr-part", share=ocr_share(path), session_class=real)
         infos.append(info)
         return session
 
+    factory.real_session = real
     for owner in targets:
         owner.InferenceSession = factory
     try:
         yield infos
+    except BaseException:
+        for info in infos:  # the engine did not come up: give its GPU shares back
+            release(info["granted_mb"])
+        raise
     finally:
         for owner in targets:
             owner.InferenceSession = real

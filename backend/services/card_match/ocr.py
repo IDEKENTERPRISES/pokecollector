@@ -14,6 +14,7 @@ Parsing is plain regexes on the recognised text; ``parse_text`` is pure so tests
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 import time
@@ -22,6 +23,8 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from . import config, device, lookup as lookup_module
+
+logger = logging.getLogger(__name__)
 
 # (x0, y0, x1, y1) as fractions of the flat card picture. The tight strips are quick (little text in them);
 # when no number is found there, the wide strips take a second look (older cards print flavour text lower).
@@ -402,12 +405,20 @@ class OcrReader:
         count = threads or config.threads()
         # RapidOCR picks its own providers and cannot cap GPU memory, so its sessions are built through device.py
         # (CUDA with a memory cap when there is a GPU, the CPU otherwise).
-        with device.ocr_sessions(ort) as infos:
-            self.engine = RapidOCR(
+        def build():
+            return RapidOCR(
                 intra_op_num_threads=count, inter_op_num_threads=1, use_cls=False,
                 det_limit_side_len=480, det_limit_type="max",
             )
-        info = device.summarise_ocr(infos)
+
+        try:
+            with device.ocr_sessions(ort) as infos:
+                self.engine = build()
+            info = device.summarise_ocr(infos)
+        except Exception as exc:  # noqa: BLE001 - never leave OCR unusable: build it plainly (RapidOCR's own CPU sessions)
+            logger.warning("Card matcher: OCR could not be set up through device.py (%s); using RapidOCR's own CPU sessions", exc)
+            self.engine = build()
+            info = device.summarise_ocr([{"device": "cpu", "reason": f"device setup failed: {type(exc).__name__}", "granted_mb": 0.0}])
         self.device = info["device"]
         self.fallback_reason = info["reason"]
         self._lock = threading.Lock()
