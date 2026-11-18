@@ -185,9 +185,8 @@ def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=Non
 
 
 def train_learned_work(session_factory, *, trace_dir, data_dir: Path | None = None, ocr_reader=None) -> dict:
-    """Version 13 test, "Train decision rule": run the rules on the tuning group's confirmed scans only (the owner's scans before
-    ``benchmark.NEW_SCANS_FROM`` and the read-only source's scans that are not held back), keep the scans the rules left unsure, and
-    train on whether their first candidate is the confirmed card. Writes ``learned-decision.json``; no photo or scan text is stored."""
+    """Version 13 test, "Train decision rule": run the rules on every confirmed scan that is not held back, keep every scan the
+    finder found the card in (rules decided or not) and train on whether its first candidate is the confirmed card, cross-fitted. Writes ``learned-decision.json``; no photo or scan text is stored."""
     from . import benchmark, learned, variants
     from .ocr import get_reader
 
@@ -195,17 +194,18 @@ def train_learned_work(session_factory, *, trace_dir, data_dir: Path | None = No
     matcher = variants.build_matcher(variants.parse(label), session_factory, data_dir=data_dir, ocr_reader=ocr_reader or get_reader())
     sink: list[dict] = []
     report = benchmark.run_labelled(session_factory, matcher, trace_dir=trace_dir, progress=jobs._progress, should_stop=jobs._stop.is_set,
-                                    held_back="separate", only=learned.is_tuning, feature_sink=sink)
+                                    held_back="separate", only=learned.is_training, feature_sink=sink)
     if report is None:
         raise RuntimeError("No diagnostics traces with a confirmed answer for English cards yet")
     if jobs._stop.is_set():
         raise RuntimeError("Stopped before training")
-    rows = [{"values": item["values"], "right": item["right"]} for item in sink if item.get("eligible") and not item.get("rules_decided")]
+    rows = [{"values": item["values"], "right": item["right"], "trace": item["trace"], "unsure": not item.get("rules_decided")}
+            for item in sink if item.get("eligible")]
     document = learned.train(rows)
     learned.save(document, data_dir, trained_with=label, scans_read=len(sink))
     cv = document["cross_validation"]
     return {"kind": "train-learned", "n": len(sink), "trained_on": len(rows), "threshold": document["threshold"], "usable": document["usable"],
-            "cv_decided_right": cv["decided_right"], "cv_decided_wrong": cv["decided_wrong"], "duration_seconds": report["duration_seconds"]}
+            "eligible": len(rows), "first_wrong": document["counts"]["first_wrong"], "folds": cv["folds"], "cv_decided_right": cv["decided_right"], "cv_decided_wrong": cv["decided_wrong"], "duration_seconds": report["duration_seconds"]}
 
 
 def start_index(model: str = DEFAULT_MODEL) -> tuple[bool, dict]:

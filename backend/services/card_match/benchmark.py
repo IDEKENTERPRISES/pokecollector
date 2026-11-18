@@ -593,7 +593,9 @@ def run_labelled(
         stored = load_stored_card(path, data)
         resolution = ocr_check.resolution_of(stored)
         review = review_photo_loader(session_factory, data)
-        outcome = matcher.match(photo, flat_card=stored, review_photo=review) if review is not None else matcher.match(photo, flat_card=stored)
+        extra_args = {"trace_name": path.name} if getattr(matcher, "learned", None) is not None else {}  # cross-fitting: only a learned row needs it
+        outcome = (matcher.match(photo, flat_card=stored, review_photo=review, **extra_args) if review is not None
+                   else matcher.match(photo, flat_card=stored, **extra_args))
         group = trace_sources.group_of(data)
         is_local = group == trace_sources.GROUP_LOCAL
         corner_row = None
@@ -728,17 +730,18 @@ def compare_row(label: str, report: dict | None, *, missing: list[str] | None = 
 
 
 def learned_refused(row: dict) -> str | None:
-    """Version 13 test: why a ``learned`` row may not be picked (None: it may, or it is not a learned row). It needs at least
-    ``HELD_OUT_MIN_SCANS`` held-out scans measured (the owner's newer scans and the held-back ones) and 0 wrong decisions in both."""
+    """Version 13 test: why a ``learned`` row may not be picked (None: it may, or it is not a learned row). The learned rule must have made
+    0 wrong decisions on every scan measured (the cross-fitted tuned and new scans, each judged by a model that never saw it, and the
+    held-back scans) and at least ``HELD_OUT_MIN_SCANS`` scans must have been measured."""
     from . import variants
 
     if not getattr(variants.parse(row.get("label")), "learned", False):
         return None
     groups = row.get("eval_groups") or {}
-    held_out = [groups.get(name) or {"n": 0, "wrong": 0} for name in ("new", "held_back")]
-    if sum(g["n"] for g in held_out) < HELD_OUT_MIN_SCANS:
+    measured = [groups.get(name) or {"n": 0, "wrong": 0} for name in EVAL_GROUPS]
+    if sum(g["n"] for g in measured) < HELD_OUT_MIN_SCANS:
         return "too_few_held_out_scans"
-    if any(g["wrong"] for g in held_out):
+    if any(g["wrong"] for g in measured):
         return "wrong_on_held_out_scans"
     return None
 

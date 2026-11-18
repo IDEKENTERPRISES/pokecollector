@@ -621,14 +621,14 @@ describe('Scanner lab version 13 test: learned decision rule', () => {
   })
 
   it('explains the three groups', () => {
-    expect(render([ok('names', groups)])).toContain('0 wrong and at least 20 scans between them')
+    expect(render([ok('names', groups)])).toContain('no group has a wrong decision and at least 20 scans were measured')
   })
 
   it('reports the trained rule, or that there is none', () => {
     expect(renderToStaticMarkup(<LearnedStatus learned={null} />)).toContain('not trained yet')
     const html = renderToStaticMarkup(<LearnedStatus learned={{ trained_at: '2026-11-18T10:00:00+00:00', threshold: 0.93, usable: true, counts: { scans: 80, first_right: 74, first_wrong: 6 }, cross_validation: { decided_right: 40, decided_wrong: 0, of: 80 } }} />)
     expect(html).toContain('threshold 0.93')
-    expect(html).toContain('40 of 80 decided, 0 wrong')
+    expect(html).toContain('of 80 scans the rules left unsure it would decide 40, 0 wrong')
     expect(renderToStaticMarkup(<LearnedStatus learned={{ threshold: 1, usable: false, counts: {}, cross_validation: {} }} />)).toContain('no safe threshold')
   })
 })

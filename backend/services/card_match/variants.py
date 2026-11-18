@@ -88,7 +88,7 @@ SYNTHETIC_COMPARE_LABELS = (
 SYNTHETIC_COMPARE_COUNT = 100
 
 
-def compare_title(label: str) -> str:
+def _base_compare_title(label: str) -> str:
     """A short readable name for a comparison row (the kept sets are named, the rest list their options)."""
     if label == "baseline":
         return "Baseline (picture only)"
@@ -99,6 +99,12 @@ def compare_title(label: str) -> str:
         if label.startswith(prefix + "+"):
             return name + " + " + " + ".join(label[len(prefix) + 1:].split("+"))
     return " + ".join(label.split("+"))
+
+
+def compare_title(label: str) -> str:
+    """The readable row name; a ``learned`` row says it is cross-fitted (a scan it trained on is judged by a model that never saw it)."""
+    title = _base_compare_title(label)
+    return title + " (cross-fitted)" if parse(label).learned else title
 
 
 def compare_group(label: str) -> str:
