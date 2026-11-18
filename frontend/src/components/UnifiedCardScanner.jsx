@@ -48,12 +48,13 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
   const submittingRef = useRef(false)
   const { enabled: queueEnabled, outbox, reachability, items: outboxItems } = useOutbox()
   const reachabilityRef = useRef(reachability.state)
-  const { t } = useSettings()
+  const { t, settings } = useSettings()
+  const matcherOnly = settings?.scan_matcher_only === 'true' // no AI scanner: nothing about one is fetched or shown
   const navigate = useNavigate()
   const { data: scannerConfiguration } = useQuery({
     queryKey: ['scanner-configuration'],
     queryFn: getScannerConfiguration,
-    enabled: isOpen,
+    enabled: isOpen && !matcherOnly,
   })
   const { data: scanData } = useQuery({
     queryKey: SCAN_JOBS_QUERY_KEY,
@@ -236,7 +237,7 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
       )}
     >
       <div className="space-y-4 p-4">
-        {scannerConfiguration?.visual_verification === 'disabled' && (
+        {!matcherOnly && scannerConfiguration?.visual_verification === 'disabled' && (
           <div role="status" className="rounded-xl border border-yellow/35 bg-yellow/10 px-3 py-2.5">
             <p className="text-xs font-semibold text-yellow">{t('settings.scannerDegradedTitle')}</p>
             <p className="mt-1 text-[11px] text-text-secondary">{t('settings.scannerDegradedWarning')}</p>

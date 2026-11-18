@@ -231,13 +231,14 @@ export default function CardScanner({ isOpen, onClose, onCardSelected }) {
   const scanPreviewRef = useRef(null)
   const scannedFileRef = useRef(null)
   const stagedFilesRef = useRef([])
-  const { t } = useSettings()
+  const { t, settings } = useSettings()
+  const matcherOnly = settings?.scan_matcher_only === 'true' // no AI scanner: nothing about one is fetched or shown
   const confirmDialog = useConfirmDialog()
   const navigate = useNavigate()
   const { data: scannerConfiguration } = useQuery({
     queryKey: ['scanner-configuration'],
     queryFn: getScannerConfiguration,
-    enabled: isOpen,
+    enabled: isOpen && !matcherOnly,
   })
 
   useEffect(() => {
