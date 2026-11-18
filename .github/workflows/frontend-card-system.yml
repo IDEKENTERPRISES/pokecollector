@@ -231,7 +231,7 @@ jobs:
       - name: Run backend tests
         run: |
           docker run --rm -v "$PWD/backend:/app" -v "$HOME/.cache/pip:/root/.cache/pip" -w /app python:3.11-slim \
-            sh -c "pip install -r requirements.txt && python -m unittest discover -s tests -p 'test_*.py'"
+            sh -c "pip install -r requirements.txt onnx==1.17.0 && python -m unittest discover -s tests -p 'test_*.py'"
 
   # Single check that needs every job above; keeps the `card-system` check name working.
   card-system:
