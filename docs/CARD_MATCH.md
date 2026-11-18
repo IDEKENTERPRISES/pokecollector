@@ -557,6 +557,17 @@ Only **New** and **Held back** are an honest test. `pick_winner` refuses a `lear
 
 **To try it.** 1) Correct the mislabelled scan (Darumaka) with "The scanner was right". 2) Press **Train decision rule** (reads only the tuning group; the line under the buttons shows scans, threshold and the cross-validation result). 3) Press **Compare options (real scans)**. 4) Read the four new rows' **New** and **Held back** columns against the rows without `learned`.
 
+## Choosing which rows to run
+
+"Compare options" used to run every row (19 rows, 1½–2 hours on the T340). Scanner lab now opens a row picker first, so a change is measured on only the rows it affects.
+
+- **The picker** (Scanner lab → Compare options, real scans; the synthetic comparison has one too): the rows in groups (history, v10 kept, v12, v13 learned, custom) with readable titles, **All** / **None**, and an estimate of the run time from each row's last measured time (`seconds` on a row; rows from older reports have none, and the estimate says how many it could not count). The last selection is remembered per browser (`localStorage`).
+- **Reference rows always run**: the option set in use (`CARD_MATCH_OPTIONS`, else `chosen.json`, else the default, when it is one of the rows) and the kept set (`variants.KEPT_LABEL`). They are ticked and cannot be unticked, and are marked `reference: true` in the report. **None** leaves only them.
+- **API**: `POST /api/card-match/benchmark` takes `labels` for `compare-labelled` / `compare-synthetic`. Missing or empty means every row, exactly as before (so the autorun is unchanged). An unknown label is a 422 naming it. Rows always run in `variants.COMPARE_LABELS` order, whatever order was sent. `GET /api/card-match/status` has `options.compare_rows` / `compare_rows_synthetic`: label, title, group, `reference`, `seconds` and `measured_at`.
+- **`pick_winner` sees only the rows measured in this run.** A partial run never compares against old numbers; the winner is "picked among the rows run now". A partial run still writes `chosen.json` from that pick (as a full run does), so run the references with the rows you are testing, which is what the picker forces.
+- **Rows not run** are shown from the newest earlier compare report that measured them (`previous_rows`, `status: "previous"`): date, n, top 1 / top 20, decided, wrong, `eval_groups`, and the number of wrong scans. They are display only (never in the pick, never saved as chosen) and are greyed in the table with "previous run, <date>". The report also has `selected_labels`, `reference_labels` and `not_run` (every label not run now, with or without an earlier result).
+- **Same scans?** Every labelled report stores `scan_fingerprint`: sha256 of `MATCHER_VERSION` and the sorted (trace name, confirmed card after admin corrections) of the scans measured. A previous row carries `same_scans`; when false (a scan added, a label corrected, a new matcher version) the table badges it **different scans**: do not compare its numbers with this run's. `same_scans` is null for a report from before fingerprints.
+
 ## Next steps
 
 1. **Read the T340 numbers** (this PR) and tune the thresholds; fix the stage the report names if the pass bar fails.
