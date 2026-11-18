@@ -13,7 +13,7 @@ describe('probe', () => {
     const result = await probe({ fetchImpl, now: () => 123, debug: noDebug })
     expect(result).toEqual({
       state: 'reachable',
-      serverInfo: { version: '1.51.6', apiLevel: 1, features: ['idempotency-v1'], fetchedAt: 123 },
+      serverInfo: { version: '1.51.6', apiLevel: 1, features: ['idempotency-v1'], dataEpoch: null, dataWipedAt: null, fetchedAt: 123 },
     })
     const [url, init] = fetchImpl.mock.calls[0]
     expect(url).toBe('/api/health')

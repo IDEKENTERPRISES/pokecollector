@@ -448,6 +448,19 @@ trades, trade-item tag associations, private collection-card photos, and scan
 queue/provider state. A full dump includes those database tables. Scanner trace
 and queued-photo files remain filesystem data and are not part of SQL backups.
 
+### Wipe all user data
+
+`GET /api/admin/data-wipe/preview` (admin) returns the row counts that would be
+deleted, the kept tables, readiness (`ADMIN_USERNAME` and `ADMIN_PASSWORD` set)
+and any busy reason. `POST /api/admin/data-wipe` runs it (body `phrase` =
+`WIPE ALL DATA`, `password` when logins are enforced). Scan traces and
+`card-match` are never deleted; `services/trace_photos.py` first copies each
+trace's review photo beside it. The table
+classification lives in `services/data_wipe.py` (`WIPE_TABLES` / `KEEP_TABLES`);
+`tests/test_data_wipe.py` fails when a table is in neither or both. See
+"Wiping user data" in `docs/DEPLOYMENT.md`. `GET /api/health` also returns
+`data_epoch` (a `settings` row, created on first use and replaced by every wipe).
+
 ### Manual restore
 
 `POST /api/backup/restore` accepts only a non-empty `.sql` upload, streams it to

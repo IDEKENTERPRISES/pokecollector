@@ -232,16 +232,30 @@ from api.admin_notifications import router as admin_notifications_router
 app.include_router(admin_notifications_router, prefix="/api/admin", tags=["admin"])
 from api.banners import admin_router as banners_admin_router, router as banners_router
 app.include_router(banners_admin_router, prefix="/api/admin", tags=["admin"])
+from api.data_wipe import router as data_wipe_router
+app.include_router(data_wipe_router, prefix="/api/admin", tags=["admin"])
 app.include_router(banners_router, prefix="/api/banners", tags=["banners"])
 app.include_router(card_match.router, prefix="/api/card-match", tags=["card-match"])
 
 
 @app.get("/api/health")
 def health_check():
+    # The id of this database's current generation of user data. A wipe sets a new one, so a phone that
+    # was offline during it can tell (see frontend/src/offline/dataEpoch.js). Null when it cannot be read.
+    data_fields = {"data_epoch": None, "data_wiped_at": None}
+    try:
+        from database import SessionLocal
+        from services.data_wipe import health_fields
+
+        with SessionLocal() as db:
+            data_fields = health_fields(db)
+    except Exception:
+        logger.warning("Could not read the data epoch for /api/health", exc_info=True)
     return {
         "status": "ok",
         "service": "pokemon-tcg-collection",
         "version": read_app_version(),
         "api_level": API_LEVEL,
         "features": list(API_FEATURES),
+        **data_fields,
     }

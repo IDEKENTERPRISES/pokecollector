@@ -15,6 +15,7 @@ import {
 import { debugFlag } from '../debug.js'
 import { classifyResponse } from './classify.js'
 import { probe as defaultProbe } from './probe.js'
+import { isStaleItem } from '../dataEpoch.js'
 
 const PROXY_UNBLOCK_MIN_AGE_MS = PROBE_BACKOFF_MS[PROBE_BACKOFF_MS.length - 1]
 
@@ -62,6 +63,16 @@ export function createReplayer({
 
   /** Steps 7–9 for one claimed item. Returns `{outcome, json, applied}`. */
   async function attempt(item, owner) {
+    // Never send an item that was queued in another data epoch (the server's data was wiped since).
+    const known = await store.getMeta('serverInfo')
+    if (known && isStaleItem(item, known.dataEpoch, known.dataWipedAt)) {
+      await store.discardWhere(queued => queued.id === item.id)
+      return {
+        outcome: { next: 'dropped', kind: 'local', code: 'data_wiped', message: 'Dropped: the server data was wiped' },
+        json: undefined,
+        applied: false,
+      }
+    }
     const op = ops[item.type]
     let outcome = null
     let json
@@ -165,6 +176,8 @@ export function createReplayer({
         return skip('server_old')
       }
       await store.unblock(ctx, ['server_old'], now())
+      // Items queued before a wipe of the server's data are dropped without being sent, whoever queued them.
+      await store.discardWhere(queued => isStaleItem(queued, info.dataEpoch, info.dataWipedAt))
       await store.unblock(ctx, ['proxy'], now(), { minAgeMs: PROXY_UNBLOCK_MIN_AGE_MS })
 
       // 6–11

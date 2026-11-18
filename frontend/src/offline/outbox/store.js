@@ -116,6 +116,7 @@ export function createStore(db, {
     display = null,
     appVersion = '',
     minApiLevel = 1,
+    dataEpoch = null,
   }) {
     if (!ctx || ctx.userId === undefined || ctx.userId === null || !ctx.origin) {
       throw new OutboxError('no_user', 'No signed-in user')
@@ -184,6 +185,8 @@ export function createStore(db, {
       display: { title: '', subtitle: '', imageUrl: null, ...(display || {}) },
       appVersion,
       minApiLevel,
+      // The data epoch current when it was queued: never replayed into a different one (offline/dataEpoch.js).
+      dataEpoch,
     }
 
     try {
@@ -534,6 +537,21 @@ export function createStore(db, {
     })
   }
 
+  /** Deletes every item (any account) the predicate accepts, with its photos, even while it is marked as sending. → count. */
+  async function discardWhere(predicate) {
+    return write(['items', 'photos'], async tx => {
+      const store = tx.objectStore('items')
+      let count = 0
+      for (const item of await promisify(store.getAll())) {
+        if (!predicate(item)) continue
+        store.delete(item.id)
+        deletePhotos(tx, item.id)
+        count += 1
+      }
+      return count
+    })
+  }
+
   /** Deletes all of this user's items on this origin, except ones being sent right now. */
   async function discardAllForUser(ctx, nowMs = nowFn()) {
     return write(['items', 'photos'], async tx => {
@@ -608,6 +626,7 @@ export function createStore(db, {
     retry,
     editPending,
     discard,
+    discardWhere,
     discardAllForUser,
     addHistory,
     listHistory,
