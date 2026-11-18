@@ -232,6 +232,9 @@ def _meta(run: PictureRun, path: str, **extra) -> dict:
     }
     if decision:
         meta["decided_card"] = decision.get("tcg_card_id")
+    rejected = (result.detection or {}).get("rejected") or {}
+    if rejected.get("edgeguard"):  # version 14: the finder's outline was too big or edge-bound to be the card (the scan screen shows a framing tip)
+        meta["outline_rejected"] = rejected.get("reason") or "implausible"
     camera = {k: v for k, v in run.input_info.items() if k in ("frame", "crop", "text_height")}
     if camera:
         meta["camera"] = camera

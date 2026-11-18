@@ -5,7 +5,7 @@ import { fetchScanCandidateImage, fetchScanJobItemImage } from '../api/client'
 import CardImage from './CardImage'
 import ScanZoomViewer from './ScanZoomViewer'
 import Button from './ios/Button'
-import { CheckThisCardBadge, ForcedPickHint, isForcedPick } from './ForcedPickNotice'
+import { CheckThisCardBadge, ForcedPickHint, FramingTip, hasRejectedOutline, isForcedPick } from './ForcedPickNotice'
 import { useDialogBehavior } from './ui/dialogBehavior'
 import { formatRetryCountdown } from '../utils/retryCountdown'
 
@@ -899,6 +899,7 @@ export function ScanItemPanel({ jobId, item, onAdd, onRetry, onWait, isAdmin = f
           <ForcedPickHint t={t} />
         </div>
       )}
+      {hasRejectedOutline(item.recognized) && <div className="mt-2"><FramingTip t={t} /></div>}
 
       {item.status === 'done' && item.matches?.length > 0 && (
         <div className="mt-4">

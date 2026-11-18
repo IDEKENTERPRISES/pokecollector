@@ -556,6 +556,45 @@ When `name-line` and `name-band` detect **no line at all**, the name is taken fr
 
 `COMPARE_LABELS` gets `KEPT+widefirst`, `KEPT+topname`, `KEPT+widefirst+topname`, where `KEPT` is `names+number+text+art+tta+fastread+numberonce+corners+wholepic+wholeread+wholestrict` (all existing rows stay). The table has two new columns: **Name** (the confirmed card's name read right, `metrics.name_read_pct`) and **Number time** (mean time the number steps took per photo, from the recorded ladder timings, `metrics.number_ms_mean`; cached repeats count 0), next to top 1, top 20, number, decided, wrong and p95. Judge `widefirst` by number time and p95 down with number, decided and wrong not worse; `topname` by name read up with wrong not higher. `pick_winner` is unchanged, so a new row that wins can be chosen into `chosen.json`.
 
+## Matcher version 14 test: `edgeguard` (an outline that is not a card)
+
+Status: a comparison row only. Off by default; `MATCHER_VERSION` stays as it is (no change to the rows that do not use it).
+
+### Evidence (18 Nov 2026, seven live scans on nonprod, all 30th Celebration cards, all in the index)
+
+The phone sent a 2160x3840 frame; the finder works on it scaled to 1149x2046. The guide (70% of the width, 63:88) is 804x1123 there, 903k px. Outlines the finder returned (x, y, in the 1149x2046 photo):
+
+| Scan | Result | Outline | Edges touched | Area / guide |
+|---|---|---|---|---|
+| Pikachu 043 | decided right | (243,578) (887,555) (894,1472) (277,1461) | none | 0.63 |
+| Eevee 117 | decided right | not found, full photo used | n/a | n/a |
+| Articuno 018 | unsure, first pick right | (0,323) (1149,323) (1149,1886) (0,1886) | left, right | 2.0 |
+| Zweilous 098 | unsure, first pick right | (152,500) (1149,628) (1149,2045) (250,2045) | right, bottom | 1.55 |
+| Zeraora 057 | unsure, wrong | (0,746) (1149,851) (1149,2045) (252,2045) | left, right, bottom | 1.4 |
+| Morpeko 061 | unsure, wrong | (0,851) (901,630) (1149,2045) (0,2045) | left, right, bottom | 1.5 |
+| Jangmo-o 110 | unsure, wrong | (0,400) (1149,409) (1149,2045) (0,2045) | left, right, bottom | 2.1 |
+
+In every bad scan the outline (a sleeve, binder page, mat or table edge) touches two or three frame edges and is 1.4-2.1x the guide (the edge test is the reliable signal). Its confidence was 0.64-0.82, so no fallback ran; OCR then read the bottom of the wrong region (no number) and the picture search embedded a scene (the same junk neighbours every time).
+
+### The rule (`detect.edge_problem`, used by `detect_card(edgeguard=True)`)
+
+With `check` on, in a full frame (not a guide picture), the best outline is refused when:
+
+- it touches **two or more** frame edges (`MAX_EDGES_TOUCHED = 1`): a corner within `EDGE_MARGIN_FRACTION = 1.5%` of a side counts as on that edge (the live outlines sat 0-1 px off, 0.1%). A held card can brush one edge, never two; or
+- its area is over **1.6x the guide's** (`MAX_GUIDE_AREA_RATIO`): the right outline was 0.63x, the bad ones 1.4-2.1x (so the edge rule, not this one, catches Zeraora and Morpeko); this is only the backstop for a big outline that touches nothing.
+
+A refused outline is then handled like a refused quad: the card is looked for **inside the guide region** (the crop the user aimed at, judged as a guide crop, so the card must fill 45% of it and look like a rectangle). A plausible card there is used (its corners are put back in the photo's own pixels). Otherwise the guide crop is the card (the existing `guide_crop` fallback). The trace's `detection.rejected` holds `edgeguard: true`, `reason` (`touches_edges` / `oversized`), `edges_touched`, `guide_area_ratio`, the refused `corners` and `searched_guide` (whether the card was found inside the guide). Photos where no outline touches an edge or dwarfs the guide are not changed (a test checks the same corners with and without the option).
+
+The option needs `corners` and turns it on (`names+edgeguard` is `names+corners+edgeguard`). Group "v14" in the row picker.
+
+### Scan screen
+
+The camera guide says "Keep the whole card inside the frame with a little space around it." When a result's `_picture.outline_rejected` is set (the edge guard refused the outline), the review shows one short tip: scan the card on its own, not in a binder page or big sleeve. Nothing is blocked.
+
+### What to tick in Compare options
+
+The references always run. Tick the two new rows: **In-use set (v9) + edgeguard** and **Kept set + edgeguard**. Read them against the references (the in-use set and Kept set): decided up or equal, **wrong must stay 0**, top 1 and number read not lower, p95 not worse. The "New" group (the owner's newly confirmed scans, including these seven) is where the gain should show. If a row wins, `pick_winner` can choose it into `chosen.json`; making it the default is then a separate change.
+
 ## Learned decision rule (parked)
 
 Status: **parked on 18 November 2026 and removed from `nonprod`. The code is not in the app.** `MATCHER_VERSION` stays "11".
@@ -590,7 +629,7 @@ Only **New** and **Held back** are an honest test of a change. Held-back scans a
 
 "Compare options" used to run every row (19 rows, 1½–2 hours on the T340). Scanner lab now opens a row picker first, so a change is measured on only the rows it affects.
 
-- **The picker** (Scanner lab → Compare options, real scans; the synthetic comparison has one too): the rows in groups (history, v10 kept, v12, custom) with readable titles, **All** / **None**, and an estimate of the run time from each row's last measured time (`seconds` on a row; rows from older reports have none, and the estimate says how many it could not count). The last selection is remembered per browser (`localStorage`).
+- **The picker** (Scanner lab → Compare options, real scans; the synthetic comparison has one too): the rows in groups (history, v10 kept, v12, v14, custom) with readable titles, **All** / **None**, and an estimate of the run time from each row's last measured time (`seconds` on a row; rows from older reports have none, and the estimate says how many it could not count). The last selection is remembered per browser (`localStorage`).
 - **Reference rows always run**: the option set in use (`CARD_MATCH_OPTIONS`, else `chosen.json`, else the default, when it is one of the rows) and the kept set (`variants.KEPT_LABEL`). They are ticked and cannot be unticked, and are marked `reference: true` in the report. **None** leaves only them.
 - **API**: `POST /api/card-match/benchmark` takes `labels` for `compare-labelled` / `compare-synthetic`. Missing or empty means every row, exactly as before (so the autorun is unchanged). An unknown label is a 422 naming it. Rows always run in `variants.COMPARE_LABELS` order, whatever order was sent. `GET /api/card-match/status` has `options.compare_rows` / `compare_rows_synthetic`: label, title, group, `reference`, `seconds` and `measured_at`.
 - **`pick_winner` sees only the rows measured in this run.** A partial run never compares against old numbers; the winner is "picked among the rows run now". A partial run still writes `chosen.json` from that pick (as a full run does), so run the references with the rows you are testing, which is what the picker forces.
