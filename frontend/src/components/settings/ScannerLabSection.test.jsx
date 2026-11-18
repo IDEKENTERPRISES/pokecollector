@@ -196,6 +196,16 @@ describe('Picture match first counts', () => {
     expect(html).toContain('1 of 20 confirmed (5%)')
   })
 
+  it('shows the unsure picks line only when there are some, or when Matcher only is on', () => {
+    const none = renderToStaticMarkup(<PictureFirstView data={{ enabled: true, counts: { ...counts, forced_shown: 0, forced_kept: 0 } }} />)
+    expect(none).not.toContain('Unsure picks shown')
+    const some = renderToStaticMarkup(<PictureFirstView data={{ enabled: true, counts: { ...counts, forced_shown: 9, forced_kept: 6 } }} />)
+    expect(some).toContain('Unsure picks shown')
+    expect(some).toContain('9 · kept as proposed: 6')
+    const only = renderToStaticMarkup(<PictureFirstView data={{ enabled: true, matcher_only: true, counts }} />)
+    expect(only).toContain('0 · kept as proposed: 0')
+  })
+
   it('says when it is off and copes with nothing confirmed yet', () => {
     const html = renderToStaticMarkup(<PictureFirstView data={{ enabled: false, counts: { ...counts, decided_confirmed: 0, picked_different: 0, error_pct: null } }} />)
     expect(html).toContain('Off.')

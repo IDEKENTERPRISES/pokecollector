@@ -6,6 +6,11 @@ export function isForcedPick(item) {
   return item?.status === 'done' && !item?.resolved && item?.recognized?._picture?.forced_pick === true
 }
 
+/** The same test for a direct `/recognize` result (the single-photo scanner), which has no status or resolved flag. */
+export function isForcedResult(result) {
+  return result?.recognized?._picture?.forced_pick === true
+}
+
 /** True when the matcher found no candidate at all, so only the search can help. */
 export function isNoCandidate(item) {
   return item?.status === 'done' && !item?.resolved && item?.recognized?._picture?.path === 'no_candidate'

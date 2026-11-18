@@ -336,6 +336,13 @@ class MatcherOnlyTests(unittest.TestCase):
         self.assertEqual(payload["counts"]["waiting"], 0)
         self.assertEqual(len(tasks.tasks), 1)
 
+    def test_the_lab_endpoint_says_whether_matcher_only_is_on(self):
+        from api import card_match
+
+        self.assertFalse(card_match.card_match_picture_first(self.db, self.admin)["matcher_only"])
+        self.switch(True)
+        self.assertTrue(card_match.card_match_picture_first(self.db, self.admin)["matcher_only"])
+
     # -- switching off ----------------------------------------------------------------------------
 
     def test_switching_off_restores_the_scanner_path_unchanged(self):
