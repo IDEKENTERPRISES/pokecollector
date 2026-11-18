@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FlaskConical, GitCompare, Hammer } from 'lucide-react'
+import ComparePicker from './ScannerLabComparePicker'
 import api from '../../api/client'
 import CustomModels from './ScannerLabCustomModels'
 import Misses, { CorrectedNote, CorrectionBar, CorrectionsProvider, DecidedWrong } from './ScannerLabMisses'
@@ -376,16 +377,23 @@ export function GroupCell({ group, name }) {
 }
 
 /** The option sets side by side on the same photos: pick the row with the best top 20 and decided rate with 0 wrong. */
-export function CompareTable({ report, title }) {
+export function CompareTable({ report, title, order }) {
   const [openWrong, setOpenWrong] = useState(null)
   const opened = report.rows.find(row => row.label === openWrong)
+  const previous = report.previous_rows || []
+  const earlier = new Set(previous.map(row => row.label))
+  // Rows run now, rows shown from an earlier report, and rows with no earlier result either, in the order of the full list.
+  const neverRun = (report.not_run || []).filter(label => !earlier.has(label)).map(label => ({ label, status: 'never' }))
+  const shown = [...report.rows, ...previous, ...neverRun]
+  if (order) shown.sort((a, b) => (order.indexOf(a.label) + 1 || 999) - (order.indexOf(b.label) + 1 || 999))
+  const partial = Boolean((report.not_run || []).length)
   return (
     <div className="space-y-2 border-t border-separator px-4 py-3" data-testid={`scanner-lab-${report.kind}`}>
       <div>
         <h3 className="text-subheadline font-semibold">{title}</h3>
         <p className="text-footnote text-text-secondary">
           {number(report.n)} photos · {report.created_at?.slice(0, 16).replace('T', ' ')} UTC · took {duration(report.duration_seconds)}
-          {report.winner ? ` · kept: ${describeOptions(report.winner)}` : ''}
+          {report.winner ? ` · kept: ${describeOptions(report.winner)}${partial ? ' (picked among the rows run now)' : ''}` : ''}
         </p>
       </div>
       {report.held_back_note && <p className="text-footnote text-text-secondary" data-testid="scanner-lab-held-back-note">{report.held_back_note}</p>}
@@ -404,17 +412,31 @@ export function CompareTable({ report, title }) {
             </tr>
           </thead>
           <tbody>
-            {report.rows.map(row => (
-              <tr key={row.label} className={`tabular-nums ${row.label === report.winner ? 'font-semibold' : ''}`}>
-                <td className="pr-2">{describeOptions(row.label)}</td>
-                {row.status === 'ok' ? (
+            {shown.map(row => (
+              <tr
+                key={row.label} data-testid={row.status === 'previous' ? 'scanner-lab-row-previous' : undefined}
+                className={`tabular-nums ${row.label === report.winner && row.status === 'ok' ? 'font-semibold' : ''} ${row.status === 'previous' || row.status === 'never' ? 'text-text-secondary opacity-70' : ''}`}
+              >
+                <td className="pr-2">
+                  {describeOptions(row.label)}
+                  {row.reference && <span className="text-text-secondary" data-testid="scanner-lab-row-reference"> · reference</span>}
+                  {row.status === 'previous' && (
+                    <span className="block text-caption1" data-testid="scanner-lab-row-previous-note">
+                      previous run, {row.date?.slice(0, 10)}
+                      {row.same_scans === false && <span className="ml-1 rounded-full bg-fill px-1.5 py-0.5" data-testid="scanner-lab-row-different-scans">different scans</span>}
+                    </span>
+                  )}
+                </td>
+                {row.status === 'never' ? (
+                  <td colSpan={11} data-testid="scanner-lab-row-never">not run, no earlier result</td>
+                ) : row.status === 'ok' || row.status === 'previous' ? (
                   <>
                     <td className="pr-2">{percent(row.top1)}</td><td className="pr-2">{percent(row.top20)}</td><td className="pr-2">{percent(row.number_exact)}</td>
                     <td className="pr-2" data-testid="scanner-lab-row-name-read">{percent(row.name_read)}</td>
                     <td className="pr-2" data-testid="scanner-lab-row-number-ms">{row.number_ms_mean != null ? `${number(row.number_ms_mean)} ms` : '–'}</td>
                     <td className="pr-2">{percent(row.decided)}</td>
                     <td className="pr-2">
-                      {row.decided_wrong > 0 ? (
+                      {row.decided_wrong > 0 && row.status === 'ok' ? (
                         <button type="button" className="ios-press text-tint underline" aria-expanded={openWrong === row.label} onClick={() => setOpenWrong(openWrong === row.label ? null : row.label)} data-testid="scanner-lab-row-wrong-open">
                           {number(row.decided_wrong)}
                         </button>
@@ -873,7 +895,10 @@ export default function ScannerLabSection() {
   }
   const refresh = () => queryClient.invalidateQueries({ queryKey: QUERY_KEY })
   const buildIndex = useMutation({ mutationFn: () => api.post('/card-match/index').then(r => r.data), onSuccess: refresh })
-  const benchmark = useMutation({ mutationFn: kind => api.post('/card-match/benchmark', { kind }).then(r => r.data), onSuccess: refresh })
+  const benchmark = useMutation({
+    mutationFn: request => api.post('/card-match/benchmark', typeof request === 'string' ? { kind: request } : request).then(r => r.data),
+    onSuccess: refresh,
+  })
   const buildExtra = useMutation({ mutationFn: name => api.post('/card-match/index', { name }).then(r => r.data), onSuccess: refresh })
   const stop = useMutation({ mutationFn: () => api.post('/card-match/stop').then(r => r.data), onSuccess: refresh })
 
@@ -886,6 +911,8 @@ export default function ScannerLabSection() {
   const errorText = buildIndex.error?.response?.data?.detail || benchmark.error?.response?.data?.detail || buildExtra.error?.response?.data?.detail
   const busy = running || buildIndex.isPending || benchmark.isPending || buildExtra.isPending
   const extras = Object.entries(data.extra_indexes || {})
+  const compareRows = data.options?.compare_rows || []
+  const compareRowsSynthetic = data.options?.compare_rows_synthetic || []
 
   let jobLine = null
   if (running) {
@@ -932,15 +959,29 @@ export default function ScannerLabSection() {
             <button type="button" className={button} disabled={busy || !ready || !data.labelled_traces || !data.ocr_available} onClick={() => benchmark.mutate('ocr-check')} data-testid="scanner-lab-ocr-check-run">
               <FlaskConical size={13} aria-hidden="true" /> OCR check ({number(data.labelled_traces)} scans)
             </button>
-            <button type="button" className={button} disabled={busy || !ready || !index.built || !data.labelled_traces} onClick={() => benchmark.mutate('compare-labelled')} data-testid="scanner-lab-compare">
-              <GitCompare size={13} aria-hidden="true" /> Compare options (real scans)
-            </button>
+            {compareRows.length ? (
+              <ComparePicker
+                rows={compareRows} kind="labelled" buttonText="Compare options (real scans)" buttonClassName={button} testId="scanner-lab-compare"
+                disabled={busy || !ready || !index.built || !data.labelled_traces} busy={busy} onRun={labels => benchmark.mutate({ kind: 'compare-labelled', labels })}
+              />
+            ) : (
+              <button type="button" className={button} disabled={busy || !ready || !index.built || !data.labelled_traces} onClick={() => benchmark.mutate('compare-labelled')} data-testid="scanner-lab-compare">
+                <GitCompare size={13} aria-hidden="true" /> Compare options (real scans)
+              </button>
+            )}
             <button type="button" className={button} disabled={busy || !ready || !index.built || !data.labelled_traces} onClick={() => benchmark.mutate('train-learned')} data-testid="scanner-lab-train-learned">
               <FlaskConical size={13} aria-hidden="true" /> Train decision rule
             </button>
-            <button type="button" className={button} disabled={busy || !ready || !index.built} onClick={() => benchmark.mutate('compare-synthetic')} data-testid="scanner-lab-compare-synthetic">
-              <GitCompare size={13} aria-hidden="true" /> Compare options (synthetic)
-            </button>
+            {compareRowsSynthetic.length ? (
+              <ComparePicker
+                rows={compareRowsSynthetic} kind="synthetic" buttonText="Compare options (synthetic)" buttonClassName={button} testId="scanner-lab-compare-synthetic"
+                disabled={busy || !ready || !index.built} busy={busy} onRun={labels => benchmark.mutate({ kind: 'compare-synthetic', labels })}
+              />
+            ) : (
+              <button type="button" className={button} disabled={busy || !ready || !index.built} onClick={() => benchmark.mutate('compare-synthetic')} data-testid="scanner-lab-compare-synthetic">
+                <GitCompare size={13} aria-hidden="true" /> Compare options (synthetic)
+              </button>
+            )}
             {extras.map(([name, extra]) => (
               <button key={name} type="button" className={button} disabled={busy || !extra.available || !index.built} onClick={() => buildExtra.mutate(name)} data-testid={`scanner-lab-build-${name}`}>
                 <Hammer size={13} aria-hidden="true" /> {extra.built ? 'Update' : 'Build'} {extra.label} index
@@ -958,8 +999,8 @@ export default function ScannerLabSection() {
         {data.reports?.synthetic && <Report report={data.reports.synthetic} title="Latest benchmark: synthetic photos" />}
         {data.reports?.labelled && <Report report={data.reports.labelled} title="Latest benchmark: real scans (diagnostics)" />}
         {data.reports?.['ocr-check'] && <OcrCheckView report={data.reports['ocr-check']} />}
-        {data.reports?.['compare-labelled'] && <CompareTable report={data.reports['compare-labelled']} title="Option comparison: real scans" />}
-        {data.reports?.['compare-synthetic'] && <CompareTable report={data.reports['compare-synthetic']} title="Option comparison: synthetic photos" />}
+        {data.reports?.['compare-labelled'] && <CompareTable report={data.reports['compare-labelled']} order={data.options?.compare} title="Option comparison: real scans" />}
+        {data.reports?.['compare-synthetic'] && <CompareTable report={data.reports['compare-synthetic']} order={data.options?.compare} title="Option comparison: synthetic photos" />}
         {data.misses && <Misses version={data.misses.created_at} tag={missTag} onTagChange={setMissTag} />}
         {!data.reports?.synthetic && !data.reports?.labelled && (
           <p className="border-t border-separator px-4 py-3 text-footnote text-text-secondary">No benchmark has run yet.</p>

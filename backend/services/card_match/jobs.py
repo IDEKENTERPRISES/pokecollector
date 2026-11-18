@@ -106,7 +106,7 @@ def build_index_work(model: str = DEFAULT_MODEL, *, session_factory=None, embedd
 
 
 def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=None, embedder=None, data_dir: Path | None = None,
-                   count: int = 400, options: str | None = None) -> dict:
+                   count: int = 400, options: str | None = None, labels: list[str] | None = None) -> dict:
     """``kind``: synthetic, labelled (the option set in use, or ``options``), or compare-synthetic /
     compare-labelled (every option set side by side; a clear winner on real photos becomes the one in use)."""
     from . import benchmark, misses, pipeline, variants
@@ -148,8 +148,9 @@ def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=Non
             raise RuntimeError("No diagnostics traces with a confirmed answer for English cards yet")
         # The synthetic comparison chooses nothing (only real photos do), so it runs a short list on fewer photos.
         synthetic = base_kind == "synthetic"
+        run_labels, selected, reference = benchmark.resolve_compare_labels(base_kind, labels, data_dir)
         report = benchmark.run_compare(
-            base_kind, factory, variants.SYNTHETIC_COMPARE_LABELS if synthetic else variants.COMPARE_LABELS, data_dir=data_dir,
+            base_kind, factory, run_labels, selected=selected, reference=reference, data_dir=data_dir,
             trace_dir=trace_dir, ocr_reader=get_reader(), progress=jobs._progress, should_stop=jobs._stop.is_set,
             count=variants.SYNTHETIC_COMPARE_COUNT if synthetic else count,
         )
@@ -211,8 +212,9 @@ def start_index(model: str = DEFAULT_MODEL) -> tuple[bool, dict]:
     return jobs.start("index", lambda: build_index_work(model))
 
 
-def start_benchmark(kind: str = "synthetic", model: str = DEFAULT_MODEL) -> tuple[bool, dict]:
-    return jobs.start(f"benchmark-{kind}", lambda: benchmark_work(kind, model))
+def start_benchmark(kind: str = "synthetic", model: str = DEFAULT_MODEL, labels: list[str] | None = None) -> tuple[bool, dict]:
+    """``labels``: for the two comparisons, the rows to run (None or empty: all of them)."""
+    return jobs.start(f"benchmark-{kind}", lambda: benchmark_work(kind, model, labels=labels))
 
 
 AUTORUN_MIN_LABELLED = 100  # confirmed traces needed before the real-photo benchmark runs by itself

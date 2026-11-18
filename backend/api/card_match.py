@@ -36,6 +36,18 @@ def _english_picture_total(db: Session) -> int:
     return int(index_module.picture_query(db, "en").with_entities(func.count(Card.id)).scalar() or 0)
 
 
+def _compare_rows(kind: str) -> list[dict]:
+    """The rows of a comparison for the picker: label, readable title, group, whether it always runs, and how long it took last time."""
+    labels = variants.SYNTHETIC_COMPARE_LABELS if kind == "synthetic" else variants.COMPARE_LABELS
+    reference = set(variants.compare_reference_labels(labels))
+    times = benchmark.last_row_seconds(kind)
+    return [
+        {"label": label, "title": variants.compare_title(label), "group": variants.compare_group(label), "reference": label in reference,
+         "seconds": (times.get(label) or {}).get("seconds"), "measured_at": (times.get(label) or {}).get("at")}
+        for label in labels
+    ]
+
+
 @router.get("/status")
 def card_match_status(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     _require_admin(current_user)
@@ -55,7 +67,10 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
             for name, spec in variants.index_specs().items() if name != DEFAULT_MODEL and not spec.get("custom")
         },
         "custom_models": _custom_models_view(),
-        "options": {"active": variants.active_label(), "compare": list(variants.COMPARE_LABELS)},
+        "options": {
+            "active": variants.active_label(), "compare": list(variants.COMPARE_LABELS),
+            "compare_rows": _compare_rows("labelled"), "compare_rows_synthetic": _compare_rows("synthetic"),
+        },
         "misses": _misses_summary(),
         "job": jobs_module.jobs.status(),
         "reports": benchmark.latest_reports(),
@@ -290,6 +305,7 @@ def start_index(body: IndexRequest | None = None, current_user: User = Depends(g
 
 class BenchmarkRequest(BaseModel):
     kind: str = "synthetic"
+    labels: list[str] | None = None  # compare-labelled / compare-synthetic: the rows to run (None or empty: all of them)
 
 
 @router.post("/benchmark")
@@ -297,8 +313,15 @@ def start_benchmark(body: BenchmarkRequest, current_user: User = Depends(get_cur
     _require_admin(current_user)
     if body.kind not in ("synthetic", "labelled", "compare-synthetic", "compare-labelled", "ocr-check", "train-learned"):
         raise HTTPException(status_code=422, detail="kind must be synthetic, labelled, compare-synthetic, compare-labelled, ocr-check or train-learned")
+    labels = None
+    if body.kind in ("compare-labelled", "compare-synthetic") and body.labels:
+        try:
+            benchmark.resolve_compare_labels(body.kind.split("-", 1)[1], body.labels)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        labels = body.labels
     _require_ready(True)
-    started, status = jobs_module.start_benchmark(body.kind, DEFAULT_MODEL)
+    started, status = jobs_module.start_benchmark(body.kind, DEFAULT_MODEL, labels)
     return {"started": started, "job": status}
 
 

@@ -86,6 +86,43 @@ SYNTHETIC_COMPARE_LABELS = (
     "baseline", "names+number+text", "names+number+text+art+tta", "names+number+text+art+tta+fastread",
 )
 SYNTHETIC_COMPARE_COUNT = 100
+
+
+def compare_title(label: str) -> str:
+    """A short readable name for a comparison row (the kept sets are named, the rest list their options)."""
+    if label == "baseline":
+        return "Baseline (picture only)"
+    for prefix, name in ((BEST_EXISTING_LABEL, "Kept set + widefirst"), (KEPT_LABEL, "Kept set"),
+                         (NO_STRICT_LABEL, "Kept set without wholestrict"), (IN_USE, "In-use set (v9)")):
+        if label == prefix:
+            return name
+        if label.startswith(prefix + "+"):
+            return name + " + " + " + ".join(label[len(prefix) + 1:].split("+"))
+    return " + ".join(label.split("+"))
+
+
+def compare_group(label: str) -> str:
+    """Where a comparison row sits in the picker: history, v10 kept, v12, v13 learned or custom."""
+    options = parse(label)
+    if options.custom:
+        return "custom"
+    if options.learned:
+        return "v13 learned"
+    if options.widefirst or options.topname:
+        return "v12"
+    if options.wholeread:
+        return "v10 kept"
+    return "history"
+
+
+def compare_reference_labels(labels=None, data_dir: Path | None = None) -> list[str]:
+    """The rows a partial comparison always runs: the label in use (when it is one of the rows) and the kept set,
+    in the order of ``labels`` (default: ``COMPARE_LABELS``)."""
+    labels = tuple(labels or COMPARE_LABELS)
+    wanted = {parse(active_label(data_dir)).label, parse(KEPT_LABEL).label}
+    return [label for label in labels if parse(label).label in wanted]
+
+
 ORDER = ("names", "number", "text", "art", "reprint", "base", "tta", "fastread", "numberonce", "corners", "wholepic", "trustrejected", "wholeread", "wholestrict")
 
 
