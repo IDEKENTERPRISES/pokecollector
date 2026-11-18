@@ -45,6 +45,8 @@ export async function probe({
         version: body.version ?? null,
         apiLevel: Number.isFinite(body.api_level) ? body.api_level : 0,
         features: Array.isArray(body.features) ? body.features : [],
+        // Changes when an administrator wipes all user data (offline/dataEpoch.js).
+        dataEpoch: typeof body.data_epoch === 'string' && body.data_epoch ? body.data_epoch : null,
         fetchedAt: now(),
       },
     }

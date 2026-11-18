@@ -169,6 +169,89 @@ Selective backup groups are useful for targeted exports, but they may depend on
 rows outside their group and do not currently include every newer feature
 table. Full backups are the recovery and upgrade format.
 
+## Wiping user data
+
+Settings > Administrator > Danger zone > **Wipe all user data** deletes every
+user and everything they made, then creates one administrator again from the
+stack's environment. Use it to reset a test stack, or to start a fresh
+installation without touching the server's own configuration.
+
+**Before you can run it**, both `ADMIN_USERNAME` and `ADMIN_PASSWORD` must be set
+in the stack's environment. The wipe is refused (and the panel says why) when
+either is missing: the new administrator gets exactly that password, so without
+it nobody could sign in. Nothing else is needed; after the wipe sign in as that
+user.
+
+**What goes**
+
+- every account and session, invites, push subscriptions, idempotency keys;
+- collections, wishlists, collection card photos, binders, products, trades,
+  swaps, portfolio snapshots, printing-detail labels;
+- XP, achievements, goals, daily activity, feed events, reactions, comments,
+  notifications, weekly challenge results, admin notifications and banners;
+- every user's preferences (`user_settings`);
+- custom cards that trainers created (rows in `cards` with `is_custom` or an
+  owner) with their price rows, and the `custom_card_matches` that point at them;
+- files in the scan upload folder (`SCAN_UPLOAD_DIR`, `/app/data/scan-uploads`).
+
+**What stays**
+
+- the server settings (`settings`: picture match first, price sync, languages,
+  the `scanner_global.*` keys, debug mode and so on) and the stored data epoch;
+- the card catalogue (`sets`, TCGdex `cards`), `price_history`, `image_cache`,
+  `sync_log`, the Gemini and provider limit state, and the **audit log**;
+- `/app/data/card-match` (picture indexes, the chosen option set, admin
+  corrections, custom models), `/app/data/pokedex-images`, the card picture
+  packs, `/app/backups` and `/app/data/auth` (the JWT secret and VAPID keys);
+- the **scanner connection settings**. They are stored per user, so the wipe
+  reads the running administrator's scanner rows first (`scanner_provider`,
+  model, custom model, timeout and capability rows for both providers,
+  `scanner_gemini_fallback`, `gemini_api_key`, `openai_api_key`,
+  `scan_diagnostics_enabled`) and writes them onto the new administrator. The
+  endpoint itself (`OPENAI_BASE_URL`) is an environment value and is unchanged.
+  If the administrator had no scanner settings and `GEMINI_API_KEY` is set, it
+  seeds the new account, as on a first start;
+- **scan diagnostics** (`SCAN_TRACE_DIR`: the photos, traces and admin
+  corrections that make up the matcher's real-photo test set). They are deleted
+  only when you tick *Also delete scan photos and diagnostics* and confirm it
+  separately. Read-only trace folders (prod's, mounted on nonprod) are never
+  touched.
+
+**Safety checks.** To run it the administrator types `WIPE ALL DATA` and
+re-enters their password (no password is asked when the instance has no login
+screen). It is refused while a restore, a matcher or Scanner lab job, or a scan
+job is running, and for anyone who is not an administrator.
+
+**Order of operations.** (1) checks, (2) the administrator's scanner settings are
+read, (3) a `pre-wipe-<UTC>.sql` backup is written to the backups folder with
+`pg_dump`; if that fails the wipe stops and **nothing is deleted**, (4) one
+database transaction under a lock deletes the rows, recreates the administrator,
+writes the scanner settings back, stores a new data epoch and writes the audit
+entry (who ran it, when, the backup file and the row counts per table); a
+failure rolls all of it back, (5) only then the files are deleted. Rows are
+deleted, not truncated, so ids are never reused.
+
+**Devices.** Every session ends. `GET /api/health` carries `data_epoch`; each
+device stores the one it last saw, and when it differs (including a phone that
+was offline during the wipe and returns days later) it drops its queued changes
+without sending them, clears saved pages, caches and local preferences, and goes
+to the login screen. The downloaded card database stays. A device that last ran
+before this feature has no stored epoch, but its old session is rejected by the
+server anyway.
+
+**Restore from the pre-wipe backup.** The file is a plain dump (without image
+cache rows) that the normal restore accepts. Copy it out of the backups folder
+(`docker cp <backend container>:/app/backups/pre-wipe-<UTC>.sql .`) and upload it
+in Settings > Backup > Restore, or restore from the server as above:
+
+```bash
+docker exec -i <postgres container> psql -U pokemon -d pokemon_tcg --single-transaction -v ON_ERROR_STOP=1 < pre-wipe-<UTC>.sql
+```
+
+Restoring brings the old accounts back and also the old data epoch, so phones
+that already reset themselves will keep their reset state and simply sign in
+again. Scan photos and diagnostics that the wipe deleted are not in the backup.
+
 ## Test stack (nonprod)
 
 New features are tested on a second stack built from the `nonprod` branch before

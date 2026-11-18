@@ -6,6 +6,8 @@ import App from './App.jsx'
 import { readPwaFlags } from './pwa/flags'
 import { handlePreloadError, initServiceWorker } from './pwa/register'
 import { updateStore } from './pwa/updateStore'
+import { startDataEpochWatch } from './offline/dataEpoch'
+import { probe as probeServer } from './offline/outbox/probe'
 import './components/card-system/tokens.css'
 import './index.css'
 import './components/card-system/styles.css'
@@ -30,6 +32,9 @@ const queryClient = new QueryClient({
     },
   },
 })
+
+// A server wipe of all user data clears this device and signs it out (offline/dataEpoch.js).
+startDataEpochWatch({ probe: () => probeServer() })
 
 const root = ReactDOM.createRoot(document.getElementById('root'))
 root.render(
