@@ -110,13 +110,35 @@ class TrainingTests(unittest.TestCase):
         self.assertEqual(cv["decided_wrong"], 0)
         self.assertGreater(cv["decided_right"], 40)  # the rule decides most of the right ones
         self.assertTrue(document["usable"])
-        self.assertEqual(document["counts"], {"scans": 68, "first_right": 60, "first_wrong": 8})
+        self.assertEqual(document["counts"], {"scans": 68, "eligible": 68, "unsure": 68, "first_right": 60, "first_wrong": 8})
         # the threshold is the lowest 0-wrong one plus the margin, and the stored model reproduces it
         x = np.array([learned.vector(r["values"]) for r in rows])
         y = np.array([1.0 if r["right"] else 0.0 for r in rows])
-        out_of_fold = learned.cross_validate(x, y, cv["l2"], learned.FOLDS)
+        assignment = np.array([document["fold_of"][f"row-{i}"] for i in range(len(rows))])
+        out_of_fold = learned.cross_validate(x, y, cv["l2"], learned.FOLDS, assignment)
         self.assertAlmostEqual(document["threshold"], learned.zero_wrong_threshold(out_of_fold, y), places=5)
         self.assertGreaterEqual(document["threshold"], float(out_of_fold[y == 0].max()) + learned.SAFETY_MARGIN)
+
+    def test_folds_are_stable_and_spread_the_wrong_picks(self):
+        rows = [{**r, "trace": f"trace-{i}.json"} for i, r in enumerate(synthetic_rows())]
+        y = np.array([1.0 if r["right"] else 0.0 for r in rows])
+        names = [r["trace"] for r in rows]
+        first = learned.assign_folds(names, y, learned.FOLDS)
+        self.assertTrue((first == learned.assign_folds(list(names), y, learned.FOLDS)).all())  # the same names, the same folds
+        wrong_per_fold = [int(((first == f) & (y == 0)).sum()) for f in range(5)]
+        self.assertLessEqual(max(wrong_per_fold) - min(wrong_per_fold), 1)
+        right = [i for i in range(len(rows)) if y[i] == 1]  # a right scan's fold is the hash of its own name, whatever the other scans are
+        self.assertTrue(all(first[i] == learned.stable_fold(names[i], 5) for i in right))
+
+    def test_the_document_keeps_a_model_per_fold_and_a_name_to_fold_map_only(self):
+        rows = [{**r, "trace": f"trace-{i}.json", "unsure": i % 2 == 0} for i, r in enumerate(synthetic_rows())]
+        document = learned.train(rows)
+        self.assertEqual(len(document["fold_models"]), document["cross_validation"]["folds"])
+        self.assertEqual(set(document["fold_of"]), {r["trace"] for r in rows})
+        self.assertEqual(document["counts"]["eligible"], 68)
+        self.assertEqual(document["counts"]["unsure"], 34)
+        self.assertEqual(document["cross_validation"]["of"], 34)  # only the scans the rules left unsure could be decided
+        self.assertEqual(document["cross_validation"]["decided_wrong"], 0)
 
     def test_the_final_model_decides_right_cards_and_refuses_wrong_ones(self):
         document = learned.train(synthetic_rows())
@@ -141,6 +163,19 @@ class TrainingTests(unittest.TestCase):
         rule = learned.LearnedRule({**document, "threshold": 1.0})
         self.assertFalse(rule.usable)  # an impossible threshold: the rule is kept but never decides
 
+    def test_a_training_scan_uses_its_fold_model_and_any_other_scan_the_full_model(self):
+        rows = [{**r, "trace": f"trace-{i}.json"} for i, r in enumerate(synthetic_rows())]
+        document = learned.train(rows)
+        rule = learned.LearnedRule(document)
+        self.assertIs(rule.model_for("trace-3.json"), rule.fold_models[document["fold_of"]["trace-3.json"]])
+        self.assertIs(rule.model_for("a-held-back-or-new-scan.json"), rule.model)
+        self.assertIs(rule.model_for(None), rule.model)  # a live scan
+        self.assertIsNot(rule.model_for("trace-3.json"), rule.model)
+        values = rows[0]["values"]
+        fold_model = rule.fold_models[document["fold_of"]["trace-0.json"]]
+        self.assertEqual(rule.probability(values, "trace-0.json"), float(learned.predict(fold_model, learned.vector(values))[0]))
+        self.assertEqual(rule.probability(values), float(learned.predict(rule.model, learned.vector(values))[0]))
+
     def test_saved_and_loaded_without_weights_in_the_summary(self):
         document = learned.train(synthetic_rows())
         with tempfile.TemporaryDirectory() as tmp:
@@ -152,7 +187,15 @@ class TrainingTests(unittest.TestCase):
             self.assertEqual((saved["threshold"], saved["trained_with"], saved["features"]), (document["threshold"], "x", list(learned.FEATURES)))
             self.assertIn("trained_at", saved)
             self.assertIsNotNone(learned.load(Path(tmp)))
-            self.assertNotIn("model", learned.summary(Path(tmp)))
+            summary = learned.summary(Path(tmp))
+            self.assertNotIn("model", summary)
+            self.assertNotIn("fold_models", summary)
+            self.assertNotIn("fold_of", summary)
+            self.assertEqual(summary["counts"]["eligible"], 68)
+            self.assertEqual(summary["counts"]["first_wrong"], 8)
+            self.assertEqual(summary["cross_validation"]["decided_wrong"], 0)
+            self.assertIn("folds", summary["cross_validation"])
+            self.assertEqual(summary["cross_fitted_scans"], 68)
 
 
 class AlwaysYes:
@@ -160,7 +203,11 @@ class AlwaysYes:
 
     usable = True
 
-    def decides(self, extracted):
+    def __init__(self):
+        self.traces = []
+
+    def decides(self, extracted, trace=None):
+        self.traces.append(trace)
         return 0.99 if extracted and extracted.get("eligible") else None
 
 
@@ -195,6 +242,15 @@ class NeverOverturnTests(unittest.TestCase):
         self.assertEqual(outcome.features["probability"], 0.99)
         self.assertFalse(outcome.features["rules_decided"])
         self.assertEqual(outcome.features["values"]["reason_no_number_and_picture_not_clear"], 1.0)
+
+    def test_the_trace_name_reaches_the_rule_and_changes_nothing_else(self):
+        rule = AlwaysYes()
+        with patch.object(pipeline, "decide", return_value=(None, "x")):
+            named = self.run_match(v9.SecondReadReader(), fastread=True, wholeread=True, learned=rule)
+            self.assertEqual(rule.traces, [None])  # a live scan: no trace name, the full model
+            plain = self.run_match(v9.SecondReadReader(), fastread=True, wholeread=True)
+        self.assertEqual(named.decision["card_id"], plain.matches[0]["card_id"])
+        self.assertIn("trace_name", pipeline.CardMatcher.match.__code__.co_varnames)
 
     def test_without_a_rule_nothing_changes_and_features_are_recorded(self):
         with patch.object(pipeline, "decide", return_value=(None, "x")):
@@ -270,6 +326,13 @@ class GroupSplitTests(unittest.TestCase):
         self.assertFalse(learned.is_tuning(self.data("held_back", "2026-10-01T10:00:00+00:00")))
         self.assertTrue(learned.is_tuning({"user_id": 1}))  # no readable time counts as tuning, as ``scan_batch`` says
 
+    def test_training_reads_every_scan_except_held_back_ones(self):
+        self.assertTrue(learned.is_training(self.data("local", "2026-10-01T00:00:00+00:00")))
+        self.assertTrue(learned.is_training(self.data("local", "2026-11-12T10:00:00+00:00")))  # the owner's newer scans too
+        self.assertTrue(learned.is_training(self.data("tuning", "2026-11-12T10:00:00+00:00")))
+        self.assertFalse(learned.is_training(self.data("held_back", "2026-10-01T10:00:00+00:00")))
+        self.assertFalse(learned.is_training(self.data("held_back", "2026-11-12T10:00:00+00:00")))
+
     def test_the_three_report_groups_match_the_training_split(self):
         for group, created, expected in (("local", "2026-10-01T00:00:00+00:00", "tuned"), ("local", "2026-11-06T00:00:00+00:00", "new"),
                                          ("tuning", "2026-11-12T00:00:00+00:00", "tuned"), ("held_back", "2026-10-01T00:00:00+00:00", "held_back")):
@@ -311,6 +374,11 @@ class TrainingReadsOnlyTheTuningGroup(sources.RunLabelledGroupTests):
         self.assertNotIn("local", groups)  # the local scan is dated 2026-11-12 by ``make_trace``'s default: a "new" scan, not trained on
         self.assertEqual(len(matcher.calls), groups["prod_tuning"]["n"])
 
+    def test_training_runs_the_owners_newer_scans_too(self):
+        report, _ = self.run_it(only=learned.is_training)
+        self.assertNotIn("prod_held_back", report["by_group"])
+        self.assertEqual(report["eval_groups"]["new"]["n"], 1)  # the owner's newer scan is read for training now
+
     def test_a_scan_before_the_new_date_is_trained_on_and_a_later_one_is_not(self):
         sources.make_trace(self.local, 1, "2026-10-01", "old", job=7, item=7, truth="swsh1-1", created="2026-10-01T10:00:00+00:00")
         report, _ = self.run_it(only=learned.is_tuning)
@@ -330,9 +398,9 @@ class TrainingReadsOnlyTheTuningGroup(sources.RunLabelledGroupTests):
 
 @skip
 class PickWinnerGuardTests(unittest.TestCase):
-    def row(self, label, decided, held_new=(20, 0), held_back=(10, 0), top20=99, wrong=0):
+    def row(self, label, decided, held_new=(20, 0), held_back=(10, 0), top20=99, wrong=0, tuned=(100, 0)):
         return {"label": label, "status": "ok", "top1": 70, "top20": top20, "decided": decided, "decided_wrong": wrong, "p95_ms": 1400,
-                "eval_groups": {"tuned": {"n": 100, "decided": 70, "wrong": 0}, "new": {"n": held_new[0], "decided": 10, "wrong": held_new[1]},
+                "eval_groups": {"tuned": {"n": tuned[0], "decided": 70, "wrong": tuned[1]}, "new": {"n": held_new[0], "decided": 10, "wrong": held_new[1]},
                                 "held_back": {"n": held_back[0], "decided": 5, "wrong": held_back[1]}}}
 
     def test_a_learned_row_with_no_wrong_decision_in_the_held_out_groups_can_win(self):
@@ -346,12 +414,17 @@ class PickWinnerGuardTests(unittest.TestCase):
             self.assertEqual(benchmark.learned_refused(rows[1]), "wrong_on_held_out_scans")
             self.assertEqual(benchmark.pick_winner(rows)["label"], KEPT)
 
-    def test_fewer_than_twenty_held_out_scans_refuses_it(self):
-        rows = [self.row(KEPT, 72.0), self.row(KEPT + "+learned", 80.0, held_new=(10, 0), held_back=(9, 0))]
+    def test_a_wrong_decision_on_a_cross_fitted_scan_refuses_it(self):
+        rows = [self.row(KEPT, 72.0), self.row(KEPT + "+learned", 80.0, tuned=(100, 1))]
+        self.assertEqual(benchmark.learned_refused(rows[1]), "wrong_on_held_out_scans")
+        self.assertEqual(benchmark.pick_winner(rows)["label"], KEPT)
+
+    def test_fewer_than_twenty_scans_measured_refuses_it(self):
+        rows = [self.row(KEPT, 72.0), self.row(KEPT + "+learned", 80.0, held_new=(5, 0), held_back=(5, 0), tuned=(9, 0))]
         self.assertEqual(benchmark.learned_refused(rows[0]), None)
         self.assertEqual(benchmark.learned_refused(rows[1]), "too_few_held_out_scans")
         self.assertEqual(benchmark.pick_winner(rows)["label"], KEPT)
-        rows[1]["eval_groups"]["held_back"]["n"] = 10  # 10 + 10 = 20: enough
+        rows[1]["eval_groups"]["held_back"]["n"] = 11  # 9 + 5 + 11 = 25: enough
         self.assertEqual(benchmark.pick_winner(rows)["label"], KEPT + "+learned")
 
     def test_a_row_without_group_numbers_is_refused_and_does_not_set_the_wrong_bar(self):
@@ -363,7 +436,7 @@ class PickWinnerGuardTests(unittest.TestCase):
         self.assertEqual(benchmark.pick_winner(rows)["label"], KEPT)
 
     def test_a_row_that_is_not_learned_is_never_judged_by_the_guard(self):
-        plain = self.row(KEPT, 72.0, held_new=(0, 0), held_back=(0, 0))
+        plain = self.row(KEPT, 72.0, held_new=(0, 0), held_back=(0, 0), tuned=(0, 0))
         self.assertIsNone(benchmark.learned_refused(plain))
         self.assertEqual(benchmark.pick_winner([plain])["label"], KEPT)
 

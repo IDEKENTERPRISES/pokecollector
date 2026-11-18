@@ -466,7 +466,7 @@ export function CompareTable({ report, title, order }) {
       {opened && <WrongList row={opened} />}
       <p className="text-footnote text-text-secondary">
         Tuned: scans used for tuning (your older scans and the other source&rsquo;s tuning scans). New: your scans from 5 Nov 02:00 UTC on, never used for tuning. Held back: the other source&rsquo;s held-back scans.
-        A learned row counts only when New and Held back have 0 wrong and at least 20 scans between them.
+        A learned row is cross-fitted (a scan it trained on is judged by a model that never saw it) and counts only when no group has a wrong decision and at least 20 scans were measured.
       </p>
     </div>
   )
@@ -479,8 +479,8 @@ export function LearnedStatus({ learned }) {
   const counts = learned.counts || {}
   return (
     <p className="text-footnote text-text-secondary" data-testid="scanner-lab-learned">
-      Decision rule: trained {learned.trained_at?.slice(0, 16).replace('T', ' ')} UTC on {number(counts.scans)} undecided scans ({number(counts.first_right)} right, {number(counts.first_wrong)} wrong first picks) ·
-      threshold {learned.threshold}{learned.usable ? '' : ' (no safe threshold: it will not decide)'} · cross-validation: {number(cv.decided_right)} of {number(cv.of)} decided, {number(cv.decided_wrong)} wrong
+      Decision rule: trained {learned.trained_at?.slice(0, 16).replace('T', ' ')} UTC on {number(counts.scans)} scans the card finder found ({number(counts.first_right)} right, {number(counts.first_wrong)} wrong first picks; held-back scans never used) ·
+      {number(cv.folds)} folds · threshold {learned.threshold}{learned.usable ? '' : ' (no safe threshold: it will not decide)'} · out of fold, of {number(cv.of)} scans the rules left unsure it would decide {number(cv.decided_right)}, {number(cv.decided_wrong)} wrong
     </p>
   )
 }

@@ -598,7 +598,8 @@ class CardMatcher:
             return detection.hires, "photo" if detection.found else "guide_crop_sharp"
         return upright, "crop"
 
-    def match(self, photo_rgb: np.ndarray, *, top_k: int = TOP_K, use_ocr: bool = True, full_photo=None, flat_card=None, review_photo=None) -> MatchResult:
+    def match(self, photo_rgb: np.ndarray, *, top_k: int = TOP_K, use_ocr: bool = True, full_photo=None, flat_card=None, review_photo=None,
+              trace_name: str | None = None) -> MatchResult:
         """``photo_rgb`` is what the card is found and embedded from (the recognition image). ``full_photo`` (the
         stored full-resolution photo), ``review_photo`` (the whole stored review photo, tried when the card is not found
         on ``photo_rgb``) or ``flat_card`` (a stored high-resolution flat card) only sharpen the text
@@ -735,7 +736,7 @@ class CardMatcher:
                                            fallback=fallback, reason=None if chosen else reason)
         learned_p = None
         if chosen is None and self.learned is not None:  # rules first: the learned rule never overturns a rules decision
-            learned_p = self.learned.decides(extracted)
+            learned_p = self.learned.decides(extracted, trace_name)  # a benchmark's trace name: cross-fitting; None for a live scan (full model)
             if learned_p is not None:
                 first = candidates[0]
                 second = max((c["_similarity"] for c in candidates[1:]), default=0.0)
