@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
-import { CompareTable, WrongList, HowConfirmedView, OcrCheckView, PictureFirstView, Report, ShadowView, SourceGroups, TraceSources } from './ScannerLabSection'
+import { CompareTable, deviceText, WrongList, HowConfirmedView, OcrCheckView, PictureFirstView, Report, ShadowView, SourceGroups, TraceSources } from './ScannerLabSection'
 import { CorrectedNote, CorrectionBarView, CorrectionsProvider, DecidedWrong, MissesView, StripRow, correctionQuestion } from './ScannerLabMisses'
 
 const report = {
@@ -628,5 +628,17 @@ describe('Scanner lab: Tuned / New / Held back columns', () => {
     const html = render([ok('names', groups)])
     expect(html).toContain('never used for tuning')
     expect(html).not.toContain('cross-fitted')
+  })
+})
+
+describe('deviceText', () => {
+  it('names the GPU with the warm-up time', () => {
+    expect(deviceText({ loaded: true, device: 'cuda', label: 'GPU (Quadro P620)', warm_ms: 812 })).toBe('GPU (Quadro P620) · warm-up 812 ms')
+  })
+  it('shows why it fell back to the CPU', () => {
+    expect(deviceText({ loaded: true, device: 'cpu', label: 'CPU', reason: 'CUDA failed: out of memory' })).toBe('CPU (CUDA failed: out of memory)')
+  })
+  it('says so before the model is loaded', () => {
+    expect(deviceText({ loaded: false })).toBe('not loaded yet')
   })
 })

@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from . import config, lookup as lookup_module
+from . import config, device, lookup as lookup_module
 
 # (x0, y0, x1, y1) as fractions of the flat card picture. The tight strips are quick (little text in them);
 # when no number is found there, the wide strips take a second look (older cards print flavour text lower).
@@ -397,14 +397,36 @@ class OcrReader:
     def __init__(self, threads: int | None = None) -> None:
         from rapidocr_onnxruntime import RapidOCR
 
+        import onnxruntime as ort
+
         count = threads or config.threads()
-        self.engine = RapidOCR(
-            intra_op_num_threads=count, inter_op_num_threads=1, use_cls=False,
-            det_limit_side_len=480, det_limit_type="max",
-        )
+        # RapidOCR picks its own providers and cannot cap GPU memory, so its sessions are built through device.py
+        # (CUDA with a memory cap when there is a GPU, the CPU otherwise).
+        with device.ocr_sessions(ort) as infos:
+            self.engine = RapidOCR(
+                intra_op_num_threads=count, inter_op_num_threads=1, use_cls=False,
+                det_limit_side_len=480, det_limit_type="max",
+            )
+        info = device.summarise_ocr(infos)
+        self.device = info["device"]
+        self.fallback_reason = info["reason"]
         self._lock = threading.Lock()
         self._whole: dict[tuple, list[Line]] = {}
         self.mode = "detect"  # "fixed": version 4's fixed strips only (the OCR check compares the two)
+
+    def warm_up(self) -> float:
+        """One dummy read of a picture with some text (so the detector and the recogniser both run). Returns seconds."""
+        import time
+
+        import cv2
+
+        started = time.monotonic()
+        picture = np.full((96, 480, 3), 255, dtype=np.uint8)
+        cv2.putText(picture, "Pikachu 025/165", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 0, 0), 3)
+        self._run(picture)
+        seconds = time.monotonic() - started
+        device.note_warm("ocr", seconds)
+        return seconds
 
     # -- one recogniser call --------------------------------------------------
 

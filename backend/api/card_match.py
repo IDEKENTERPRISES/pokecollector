@@ -13,7 +13,7 @@ from database import get_db
 from models import Card, User
 from services import scan_trace, trace_correction, trace_sources
 from services.audit import record_audit
-from services.card_match import MATCHER_VERSION, benchmark, config, custom_models, embed, index as index_module, jobs as jobs_module, misses as misses_module, shadow as shadow_module, variants
+from services.card_match import MATCHER_VERSION, benchmark, config, custom_models, embed, index as index_module, device as device_module, jobs as jobs_module, misses as misses_module, shadow as shadow_module, variants
 from services.card_match.model_specs import DEFAULT_MODEL, MODEL_SPECS
 
 router = APIRouter()
@@ -57,6 +57,7 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
         "matcher_version": MATCHER_VERSION,
         "model": {"name": DEFAULT_MODEL, "available": embed.model_available(DEFAULT_MODEL), "license": spec["license"], "dim": spec["dim"]},
         "ocr_available": _ocr_available(),
+        "device": device_module.report(DEFAULT_MODEL),
         "threads": config.threads(),
         "autorun": config.autorun_enabled(),
         "index_after_sync": config.index_after_sync_enabled(),

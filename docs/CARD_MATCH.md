@@ -334,6 +334,9 @@ On disk (`CARD_MATCH_DIR`, default `/app/data/card-match`; mounted in `docker-co
 | `CARD_MATCH_DIR` | `/app/data/card-match` | index, reports, cached pictures |
 | `CARD_MATCH_MODEL_DIR` | `/app/card-match-models` | where the image has the model file |
 | `CARD_MATCH_THREADS` | `3` (1–8) | ONNX Runtime and OpenCV thread cap |
+| `CARD_MATCH_DEVICE` | `auto` | `auto` / `cuda`: use the GPU when it works, else the CPU; `cpu`: never use the GPU (see "Running on the GPU") |
+| `CARD_MATCH_GPU_MEM_MB` | `600` | GPU memory this process may use for the matcher, shared out between the picture model and OCR |
+| `CARD_MATCH_WARM` | off | `1`: at startup load the picture model and OCR and run one dummy scan through each (nonprod sets it) |
 | `SCAN_MATCHER_AUTORUN` | off | **nonprod only**: once per matcher version, after startup, fill the picture cache if needed, build the index and the artwork index, run the synthetic benchmark, and with at least 100 confirmed scans the real-photo benchmark and the option comparison |
 | `CARD_MATCH_OPTIONS` | unset | force an option set, e.g. `names+art`; unset = `chosen.json` of this matcher version, else `names+number+text+art+tta` |
 | `SCAN_MATCHER_SHADOW` | off | **nonprod only**: shadow mode (below) |
@@ -376,6 +379,19 @@ Until prod had scans of its own, the matcher was measured on the owner's scans o
 - **If prod's folder is empty, missing or unreadable** everything behaves exactly as it did before: no groups, no extra rows, only the line above.
 
 Limits: one index build or benchmark at a time (a second request gets `started: false`); jobs run in a thread at `nice 10` where the OS allows it; ONNX Runtime gets 3 intra-op threads and OpenCV 3.
+
+## Running on the GPU
+
+The picture model (DINOv2-small) and RapidOCR's two ONNX sessions can run on the server's NVIDIA card (Quadro P620, 2 GB, Pascal) instead of the CPU. Nonprod first; prod only after nonprod has been measured.
+
+- **Setting:** `CARD_MATCH_DEVICE` = `auto` (default), `cuda` or `cpu`. With `auto`, a session is created on `CUDAExecutionProvider` when ONNX Runtime lists it and the session really creates; any failure (no device, missing libraries, out of memory at load) is logged once ("Card matcher: embedder:dinov2-small runs on the CPU (reason)") and that model runs on the CPU. Nothing crashes, results are the same kind of answer. Pinned and uploaded (custom) picture models follow the same rule. `cpu` never touches the card.
+- **OCR:** RapidOCR chooses its own providers and cannot cap GPU memory, so `device.py` builds its sessions for it (CUDA with the cap, else CPU). If RapidOCR's internals change and the sessions cannot be intercepted, OCR simply stays on the CPU, which the lab shows.
+- **Memory cap (2 GB shared by two stacks):** each process gets a budget, `CARD_MATCH_GPU_MEM_MB` = 600 MB, as `gpu_mem_limit` per session: 300 MB for the picture model, 150 MB for each OCR session, `arena_extend_strategy=kSameAsRequested` (the arena grows by what is asked, not by doubling), `cudnn_conv_algo_search=HEURISTIC` (the exhaustive search re-benchmarks every new OCR crop size). A model that would not fit in what is left of the budget (a second or custom picture model) runs on the CPU, with that reason shown. Only one run per model at a time (a lock), and batches on the card are at most 16 (the index build's size), so one scan cannot go over the cap. Each process also has a CUDA context of about 250 MB outside the cap, so two stacks use roughly 2 × (600 + 250) MB, which fits in 2 GB; lower `CARD_MATCH_GPU_MEM_MB` if the card ever runs short.
+- **Warm:** with `CARD_MATCH_WARM=1` the models load in a background thread at startup and run one dummy inference each (a blank picture; a line of text for OCR), then stay loaded for the life of the process, so the first scan pays no CUDA or session start-up. There is no periodic keep-warm: nothing in the process is released while idle (the cached sessions live as long as the process), and an idle card only lowers its clocks, which costs a few milliseconds on the next call. Add one only if the lab shows a slow first scan after idling.
+- **Checking:** Settings › Data & sync › Scanner lab shows "Picture model running on" and "OCR running on": `GPU (Quadro P620) · warm-up N ms`, or `CPU (reason)`. "not loaded yet" means no scan or warm-up has used that model since the container started. `docker logs` has the one-line fallback reasons and a "Card matcher warm: ..." line.
+- **Image:** the backend image is CPU-only by default. `--build-arg CARD_MATCH_GPU=1` swaps in `onnxruntime-gpu==1.19.2` (CUDA 12, cuDNN 9) and the CUDA 12 libraries from pip, and sets `LD_LIBRARY_PATH` to them. CUDA 13 dropped Pascal, so stay on CUDA 12.x (driver 580 is the last branch that runs it). The libraries add roughly 1.5 GB (cuDNN is the biggest), so the GPU build is opt-in; nonprod's Compose file turns it on. The ONNX Runtime GPU wheel's support for compute capability 6.1 is expected but has to be confirmed on the server (the lab says CPU with a reason if it is not).
+- **Same answers:** the GPU's fp32 maths can differ from the CPU in the last digits of a vector. After the deploy, run Compare options with only the reference rows (the rows marked as always run) and expect the same decided and wrong numbers as before; a difference of one picture in a thousand at the margin is rounding, a bigger one is a bug to report.
+- **Prod later:** `docker-compose.portainer.yml` is not changed yet. When promoted, its backend service needs: `build: args: CARD_MATCH_GPU: "1"` (or a GPU image tag), a `deploy.resources.reservations.devices` entry (`driver: nvidia`, `count: 1`, `capabilities: [gpu]`), and `CARD_MATCH_DEVICE: auto`, `CARD_MATCH_GPU_MEM_MB: "600"`, `CARD_MATCH_WARM: "1"`, `NVIDIA_DRIVER_CAPABILITIES: compute,utility` in its environment. If Portainer's Compose rejects `deploy.resources.reservations.devices`, use `runtime: nvidia` instead.
 
 ## Phone matcher (parked)
 

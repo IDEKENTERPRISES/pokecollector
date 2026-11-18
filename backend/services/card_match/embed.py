@@ -1,7 +1,8 @@
 """Picture embeddings: a flat card in, an L2-normalised float32 vector out.
 
 ``Embedder`` is the interface; ``OnnxEmbedder`` runs any model listed in ``model_specs.py`` on ONNX
-Runtime's CPU provider with the thread count capped. A second model (MobileCLIP, SigLIP, ...) is one
+Runtime's CUDA provider when there is a GPU (``device.py``, memory capped) and its CPU provider otherwise,
+with the thread count capped. A second model (MobileCLIP, SigLIP, ...) is one
 more entry in ``MODEL_SPECS``.
 Tests use ``FakeEmbedder`` (no model file).
 """
@@ -15,7 +16,7 @@ from typing import Protocol, Sequence
 
 import numpy as np
 
-from . import config, custom_models
+from . import config, custom_models, device
 from .model_specs import DEFAULT_MODEL, MODEL_SPECS
 
 
@@ -94,17 +95,33 @@ class OnnxEmbedder:
         options.inter_op_num_threads = 1
         options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        self.session = ort.InferenceSession(str(self.path), sess_options=options, providers=["CPUExecutionProvider"])
+        self.session, info = device.create_session(ort, str(self.path), options, kind=f"embedder:{name}", share=device.EMBEDDER_SHARE)
+        self.device = info["device"]
+        self.fallback_reason = info["reason"]
         self.input_name = self.session.get_inputs()[0].name
+        self._run_lock = threading.Lock()  # one run at a time per model: bounds the GPU arena
+
+    def warm_up(self) -> float:
+        """One dummy inference, so the first real scan does not pay for CUDA or session start-up. Returns seconds."""
+        import time
+
+        started = time.monotonic()
+        self.embed([np.full((self.size, self.size, 3), 127, dtype=np.uint8)])
+        seconds = time.monotonic() - started
+        device.note_warm(f"embedder:{self.name}", seconds)
+        return seconds
 
     def prepare(self, image: np.ndarray) -> np.ndarray:
         return preprocess(image, self.size, self.mean, self.std)
 
     def embed(self, images: Sequence[np.ndarray], batch_size: int = 8) -> np.ndarray:
         out = []
+        if self.device == "cuda":
+            batch_size = min(batch_size, device.MAX_GPU_BATCH)
         for start in range(0, len(images), batch_size):
             batch = np.stack([self.prepare(image) for image in images[start:start + batch_size]])
-            hidden = self.session.run(None, {self.input_name: batch})[0]
+            with self._run_lock:
+                hidden = self.session.run(None, {self.input_name: batch})[0]
             out.append(np.asarray(hidden[:, 0, :], dtype=np.float32))  # the CLS token
         if not out:
             return np.zeros((0, self.dim), dtype=np.float32)
@@ -146,3 +163,4 @@ def forget(name: str) -> None:
     with _cache_lock:
         for key in [key for key in _cache if key[0] == name]:
             del _cache[key]
+    device.drop(f"embedder:{name}")
