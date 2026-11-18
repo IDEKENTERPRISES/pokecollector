@@ -1,0 +1,9 @@
+# Install torch/torchvision first from the CUDA index (see README):
+#   pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
+transformers==5.20.2
+onnx==1.23.2
+onnxruntime==1.23.2
+opencv-python-headless==5.1.0.95
+numpy==2.2.6
+pillow==12.3.0
+scipy==1.15.3
