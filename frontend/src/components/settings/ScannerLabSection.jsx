@@ -340,7 +340,7 @@ export function Report({ report, title }) {
   )
 }
 
-const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused', wholeread: 'second read of the whole picture', wholestrict: 'stricter rules for a number read only from the whole picture', widefirst: 'wide bottom read first (test)', topname: 'name from the top band (test)', learned: 'learned decision rule (test)' }
+const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused', wholeread: 'second read of the whole picture', wholestrict: 'stricter rules for a number read only from the whole picture', widefirst: 'wide bottom read first (test)', topname: 'name from the top band (test)' }
 const describeOptions = label => (label === 'baseline' ? OPTION_NAMES.baseline : label.split('+').map(word => OPTION_NAMES[word] || word).join(' + '))
 
 /** The scans one comparison row decided wrong, in the same plain wording as Misses > Decided wrong (text only: no pictures are kept for these). */
@@ -447,7 +447,7 @@ export function CompareTable({ report, title, order }) {
                   </>
                 ) : (
                   <td colSpan={11} className="text-text-secondary" data-testid="scanner-lab-row-skipped">
-                    {row.train_first ? 'train first (press Train decision rule)' : `needs the ${(row.missing_indexes || []).join(', ')} index`}
+                    {`needs the ${(row.missing_indexes || []).join(', ')} index`}
                   </td>
                 )}
               </tr>
@@ -466,22 +466,8 @@ export function CompareTable({ report, title, order }) {
       {opened && <WrongList row={opened} />}
       <p className="text-footnote text-text-secondary">
         Tuned: scans used for tuning (your older scans and the other source&rsquo;s tuning scans). New: your scans from 5 Nov 02:00 UTC on, never used for tuning. Held back: the other source&rsquo;s held-back scans.
-        A learned row is cross-fitted (a scan it trained on is judged by a model that never saw it) and counts only when no group has a wrong decision and at least 20 scans were measured.
       </p>
     </div>
-  )
-}
-
-/** The trained decision rule, in words (no weights are ever sent). */
-export function LearnedStatus({ learned }) {
-  if (!learned) return <p className="text-footnote text-text-secondary" data-testid="scanner-lab-learned">Decision rule: not trained yet.</p>
-  const cv = learned.cross_validation || {}
-  const counts = learned.counts || {}
-  return (
-    <p className="text-footnote text-text-secondary" data-testid="scanner-lab-learned">
-      Decision rule: trained {learned.trained_at?.slice(0, 16).replace('T', ' ')} UTC on {number(counts.scans)} scans the card finder found ({number(counts.first_right)} right, {number(counts.first_wrong)} wrong first picks; held-back scans never used) ·
-      {number(cv.folds)} folds · threshold {learned.threshold}{learned.usable ? '' : ' (no safe threshold: it will not decide)'} · out of fold, of {number(cv.of)} scans the rules left unsure it would decide {number(cv.decided_right + cv.decided_wrong)}, {number(cv.decided_wrong)} wrong (each fold uses its own threshold{cv.folds_never_deciding ? `; ${number(cv.folds_never_deciding)} fold(s) too few wrong picks to decide` : ''})
-    </p>
   )
 }
 
@@ -943,7 +929,6 @@ export default function ScannerLabSection() {
             <Row key={name} label={`Index: ${extra.label}`} value={extra.built ? `${number(extra.count)} pictures` : 'not built'} />
           ))}
           {!data.ocr_available && <p className="text-footnote text-red-500">The OCR library is not installed in this image.</p>}
-          <LearnedStatus learned={data.learned} />
           {jobLine && <p className="text-footnote" aria-live="polite" data-testid="scanner-lab-job">{jobLine}</p>}
           {errorText && <p className="text-footnote text-red-500">{errorText}</p>}
           <div className="flex flex-wrap gap-2 pt-1">
@@ -969,9 +954,6 @@ export default function ScannerLabSection() {
                 <GitCompare size={13} aria-hidden="true" /> Compare options (real scans)
               </button>
             )}
-            <button type="button" className={button} disabled={busy || !ready || !index.built || !data.labelled_traces} onClick={() => benchmark.mutate('train-learned')} data-testid="scanner-lab-train-learned">
-              <FlaskConical size={13} aria-hidden="true" /> Train decision rule
-            </button>
             {compareRowsSynthetic.length ? (
               <ComparePicker
                 rows={compareRowsSynthetic} kind="synthetic" buttonText="Compare options (synthetic)" buttonClassName={button} testId="scanner-lab-compare-synthetic"

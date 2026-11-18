@@ -138,10 +138,6 @@ def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=Non
             raise RuntimeError("No diagnostics traces with a confirmed answer yet")
         path = benchmark.save_report(report, data_dir)
         return {"report": path.name, "kind": kind, "n": report["traces"], "duration_seconds": report["duration_seconds"]}
-    if kind == "train-learned":
-        if not has_traces:
-            raise RuntimeError("No diagnostics traces with a confirmed answer yet")
-        return train_learned_work(factory, trace_dir=trace_dir, data_dir=data_dir)
     if kind.startswith("compare-"):
         base_kind = kind.split("-", 1)[1]
         if base_kind == "labelled" and not has_traces:
@@ -156,12 +152,11 @@ def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=Non
         )
         if base_kind == "labelled" and report["winner"] and not jobs._stop.is_set():
             winner = next(row for row in report["rows"] if row["label"] == report["winner"])
-            if not variants.parse(winner["label"]).learned:  # a learned row is shown, never made the default by itself (the owner decides)
-                variants.save_chosen(
-                    winner["label"],
-                    f"best of {len(report['rows'])} option sets on {winner['n']} real photos: top 20 {winner['top20']}%, decided {winner['decided']}%, {winner['decided_wrong']} wrong",
-                    data_dir,
-                )
+            variants.save_chosen(
+                winner["label"],
+                f"best of {len(report['rows'])} option sets on {winner['n']} real photos: top 20 {winner['top20']}%, decided {winner['decided']}%, {winner['decided_wrong']} wrong",
+                data_dir,
+            )
         path = benchmark.save_report(report, data_dir)
         return {"report": path.name, "kind": kind, "n": report["metrics"]["n"], "duration_seconds": report["duration_seconds"], "winner": report["winner"]}
     if options is not None:
@@ -182,30 +177,6 @@ def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=Non
         report = benchmark.run_synthetic(factory, matcher, count=count, data_dir=data_dir, progress=jobs._progress, should_stop=jobs._stop.is_set)
     path = benchmark.save_report(report, data_dir)
     return {"report": path.name, "kind": kind, "n": report["metrics"]["n"], "duration_seconds": report["duration_seconds"]}
-
-
-def train_learned_work(session_factory, *, trace_dir, data_dir: Path | None = None, ocr_reader=None) -> dict:
-    """Version 13 test, "Train decision rule": run the rules on every confirmed scan that is not held back, keep every scan the
-    finder found the card in (rules decided or not) and train on whether its first candidate is the confirmed card, cross-fitted. Writes ``learned-decision.json``; no photo or scan text is stored."""
-    from . import benchmark, learned, variants
-    from .ocr import get_reader
-
-    label = variants.TRAIN_LABEL
-    matcher = variants.build_matcher(variants.parse(label), session_factory, data_dir=data_dir, ocr_reader=ocr_reader or get_reader())
-    sink: list[dict] = []
-    report = benchmark.run_labelled(session_factory, matcher, trace_dir=trace_dir, progress=jobs._progress, should_stop=jobs._stop.is_set,
-                                    held_back="separate", only=learned.is_training, feature_sink=sink)
-    if report is None:
-        raise RuntimeError("No diagnostics traces with a confirmed answer for English cards yet")
-    if jobs._stop.is_set():
-        raise RuntimeError("Stopped before training")
-    rows = [{"values": item["values"], "right": item["right"], "trace": item["trace"], "unsure": not item.get("rules_decided")}
-            for item in sink if item.get("eligible")]
-    document = learned.train(rows)
-    learned.save(document, data_dir, trained_with=label, scans_read=len(sink))
-    cv = document["cross_validation"]
-    return {"kind": "train-learned", "n": len(sink), "trained_on": len(rows), "threshold": document["threshold"], "usable": document["usable"],
-            "eligible": len(rows), "first_wrong": document["counts"]["first_wrong"], "folds": cv["folds"], "cv_decided_right": cv["decided_right"], "cv_decided_wrong": cv["decided_wrong"], "duration_seconds": report["duration_seconds"]}
 
 
 def start_index(model: str = DEFAULT_MODEL) -> tuple[bool, dict]:

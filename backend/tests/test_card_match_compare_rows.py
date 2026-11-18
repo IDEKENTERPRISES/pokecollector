@@ -70,9 +70,23 @@ class ResolveLabelsTests(unittest.TestCase):
         with patch.dict(os.environ, {"CARD_MATCH_OPTIONS": variants.IN_USE}):  # the environment wins
             self.assertEqual(benchmark.resolve_compare_labels("labelled", ["names"], self.data_dir)[2], [variants.IN_USE, variants.KEPT_LABEL])
 
+    def test_the_learned_rule_is_parked(self):
+        self.assertEqual(variants.parse("names+learned").label, "names")  # an unknown word is ignored
+        self.assertFalse(hasattr(variants.Options(), "learned"))
+        self.assertFalse([label for label in variants.COMPARE_LABELS if "learned" in label])
+
+    def test_the_prod_pin_is_the_best_set_and_spelled_in_canonical_order(self):
+        pin = "names+number+text+art+tta+fastread+numberonce+corners+wholepic+wholeread+widefirst+topname"
+        self.assertEqual(variants.parse(pin).label, pin)
+        self.assertEqual(pin, variants.NO_STRICT_LABEL + "+widefirst+topname")
+        self.assertIn(pin, variants.COMPARE_LABELS)
+        compose = Path(__file__).resolve().parents[2] / "docker-compose.portainer.yml"
+        if compose.exists():
+            self.assertIn("CARD_MATCH_OPTIONS: ${CARD_MATCH_OPTIONS:-" + pin + "}", compose.read_text(encoding="utf-8"))
+
     def test_titles_and_groups(self):
         groups = {variants.compare_group(label) for label in variants.COMPARE_LABELS}
-        self.assertEqual(groups, {"history", "v10 kept", "v12", "v13 learned", "custom"})
+        self.assertEqual(groups, {"history", "v10 kept", "v12", "custom"})
         self.assertEqual(variants.compare_group(variants.KEPT_LABEL), "v10 kept")
         self.assertEqual(variants.compare_group(variants.KEPT_LABEL + "+custom"), "custom")
         self.assertEqual(variants.compare_title(variants.KEPT_LABEL), "Kept set")
