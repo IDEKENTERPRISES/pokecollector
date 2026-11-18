@@ -63,6 +63,7 @@ DEFAULT_LABEL = IN_USE  # an unbuilt artwork index is left out, see ``usable``
 KEPT_LABEL = IN_USE + "+wholeread+wholestrict"  # the kept set: 72.1% decided, 0 wrong on the real photos
 NO_STRICT_LABEL = IN_USE + "+wholeread"  # the kept set without ``wholestrict``
 BEST_EXISTING_LABEL = KEPT_LABEL + "+widefirst"  # the best existing row, which the server picked with version 12
+TRAIN_LABEL = NO_STRICT_LABEL + "+topname"  # the rules the learned rule is trained behind (what it judges is what these leave unsure)
 COMPARE_LABELS = (
     "baseline", "names", "names+number", "names+number+text", "names+number+text+art",
     "names+number+text+art+tta+fastread", "names+number+text+art+tta+fastread+corners", IN_USE,
