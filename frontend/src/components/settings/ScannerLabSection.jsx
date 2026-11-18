@@ -20,6 +20,14 @@ function duration(seconds) {
   return `${(seconds / 3600).toFixed(1)} h`
 }
 
+// "Picture model running on: GPU (Quadro P620) · warm-up 800 ms", with the reason when it fell back to the CPU.
+export function deviceText(part) {
+  if (!part || !part.loaded) return 'not loaded yet';
+  const warm = part.warm_ms != null ? ` · warm-up ${part.warm_ms} ms` : '';
+  const why = part.device === 'cpu' && part.reason ? ` (${part.reason})` : '';
+  return `${part.label}${warm}${why}`;
+}
+
 function Row({ label, value, testId }) {
   return (
     <div className="flex items-baseline justify-between gap-3 py-1" data-testid={testId}>
@@ -928,6 +936,8 @@ export default function ScannerLabSection() {
           <Row testId="scanner-lab-coverage" label="English cards indexed" value={`${number(index.count)} of ${number(data.english_total)}`} />
           <Row label="Model" value={`${data.model?.name}${ready ? '' : ' (missing from this image)'}`} />
           <Row label="Index built" value={index.built ? `${index.built_at?.slice(0, 16).replace('T', ' ')} UTC · ${duration(index.build_seconds) || 'in steps'}` : 'not yet'} />
+          <Row testId="scanner-lab-device-model" label="Picture model running on" value={deviceText(data.device?.embedder)} />
+          <Row testId="scanner-lab-device-ocr" label="OCR running on" value={deviceText(data.device?.ocr)} />
           <Row label="Threads" value={`${data.threads}${data.autorun ? ' · runs by itself after a deploy' : ''}`} />
           <Row testId="scanner-lab-options" label="Matching options in use" value={describeOptions(data.options?.active || 'baseline')} />
           <TraceSources sources={data.trace_sources} />

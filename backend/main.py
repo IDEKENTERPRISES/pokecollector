@@ -108,6 +108,10 @@ async def lifespan(app: FastAPI):
     if autorun_once(card_picture_warmer):
         logger.info("Card matcher: the index build and benchmark will start shortly")
 
+    # CARD_MATCH_WARM=1 (nonprod): load the picture model and OCR now and run one dummy inference through each.
+    from services.card_match.warmup import start_in_background as warm_card_matcher
+    warm_card_matcher()
+
     yield
 
     # Shutdown

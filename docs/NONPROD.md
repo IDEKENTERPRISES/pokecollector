@@ -87,6 +87,15 @@ Nonprod sets `SCAN_PICTURE_FIRST=1`: new scans go to the picture matcher before 
 
 **Re-test:** with the scanner PC on, scan a clear photo of a common card (decided, no Ollama call, "Matched by picture" for you) and a poor one (goes to Ollama as before). Switch the scanner off, scan a blurry photo: it should reach the inbox with candidates and the not-sure line; press **Wait for the scanner**, then switch the scanner back on and it should be recognised within a minute.
 
+## Running the picture matcher on the GPU
+
+The nonprod backend is built with the GPU variant of the image (`CARD_MATCH_GPU: "1"`), is given the server's NVIDIA card through a Compose device reservation, and sets `CARD_MATCH_DEVICE=auto`, `CARD_MATCH_GPU_MEM_MB=600` and `CARD_MATCH_WARM=1`. Prod's stack is unchanged. Details, the memory cap and the lines prod will need are in `docs/CARD_MATCH.md`, "Running on the GPU".
+
+- **Re-deploy:** the image must be rebuilt (the GPU libraries are in a new layer), so use the redeploy with a rebuild. The Docker host already has the `nvidia` runtime; if the container does not start because of the device reservation, switch to `runtime: nvidia` in `docker-compose.nonprod.yml`.
+- **Check:** Scanner lab › status shows "Picture model running on: GPU (Quadro P620)" and "OCR running on: GPU (...)" with the warm-up time. If it says CPU, the reason is next to it, and the app works as before.
+- **Measure:** scan a few photos and compare the seconds in the scan trace with the CPU numbers (embedding about 600 ms, OCR 200 to 1,400 ms). Then run Compare options with only the reference rows and expect the same decided and wrong counts as before the deploy.
+- **Back to the CPU without a rebuild:** set `CARD_MATCH_DEVICE: cpu` and redeploy.
+
 ## "Coming next" in the version history
 
 Settings › About › Version history shows the draft notes of the release being tested (`next` in `frontend/src/welcome/releases.json`) at the top, under a yellow "Coming next" chip, **on nonprod only**.
