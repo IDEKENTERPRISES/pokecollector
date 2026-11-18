@@ -3,7 +3,7 @@
 import base64
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -13,7 +13,7 @@ from database import get_db
 from models import Card, User
 from services import scan_trace, trace_correction, trace_sources
 from services.audit import record_audit
-from services.card_match import MATCHER_VERSION, benchmark, config, embed, index as index_module, jobs as jobs_module, learned as learned_module, misses as misses_module, shadow as shadow_module, variants
+from services.card_match import MATCHER_VERSION, benchmark, config, custom_models, embed, index as index_module, jobs as jobs_module, learned as learned_module, misses as misses_module, shadow as shadow_module, variants
 from services.card_match.model_specs import DEFAULT_MODEL, MODEL_SPECS
 
 router = APIRouter()
@@ -52,8 +52,9 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
         "index": index_module.index_status(DEFAULT_MODEL),
         "extra_indexes": {
             name: {**index_module.index_status(name), "label": spec["label"], "available": embed.model_available(spec["model"])}
-            for name, spec in variants.index_specs().items() if name != DEFAULT_MODEL
+            for name, spec in variants.index_specs().items() if name != DEFAULT_MODEL and not spec.get("custom")
         },
+        "custom_models": _custom_models_view(),
         "options": {"active": variants.active_label(), "compare": list(variants.COMPARE_LABELS)},
         "misses": _misses_summary(),
         "job": jobs_module.jobs.status(),
@@ -65,6 +66,67 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
         "thresholds": benchmark.thresholds(),
         "learned": learned_module.summary(),  # version 13 test: the trained decision rule (no weights), or None
     }
+
+
+def _custom_models_view() -> list[dict]:
+    """Uploaded custom models, newest first, each with the status of its two indexes."""
+    out = []
+    for entry in sorted(custom_models.list_models(), key=lambda e: e.get("uploaded_at", ""), reverse=True):
+        names = custom_models.index_names(entry["id"])
+        out.append({
+            **{key: entry[key] for key in ("id", "name", "sha256", "size_bytes", "uploaded_by", "uploaded_at", "dim")},
+            "sha_short": entry["sha256"][:8], "available": embed.model_available(entry["id"]),
+            "indexes": {kind: {**index_module.index_status(index_name), "name": index_name} for kind, index_name in names.items()},
+        })
+    return out
+
+
+@router.get("/models")
+def list_custom_models(current_user: User = Depends(get_current_user)):
+    _require_admin(current_user)
+    return {"models": _custom_models_view(), "max_bytes": custom_models.MAX_BYTES}
+
+
+@router.post("/models")
+def upload_custom_model(
+    request: Request, file: UploadFile = File(...), name: str = Form(""),
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Upload a picture model (.onnx, at most 400 MB; see docs/CARD_MATCH.md, "Custom picture models")."""
+    _require_admin(current_user)
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > custom_models.MAX_BYTES + (1 << 20):
+        raise HTTPException(status_code=413, detail=f"The file is over the {custom_models.MAX_BYTES // (1024 * 1024)} MB limit")
+    if not (file.filename or "").lower().endswith(".onnx"):
+        raise HTTPException(status_code=422, detail="The file must be an .onnx model")
+    try:
+        entry = custom_models.save_upload(file.file, name or (file.filename or "")[:-5], current_user.username)
+    except custom_models.CustomModelError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    record_audit(
+        db, "card_match.model_uploaded", request=request, actor=current_user, target_type="card_match_model", target_id=entry["id"],
+        details={"name": entry["name"], "sha256": entry["sha256"], "size_bytes": entry["size_bytes"]},
+    )
+    return {"model": next((m for m in _custom_models_view() if m["id"] == entry["id"]), entry)}
+
+
+@router.delete("/models/{model_id}")
+def delete_custom_model(model_id: str, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Remove an uploaded model, its file and both its indexes."""
+    _require_admin(current_user)
+    if not custom_models.is_custom_name(model_id):
+        raise HTTPException(status_code=404, detail="Unknown model")
+    if jobs_module.jobs.is_running():
+        raise HTTPException(status_code=409, detail="A matcher job is running: stop it or wait before deleting a model")
+    try:
+        entry = custom_models.delete_model(model_id)
+    except custom_models.CustomModelError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    record_audit(
+        db, "card_match.model_deleted", request=request, actor=current_user, target_type="card_match_model", target_id=model_id,
+        details={"name": entry["name"], "sha256": entry["sha256"]},
+    )
+    return {"deleted": model_id}
 
 
 _SOURCE_STATUS_TTL_SECONDS = 30

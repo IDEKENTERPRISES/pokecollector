@@ -21,6 +21,8 @@ Options (all measured side by side by the labelled benchmark, "Compare options" 
   - ``wholestrict`` (version 10, needs ``wholeread``): a number that came only from the whole-picture second read may decide only
     under stricter rules (``pipeline.whole_number_problem``): the set total was read and fits, the card is the picture's first or
     second pick with a higher similarity, no known name contradicts it, and the number line was read with high confidence.
+  - ``custom``: the whole-card and artwork searches use the newest uploaded custom picture model (``custom_models.py``) and its two
+    indexes (``custom-<sha8>``, ``custom-<sha8>-art``); it turns on ``art``. Without those indexes the row shows them as missing.
     (``wholeview``, version 9, was removed in version 10: it added almost nothing and cost time.)
   - ``widefirst`` (version 12 test): a card whose two tight number strips detect no text at all reads the whole bottom band next
     (``ocr.OcrReader.read``), and skips the sharp / contrast steps when that finds nothing either;
@@ -40,10 +42,10 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
-from . import config
+from . import config, custom_models
 from .model_specs import DEFAULT_MODEL, MODEL_SPECS
 
 logger = logging.getLogger(__name__)
@@ -52,6 +54,7 @@ BASE_MODEL = "dinov2-base"
 ART_INDEX = f"{DEFAULT_MODEL}-art"  # the artwork-window index of the default model
 V12_WORDS = ("widefirst", "topname")  # version 12 test options: server only, off by default
 V13_WORDS = ("learned",)  # version 13 test option
+CUSTOM_WORDS = ("custom",)  # the newest uploaded custom picture model
 BEST_V8 = "names+number+text+art+tta+fastread+corners+wholepic"
 IN_USE = "names+number+text+art+tta+fastread+numberonce+corners+wholepic"  # picked on the server with version 9: 67.4% decided, 0 wrong, p95 1,431 ms
 DEFAULT_LABEL = IN_USE  # an unbuilt artwork index is left out, see ``usable``
@@ -74,6 +77,8 @@ COMPARE_LABELS = (
     NO_STRICT_LABEL + "+topname", NO_STRICT_LABEL + "+widefirst+topname",
     # ... and the learned decision rule on top (a row shows "train first" until ``learned-decision.json`` exists).
     BEST_EXISTING_LABEL + "+learned", NO_STRICT_LABEL + "+topname+learned",
+    # The newest uploaded custom picture model in the kept set, and in the kept set without ``wholestrict``.
+    KEPT_LABEL + "+custom", NO_STRICT_LABEL + "+custom",
 )
 # The synthetic comparison chooses nothing, so it runs a short list on fewer photos
 # (version 5: 10 rows x 400 photos took 89 minutes).
@@ -104,9 +109,11 @@ class Options:
     topname: bool = False  # version 12 test: no line in the name strips -> take the name from the top band's lines
     learned: bool = False  # version 13 test: a learned decision rule may decide a scan the rules left unsure (needs a trained model)
 
+    custom: bool = False  # the newest uploaded custom picture model and its two indexes (needs art, so turns it on)
+
     @property
     def label(self) -> str:
-        parts = [name for name in ORDER + V12_WORDS + V13_WORDS if getattr(self, name)]
+        parts = [name for name in ORDER + V12_WORDS + V13_WORDS + CUSTOM_WORDS if getattr(self, name)]
         return "+".join(parts) or "baseline"
 
 
@@ -115,35 +122,41 @@ def parse(label: str | None) -> Options:
     words = {word.strip().lower() for word in str(label or "").replace(",", "+").split("+")}
     if "reprint" in words:
         words.add("art")  # the tie-break reads the artwork-only similarity
+    if "custom" in words:
+        words.add("art")  # the custom model has an artwork index too
     if "wholestrict" in words:
         words.add("wholeread")  # it judges the number the second read produced
     if "wholepic" in words or "trustrejected" in words:
         words.add("corners")  # both act on a quad the finder refused
-    return Options(**{name: name in words for name in ORDER + V12_WORDS + V13_WORDS})
+    return Options(**{name: name in words for name in ORDER + V12_WORDS + V13_WORDS + CUSTOM_WORDS})
 
 
-def model_name(options: Options) -> str:
-    return DEFAULT_MODEL
+def model_name(options: Options, data_dir: Path | None = None) -> str:
+    return custom_models.newest_name(data_dir) if options.custom else DEFAULT_MODEL
 
 
-def main_index_name(options: Options) -> str:
-    return DEFAULT_MODEL
+def main_index_name(options: Options, data_dir: Path | None = None) -> str:
+    return model_name(options, data_dir)
 
 
-def art_index_name(options: Options) -> str:
-    return ART_INDEX
+def art_index_name(options: Options, data_dir: Path | None = None) -> str:
+    return custom_models.art_name(model_name(options, data_dir)) if options.custom else ART_INDEX
 
 
-def needed_indexes(options: Options) -> list[str]:
-    """Names of the picture indexes (besides the default one) an option set reads."""
-    return ([art_index_name(options)] if options.art else []) + ([BASE_MODEL] if options.base else [])
+def needed_indexes(options: Options, data_dir: Path | None = None) -> list[str]:
+    """Names of the picture indexes (besides the default one) an option set reads. A custom row reads the custom
+    model's whole-card index too, and has none to read (``custom-none``) until a model is uploaded."""
+    return (
+        ([main_index_name(options, data_dir)] if options.custom else [])
+        + ([art_index_name(options, data_dir)] if options.art else []) + ([BASE_MODEL] if options.base else [])
+    )
 
 
 def missing_indexes(options: Options, data_dir: Path | None = None) -> list[str]:
     from . import index as index_module
 
     out = []
-    for name in needed_indexes(options):
+    for name in needed_indexes(options, data_dir):
         status = index_module.index_status(name, data_dir)
         if not status.get("built") or not status.get("count"):
             out.append(name)
@@ -181,12 +194,12 @@ def active_label(data_dir: Path | None = None) -> str:
 def usable(options: Options, data_dir: Path | None = None) -> Options:
     """The options with the parts whose picture index is not built left out; the name, number, text, extra-view
     and reading options still run, so a half-built setup still answers."""
-    from dataclasses import replace
-
     missing = missing_indexes(options, data_dir)
     if not missing:
         return options
-    art = art_index_name(options)
+    if options.custom and (main_index_name(options, data_dir) in missing or art_index_name(options, data_dir) in missing):
+        return usable(replace(options, custom=False), data_dir)  # no custom indexes: the default model's search
+    art = art_index_name(options, data_dir)
     return replace(options, art=options.art and art not in missing, base=options.base and BASE_MODEL not in missing,
                    reprint=options.reprint and art not in missing)
 
@@ -208,11 +221,11 @@ def build_matcher(options: Options, session_factory, *, data_dir: Path | None = 
 
     index = None
     try:
-        index = index_module.get_index(main_index_name(options), data_dir)
+        index = index_module.get_index(main_index_name(options, data_dir), data_dir)
     except Exception:
         pass
     key = (options, id(index), len(index) if index is not None else 0, id(session_factory), id(ocr_reader), read_hp, str(data_dir),
-           tuple(len(ix) for ix in (index_module.get_index(n, data_dir) for n in needed_indexes(options)) if ix is not None) if index is not None else ())
+           tuple(len(ix) for ix in (index_module.get_index(n, data_dir) for n in needed_indexes(options, data_dir)) if ix is not None) if index is not None else ())
     if options.learned:  # a new training must give a new matcher
         from . import learned as learned_module
 
@@ -234,13 +247,13 @@ def _build_matcher(options: Options, session_factory, *, data_dir: Path | None =
     from . import embed, index as index_module, learned as learned_module, lookup as lookup_module, names as names_module, pipeline
     from .ocr import get_reader
 
-    embedder = embed.get_embedder(model_name(options))
-    index = index_module.get_index(main_index_name(options), data_dir)
+    embedder = embed.get_embedder(model_name(options, data_dir))
+    index = index_module.get_index(main_index_name(options, data_dir), data_dir)
     if index is None or len(index) == 0:
         raise RuntimeError("The picture index is empty: build it first")
     signals = []
     if options.art:
-        art = index_module.get_index(art_index_name(options), data_dir)
+        art = index_module.get_index(art_index_name(options, data_dir), data_dir)
         if art is not None and len(art):
             signals.append(pipeline.Signal("art", art, embedder, crop="art"))
         else:
@@ -263,13 +276,18 @@ def _build_matcher(options: Options, session_factory, *, data_dir: Path | None =
     )
 
 
-def index_specs() -> dict[str, dict]:
+def index_specs(data_dir: Path | None = None) -> dict[str, dict]:
     """The picture indexes that can be built: name -> {model, crop, label}."""
-    return {
+    specs = {
         DEFAULT_MODEL: {"model": DEFAULT_MODEL, "crop": "full", "label": "whole card (DINOv2-small)"},
         ART_INDEX: {"model": DEFAULT_MODEL, "crop": "art", "label": "artwork only (DINOv2-small)"},
         BASE_MODEL: {"model": BASE_MODEL, "crop": "full", "label": "whole card (DINOv2-base)"},
     }
+    for entry in custom_models.list_models(data_dir):  # uploaded models: two indexes each
+        name = entry["id"]
+        specs[name] = {"model": name, "crop": "full", "label": f"whole card ({entry['name']})", "custom": True}
+        specs[custom_models.art_name(name)] = {"model": name, "crop": "art", "label": f"artwork only ({entry['name']})", "custom": True}
+    return specs
 
 
 assert BASE_MODEL in MODEL_SPECS

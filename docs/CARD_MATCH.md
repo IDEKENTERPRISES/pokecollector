@@ -483,6 +483,21 @@ All permissive; the project itself is AGPL-3.0-only. TCGdex card pictures are fe
 
 `backend/Dockerfile` runs `fetch_card_match_models.py` after installing the requirements: it downloads the pinned URL, checks the sha256 and puts the file in `/app/card-match-models`. This layer is cached until `model_specs.py` changes. At runtime `OnnxEmbedder` checks the sha256 again before loading. To add a second model (MobileCLIP, SigLIP) for comparison, add an entry to `MODEL_SPECS`; the index is stored per model name.
 
+## Custom picture models
+
+An admin can upload an ONNX picture model in Scanner lab (nonprod, or any server) and compare it with the pinned DINOv2-small on the real photos. The file goes to the card-match data folder (it persists across deploys; scan photos are never involved): `models/custom-<sha8>.onnx` plus a registry `models/registry.json` (name, sha256, size, uploaded by, uploaded at, input size, mean/std).
+
+**What the model must look like** (the same as `onnx-community/dinov2-small` `model.onnx`):
+- input `pixel_values`, float32, shape 1x3x224x224 (any batch size), ImageNet normalisation (mean 0.485/0.456/0.406, std 0.229/0.224/0.225; the server does the resize and normalising);
+- output `last_hidden_state`, shape [batch, N, 384], the CLS token first (`[:, 0]` is the picture's vector; 384 numbers, the same as the default model, so the existing index and search code applies).
+The upload is refused (422) when the file is not an ONNX model onnxruntime can load, has more than one input, does not run on a zeros input, or has another output shape; 413 over 400 MB; 409 when the same file is already uploaded. The checksum is checked again every time the model loads.
+
+**Upload.** Scanner lab > "Custom picture models" > "Upload a model (.onnx)" (admin only; a progress bar shows the upload). API: `POST /api/card-match/models` (multipart: `file`, `name`), `GET /api/card-match/models`, `DELETE /api/card-match/models/<id>` (removes the file and both indexes; refused while a job runs). Each upload and delete is in the audit log (`card_match.model_uploaded`, `card_match.model_deleted`). The frontend nginx has a `/api/card-match/models` location with a 410M body limit and no request buffering; any proxy in front must allow bodies of that size on this route.
+
+**Build the indexes.** Two buttons per model: the whole-card index `custom-<sha8>` and the artwork-window index `custom-<sha8>-art`, built by the same checkpointed job as the other indexes from the cached English card pictures (about 17 minutes each on the T340; a stopped build continues).
+
+**Compare.** The option word `custom` makes the whole-card and artwork searches use the newest uploaded model and its two indexes (it turns on `art`). "Compare options (real scans)" has two extra rows: the server's kept set + `custom`, and the kept set without `wholestrict` + `custom`. A row whose custom indexes are not built (or with no model uploaded) is skipped and lists the missing indexes, like the other rows. `pick_winner` treats the rows like any other, so a `custom` row can become the one in use; prod would then need the same model uploaded (and both indexes built) before the same set could be used there. Until then prod's `usable()` drops `custom` and searches with the default model. Deleting a model removes it from the rows the same way.
+
 ## Matcher version 12 test (options)
 
 Two reading options, **off by default**, measured as comparison rows only. `MATCHER_VERSION` stays **11**, and `DEFAULT_LABEL` are unchanged. Nothing about a real scan changes until a row wins and `chosen.json` picks it.

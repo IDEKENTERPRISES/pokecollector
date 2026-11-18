@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FlaskConical, GitCompare, Hammer } from 'lucide-react'
 import api from '../../api/client'
+import CustomModels from './ScannerLabCustomModels'
 import Misses, { CorrectedNote, CorrectionBar, CorrectionsProvider, DecidedWrong } from './ScannerLabMisses'
 
 const QUERY_KEY = ['card-match-status']
@@ -950,6 +951,7 @@ export default function ScannerLabSection() {
             )}
           </div>
         </div>
+        <CustomModels models={data.custom_models || []} busy={busy} onChanged={refresh} />
         {pictureFirst.data?.counts && <PictureFirstView data={pictureFirst.data} onOpenDecidedWrong={data.misses ? openDecidedWrong : undefined} />}
         {shadow.data?.report && (shadow.data.enabled || shadow.data.report.compared > 0) && <ShadowView data={shadow.data} />}
         <HowConfirmedView data={shadow.data?.report?.how_confirmed} />
