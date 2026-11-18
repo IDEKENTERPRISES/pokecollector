@@ -77,7 +77,7 @@ class Base(unittest.TestCase):
         self.clock = Clock()
         lifecycle._clock = self.clock
         lifecycle._last_use = self.clock()
-        env = mock.patch.dict("os.environ", {"CARD_MATCH_DEVICE": "auto", "CARD_MATCH_GPU_MEM_MB": "600", "CARD_MATCH_IDLE_UNLOAD_MINUTES": "10", "CARD_MATCH_GPU_FAILURES": "3"})
+        env = mock.patch.dict("os.environ", {"CARD_MATCH_DEVICE": "auto", "CARD_MATCH_GPU_MEM_MB": "1024", "CARD_MATCH_IDLE_UNLOAD_MINUTES": "10", "CARD_MATCH_GPU_FAILURES": "3"})
         env.start()
         self.addCleanup(env.stop)
         self.addCleanup(lifecycle.reset_for_tests)
@@ -124,8 +124,8 @@ class PerRunFallbackTests(Base):
         self.assertIn("3 GPU runs failed", view["reason"])
 
     def test_budget_shares_are_planned_for_variable_ocr_inputs(self):
-        self.assertEqual(device.EMBEDDER_SHARE, 0.3)
-        self.assertEqual(device.OCR_SHARES, {"det": 0.3, "rec": 0.3, "cls": 0.05})
+        self.assertEqual(device.EMBEDDER_SHARE, 0.2)
+        self.assertEqual(device.OCR_SHARES, {"det": 0.35, "rec": 0.35, "cls": 0.03})
         self.assertLessEqual(device.EMBEDDER_SHARE + sum(device.OCR_SHARES.values()), 1.0)
 
 

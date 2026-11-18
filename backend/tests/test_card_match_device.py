@@ -36,7 +36,7 @@ class FakeOrt:
 class DeviceTests(unittest.TestCase):
     def setUp(self):
         device.reset_for_tests()
-        patcher = mock.patch.dict("os.environ", {"CARD_MATCH_DEVICE": "auto", "CARD_MATCH_GPU_MEM_MB": "600"})
+        patcher = mock.patch.dict("os.environ", {"CARD_MATCH_DEVICE": "auto", "CARD_MATCH_GPU_MEM_MB": "1024"})
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -46,7 +46,7 @@ class DeviceTests(unittest.TestCase):
         self.assertEqual(info["device"], "cuda")
         provider, options = ort.calls[0][0]
         self.assertEqual(provider, device.CUDA)
-        self.assertEqual(options["gpu_mem_limit"], 180 * device.MB)
+        self.assertEqual(options["gpu_mem_limit"], int(1024 * 0.2 * device.MB))
         self.assertEqual(options["arena_extend_strategy"], "kSameAsRequested")
         self.assertEqual(ort.calls[0][1], device.CPU)
 
@@ -75,10 +75,10 @@ class DeviceTests(unittest.TestCase):
 
     def test_memory_budget_is_shared(self):
         ort = FakeOrt([device.CUDA, device.CPU])
-        results = [device.create_session(ort, "m.onnx", None, kind=f"embedder:{n}")[1]["device"] for n in ("a", "b", "c", "d")]
-        self.assertEqual(results, ["cuda", "cuda", "cuda", "cpu"])  # 3 x 180 MB fit in the 600 MB budget, a fourth does not
+        results = [device.create_session(ort, "m.onnx", None, kind=f"embedder:{n}")[1]["device"] for n in ("a", "b", "c", "d", "e", "f")]
+        self.assertEqual(results, ["cuda"] * 5 + ["cpu"])  # 5 x 205 MB fit in the 1024 MB budget, a sixth does not
         device.drop("embedder:a")
-        self.assertEqual(device.create_session(ort, "m.onnx", None, kind="embedder:e")[1]["device"], "cuda")
+        self.assertEqual(device.create_session(ort, "m.onnx", None, kind="embedder:g")[1]["device"], "cuda")
 
     def test_report_names_the_gpu_and_warm_time(self):
         ort = FakeOrt([device.CUDA, device.CPU])
@@ -104,7 +104,7 @@ class SwappableOrt(FakeOrt):
 class OcrSessionTests(unittest.TestCase):
     def setUp(self):
         device.reset_for_tests()
-        patcher = mock.patch.dict("os.environ", {"CARD_MATCH_DEVICE": "auto", "CARD_MATCH_GPU_MEM_MB": "600"})
+        patcher = mock.patch.dict("os.environ", {"CARD_MATCH_DEVICE": "auto", "CARD_MATCH_GPU_MEM_MB": "1024"})
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -115,9 +115,9 @@ class OcrSessionTests(unittest.TestCase):
         return infos
 
     def test_shares_are_planned_to_fit(self):
-        self.assertEqual(device.ocr_share("/m/ch_PP-OCRv4_det_infer.onnx"), 0.3)
-        self.assertEqual(device.ocr_share("/m/ch_ppocr_mobile_v2.0_cls_infer.onnx"), 0.05)
-        self.assertEqual(device.ocr_share("/m/ch_PP-OCRv4_rec_infer.onnx"), 0.3)
+        self.assertEqual(device.ocr_share("/m/ch_PP-OCRv4_det_infer.onnx"), 0.35)
+        self.assertEqual(device.ocr_share("/m/ch_ppocr_mobile_v2.0_cls_infer.onnx"), 0.03)
+        self.assertEqual(device.ocr_share("/m/ch_PP-OCRv4_rec_infer.onnx"), 0.35)
         self.assertLessEqual(device.EMBEDDER_SHARE + sum(device.OCR_SHARES.values()), 1.0)
 
     def test_healthy_start_puts_embedder_and_all_three_ocr_parts_on_the_gpu_without_a_warning(self):
@@ -130,8 +130,8 @@ class OcrSessionTests(unittest.TestCase):
 
     def test_budget_running_out_on_the_third_session_falls_back_without_recursing(self):
         ort = SwappableOrt([device.CUDA, device.CPU])
-        with mock.patch.dict("os.environ", {"CARD_MATCH_GPU_MEM_MB": "300"}):  # det 60 + cls 15 + rec 60 fits; make it tight
-            device.create_session(ort, "dino.onnx", None, kind="embedder:x")  # 150 MB
+        with mock.patch.dict("os.environ", {"CARD_MATCH_GPU_MEM_MB": "300"}):  # embedder 60 + det 105 + rec 105 fit, a further OCR session does not
+            device.create_session(ort, "dino.onnx", None, kind="embedder:x")  # 60 MB
             infos = self.build_ocr(ort, ("det.onnx", "rec.onnx", "rec2.onnx", "rec3.onnx"))
         devices = [i["device"] for i in infos]
         self.assertEqual(devices[:2], ["cuda", "cuda"])

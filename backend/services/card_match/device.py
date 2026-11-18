@@ -5,7 +5,7 @@
 memory while loading) is caught, logged once as one line, and the session is built on the CPU instead.
 
 The card is small (2 GB, shared by the prod and nonprod stacks), so every process has a GPU memory budget
-(``CARD_MATCH_GPU_MEM_MB``, default 600) that is handed out to sessions as a per-session ``gpu_mem_limit``. A session
+(``CARD_MATCH_GPU_MEM_MB``, default 1024) that is handed out to sessions as a per-session ``gpu_mem_limit``. A session
 that would not fit in what is left runs on the CPU. The arena grows only by what is asked for (``kSameAsRequested``).
 """
 
@@ -27,13 +27,14 @@ CPU = "CPUExecutionProvider"
 CUDA = "CUDAExecutionProvider"
 MB = 1024 * 1024
 
-# Share of the budget per session, planned so a healthy start fits: picture model 0.3 (fixed 224x224 inputs, about 90 MB
-# of weights), OCR detector 0.3 and recogniser 0.3 (their inputs vary in size and need headroom for the biggest crop),
-# direction classifier 0.05 (RapidOCR loads it even with use_cls=False; it is tiny) = 0.95. The rest is headroom.
+# Share of the budget per session, planned so a healthy start fits: picture model 0.2 (205 MB of 1 GB: fixed
+# 224x224 inputs, about 90 MB of weights), OCR detector 0.35 and recogniser 0.35 (358 MB each: their inputs vary in size and
+# need generous headroom for the biggest crop), direction classifier 0.03 (RapidOCR loads it even with use_cls=False; it is
+# tiny) = 0.93. The rest is headroom. These are caps, not allocations: the arena grows only as far as a run needs.
 # A run that still runs out of arena is rerun on the CPU (``GpuSession``), so a share that is too small costs time, not scans.
-EMBEDDER_SHARE = 0.3
-OCR_SHARES = {"det": 0.3, "rec": 0.3, "cls": 0.05}
-OCR_DEFAULT_SHARE = 0.3
+EMBEDDER_SHARE = 0.2
+OCR_SHARES = {"det": 0.35, "rec": 0.35, "cls": 0.03}
+OCR_DEFAULT_SHARE = 0.35
 MAX_GPU_BATCH = 16  # a bigger batch on the card could exceed the cap; the index build uses 16
 
 _lock = threading.Lock()
@@ -57,9 +58,9 @@ def requested() -> str:
 
 def budget_mb() -> int:
     try:
-        return max(128, int(os.environ.get("CARD_MATCH_GPU_MEM_MB", "600")))
+        return max(128, int(os.environ.get("CARD_MATCH_GPU_MEM_MB", "1024")))
     except ValueError:
-        return 600
+        return 1024
 
 
 def warm_enabled() -> bool:
