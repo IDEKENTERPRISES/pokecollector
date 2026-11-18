@@ -338,7 +338,7 @@ export function Report({ report, title }) {
   )
 }
 
-const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused', wholeread: 'second read of the whole picture', wholestrict: 'stricter rules for a number read only from the whole picture', widefirst: 'wide bottom read first (test)', topname: 'name from the top band (test)' }
+const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused', wholeread: 'second read of the whole picture', wholestrict: 'stricter rules for a number read only from the whole picture', widefirst: 'wide bottom read first (test)', topname: 'name from the top band (test)', learned: 'learned decision rule (test)' }
 const describeOptions = label => (label === 'baseline' ? OPTION_NAMES.baseline : label.split('+').map(word => OPTION_NAMES[word] || word).join(' + '))
 
 /** The scans one comparison row decided wrong, in the same plain wording as Misses > Decided wrong (text only: no pictures are kept for these). */
@@ -359,6 +359,18 @@ export function WrongList({ row }) {
       )}
       {items.length > 0 && items.length < row.decided_wrong && <p className="text-footnote text-text-secondary">Showing the first {items.length} of {row.decided_wrong}.</p>}
     </div>
+  )
+}
+
+const GROUP_COLUMNS = [['tuned', 'Tuned'], ['new', 'New'], ['held_back', 'Held back']]
+
+/** Decided and wrong for one of the three honest groups of a comparison row (version 13 test): "58% · 0 wrong", or a dash when the group has no scans. */
+export function GroupCell({ group, name }) {
+  if (!group || !group.n) return <td className="pr-2 text-text-secondary" data-testid={`scanner-lab-group-${name}`}>–</td>
+  return (
+    <td className="pr-2" data-testid={`scanner-lab-group-${name}`}>
+      {Math.round((100 * group.decided) / group.n)}% · <span className={group.wrong ? 'text-red-500' : ''}>{number(group.wrong)} wrong</span> <span className="text-text-secondary">({number(group.n)})</span>
+    </td>
   )
 }
 
@@ -386,7 +398,8 @@ export function CompareTable({ report, title }) {
           <thead>
             <tr className="text-left text-text-secondary">
               <th className="pr-2 font-normal">Options</th><th className="pr-2 font-normal">Top 1</th><th className="pr-2 font-normal">Top 20</th>
-              <th className="pr-2 font-normal">Number</th><th className="pr-2 font-normal">Name</th><th className="pr-2 font-normal">Number time</th><th className="pr-2 font-normal">Decided</th><th className="pr-2 font-normal">Wrong</th><th className="font-normal">p95</th>
+              <th className="pr-2 font-normal">Number</th><th className="pr-2 font-normal">Name</th><th className="pr-2 font-normal">Number time</th><th className="pr-2 font-normal">Decided</th><th className="pr-2 font-normal">Wrong</th><th className="pr-2 font-normal">p95</th>
+              {GROUP_COLUMNS.map(([name, label]) => <th key={name} className="pr-2 font-normal" data-testid={`scanner-lab-group-head-${name}`}>{label}</th>)}
             </tr>
           </thead>
           <tbody>
@@ -406,10 +419,13 @@ export function CompareTable({ report, title }) {
                         </button>
                       ) : number(row.decided_wrong)}
                     </td>
-                    <td>{row.p95_ms != null ? `${number(row.p95_ms)} ms` : '–'}</td>
+                    <td className="pr-2">{row.p95_ms != null ? `${number(row.p95_ms)} ms` : '–'}</td>
+                    {GROUP_COLUMNS.map(([name]) => <GroupCell key={name} name={name} group={row.eval_groups?.[name]} />)}
                   </>
                 ) : (
-                  <td colSpan={8} className="text-text-secondary">needs the {(row.missing_indexes || []).join(', ')} index</td>
+                  <td colSpan={11} className="text-text-secondary" data-testid="scanner-lab-row-skipped">
+                    {row.train_first ? 'train first (press Train decision rule)' : `needs the ${(row.missing_indexes || []).join(', ')} index`}
+                  </td>
                 )}
               </tr>
             ))}
@@ -425,7 +441,24 @@ export function CompareTable({ report, title }) {
         </table>
       </div>
       {opened && <WrongList row={opened} />}
+      <p className="text-footnote text-text-secondary">
+        Tuned: scans used for tuning (your older scans and the other source&rsquo;s tuning scans). New: your scans from 5 Nov 02:00 UTC on, never used for tuning. Held back: the other source&rsquo;s held-back scans.
+        A learned row counts only when New and Held back have 0 wrong and at least 20 scans between them.
+      </p>
     </div>
+  )
+}
+
+/** The trained decision rule, in words (no weights are ever sent). */
+export function LearnedStatus({ learned }) {
+  if (!learned) return <p className="text-footnote text-text-secondary" data-testid="scanner-lab-learned">Decision rule: not trained yet.</p>
+  const cv = learned.cross_validation || {}
+  const counts = learned.counts || {}
+  return (
+    <p className="text-footnote text-text-secondary" data-testid="scanner-lab-learned">
+      Decision rule: trained {learned.trained_at?.slice(0, 16).replace('T', ' ')} UTC on {number(counts.scans)} undecided scans ({number(counts.first_right)} right, {number(counts.first_wrong)} wrong first picks) ·
+      threshold {learned.threshold}{learned.usable ? '' : ' (no safe threshold: it will not decide)'} · cross-validation: {number(cv.decided_right)} of {number(cv.of)} decided, {number(cv.decided_wrong)} wrong
+    </p>
   )
 }
 
@@ -882,6 +915,7 @@ export default function ScannerLabSection() {
             <Row key={name} label={`Index: ${extra.label}`} value={extra.built ? `${number(extra.count)} pictures` : 'not built'} />
           ))}
           {!data.ocr_available && <p className="text-footnote text-red-500">The OCR library is not installed in this image.</p>}
+          <LearnedStatus learned={data.learned} />
           {jobLine && <p className="text-footnote" aria-live="polite" data-testid="scanner-lab-job">{jobLine}</p>}
           {errorText && <p className="text-footnote text-red-500">{errorText}</p>}
           <div className="flex flex-wrap gap-2 pt-1">
@@ -899,6 +933,9 @@ export default function ScannerLabSection() {
             </button>
             <button type="button" className={button} disabled={busy || !ready || !index.built || !data.labelled_traces} onClick={() => benchmark.mutate('compare-labelled')} data-testid="scanner-lab-compare">
               <GitCompare size={13} aria-hidden="true" /> Compare options (real scans)
+            </button>
+            <button type="button" className={button} disabled={busy || !ready || !index.built || !data.labelled_traces} onClick={() => benchmark.mutate('train-learned')} data-testid="scanner-lab-train-learned">
+              <FlaskConical size={13} aria-hidden="true" /> Train decision rule
             </button>
             <button type="button" className={button} disabled={busy || !ready || !index.built} onClick={() => benchmark.mutate('compare-synthetic')} data-testid="scanner-lab-compare-synthetic">
               <GitCompare size={13} aria-hidden="true" /> Compare options (synthetic)

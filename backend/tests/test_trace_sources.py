@@ -372,7 +372,7 @@ class RunLabelledGroupTests(unittest.TestCase):
 
 @skip
 class PickIgnoresHeldBackTests(unittest.TestCase):
-    def test_compare_runs_without_the_held_back_scans_and_measures_them_once_for_the_winner(self):
+    def test_compare_measures_the_held_back_scans_apart_from_the_headline_and_once_more_for_the_winner(self):
         calls = []
 
         def fake_run_labelled(session_factory, matcher, **kwargs):
@@ -393,7 +393,7 @@ class PickIgnoresHeldBackTests(unittest.TestCase):
                 patch.object(benchmark, "run_labelled", fake_run_labelled), \
                 patch.object(ocr_check, "labelled_traces", return_value=[(held, Path("a")), (tuning, Path("b"))]):
             report = benchmark.run_compare("labelled", lambda: None, ["plain", "other"], trace_dir=None)
-        self.assertEqual([held_back for _label, held_back in calls[:2]], ["skip", "skip"])
+        self.assertEqual([held_back for _label, held_back in calls[:2]], ["separate", "separate"])
         self.assertEqual(calls[2], (report["winner"], "only"))
         self.assertEqual(len(calls), 3)
         self.assertEqual(report["held_back"]["n"], 5)
@@ -414,7 +414,7 @@ class PickIgnoresHeldBackTests(unittest.TestCase):
                 patch.object(benchmark, "run_labelled", fake_run_labelled), \
                 patch.object(ocr_check, "labelled_traces", return_value=[({"user_id": 1}, Path("a"))]):
             report = benchmark.run_compare("labelled", lambda: None, ["plain"], trace_dir=None)
-        self.assertEqual(calls, ["skip"])
+        self.assertEqual(calls, ["separate"])
         self.assertIsNone(report["held_back"])
         self.assertIsNone(report["held_back_note"])
 

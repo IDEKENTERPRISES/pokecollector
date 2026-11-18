@@ -507,6 +507,41 @@ When `name-line` and `name-band` detect **no line at all**, the name is taken fr
 
 `COMPARE_LABELS` gets `KEPT+widefirst`, `KEPT+topname`, `KEPT+widefirst+topname`, where `KEPT` is `names+number+text+art+tta+fastread+numberonce+corners+wholepic+wholeread+wholestrict` (all existing rows stay). The table has two new columns: **Name** (the confirmed card's name read right, `metrics.name_read_pct`) and **Number time** (mean time the number steps took per photo, from the recorded ladder timings, `metrics.number_ms_mean`; cached repeats count 0), next to top 1, top 20, number, decided, wrong and p95. Judge `widefirst` by number time and p95 down with number, decided and wrong not worse; `topname` by name read up with wrong not higher. `pick_winner` is unchanged, so a new row that wins can be chosen into `chosen.json`.
 
+## Matcher version 13 test: learned decision rule
+
+Status: **a test option. `MATCHER_VERSION` stays "11", the default option set does not change, and nothing decides differently until a `learned` row is measured and the owner chooses it.**
+
+**Why.** On the real photos the first pick is right about 98% of the time, but only 72-77% of scans are decided: fixed hand-set thresholds (similarity ≥ 0.55 in the top 10, lead ≥ 0.06, the 0.80 / 0.88 picture rules, the `wholestrict` rules) refuse many right first picks. Version 13 learns, from scans used for tuning, how likely the *first* candidate is to be right.
+
+**What it is** (`learned.py`, numpy only). `extract` turns a scan into about 35 numbers about its first candidate (the merged ranking's top one): picture similarity, picture rank, lead over the next, artwork similarity and lead; whether the read number names exactly one printing, several, or none among the candidates; whether the first candidate's number and printed total match the read (or contradict it), whether the number was corrected or looked up; the number's source (finder card / whole picture) and confidence; name read, name score, name known, name conflict; set-code match; the finder's confidence, whether it found the card, whether a fallback was used; the lookup level and text score; and which of five "unsure" reasons the rules gave. They are recorded on every `MatchResult.features` (not part of `as_dict`; the public result shape is unchanged). The model is a logistic regression with L2 on standardised features (Newton steps; no new dependency).
+
+**How it decides.** Rules come first. Only when `pipeline.decide` returned unsure, only for the first candidate, and only when the finder found the card (a fallback card is never decided by it), the rule decides if the probability is at or above its threshold. The decision's mechanism is `learned`. It never overturns a rules decision (a test runs the matcher with a rule that says yes to everything and checks the rules' decision is unchanged).
+
+**Training** (Scanner lab → **Train decision rule**, `POST /api/card-match/benchmark` with `kind: "train-learned"`). It runs the rules (`variants.TRAIN_LABEL` = the kept set without `wholestrict` + `topname`) over **the tuning group only** (`learned.is_tuning`: the owner's scans made before 2026-11-05 02:00 UTC and a read-only source's scans that are *not* held back). The owner's newer scans and every held-back scan are never run for training (a test pins this). It keeps the scans the rules left unsure and trains on "is the first candidate the confirmed card" (a corrected label counts as the corrected card).
+
+**The threshold.** 5-fold cross-validation inside the tuning group (the wrong first picks spread over the folds). Every scan gets a probability from a model that never saw it; the threshold is the lowest with **0 wrong decisions across all folds** (just above the highest out-of-fold probability of a wrong first pick) **plus a safety margin of 0.02** (`SAFETY_MARGIN`), because only a handful of first picks are wrong. The L2 strength is chosen from 0.3 / 1 / 3 / 10 as the one that would decide most right first picks at its own zero-wrong threshold. It refuses to train with under 20 scans or under 2 wrong first picks (no threshold can be checked). If no threshold below 0.9999 has 0 wrong, the rule is saved as `usable: false` and never decides. The result is `learned-decision.json` in the card-match folder: model, feature list, threshold, counts, cross-validation result, date. No photo and no scan text is stored in it, and nothing from trainers' scans goes in the repo.
+
+**The rows** (Compare options, real scans; four new ones, 17 in all):
+
+| Row | What it measures |
+| --- | --- |
+| kept set without `wholestrict` + `topname` | the plain reading option, no strict rule |
+| kept set without `wholestrict` + `widefirst` + `topname` | both reading options, no strict rule |
+| best existing row (kept set + `widefirst`) + `learned` | the learned rule on top of what the server picked with version 12 |
+| kept set without `wholestrict` + `topname` + `learned` | the learned rule instead of the strict rules |
+
+A `learned` row says **train first** until `learned-decision.json` exists. A winner that is a `learned` row is shown in the report but is **not** written to `chosen.json` by the comparison: the owner decides.
+
+**How to read the groups.** Every row now has three extra columns, each "decided % · wrong (scans)":
+
+- **Tuned**: the scans used for tuning (the owner's older scans and the other source's tuning scans). The learned rule trained on exactly these, so this column flatters it.
+- **New**: the owner's scans from 5 Nov 02:00 UTC on, never used for tuning.
+- **Held back**: the other source's held-back scans (30% by a stable hash).
+
+Only **New** and **Held back** are an honest test. `pick_winner` refuses a `learned` row unless both have 0 wrong decisions and at least 20 held-out scans were measured in the two together (`benchmark.learned_refused`; the reasons are `wrong_on_held_out_scans` and `too_few_held_out_scans`), and a refused row does not lower the "no more wrong than the best row" bar for the others. Held-back scans are now run for every row (`held_back="separate"`) but still never counted in the headline numbers the pick reads; this makes a comparison longer by the held-back share. Overfitting is the risk: earlier runs decided about 53% on the not-used-for-tuning scans against 81% on the tuned ones, and there are only about 5 wrong first picks, so trust a learned row only if **New** and **Held back** decide clearly more than the same row without `learned` and stay at 0 wrong.
+
+**To try it.** 1) Correct the mislabelled scan (Darumaka) with "The scanner was right". 2) Press **Train decision rule** (reads only the tuning group; the line under the buttons shows scans, threshold and the cross-validation result). 3) Press **Compare options (real scans)**. 4) Read the four new rows' **New** and **Held back** columns against the rows without `learned`.
+
 ## Next steps
 
 1. **Read the T340 numbers** (this PR) and tune the thresholds; fix the stage the report names if the pass bar fails.
