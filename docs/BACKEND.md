@@ -461,6 +461,16 @@ classification lives in `services/data_wipe.py` (`WIPE_TABLES` / `KEEP_TABLES`);
 "Wiping user data" in `docs/DEPLOYMENT.md`. `GET /api/health` also returns
 `data_epoch` (a `settings` row, created on first use and replaced by every wipe).
 
+### Server backups
+
+`GET /api/backup/server` lists the `.sql` files in the backups folder (admin only),
+`GET /api/backup/server/download?filename=` streams one and
+`POST /api/backup/server/restore` (`{filename, password}`) starts the normal
+restore job from a copy of it (same guard, timeout, status and lock). File names
+are bare names only (`^[A-Za-z0-9][A-Za-z0-9._-]*\.sql$`, no `..`, no symlinks,
+regular file directly in the folder). Download and restore write `backup.download`
+and `backup.restore` audit entries. See "Server backups" in `docs/DEPLOYMENT.md`.
+
 ### Manual restore
 
 `POST /api/backup/restore` accepts only a non-empty `.sql` upload, streams it to
