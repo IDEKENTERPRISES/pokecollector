@@ -87,3 +87,16 @@ def phone_view(card_rgb: np.ndarray, seed: int):
     if rnd.random() < 0.2:
         flat = low_light(flat, rnd)
     return flat, art_of(flat)
+
+
+def resize224(img):
+    """Exactly the resize step of the server's embed.preprocess (uint8 in, uint8 out)."""
+    return cv2.resize(img, (SIZE, SIZE), interpolation=cv2.INTER_AREA if min(img.shape[:2]) > SIZE else cv2.INTER_CUBIC)
+
+
+def to_jpg(img, q=95):
+    return cv2.imencode(".jpg", img[..., ::-1], [cv2.IMWRITE_JPEG_QUALITY, q])[1].tobytes()
+
+
+def from_jpg(b):
+    return cv2.imdecode(np.frombuffer(b, np.uint8), 1)[..., ::-1]
