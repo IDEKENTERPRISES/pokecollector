@@ -253,9 +253,16 @@ deleted, not truncated, so ids are never reused.
 device stores the one it last saw, and when it differs (including a phone that
 was offline during the wipe and returns days later) it drops its queued changes
 without sending them, clears saved pages, caches and local preferences, and goes
-to the login screen. The downloaded card database stays. A device that last ran
-before this feature has no stored epoch, but its old session is rejected by the
-server anyway.
+to the login screen. The downloaded card database stays. `/api/health` also carries
+`data_wiped_at` (when the last wipe finished; null if there never was one). A
+device with no stored epoch (it last ran before this feature, or was never opened
+between a deploy and the wipe) that holds anything user-specific (a stored
+sign-in, queued changes, saved pages) is treated as wiped when the server reports
+`data_wiped_at`: it resets and signs out, so its old queue can never be replayed
+into a new account. A device that holds nothing just stores the epoch. Every
+queued change is also stamped with the epoch it was queued in, and the outbox
+never sends an item stamped with a different epoch (or an unstamped one once the
+server has been wiped); it deletes it instead.
 
 **Restore from the pre-wipe backup.** The file is a plain dump (without image
 cache rows) that the normal restore accepts. Copy it out of the backups folder

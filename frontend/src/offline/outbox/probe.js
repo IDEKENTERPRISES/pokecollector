@@ -47,6 +47,8 @@ export async function probe({
         features: Array.isArray(body.features) ? body.features : [],
         // Changes when an administrator wipes all user data (offline/dataEpoch.js).
         dataEpoch: typeof body.data_epoch === 'string' && body.data_epoch ? body.data_epoch : null,
+        // When the last wipe happened; null when there never was one (offline/dataEpoch.js).
+        dataWipedAt: typeof body.data_wiped_at === 'string' && body.data_wiped_at ? body.data_wiped_at : null,
         fetchedAt: now(),
       },
     }

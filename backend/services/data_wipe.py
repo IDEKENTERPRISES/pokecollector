@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 
 CONFIRM_PHRASE = "WIPE ALL DATA"
 DATA_EPOCH_SETTING = "data_epoch"
+DATA_WIPED_AT_SETTING = "data_wiped_at"
 
 # --- classification ---------------------------------------------------------------------------
 
@@ -237,6 +238,27 @@ def read_data_epoch(db: Session) -> str | None:
     """The current epoch without creating or committing anything (None when it was never created)."""
     row = db.get(Setting, DATA_EPOCH_SETTING)
     return row.value if row is not None and row.value else None
+
+
+def read_data_wiped_at(db: Session) -> str | None:
+    """When the last wipe of all user data finished (UTC ISO text); None when there has never been one."""
+    row = db.get(Setting, DATA_WIPED_AT_SETTING)
+    return row.value if row is not None and row.value else None
+
+
+def health_fields(db: Session) -> dict:
+    """What GET /api/health advertises about the data generation (see frontend/src/offline/dataEpoch.js)."""
+    return {"data_epoch": get_data_epoch(db) or None, "data_wiped_at": read_data_wiped_at(db)}
+
+
+def _set_wiped_at(db: Session) -> str:
+    stamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    row = db.get(Setting, DATA_WIPED_AT_SETTING)
+    if row is None:
+        db.add(Setting(key=DATA_WIPED_AT_SETTING, value=stamp))
+    else:
+        row.value = stamp
+    return stamp
 
 
 def _set_data_epoch(db: Session) -> str:
@@ -486,6 +508,7 @@ def wipe_all_user_data(
                     carried["gemini_api_key"] = env_key
             write_scanner_settings(db, admin.id, carried)
             new_epoch = _set_data_epoch(db)
+            wiped_at = _set_wiped_at(db)
             record_audit(
                 db,
                 "data.wipe",
@@ -522,6 +545,7 @@ def wipe_all_user_data(
             "admin_username": username,
             "admin_id": admin_id,
             "data_epoch": new_epoch,
+            "data_wiped_at": wiped_at,
             "scanner_settings_carried": sorted(scanner_settings),
         }
     finally:

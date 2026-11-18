@@ -577,3 +577,43 @@ describe('stop', () => {
     expect(await run()).toMatchObject({ ran: true })
   })
 })
+
+describe('replay — data epoch', () => {
+  const wiped = { ...HEALTH, data_epoch: 'new-epoch', data_wiped_at: '2026-11-20T10:00:00+00:00' }
+
+  it('never sends an item queued in another epoch, and keeps one queued in the current epoch', async () => {
+    health = () => json(wiped)
+    await add({ dataEpoch: 'old-epoch', payload: { card_id: 'old', quantity: 1 } })
+    const fresh = await add({ dataEpoch: 'new-epoch', payload: { card_id: 'fresh', quantity: 1 } })
+    const result = await run({ trigger: 'manual' })
+    expect(calls.map(call => JSON.parse(call.init.body).card_id)).toEqual(['fresh'])
+    expect(result.processed).toBe(1)
+    expect(await store.getItem(fresh.id)).toBeNull() // sent and removed
+    expect(await store.totals()).toMatchObject({ items: 0 })
+  })
+
+  it('drops an unstamped item when the server reports a wipe, even another account\'s', async () => {
+    health = () => json(wiped)
+    await add({ payload: { card_id: 'unstamped', quantity: 1 } })
+    await store.enqueue({ ctx: { userId: 2, origin: CTX.origin }, type: 'collection.add', payload: { card_id: 'other', quantity: 1 } })
+    await run({ trigger: 'manual' })
+    expect(calls).toEqual([])
+    expect(await store.totals()).toMatchObject({ items: 0 })
+  })
+
+  it('keeps unstamped items while the server was never wiped', async () => {
+    health = () => json({ ...HEALTH, data_epoch: 'e', data_wiped_at: null })
+    await add()
+    await run({ trigger: 'manual' })
+    expect(calls).toHaveLength(1)
+  })
+
+  it('does not send a stale item even through "send now" with the last known server info', async () => {
+    const item = await add({ dataEpoch: 'old-epoch' })
+    await store.setMeta('serverInfo', { features: ['idempotency-v1'], apiLevel: 1, dataEpoch: 'new-epoch', dataWipedAt: '2026-11-20T10:00:00+00:00' })
+    const results = await replayer.sendNow(CTX, [item.id], 'dev:tab1')
+    expect(calls).toEqual([])
+    expect(results[0].outcome).toBe('dropped')
+    expect(await store.getItem(item.id)).toBeNull()
+  })
+})

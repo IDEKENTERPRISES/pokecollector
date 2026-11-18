@@ -48,10 +48,46 @@ export function writeStoredEpoch(epoch, storage = defaultStorage()) {
  * 'same'    nothing changed.
  * 'wiped'   the server's data was wiped since this device last saw it.
  */
-export function judgeEpoch(stored, server) {
+export function judgeEpoch(stored, server, { wipedAt = null, holdsUserData = false } = {}) {
   if (typeof server !== 'string' || server === '') return 'unknown'
-  if (!stored) return 'first'
+  // No epoch stored: a device from before this feature, or one that never saw the server. If the server was
+  // wiped at some point and this device holds anything user-specific, it may belong to the old accounts.
+  if (!stored) return wipedAt && holdsUserData ? 'wiped' : 'first'
   return stored === server ? 'same' : 'wiped'
+}
+
+/** True for an outbox item that must never be sent: queued in another epoch, or unstamped on a server that was wiped. */
+export function isStaleItem(item, serverEpoch, wipedAt) {
+  if (typeof serverEpoch !== 'string' || serverEpoch === '') return false
+  if (item?.dataEpoch) return item.dataEpoch !== serverEpoch
+  return Boolean(wipedAt)
+}
+
+const OUTBOX_DB = 'pokecollector-outbox'
+const READ_CACHE_DB = 'pokecollector-readcache'
+
+async function listDatabaseNames() {
+  try {
+    const list = await globalThis.indexedDB?.databases?.()
+    return Array.isArray(list) ? list.map(entry => entry.name) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Whether this device holds anything user-specific: a stored sign-in, or the outbox / saved-pages databases.
+ * Those databases are only created by a signed-in user, so their presence is enough (a false "yes" only costs
+ * one sign-in; a false "no" would replay old writes into a new account).
+ */
+export async function deviceHoldsUserData({ storage = defaultStorage(), listDatabases = listDatabaseNames } = {}) {
+  try {
+    if (storage?.getItem('token') || storage?.getItem('user')) return true
+  } catch {
+    // unreadable storage counts as empty
+  }
+  const names = await listDatabases()
+  return Boolean(names?.some(name => name === OUTBOX_DB || name === READ_CACHE_DB))
 }
 
 const listeners = new Set()
@@ -115,7 +151,12 @@ export async function wipeLocalData(serverEpoch, {
  */
 export async function observeDataEpoch(serverEpoch, options = {}) {
   const storage = options.storage ?? defaultStorage('localStorage')
-  const verdict = judgeEpoch(readStoredEpoch(storage), serverEpoch)
+  const stored = readStoredEpoch(storage)
+  const wipedAt = options.wipedAt ?? null
+  const holdsUserData = !stored && wipedAt && typeof serverEpoch === 'string' && serverEpoch
+    ? await (options.holdsUserData ?? deviceHoldsUserData)({ storage })
+    : false
+  const verdict = judgeEpoch(stored, serverEpoch, { wipedAt, holdsUserData })
   if (verdict === 'first') writeStoredEpoch(serverEpoch, storage)
   if (verdict !== 'wiped') return verdict
   if (!running) {
@@ -133,7 +174,7 @@ export function guardProbeWithEpoch(probeImpl, observe = observeDataEpoch) {
   return async (...args) => {
     const result = await probeImpl(...args)
     if (result?.state === 'reachable') {
-      const verdict = await observe(result.serverInfo?.dataEpoch ?? null)
+      const verdict = await observe(result.serverInfo?.dataEpoch ?? null, { wipedAt: result.serverInfo?.dataWipedAt ?? null })
       if (verdict === 'wiped') return { state: 'unreachable' }
     }
     return result
@@ -150,7 +191,7 @@ export function startDataEpochWatch({ probe, observe = observeDataEpoch, target 
     if (stopped) return
     try {
       const result = await probe()
-      if (!stopped && result?.state === 'reachable') await observe(result.serverInfo?.dataEpoch ?? null)
+      if (!stopped && result?.state === 'reachable') await observe(result.serverInfo?.dataEpoch ?? null, { wipedAt: result.serverInfo?.dataWipedAt ?? null })
     } catch {
       // unreachable servers are the outbox monitor's business
     }

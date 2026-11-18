@@ -483,6 +483,38 @@ class DataWipeTests(unittest.TestCase):
         with self.assertRaises(HTTPException):
             wipe_api.preview_data_wipe(self.trainer, self.db)
 
+    def test_health_shows_wiped_at_only_after_a_wipe(self):
+        before = data_wipe.health_fields(self.db)
+        self.assertEqual(before["data_epoch"], self.old_epoch)
+        self.assertIsNone(before["data_wiped_at"])
+        report = self.wipe()
+        after = data_wipe.health_fields(self.db)
+        self.assertEqual(after["data_epoch"], report["data_epoch"])
+        self.assertEqual(after["data_wiped_at"], report["data_wiped_at"])
+        self.assertRegex(after["data_wiped_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+
+    def test_a_refused_or_failed_wipe_leaves_no_wiped_at(self):
+        with self.assertRaises(data_wipe.WipeRefused):
+            self.wipe(env={})
+        with patch.object(data_wipe, "write_scanner_settings", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                self.wipe()
+        self.assertIsNone(data_wipe.health_fields(self.db)["data_wiped_at"])
+
+    def test_health_endpoint_includes_both_fields(self):
+        import main
+
+        class FakeSession:
+            def __enter__(self_inner):
+                return self.db
+
+            def __exit__(self_inner, *args):
+                return False
+
+        with patch("database.SessionLocal", FakeSession):
+            payload = main.health_check()
+        self.assertEqual(payload["data_epoch"], self.old_epoch)
+        self.assertIsNone(payload["data_wiped_at"])
     def test_pre_wipe_backup_name_and_failure(self):
         with tempfile.TemporaryDirectory() as folder:
             with self.assertRaises(data_wipe.WipeBackupFailed):

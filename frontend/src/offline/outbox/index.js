@@ -10,6 +10,7 @@ import { createReachability, probe as defaultProbe } from './probe.js'
 import { createReachabilityMonitor } from './monitor.js'
 import { createReplayer } from './replay.js'
 import { createStore, OutboxError } from './store.js'
+import { readStoredEpoch } from '../dataEpoch.js'
 import { collectionAdd } from './ops/collectionAdd.js'
 import { scanUpload } from './ops/scanUpload.js'
 import { wishlistAdd } from './ops/wishlistAdd.js'
@@ -222,7 +223,7 @@ export function createOutbox({
         throw new OutboxError('server_old', 'The server is too old to accept queued items')
       }
       const item = await store.enqueue({
-        ctx: current, type, payload, photos, display, appVersion: appVersion(),
+        ctx: current, type, payload, photos, display, appVersion: appVersion(), dataEpoch: readStoredEpoch(),
       })
       await changed()
       return item

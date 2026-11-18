@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  DATA_EPOCH_KEY, guardProbeWithEpoch, judgeEpoch, observeDataEpoch, onDataWiped, readStoredEpoch, startDataEpochWatch,
-  wipeLocalData,
+  DATA_EPOCH_KEY, deviceHoldsUserData, guardProbeWithEpoch, isStaleItem, judgeEpoch, observeDataEpoch, onDataWiped, readStoredEpoch,
+  startDataEpochWatch, wipeLocalData,
 } from './dataEpoch'
 import { probe } from './outbox/probe'
 
@@ -125,7 +125,7 @@ describe('guardProbeWithEpoch', () => {
     const inner = vi.fn(async () => ({ state: 'reachable', serverInfo: { dataEpoch: 'after' } }))
     const observe = vi.fn(async () => 'wiped')
     expect(await guardProbeWithEpoch(inner, observe)()).toEqual({ state: 'unreachable' })
-    expect(observe).toHaveBeenCalledWith('after')
+    expect(observe).toHaveBeenCalledWith('after', { wipedAt: null })
   })
 
   it('passes a normal probe through and skips the check when unreachable', async () => {
@@ -151,7 +151,7 @@ describe('startDataEpochWatch', () => {
     const stop = startDataEpochWatch({ probe: probeFn, observe, target })
     await Promise.resolve()
     await Promise.resolve()
-    expect(observe).toHaveBeenCalledWith('x')
+    expect(observe).toHaveBeenCalledWith('x', { wipedAt: null })
     await handlers.online()
     expect(probeFn).toHaveBeenCalledTimes(2)
     stop()
@@ -173,5 +173,73 @@ describe('the health probe', () => {
   it('has no epoch from an older server', async () => {
     const result = await probe({ fetchImpl: answer(base), debug: () => false })
     expect(result.serverInfo.dataEpoch).toBeNull()
+  })
+})
+
+describe('a device with no stored epoch', () => {
+  const opts = (storage, extra = {}) => ({
+    storage, session: memoryStorage(), clearAll: vi.fn(async () => {}), redirect: vi.fn(), extraListeners: new Set(), ...extra,
+  })
+
+  it('judges it wiped only when the server was wiped and the device holds user data', () => {
+    expect(judgeEpoch(null, 'e', { wipedAt: '2026-11-20T10:00:00+00:00', holdsUserData: true })).toBe('wiped')
+    expect(judgeEpoch(null, 'e', { wipedAt: '2026-11-20T10:00:00+00:00', holdsUserData: false })).toBe('first')
+    expect(judgeEpoch(null, 'e', { wipedAt: null, holdsUserData: true })).toBe('first')
+  })
+
+  it('drops the queue and logs out a phone with outbox data from before the feature', async () => {
+    const storage = memoryStorage({ token: 'old', user: '{"id":5}' })
+    const o = opts(storage, { wipedAt: '2026-11-20T10:00:00+00:00', holdsUserData: async () => true })
+    expect(await observeDataEpoch('new', o)).toBe('wiped')
+    expect(o.clearAll).toHaveBeenCalledWith({ keepOutbox: false })
+    expect(storage.getItem('token')).toBeNull()
+    expect(readStoredEpoch(storage)).toBe('new')
+    expect(o.redirect).toHaveBeenCalledTimes(1)
+  })
+
+  it('only stores the epoch on a fresh device that holds nothing', async () => {
+    const storage = memoryStorage()
+    const o = opts(storage, { wipedAt: '2026-11-20T10:00:00+00:00', holdsUserData: async () => false })
+    expect(await observeDataEpoch('new', o)).toBe('first')
+    expect(readStoredEpoch(storage)).toBe('new')
+    expect(o.clearAll).not.toHaveBeenCalled()
+    expect(o.redirect).not.toHaveBeenCalled()
+  })
+
+  it('does not even look for user data when the server was never wiped', async () => {
+    const holds = vi.fn(async () => true)
+    const storage = memoryStorage({ token: 't' })
+    expect(await observeDataEpoch('new', opts(storage, { wipedAt: null, holdsUserData: holds }))).toBe('first')
+    expect(holds).not.toHaveBeenCalled()
+    expect(storage.getItem('token')).toBe('t')
+  })
+
+  it('finds user data in a stored sign-in or in the outbox and saved-pages databases', async () => {
+    expect(await deviceHoldsUserData({ storage: memoryStorage({ token: 't' }), listDatabases: async () => [] })).toBe(true)
+    expect(await deviceHoldsUserData({ storage: memoryStorage({ user: '{}' }), listDatabases: async () => null })).toBe(true)
+    expect(await deviceHoldsUserData({ storage: memoryStorage(), listDatabases: async () => [{ name: 'x' }].map(d => d.name) })).toBe(false)
+    expect(await deviceHoldsUserData({ storage: memoryStorage(), listDatabases: async () => ['pokecollector-outbox'] })).toBe(true)
+    expect(await deviceHoldsUserData({ storage: memoryStorage(), listDatabases: async () => ['pokecollector-readcache'] })).toBe(true)
+    expect(await deviceHoldsUserData({ storage: memoryStorage(), listDatabases: async () => null })).toBe(false)
+  })
+
+  it('hands the wipe time of the health answer to the check', async () => {
+    const observe = vi.fn(async () => 'same')
+    const inner = async () => ({ state: 'reachable', serverInfo: { dataEpoch: 'e', dataWipedAt: '2026-11-20T10:00:00+00:00' } })
+    await guardProbeWithEpoch(inner, observe)()
+    expect(observe).toHaveBeenCalledWith('e', { wipedAt: '2026-11-20T10:00:00+00:00' })
+  })
+})
+
+describe('isStaleItem', () => {
+  it('never sends an item queued in another epoch', () => {
+    expect(isStaleItem({ dataEpoch: 'old' }, 'new', null)).toBe(true)
+    expect(isStaleItem({ dataEpoch: 'new' }, 'new', '2026-11-20T10:00:00+00:00')).toBe(false)
+  })
+
+  it('drops an unstamped item when the server was wiped, keeps it when never wiped or when the epoch is unknown', () => {
+    expect(isStaleItem({}, 'new', '2026-11-20T10:00:00+00:00')).toBe(true)
+    expect(isStaleItem({}, 'new', null)).toBe(false)
+    expect(isStaleItem({ dataEpoch: 'old' }, null, '2026-11-20T10:00:00+00:00')).toBe(false)
   })
 })
