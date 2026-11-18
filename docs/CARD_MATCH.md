@@ -338,6 +338,7 @@ On disk (`CARD_MATCH_DIR`, default `/app/data/card-match`; mounted in `docker-co
 | `CARD_MATCH_OPTIONS` | unset | force an option set, e.g. `names+art`; unset = `chosen.json` of this matcher version, else `names+number+text+art+tta` |
 | `SCAN_MATCHER_SHADOW` | off | **nonprod only**: shadow mode (below) |
 | `SCAN_PICTURE_FIRST` | off | default for the admin switch "Picture match first" (below); nonprod sets it to on |
+| `SCAN_MATCHER_ONLY` | off | default for the admin switch "Matcher only (no AI)" (below): no scanner provider is ever contacted |
 | `SCAN_PICTURE_FIRST_TIMEOUT_SECONDS` | `5` (0.5–30) | longest a scan waits for the matcher before the old path takes over |
 | `SCAN_TRACE_READONLY_DIRS` | unset | **nonprod only**: extra folders of scan diagnostics that Scanner lab reads and never writes, as `label=path` entries (`prod=/app/data/scan-traces-prod`); see "Prod's scans in nonprod's Scanner lab" below |
 | `SCAN_MATCHER_INDEX_AFTER_SYNC` | off | after `schedule_after_sync` (card sync → picture warm-up), add the new pictures to the index; nonprod sets it |
@@ -437,6 +438,23 @@ Safety: one matcher run at a time per process (a single worker thread; the match
 Where it is recorded: `recognized._picture` on the scan (path, mechanism, similarity, reason, milliseconds, the decided card, later the card the trainer confirmed) and `picture_match` in the diagnostics trace. The scan review shows "Matched by picture" under the card name to **admins only**; trainers see nothing new except the unsure line and the Wait button.
 
 To turn it off if anything looks wrong: Settings › Scanner › **Picture match first** off (takes effect on the next scan, no restart), or remove `SCAN_PICTURE_FIRST` from the compose file and redeploy. Scans already in the inbox keep their results.
+
+## Matcher only (no AI)
+
+An admin switch, **Settings › Scanner › Matcher only (no AI)** (setting `scan_matcher_only`; default from `SCAN_MATCHER_ONLY`, off). While it is on the app never contacts Ollama, an OpenAI-compatible endpoint or Gemini, and **every scan gets the picture matcher's result however unsure it is**. It works with "Picture match first" on or off. Code: `services/matcher_only.py`, `picture_first.matcher_only_result`, `scan_queue.matcher_only_scan`.
+
+| Matcher says | What the scan holds | `_picture` |
+| --- | --- | --- |
+| decided | exactly the decided result of today (the card first, then the close matches) | `path: decided`, `matcher_only: true`, `forced_pick: false`, `rules_decided: true` |
+| unsure | the matcher's first candidate as the proposed card plus up to 4 alternatives | `path: forced`, `matcher_only: true`, `forced_pick: true`, `forced_card`, `rules_decided: false`, the real `unsure_reason` |
+| no candidate | no matches, so the review shows the card search | `path: no_candidate`, `forced_pick: false` |
+| index, model or OCR not ready | the scan fails with "The picture index isn't ready yet" (admins also read "Build it in Scanner lab."); retry once it is built | none |
+
+Nothing is ever added without the trainer confirming: the review shows a **Check this card** badge on a forced proposal, the alternatives as tappable cards and the search one tap away. The index holds English cards only, so a card in another language gets the nearest English match and the trainer picks.
+
+Diagnostics stay honest. The rules' real outcome is stored as always (a forced scan's `path` is `forced`, never `decided`, and the shadow record keeps `decision: null`), so Scanner lab's decided and wrong numbers are unchanged. On confirmation `_picture.forced_kept` records whether the trainer kept the forced pick or changed it, and `GET /api/card-match/picture-first` returns `counts.forced_shown` and `counts.forced_kept` ("unsure picks shown: N, kept as-is: M") for the last 7 days.
+
+Waiting scans: a scan that was "waiting for the scanner" when the switch went on is released on the next poll of the queue (or the once-a-minute sweep) and finished by the matcher; nothing waits for, retries with or queues for a scanner. A matcher run is given up to 25 seconds here (there is nothing to fall back to).
 
 ## Reading the Scanner lab
 

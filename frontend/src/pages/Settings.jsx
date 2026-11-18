@@ -1523,6 +1523,15 @@ export default function Settings() {
               )}
               {scanDiagnosticsRow}
               {user?.role === 'admin' && (
+                <SettingsRow label={t('settings.matcherOnly')} description={t('settings.matcherOnlyDesc')}>
+                  <Toggle
+                    value={settings.scan_matcher_only === 'true'}
+                    label={t('settings.matcherOnly')}
+                    onChange={val => handleAdminBooleanSettingToggle('scan_matcher_only', val)}
+                  />
+                </SettingsRow>
+              )}
+              {user?.role === 'admin' && (
                 <SettingsRow label={t('settings.pictureFirst')} description={t('settings.pictureFirstDesc')}>
                   <Toggle
                     value={settings.scan_picture_first === 'true'}
