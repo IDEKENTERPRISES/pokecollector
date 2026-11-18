@@ -11,7 +11,7 @@ from api.auth import get_current_user
 from sqlalchemy.orm import Session
 from database import get_db
 from models import CollectionCardPhoto, Setting, UserSetting, User
-from services import challenge, feed as feed_service, notifications
+from services import challenge, feed as feed_service, matcher_only, notifications
 from services.audit import record_audit
 from services.debug_logging import configure_debug_logging, get_debug_log_path
 from services.digital_sets import DIGITAL_SETS_SETTING_KEY, refresh_digital_catalogue_flags
@@ -103,6 +103,8 @@ logger = logging.getLogger(__name__)
 PHOTO_PREFERENCE_SETTING_KEY = "prefer_own_card_photos"
 # Admin switch "Picture match first" (services/picture_first.py); the environment sets the default.
 PICTURE_FIRST_SETTING_KEY = "scan_picture_first"
+# Admin switch "Matcher only (no AI)" (services/matcher_only.py); the environment sets the default.
+MATCHER_ONLY_SETTING_KEY = matcher_only.SETTING_KEY
 
 PER_USER_KEYS = {
     "language", "currency", "price_primary", "price_display",
@@ -188,6 +190,7 @@ ADMIN_ONLY_KEYS = {
     PUBLIC_PROFILES_SETTING_KEY,
     SOCIAL_SETTING_KEY,
     PICTURE_FIRST_SETTING_KEY,
+    MATCHER_ONLY_SETTING_KEY,
 }
 
 DEFAULT_SETTINGS = {
@@ -240,7 +243,7 @@ def _coerce_setting_value(key: str, value) -> str:
         "cross_language_image_fallback", DIGITAL_SETS_SETTING_KEY,
         PUBLIC_PROFILES_SETTING_KEY, SOCIAL_SETTING_KEY, SCAN_DIAGNOSTICS_SETTING_KEY,
         PHOTO_PREFERENCE_SETTING_KEY, SCANNER_GEMINI_FALLBACK_SETTING_KEY,
-        PICTURE_FIRST_SETTING_KEY,
+        PICTURE_FIRST_SETTING_KEY, MATCHER_ONLY_SETTING_KEY,
     }:
         return "true" if str(value).lower() in {"true", "1", "yes", "on"} else "false"
     if key == "portfolio_display_mode":
@@ -264,6 +267,28 @@ def _apply_setting_side_effect(db: Session, key: str, value: str) -> None:
             result["sets_marked"],
             result["cards_marked"],
         )
+
+
+def _finish_matcher_only_change(db: Session, before: bool, value: str, current_user: User, request) -> None:
+    """After the switch is written: refresh this process, audit a real change, and free the scans that were waiting
+    for a scanner (the next poll or the minute sweep runs them through the matcher). Nobody's stored scanner
+    provider, model, endpoint or key is read or written here."""
+    after = str(value).strip().lower() in matcher_only.TRUE
+    matcher_only.set_flag(after)
+    if after != before:
+        record_audit(
+            db,
+            "scanner.matcher_only.updated",
+            request=request,
+            actor=current_user,
+            target_type="scanner",
+            details={"matcher_only": {"before": before, "after": after}},
+            commit=False,
+        )
+    if after:
+        from services.scan_queue import release_waiting_scans
+
+        release_waiting_scans(db)  # commits this transaction too
 
 
 def _is_admin(db: Session, user_id: int) -> bool:
@@ -302,6 +327,8 @@ def _get_user_settings(db: Session, user_id: int) -> dict:
         result[PICTURE_FIRST_SETTING_KEY] = "true" if picture_first.enabled(db) else "false"
     else:
         result.pop(PICTURE_FIRST_SETTING_KEY, None)
+    # Everyone sees whether AI scanning is off (the scanner screens adapt); only an admin can change it.
+    result[MATCHER_ONLY_SETTING_KEY] = "true" if matcher_only.enabled(db) else "false"
 
     if (diagnostics_default_on() or trace_required()) and trace_available():
         # A test server collects from everyone who hasn't switched diagnostics off; a required server
@@ -871,6 +898,9 @@ async def test_scanner_configuration(
     request: Request = None,
 ):
     _require_scanner_writer(current_user)
+    if matcher_only.enabled(db):
+        # Matcher only: the test would call the provider, which is switched off. Nothing is sent or saved.
+        raise HTTPException(status_code=409, detail=matcher_only.MESSAGE)
     if data.accept_degraded_visual_verification and current_user.role != "admin":
         raise HTTPException(
             status_code=403,
@@ -1023,6 +1053,7 @@ def update_settings(
             detail="Use the atomic scanner configuration endpoint for scanner settings.",
         )
     pending_side_effects = []
+    matcher_only_before = None
     for key, value in data.items():
         _refuse_dedicated_setting(key)
         coerced_value = _coerce_setting_value(key, value)
@@ -1031,6 +1062,8 @@ def update_settings(
                 if key in {PUBLIC_PROFILES_SETTING_KEY, SOCIAL_SETTING_KEY}:
                     raise HTTPException(status_code=403, detail="Admin only")
                 continue
+            if key == MATCHER_ONLY_SETTING_KEY:
+                matcher_only_before = matcher_only.enabled(db)
             row = db.query(Setting).filter(Setting.key == key).first()
             if row:
                 row.value = coerced_value
@@ -1049,6 +1082,8 @@ def update_settings(
                 db.add(UserSetting(user_id=current_user.id, key=key, value=coerced_value))
     for key, value in pending_side_effects:
         _apply_setting_side_effect(db, key, value)
+        if key == MATCHER_ONLY_SETTING_KEY:
+            _finish_matcher_only_change(db, bool(matcher_only_before), value, current_user, request)
     db.commit()
     return _get_user_settings(db, current_user.id)
 
@@ -1196,6 +1231,7 @@ def set_setting(
     if key in ADMIN_ONLY_KEYS:
         if current_user.role != "admin":
             raise HTTPException(status_code=403, detail="Admin only")
+        matcher_only_before = matcher_only.enabled(db) if key == MATCHER_ONLY_SETTING_KEY else None
         row = db.query(Setting).filter(Setting.key == key).first()
         if row:
             row.value = value
@@ -1215,5 +1251,7 @@ def set_setting(
             db.add(UserSetting(user_id=current_user.id, key=key, value=value))
     if key in ADMIN_ONLY_KEYS:
         _apply_setting_side_effect(db, *pending_side_effect)
+        if key == MATCHER_ONLY_SETTING_KEY:
+            _finish_matcher_only_change(db, bool(matcher_only_before), value, current_user, request)
     db.commit()
     return {"key": key, "value": value}
