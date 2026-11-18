@@ -91,5 +91,81 @@ class DeviceTests(unittest.TestCase):
         self.assertFalse(view["ocr"]["loaded"])
 
 
+class SwappableOrt(FakeOrt):
+    """A fake whose InferenceSession is a plain attribute, like onnxruntime's, so ``ocr_sessions`` can swap it."""
+
+    def __init__(self, available, cuda_works=True):
+        super().__init__(available, cuda_works)
+        real = FakeOrt.InferenceSession.__get__(self)
+        self.InferenceSession = real
+        self.real = real
+
+
+class OcrSessionTests(unittest.TestCase):
+    def setUp(self):
+        device.reset_for_tests()
+        patcher = mock.patch.dict("os.environ", {"CARD_MATCH_DEVICE": "auto", "CARD_MATCH_GPU_MEM_MB": "600"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def build_ocr(self, ort, names=("det.onnx", "cls.onnx", "rec.onnx")):
+        with device.ocr_sessions(ort) as infos:
+            for name in names:  # what RapidOCR does: ort.InferenceSession(...) for each model
+                ort.InferenceSession(f"/models/ch_PP-OCRv4_{name}", sess_options=None, providers=["whatever"])
+        return infos
+
+    def test_shares_are_planned_to_fit(self):
+        self.assertEqual(device.ocr_share("/m/ch_PP-OCRv4_det_infer.onnx"), 0.2)
+        self.assertEqual(device.ocr_share("/m/ch_ppocr_mobile_v2.0_cls_infer.onnx"), 0.05)
+        self.assertEqual(device.ocr_share("/m/ch_PP-OCRv4_rec_infer.onnx"), 0.2)
+        self.assertLessEqual(device.EMBEDDER_SHARE + sum(device.OCR_SHARES.values()), 1.0)
+
+    def test_healthy_start_puts_embedder_and_all_three_ocr_parts_on_the_gpu_without_a_warning(self):
+        ort = SwappableOrt([device.CUDA, device.CPU])
+        device.create_session(ort, "dino.onnx", None, kind="embedder:dinov2-small")
+        with self.assertNoLogs(device.logger, "WARNING"):
+            infos = self.build_ocr(ort)
+        self.assertEqual([i["device"] for i in infos], ["cuda", "cuda", "cuda"])
+        self.assertEqual(device.summarise_ocr(infos)["device"], "cuda")
+
+    def test_budget_running_out_on_the_third_session_falls_back_without_recursing(self):
+        ort = SwappableOrt([device.CUDA, device.CPU])
+        with mock.patch.dict("os.environ", {"CARD_MATCH_GPU_MEM_MB": "300"}):  # det 60 + cls 15 + rec 60 fits; make it tight
+            device.create_session(ort, "dino.onnx", None, kind="embedder:x")  # 150 MB
+            infos = self.build_ocr(ort, ("det.onnx", "rec.onnx", "rec2.onnx", "rec3.onnx"))
+        devices = [i["device"] for i in infos]
+        self.assertEqual(devices[:2], ["cuda", "cuda"])
+        self.assertIn("cpu", devices)  # ran out, fell back on the real class (no RecursionError)
+        self.assertIs(ort.InferenceSession, ort.real)  # swap restored
+
+    def test_cpu_fallback_while_swapped_uses_the_real_session_class(self):
+        ort = SwappableOrt([device.CPU])  # no CUDA at all: every part takes the CPU path inside the swap
+        infos = self.build_ocr(ort)
+        self.assertEqual([i["device"] for i in infos], ["cpu"] * 3)
+        self.assertIs(ort.InferenceSession, ort.real)
+
+    def test_swap_is_restored_and_shares_released_when_the_engine_fails(self):
+        ort = SwappableOrt([device.CUDA, device.CPU])
+        with self.assertRaises(ValueError):
+            with device.ocr_sessions(ort):
+                ort.InferenceSession("/m/x_det.onnx", sess_options=None, providers=None)
+                raise ValueError("engine failed")
+        self.assertIs(ort.InferenceSession, ort.real)
+        self.assertEqual(device._granted_mb, 0.0)
+
+
+class StatusDoesNotLoadModels(unittest.TestCase):
+    def test_report_never_touches_a_session_factory(self):
+        device.reset_for_tests()
+        ort = FakeOrt([device.CUDA, device.CPU])
+        with mock.patch("services.card_match.embed.get_embedder") as embedder, mock.patch("services.card_match.ocr.get_reader") as reader:
+            view = device.report()
+        embedder.assert_not_called()
+        reader.assert_not_called()
+        self.assertEqual(ort.calls, [])
+        self.assertFalse(view["embedder"]["loaded"])
+        self.assertFalse(view["ocr"]["loaded"])
+
+
 if __name__ == "__main__":
     unittest.main()
