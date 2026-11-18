@@ -32,6 +32,8 @@ python train.py --root $ROOT --until "2026-11-18 07:10"
 python export.py --root $ROOT
 ```
 
+Training stops at the `--until` deadline; it can also be stopped early (kill the processes; `best.pt` is kept and `export.py` uses it).
+
 ### What it does
 - **Classes.** Pictures with the same name and an artwork-window perceptual hash within 10 of 64 bits are one class
   (reprints that pictures cannot separate). 1,000 classes are held out for evaluation.
