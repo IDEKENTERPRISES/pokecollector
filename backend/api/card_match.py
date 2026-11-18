@@ -13,7 +13,7 @@ from database import get_db
 from models import Card, User
 from services import scan_trace, trace_correction, trace_sources
 from services.audit import record_audit
-from services.card_match import MATCHER_VERSION, benchmark, config, custom_models, embed, index as index_module, jobs as jobs_module, learned as learned_module, misses as misses_module, shadow as shadow_module, variants
+from services.card_match import MATCHER_VERSION, benchmark, config, custom_models, embed, index as index_module, jobs as jobs_module, misses as misses_module, shadow as shadow_module, variants
 from services.card_match.model_specs import DEFAULT_MODEL, MODEL_SPECS
 
 router = APIRouter()
@@ -79,7 +79,6 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
         "corrected_labels": trace_correction.corrections_overview(trace_dir)["scans"],
         "trace_sources": _trace_sources(),
         "thresholds": benchmark.thresholds(),
-        "learned": learned_module.summary(),  # version 13 test: the trained decision rule (no weights), or None
     }
 
 
@@ -311,8 +310,8 @@ class BenchmarkRequest(BaseModel):
 @router.post("/benchmark")
 def start_benchmark(body: BenchmarkRequest, current_user: User = Depends(get_current_user)):
     _require_admin(current_user)
-    if body.kind not in ("synthetic", "labelled", "compare-synthetic", "compare-labelled", "ocr-check", "train-learned"):
-        raise HTTPException(status_code=422, detail="kind must be synthetic, labelled, compare-synthetic, compare-labelled, ocr-check or train-learned")
+    if body.kind not in ("synthetic", "labelled", "compare-synthetic", "compare-labelled", "ocr-check"):
+        raise HTTPException(status_code=422, detail="kind must be synthetic, labelled, compare-synthetic, compare-labelled or ocr-check")
     labels = None
     if body.kind in ("compare-labelled", "compare-synthetic") and body.labels:
         try:

@@ -27,7 +27,7 @@ from typing import Callable
 
 import numpy as np
 
-from . import config, constrained, detect as detect_module, learned as learned_module, ocr as ocr_module
+from . import config, constrained, detect as detect_module, ocr as ocr_module
 from .index import CardIndex, tcg_card_id
 
 TOP_K = 20
@@ -114,7 +114,6 @@ class MatchResult:
     timings_ms: dict = field(default_factory=dict)
     text_card: object = None  # the flat card the text was read from (numpy array); not part of ``as_dict``
     card: object = None  # the flat card the picture was embedded from (numpy array); not part of ``as_dict``
-    features: dict | None = None  # version 13 test: the first candidate's numbers (``learned.extract``); not part of ``as_dict``
 
     def as_dict(self) -> dict:
         return {
@@ -382,7 +381,6 @@ class CardMatcher:
         lookup=None, use_number: bool = False, use_text: bool = False, reprint: bool = False, fastread: bool = False,
         number_once: bool = False, corners: bool = False, wholepic: bool = False, trustrejected: bool = False,
         wholeread: bool = False, wholestrict: bool = False, widefirst: bool = False, topname: bool = False,
-        learned=None,
     ) -> None:
         self.index = index
         self.embedder = embedder
@@ -405,7 +403,6 @@ class CardMatcher:
         self.wholestrict = wholestrict  # version 10: a number read only from the whole picture decides only under ``whole_number_problem``'s rules
         self.widefirst = widefirst  # version 12 test: no text in the tight number strips -> read the whole bottom band next
         self.topname = topname  # version 12 test: no line in the name strips -> the name from the top band's lines (needs ``names``)
-        self.learned = learned  # version 13 test: a learned.LearnedRule that may decide a scan the rules left unsure (first candidate only)
         self.reprint = reprint  # break ties between reprints by the artwork-only similarity
         self._row_maps: dict[int, np.ndarray] = {}
 
@@ -598,8 +595,7 @@ class CardMatcher:
             return detection.hires, "photo" if detection.found else "guide_crop_sharp"
         return upright, "crop"
 
-    def match(self, photo_rgb: np.ndarray, *, top_k: int = TOP_K, use_ocr: bool = True, full_photo=None, flat_card=None, review_photo=None,
-              trace_name: str | None = None) -> MatchResult:
+    def match(self, photo_rgb: np.ndarray, *, top_k: int = TOP_K, use_ocr: bool = True, full_photo=None, flat_card=None, review_photo=None) -> MatchResult:
         """``photo_rgb`` is what the card is found and embedded from (the recognition image). ``full_photo`` (the
         stored full-resolution photo), ``review_photo`` (the whole stored review photo, tried when the card is not found
         on ``photo_rgb``) or ``flat_card`` (a stored high-resolution flat card) only sharpen the text
@@ -731,16 +727,6 @@ class CardMatcher:
                                 number_read=bool(ocr_result and ocr_result.number_local and not looked_up),
                                 whole_strict=self.wholestrict, number_source=getattr(ocr_result, "number_source", None) if ocr_result else None,
                                 number_confidence=getattr(ocr_result, "number_confidence", None) if ocr_result else None)
-        rules_mechanism = chosen["mechanism"] if chosen else None
-        extracted = learned_module.extract(candidates, card_info, ocr_info, {"found": detection.found, "confidence": detection.confidence},
-                                           fallback=fallback, reason=None if chosen else reason)
-        learned_p = None
-        if chosen is None and self.learned is not None:  # rules first: the learned rule never overturns a rules decision
-            learned_p = self.learned.decides(extracted, trace_name)  # a benchmark's trace name: cross-fitting; None for a live scan (full model)
-            if learned_p is not None:
-                first = candidates[0]
-                second = max((c["_similarity"] for c in candidates[1:]), default=0.0)
-                chosen = {"candidate": first, "mechanism": learned_module.MECHANISM, "lead": round(first["_similarity"] - second, 4)}
         timings["decide"] = (_timer() - t0) * 1000
         timings["total"] = sum(timings.values())
 
@@ -778,7 +764,6 @@ class CardMatcher:
                        # A quad the finder saw and refused (version 8): why, and its measurements; None when it refused nothing.
                        "rejected": getattr(detection, "rejected", None)},
             ocr=ocr_info, timings_ms={key: round(value, 1) for key, value in timings.items()}, text_card=text_card, card=upright,
-            features={**extracted, "rules_decided": rules_mechanism is not None, "rules_mechanism": rules_mechanism, "probability": learned_p} if extracted else None,
         )
 
 

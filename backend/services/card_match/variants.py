@@ -28,8 +28,6 @@ Options (all measured side by side by the labelled benchmark, "Compare options" 
     (``ocr.OcrReader.read``), and skips the sharp / contrast steps when that finds nothing either;
   - ``topname`` (version 12 test): when the name-line and name-band reads detect no line, the name is taken from the top band's lines
     (``names.pick_top_line``: name-like and known to the catalogue). Both are off by default and only comparison rows.
-  - ``learned`` (version 13 test): a learned decision rule (``learned.py``, trained in Scanner lab from ``learned-decision.json``) may decide
-    a scan the rules left unsure, on its first candidate only; it never overturns a rules decision. Off by default, comparison rows only.
 A label is the options joined by ``+``: ``baseline`` (none), ``names``, ``names+number``, ``names+number+text+tta`` ...
 
 The label in use comes from ``CARD_MATCH_OPTIONS``, else from ``chosen.json`` (written when a comparison
@@ -53,7 +51,6 @@ logger = logging.getLogger(__name__)
 BASE_MODEL = "dinov2-base"
 ART_INDEX = f"{DEFAULT_MODEL}-art"  # the artwork-window index of the default model
 V12_WORDS = ("widefirst", "topname")  # version 12 test options: server only, off by default
-V13_WORDS = ("learned",)  # version 13 test option
 CUSTOM_WORDS = ("custom",)  # the newest uploaded custom picture model
 BEST_V8 = "names+number+text+art+tta+fastread+corners+wholepic"
 IN_USE = "names+number+text+art+tta+fastread+numberonce+corners+wholepic"  # picked on the server with version 9: 67.4% decided, 0 wrong, p95 1,431 ms
@@ -66,17 +63,14 @@ DEFAULT_LABEL = IN_USE  # an unbuilt artwork index is left out, see ``usable``
 KEPT_LABEL = IN_USE + "+wholeread+wholestrict"  # the kept set: 72.1% decided, 0 wrong on the real photos
 NO_STRICT_LABEL = IN_USE + "+wholeread"  # the kept set without ``wholestrict``
 BEST_EXISTING_LABEL = KEPT_LABEL + "+widefirst"  # the best existing row, which the server picked with version 12
-TRAIN_LABEL = NO_STRICT_LABEL + "+topname"  # the rules the learned rule is trained behind (what it judges is what these leave unsure)
 COMPARE_LABELS = (
     "baseline", "names", "names+number", "names+number+text", "names+number+text+art",
     "names+number+text+art+tta+fastread", "names+number+text+art+tta+fastread+corners", IN_USE,
     IN_USE + "+wholeread", IN_USE + "+wholeread+wholestrict",
     # Version 12 test: the kept set with each new reading option, and both.
     KEPT_LABEL + "+widefirst", KEPT_LABEL + "+topname", KEPT_LABEL + "+widefirst+topname",
-    # Version 13 test: the kept set without ``wholestrict`` (the decision rule below stands in for it), with each reading option.
+    # The kept set without ``wholestrict``, with each reading option (picked on 18 Nov 2026: the pin).
     NO_STRICT_LABEL + "+topname", NO_STRICT_LABEL + "+widefirst+topname",
-    # ... and the learned decision rule on top (a row shows "train first" until ``learned-decision.json`` exists).
-    BEST_EXISTING_LABEL + "+learned", NO_STRICT_LABEL + "+topname+learned",
     # The newest uploaded custom picture model in the kept set, and in the kept set without ``wholestrict``.
     KEPT_LABEL + "+custom", NO_STRICT_LABEL + "+custom",
 )
@@ -102,18 +96,15 @@ def _base_compare_title(label: str) -> str:
 
 
 def compare_title(label: str) -> str:
-    """The readable row name; a ``learned`` row says it is cross-fitted (a scan it trained on is judged by a model that never saw it)."""
-    title = _base_compare_title(label)
-    return title + " (cross-fitted)" if parse(label).learned else title
+    """The readable row name."""
+    return _base_compare_title(label)
 
 
 def compare_group(label: str) -> str:
-    """Where a comparison row sits in the picker: history, v10 kept, v12, v13 learned or custom."""
+    """Where a comparison row sits in the picker: history, v10 kept, v12 or custom."""
     options = parse(label)
     if options.custom:
         return "custom"
-    if options.learned:
-        return "v13 learned"
     if options.widefirst or options.topname:
         return "v12"
     if options.wholeread:
@@ -150,13 +141,12 @@ class Options:
     wholestrict: bool = False  # version 10: a number read only from the whole picture decides only under stricter rules (needs wholeread)
     widefirst: bool = False  # version 12 test: no text in the tight number strips -> read the whole bottom band next
     topname: bool = False  # version 12 test: no line in the name strips -> take the name from the top band's lines
-    learned: bool = False  # version 13 test: a learned decision rule may decide a scan the rules left unsure (needs a trained model)
 
     custom: bool = False  # the newest uploaded custom picture model and its two indexes (needs art, so turns it on)
 
     @property
     def label(self) -> str:
-        parts = [name for name in ORDER + V12_WORDS + V13_WORDS + CUSTOM_WORDS if getattr(self, name)]
+        parts = [name for name in ORDER + V12_WORDS + CUSTOM_WORDS if getattr(self, name)]
         return "+".join(parts) or "baseline"
 
 
@@ -171,7 +161,7 @@ def parse(label: str | None) -> Options:
         words.add("wholeread")  # it judges the number the second read produced
     if "wholepic" in words or "trustrejected" in words:
         words.add("corners")  # both act on a quad the finder refused
-    return Options(**{name: name in words for name in ORDER + V12_WORDS + V13_WORDS + CUSTOM_WORDS})
+    return Options(**{name: name in words for name in ORDER + V12_WORDS + CUSTOM_WORDS})
 
 
 def model_name(options: Options, data_dir: Path | None = None) -> str:
@@ -204,13 +194,6 @@ def missing_indexes(options: Options, data_dir: Path | None = None) -> list[str]
         if not status.get("built") or not status.get("count"):
             out.append(name)
     return out
-
-
-def needs_training(options: Options, data_dir: Path | None = None) -> bool:
-    """A ``learned`` option set with no trained decision rule on disk yet."""
-    from . import learned as learned_module
-
-    return bool(getattr(options, "learned", False)) and learned_module.load_document(data_dir) is None
 
 
 def chosen_path(data_dir: Path | None = None) -> Path:
@@ -269,13 +252,6 @@ def build_matcher(options: Options, session_factory, *, data_dir: Path | None = 
         pass
     key = (options, id(index), len(index) if index is not None else 0, id(session_factory), id(ocr_reader), read_hp, str(data_dir),
            tuple(len(ix) for ix in (index_module.get_index(n, data_dir) for n in needed_indexes(options, data_dir)) if ix is not None) if index is not None else ())
-    if options.learned:  # a new training must give a new matcher
-        from . import learned as learned_module
-
-        try:
-            key += (learned_module.model_path(data_dir).stat().st_mtime_ns,)
-        except OSError:
-            key += (None,)
     cached = _matchers.get("last")
     if cached and cached[0] == key:
         return cached[1]
@@ -287,7 +263,7 @@ def build_matcher(options: Options, session_factory, *, data_dir: Path | None = 
 def _build_matcher(options: Options, session_factory, *, data_dir: Path | None = None, ocr_reader=None, read_hp: bool = False):
     """A CardMatcher with these options. Raises RuntimeError when the default index is missing; an extra
     index that is not built leaves that option out (logged), so a half-built setup still answers."""
-    from . import embed, index as index_module, learned as learned_module, lookup as lookup_module, names as names_module, pipeline
+    from . import embed, index as index_module, lookup as lookup_module, names as names_module, pipeline
     from .ocr import get_reader
 
     embedder = embed.get_embedder(model_name(options, data_dir))
@@ -315,7 +291,6 @@ def _build_matcher(options: Options, session_factory, *, data_dir: Path | None =
         corners=options.corners, wholepic=options.wholepic, trustrejected=options.trustrejected,
         wholeread=options.wholeread, wholestrict=options.wholestrict, widefirst=options.widefirst, topname=options.topname,
         lookup=lookup, use_number=options.number, use_text=options.text, reprint=options.reprint,
-        learned=learned_module.load(data_dir) if options.learned else None,
     )
 
 

@@ -45,7 +45,7 @@ class OptionAndRowTests(unittest.TestCase):
 
     def test_the_comparison_rows(self):
         labels = variants.COMPARE_LABELS
-        self.assertLessEqual(len(labels), 19)  # the ten rows of version 10, the version 12 test three and the version 13 test four and the two custom rows
+        self.assertLessEqual(len(labels), 17)  # the ten rows of version 10, the version 12 test three, the two without wholestrict and the two custom rows
         self.assertEqual(len(set(labels)), len(labels))
         for wanted in (IN_USE, IN_USE + "+wholeread", IN_USE + "+wholeread+wholestrict"):
             self.assertIn(wanted, labels)

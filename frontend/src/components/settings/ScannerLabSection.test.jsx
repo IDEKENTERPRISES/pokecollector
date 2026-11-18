@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
-import { CompareTable, LearnedStatus, WrongList, HowConfirmedView, OcrCheckView, PictureFirstView, Report, ShadowView, SourceGroups, TraceSources } from './ScannerLabSection'
+import { CompareTable, WrongList, HowConfirmedView, OcrCheckView, PictureFirstView, Report, ShadowView, SourceGroups, TraceSources } from './ScannerLabSection'
 import { CorrectedNote, CorrectionBarView, CorrectionsProvider, DecidedWrong, MissesView, StripRow, correctionQuestion } from './ScannerLabMisses'
 
 const report = {
@@ -588,7 +588,7 @@ describe('Correcting a confirmed card', () => {
   })
 })
 
-describe('Scanner lab version 13 test: learned decision rule', () => {
+describe('Scanner lab: Tuned / New / Held back columns', () => {
   const ok = (label, groups) => ({ label, status: 'ok', n: 280, top1: 98, top5: 99, top20: 99.6, number_exact: 80, name_read: 90, number_ms_mean: 100, decided: 72.1, decided_right: 100, decided_wrong: 0, p95_ms: 1400, eval_groups: groups })
   const groups = {
     tuned: { n: 200, decided: 150, wrong: 0 },
@@ -614,21 +614,9 @@ describe('Scanner lab version 13 test: learned decision rule', () => {
     expect(html.match(/scanner-lab-group-(new|held_back)"[^>]*>–/g)).toHaveLength(2)
   })
 
-  it('says train first for a learned row with no trained rule, and names the option', () => {
-    const html = render([{ label: 'names+learned', status: 'skipped', missing_indexes: [], train_first: true }])
-    expect(html).toContain('train first')
-    expect(html).toContain('learned decision rule (test)')
-  })
-
   it('explains the three groups', () => {
-    expect(render([ok('names', groups)])).toContain('no group has a wrong decision and at least 20 scans were measured')
-  })
-
-  it('reports the trained rule, or that there is none', () => {
-    expect(renderToStaticMarkup(<LearnedStatus learned={null} />)).toContain('not trained yet')
-    const html = renderToStaticMarkup(<LearnedStatus learned={{ trained_at: '2026-11-18T10:00:00+00:00', threshold: 0.93, usable: true, counts: { scans: 80, first_right: 74, first_wrong: 6 }, cross_validation: { decided_right: 40, decided_wrong: 0, of: 80 } }} />)
-    expect(html).toContain('threshold 0.93')
-    expect(html).toContain('of 80 scans the rules left unsure it would decide 40, 0 wrong')
-    expect(renderToStaticMarkup(<LearnedStatus learned={{ threshold: 1, usable: false, counts: {}, cross_validation: {} }} />)).toContain('no safe threshold')
+    const html = render([ok('names', groups)])
+    expect(html).toContain('never used for tuning')
+    expect(html).not.toContain('cross-fitted')
   })
 })
