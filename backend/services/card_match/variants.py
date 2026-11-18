@@ -77,8 +77,8 @@ COMPARE_LABELS = (
     NO_STRICT_LABEL + "+topname", NO_STRICT_LABEL + "+widefirst+topname",
     # The newest uploaded custom picture model in the kept set, and in the kept set without ``wholestrict``.
     KEPT_LABEL + "+custom", NO_STRICT_LABEL + "+custom",
-    # Version 14 test: the in-use set and the kept set, each with the edge guard.
-    IN_USE + "+edgeguard", KEPT_LABEL + "+edgeguard",
+    # Version 14 test: the set in use (the pin) and the kept set, each with the edge guard.
+    NO_STRICT_LABEL + "+widefirst+topname+edgeguard", KEPT_LABEL + "+edgeguard",
 )
 # The synthetic comparison chooses nothing, so it runs a short list on fewer photos
 # (version 5: 10 rows x 400 photos took 89 minutes).

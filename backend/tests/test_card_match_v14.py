@@ -163,13 +163,14 @@ class OptionTests(unittest.TestCase):
 
     @unittest.skipUnless(DEPS_AVAILABLE, "backend dependencies are not installed")
     def test_the_rows_exist(self):
-        in_use = variants.IN_USE + "+edgeguard"
+        in_use = variants.NO_STRICT_LABEL + "+widefirst+topname+edgeguard"
+        self.assertEqual(variants.parse(in_use).label, in_use)  # the order of the words round-trips
         kept = variants.KEPT_LABEL + "+edgeguard"
         self.assertIn(in_use, variants.COMPARE_LABELS)
         self.assertIn(kept, variants.COMPARE_LABELS)
         self.assertEqual(variants.compare_group(kept), "v14")
         self.assertEqual(variants.compare_title(kept), "Kept set + edgeguard")
-        self.assertEqual(variants.compare_title(in_use), "In-use set (v9) + edgeguard")
+        self.assertEqual(variants.compare_title(in_use), "Kept set without wholestrict + widefirst + topname + edgeguard")
 
 
 @unittest.skipUnless(DEPS_AVAILABLE, "backend dependencies are not installed")

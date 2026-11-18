@@ -593,7 +593,7 @@ The camera guide says "Keep the whole card inside the frame with a little space 
 
 ### What to tick in Compare options
 
-The references always run. Tick the two new rows: **In-use set (v9) + edgeguard** and **Kept set + edgeguard**. Read them against the references (the in-use set and Kept set): decided up or equal, **wrong must stay 0**, top 1 and number read not lower, p95 not worse. The "New" group (the owner's newly confirmed scans, including these seven) is where the gain should show. If a row wins, `pick_winner` can choose it into `chosen.json`; making it the default is then a separate change.
+The references always run. Tick the two new rows: **Kept set without wholestrict + widefirst + topname + edgeguard** (the set in use, the prod pin) and **Kept set + edgeguard**. Read them against the references (the in-use set and Kept set): decided up or equal, **wrong must stay 0**, top 1 and number read not lower, p95 not worse. The "New" group (the owner's newly confirmed scans, including these seven) is where the gain should show. If a row wins, `pick_winner` can choose it into `chosen.json`; making it the default is then a separate change.
 
 ## Learned decision rule (parked)
 
