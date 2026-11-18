@@ -480,7 +480,7 @@ export function LearnedStatus({ learned }) {
   return (
     <p className="text-footnote text-text-secondary" data-testid="scanner-lab-learned">
       Decision rule: trained {learned.trained_at?.slice(0, 16).replace('T', ' ')} UTC on {number(counts.scans)} scans the card finder found ({number(counts.first_right)} right, {number(counts.first_wrong)} wrong first picks; held-back scans never used) ·
-      {number(cv.folds)} folds · threshold {learned.threshold}{learned.usable ? '' : ' (no safe threshold: it will not decide)'} · out of fold, of {number(cv.of)} scans the rules left unsure it would decide {number(cv.decided_right)}, {number(cv.decided_wrong)} wrong
+      {number(cv.folds)} folds · threshold {learned.threshold}{learned.usable ? '' : ' (no safe threshold: it will not decide)'} · out of fold, of {number(cv.of)} scans the rules left unsure it would decide {number(cv.decided_right + cv.decided_wrong)}, {number(cv.decided_wrong)} wrong (each fold uses its own threshold{cv.folds_never_deciding ? `; ${number(cv.folds_never_deciding)} fold(s) too few wrong picks to decide` : ''})
     </p>
   )
 }

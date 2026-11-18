@@ -176,6 +176,57 @@ class TrainingTests(unittest.TestCase):
         self.assertEqual(rule.probability(values, "trace-0.json"), float(learned.predict(fold_model, learned.vector(values))[0]))
         self.assertEqual(rule.probability(values), float(learned.predict(rule.model, learned.vector(values))[0]))
 
+    def named_rows(self, outlier=False):
+        rows = [{**r, "trace": f"trace-{i}.json"} for i, r in enumerate(synthetic_rows())]
+        if outlier:  # one wrong first pick that looks exactly like a good one
+            rows.append({"values": {"similarity": 0.9, "lead": 0.25, "first_number_match": 1.0}, "right": False, "trace": "outlier.json"})
+        return rows
+
+    def test_fold_thresholds_are_chosen_without_their_own_fold(self):
+        rows = self.named_rows()
+        document = learned.train(rows)
+        x = np.array([learned.vector(r["values"]) for r in rows])
+        y = np.array([1.0 if r["right"] else 0.0 for r in rows])
+        names = [r["trace"] for r in rows]
+        fold_of = np.array([document["fold_of"][n] for n in names])
+        self.assertEqual(len(document["fold_thresholds"]), len(document["fold_models"]))
+        for fold, threshold in enumerate(document["fold_thresholds"]):
+            keep = fold_of != fold
+            l2, expected, _ = learned._choose(x[keep], y[keep], [n for n, k in zip(names, keep) if k], np.ones(int(keep.sum()), dtype=bool), learned.SAFETY_MARGIN, learned.FOLDS)
+            self.assertEqual(threshold, expected)
+            self.assertEqual(document["fold_models"][fold], learned.fit(x[keep], y[keep], document["cross_validation"]["fold_l2"][fold]))
+            self.assertEqual(document["cross_validation"]["fold_l2"][fold], l2)
+
+    def test_a_wrong_training_scan_can_be_decided_and_is_counted_wrong(self):
+        rows = self.named_rows(outlier=True)
+        document = learned.train(rows)
+        rule = learned.LearnedRule(document)
+        self.assertGreaterEqual(document["cross_validation"]["decided_wrong"], 1)  # no longer 0 by construction
+        decided_wrong = 0
+        for row in rows:
+            p = rule.decides({"values": row["values"], "eligible": True}, row["trace"])
+            decided_wrong += 1 if p is not None and not row["right"] else 0
+        self.assertEqual(decided_wrong, document["cross_validation"]["decided_wrong"])  # the comparison sees what the summary says
+        self.assertIsNotNone(rule.decides({"values": rows[-1]["values"], "eligible": True}, "outlier.json"))
+
+    def test_new_and_live_scans_use_the_full_model_and_threshold(self):
+        document = learned.train(self.named_rows())
+        rule = learned.LearnedRule(document)
+        self.assertEqual(rule.threshold_for(None), document["threshold"])
+        self.assertEqual(rule.threshold_for("never-seen.json"), document["threshold"])
+        self.assertEqual(rule.threshold_for("trace-3.json"), document["fold_thresholds"][document["fold_of"]["trace-3.json"]])
+
+    def test_a_fold_with_too_few_wrong_picks_never_decides(self):
+        rows = synthetic_rows(40, 2)
+        rows = [{**r, "trace": f"t-{i}.json"} for i, r in enumerate(rows)]
+        document = learned.train(rows)
+        self.assertGreaterEqual(document["cross_validation"]["folds_never_deciding"], 1)
+        self.assertIn(1.0, document["fold_thresholds"])
+        rule = learned.LearnedRule(document)
+        good = {"values": {"similarity": 0.9, "lead": 0.25, "first_number_match": 1.0}, "eligible": True}
+        never = next(n for n, f in document["fold_of"].items() if document["fold_thresholds"][f] == 1.0)
+        self.assertIsNone(rule.decides(good, never))
+
     def test_saved_and_loaded_without_weights_in_the_summary(self):
         document = learned.train(synthetic_rows())
         with tempfile.TemporaryDirectory() as tmp:

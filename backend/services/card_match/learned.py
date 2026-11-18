@@ -207,6 +207,45 @@ def train(rows: list[dict], *, features=FEATURES, margin: float = SAFETY_MARGIN,
     if wrong < MIN_WRONG:
         raise ValueError(f"Only {wrong} wrong first picks among {len(rows)} scans: a threshold cannot be checked with fewer than {MIN_WRONG}")
     assignment = assign_folds(names, y, folds)
+    n_folds = int(assignment.max()) + 1
+    l2, threshold, probabilities = _choose(x, y, names, unsure, margin, folds)
+    usable = threshold <= MAX_THRESHOLD
+    # Nested: each outer fold's own l2 and threshold come from the other folds alone (the same inner cross-validation), so the
+    # out-of-fold numbers below are not guaranteed to be 0 wrong by construction. A fold whose training part has too few wrong
+    # first picks gets threshold 1.0 and never decides.
+    fold_models, fold_thresholds, fold_l2 = [], [], []
+    nested = np.zeros(len(y))
+    for fold in range(n_folds):
+        keep = assignment != fold
+        inner = _choose(x[keep], y[keep], [n for n, k in zip(names, keep) if k], unsure[keep], margin, folds)
+        fold_l2.append(inner[0] if inner else l2)
+        model = fit(x[keep], y[keep], fold_l2[-1])
+        fold_models.append(model)
+        fold_thresholds.append(inner[1] if inner else 1.0)
+        held = ~keep
+        if held.any():
+            nested[held] = predict(model, x[held])
+    cutoffs = np.array([fold_thresholds[f] for f in assignment])
+    would = (nested >= cutoffs) & unsure & (cutoffs <= MAX_THRESHOLD)
+    return {
+        "version": 3, "features": list(features), "model": fit(x, y, l2), "threshold": threshold, "usable": usable, "margin": margin,
+        "fold_models": fold_models, "fold_thresholds": [float(t) for t in fold_thresholds], "fold_of": {name: int(f) for name, f in zip(names, assignment)},
+        "cross_validation": {
+            "folds": n_folds, "l2": l2, "fold_l2": fold_l2, "nested": True,
+            "folds_never_deciding": int(sum(1 for t in fold_thresholds if t > MAX_THRESHOLD)),
+            "decided_right": int((would & (y == 1)).sum()), "decided_wrong": int((would & (y == 0)).sum()), "of": int(unsure.sum()),
+        },
+        "counts": {"scans": len(rows), "eligible": len(rows), "unsure": int(unsure.sum()), "first_right": int(y.sum()), "first_wrong": wrong},
+        "trained_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+    }
+
+
+def _choose(x, y, names, unsure, margin, folds):
+    """The L2 strength and threshold for these rows by cross-validation (what ``train`` does on the whole set, and again on each fold's
+    training part). Returns ``(l2, threshold, out_of_fold_probabilities)``; None when there are too few wrong first picks to check one."""
+    if int((y == 0).sum()) < MIN_WRONG:
+        return None
+    assignment = assign_folds(names, y, folds)
     best = None
     for l2 in L2_GRID:
         probabilities = cross_validate(x, y, l2, folds, assignment)
@@ -214,21 +253,7 @@ def train(rows: list[dict], *, features=FEATURES, margin: float = SAFETY_MARGIN,
         decided = int(((probabilities >= threshold) & (y == 1) & unsure).sum())
         if best is None or decided > best[0] or (decided == best[0] and l2 > best[1]):
             best = (decided, l2, threshold, probabilities)
-    decided, l2, threshold, probabilities = best
-    usable = threshold <= MAX_THRESHOLD
-    n_folds = int(assignment.max()) + 1
-    fold_models = [fit(x[assignment != fold], y[assignment != fold], l2) for fold in range(n_folds)]
-    would = (probabilities >= threshold) & unsure
-    return {
-        "version": 2, "features": list(features), "model": fit(x, y, l2), "threshold": threshold, "usable": usable, "margin": margin,
-        "fold_models": fold_models, "fold_of": {name: int(f) for name, f in zip(names, assignment)},
-        "cross_validation": {
-            "folds": n_folds, "l2": l2, "decided_right": int((would & (y == 1)).sum()), "decided_wrong": int((would & (y == 0)).sum()),
-            "of": int(unsure.sum()),
-        },
-        "counts": {"scans": len(rows), "eligible": len(rows), "unsure": int(unsure.sum()), "first_right": int(y.sum()), "first_wrong": wrong},
-        "trained_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-    }
+    return best[1], best[2], best[3]
 
 
 # ── Where it lives, and using it ────────────────────────────────────────────
@@ -264,6 +289,7 @@ def summary(data_dir: Path | None = None) -> dict | None:
     keys = ("trained_at", "threshold", "usable", "margin", "cross_validation", "counts", "matcher_version", "trained_with")
     out = {key: document.get(key) for key in keys}
     out["cross_fitted_scans"] = len(document.get("fold_of") or {})
+    out["fold_thresholds"] = document.get("fold_thresholds")
     return out
 
 
@@ -275,24 +301,36 @@ class LearnedRule:
         self.usable = bool(document.get("usable", True)) and self.threshold <= MAX_THRESHOLD
         self.fold_models = list(document.get("fold_models") or [])
         self.fold_of = dict(document.get("fold_of") or {})
+        self.fold_thresholds = [float(t) for t in (document.get("fold_thresholds") or [])]
+
+    def _fold(self, trace: str | None) -> int | None:
+        fold = self.fold_of.get(trace) if trace else None
+        return fold if fold is not None and 0 <= fold < len(self.fold_models) else None
 
     def model_for(self, trace: str | None) -> dict:
         """Cross-fitting: a scan that was in training is judged by the fold model trained without it; any other scan (held back, confirmed
         after training, or a live scan: ``trace`` None) by the full model."""
-        fold = self.fold_of.get(trace) if trace else None
-        if fold is not None and 0 <= fold < len(self.fold_models):
-            return self.fold_models[fold]
-        return self.model
+        fold = self._fold(trace)
+        return self.model if fold is None else self.fold_models[fold]
+
+    def threshold_for(self, trace: str | None) -> float:
+        """The fold's own threshold (chosen without that fold) for a training scan, else the full-data threshold. A fold with too few wrong
+        first picks has 1.0 and never decides. A file from before per-fold thresholds uses the full threshold for everything."""
+        fold = self._fold(trace)
+        return self.threshold if fold is None or fold >= len(self.fold_thresholds) else self.fold_thresholds[fold]
 
     def probability(self, values: dict, trace: str | None = None) -> float:
         return float(predict(self.model_for(trace), vector(values, self.features))[0])
 
     def decides(self, extracted: dict | None, trace: str | None = None) -> float | None:
-        """The probability when this rule would decide the scan (usable, eligible, at or above the threshold), else None."""
-        if not self.usable or not extracted or not extracted.get("eligible"):
+        """The probability when this rule would decide the scan (eligible, at or above the threshold that goes with its model), else None."""
+        if not extracted or not extracted.get("eligible"):
+            return None
+        threshold = self.threshold_for(trace)
+        if threshold > MAX_THRESHOLD or (self._fold(trace) is None and not self.usable):
             return None
         p = self.probability(extracted["values"], trace)
-        return p if p >= self.threshold and not math.isnan(p) else None
+        return p if p >= threshold and not math.isnan(p) else None
 
 
 def load(data_dir: Path | None = None) -> LearnedRule | None:
