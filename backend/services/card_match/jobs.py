@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from . import MATCHER_VERSION, config
+from . import MATCHER_VERSION, config, lifecycle
 from .model_specs import DEFAULT_MODEL
 
 logger = logging.getLogger(__name__)
@@ -67,7 +67,8 @@ class MatchJobs:
         try:
             config.lower_priority()
             config.apply_thread_caps()
-            summary = work()
+            with lifecycle.in_use():  # a job is use for its whole length: the GPU sessions are never unloaded under it
+                summary = work()
         except Exception as exc:
             logger.exception("Card-match job %s failed", kind)
             error = str(exc) or exc.__class__.__name__

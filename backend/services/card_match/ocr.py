@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from . import config, device, lookup as lookup_module
+from . import config, device, lifecycle, lookup as lookup_module
 
 logger = logging.getLogger(__name__)
 
@@ -397,12 +397,25 @@ class OcrReader:
     picture search knows); otherwise the turned card is tried too when nothing complete came out.
     """
 
+    engine = None  # RapidOCR; None after an idle unload (the next read builds it again)
+    _gpu_wrappers: tuple = ()
+    _load_lock = threading.RLock()
+
     def __init__(self, threads: int | None = None) -> None:
+        self._threads = threads
+        self._lock = threading.Lock()
+        self._whole: dict[tuple, list[Line]] = {}
+        self.mode = "detect"  # "fixed": version 4's fixed strips only (the OCR check compares the two)
+        self._load_engine()
+        lifecycle.register(self)
+
+    def _load_engine(self) -> None:
+        """Build the RapidOCR engine (its sessions on the GPU when there is one). Also runs again after an idle unload."""
         from rapidocr_onnxruntime import RapidOCR
 
         import onnxruntime as ort
 
-        count = threads or config.threads()
+        count = self._threads or config.threads()
         # RapidOCR picks its own providers and cannot cap GPU memory, so its sessions are built through device.py
         # (CUDA with a memory cap when there is a GPU, the CPU otherwise).
         def build():
@@ -413,17 +426,39 @@ class OcrReader:
 
         try:
             with device.ocr_sessions(ort) as infos:
-                self.engine = build()
+                engine = build()
             info = device.summarise_ocr(infos)
+            self._gpu_wrappers = tuple(info["wrappers"])
+            self.engine = engine
         except Exception as exc:  # noqa: BLE001 - never leave OCR unusable: build it plainly (RapidOCR's own CPU sessions)
             logger.warning("Card matcher: OCR could not be set up through device.py (%s); using RapidOCR's own CPU sessions", exc)
             self.engine = build()
+            self._gpu_wrappers = ()
             info = device.summarise_ocr([{"device": "cpu", "reason": f"device setup failed: {type(exc).__name__}", "granted_mb": 0.0}])
         self.device = info["device"]
         self.fallback_reason = info["reason"]
-        self._lock = threading.Lock()
-        self._whole: dict[tuple, list[Line]] = {}
-        self.mode = "detect"  # "fixed": version 4's fixed strips only (the OCR check compares the two)
+
+    def _ensure_engine(self):
+        """The engine, built again first if an idle unload released it. Call inside ``lifecycle.in_use()``."""
+        engine = self.engine
+        if engine is None:
+            with self._load_lock:
+                if self.engine is None:
+                    self._load_engine()
+            engine = self.engine
+        return engine
+
+    def unload(self) -> bool:
+        """Release the GPU sessions after an idle spell (called by lifecycle, never during a use). True when released."""
+        with self._load_lock:
+            if self.engine is None or not self._gpu_wrappers:
+                return False
+            for wrapper in self._gpu_wrappers:
+                wrapper.close()
+            self._gpu_wrappers = ()
+            self.engine = None
+            device.mark_unloaded("ocr")
+            return True
 
     def warm_up(self) -> float:
         """One dummy read of a picture with some text (so the detector and the recogniser both run). Returns seconds."""
@@ -445,12 +480,13 @@ class OcrReader:
         import cv2
 
         side = 480 if self.mode == "fixed" else int(min(WHOLE_SIDE, max(480, max(picture.shape[:2]))))
-        with self._lock:
-            self.engine.text_det.preprocess_op.limit_side_len = side
+        with lifecycle.in_use(), self._lock:
+            engine = self._ensure_engine()
+            engine.text_det.preprocess_op.limit_side_len = side
             if low:  # fainter text counts: glossy and sleeved cards read with less contrast
-                found, _timing = self.engine(cv2.cvtColor(picture, cv2.COLOR_RGB2BGR), box_thresh=0.35, text_score=0.4)
+                found, _timing = engine(cv2.cvtColor(picture, cv2.COLOR_RGB2BGR), box_thresh=0.35, text_score=0.4)
             else:
-                found, _timing = self.engine(cv2.cvtColor(picture, cv2.COLOR_RGB2BGR), box_thresh=0.5, text_score=0.5)
+                found, _timing = engine(cv2.cvtColor(picture, cv2.COLOR_RGB2BGR), box_thresh=0.5, text_score=0.5)
         lines = []
         for item in found or []:
             xs, ys = [point[0] for point in item[0]], [point[1] for point in item[0]]
@@ -508,8 +544,8 @@ class OcrReader:
         strip = cv2.resize(card[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)], None, fx=self._zoom(card, zoom), fy=self._zoom(card, zoom), interpolation=cv2.INTER_CUBIC)
         if sharpen:
             strip = prepare(strip, "sharp")
-        with self._lock:
-            found, _timing = self.engine(cv2.cvtColor(strip, cv2.COLOR_RGB2BGR))
+        with lifecycle.in_use(), self._lock:
+            found, _timing = self._ensure_engine()(cv2.cvtColor(strip, cv2.COLOR_RGB2BGR))
         ordered = sorted(found or [], key=lambda item: min(point[0] for point in item[0]))
         return [(str(item[1]), float(max(point[1] for point in item[0]) - min(point[1] for point in item[0]))) for item in ordered]
 

@@ -34,8 +34,10 @@ services:
     environment:
       # Picture matcher on the GPU (auto = GPU when it works, else CPU), kept warm: models load at startup and run one dummy scan.
       CARD_MATCH_DEVICE: auto
-      CARD_MATCH_GPU_MEM_MB: "600"
+      CARD_MATCH_GPU_MEM_MB: "1024"
       CARD_MATCH_WARM: "1"
+      # Release the GPU sessions after 10 idle minutes (the card is shared with Jellyfin); the scan screen warms them again.
+      CARD_MATCH_IDLE_UNLOAD_MINUTES: "10"
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
       TELEGRAM_ENABLED: "false"
       # Wrapped opens outside 1 December to 15 January here, for testing (docs/NONPROD.md).

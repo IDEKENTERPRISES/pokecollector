@@ -16,7 +16,7 @@ from typing import Protocol, Sequence
 
 import numpy as np
 
-from . import config, custom_models, device
+from . import config, custom_models, device, lifecycle
 from .model_specs import DEFAULT_MODEL, MODEL_SPECS
 
 
@@ -95,11 +95,31 @@ class OnnxEmbedder:
         options.inter_op_num_threads = 1
         options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        self.session, info = device.create_session(ort, str(self.path), options, kind=f"embedder:{name}", share=device.EMBEDDER_SHARE)
-        self.device = info["device"]
-        self.fallback_reason = info["reason"]
-        self.input_name = self.session.get_inputs()[0].name
+        self._ort, self._options = ort, options
         self._run_lock = threading.Lock()  # one run at a time per model: bounds the GPU arena
+        self._load_lock = threading.RLock()
+        self.session = None
+        self._open()
+        lifecycle.register(self)
+
+    def _open(self) -> None:
+        """Create the session (on the GPU when there is one). Also runs again after an idle unload."""
+        with self._load_lock:
+            self.session, info = device.create_session(self._ort, str(self.path), self._options, kind=f"embedder:{self.name}", share=device.EMBEDDER_SHARE)
+            self.device = info["device"]
+            self.fallback_reason = info["reason"]
+            self.input_name = self.session.get_inputs()[0].name
+
+    def unload(self) -> bool:
+        """Release the GPU session after an idle spell (called by lifecycle, never during a use). The object stays usable:
+        the next ``embed`` opens the session again. A CPU session is left alone. True when something was released."""
+        with self._load_lock:
+            if not isinstance(self.session, device.GpuSession):
+                return False
+            self.session.close()
+            self.session = None
+            device.mark_unloaded(f"embedder:{self.name}")
+            return True
 
     def warm_up(self) -> float:
         """One dummy inference, so the first real scan does not pay for CUDA or session start-up. Returns seconds."""
@@ -116,13 +136,17 @@ class OnnxEmbedder:
 
     def embed(self, images: Sequence[np.ndarray], batch_size: int = 8) -> np.ndarray:
         out = []
-        if self.device == "cuda":
-            batch_size = min(batch_size, device.MAX_GPU_BATCH)
-        for start in range(0, len(images), batch_size):
-            batch = np.stack([self.prepare(image) for image in images[start:start + batch_size]])
-            with self._run_lock:
-                hidden = self.session.run(None, {self.input_name: batch})[0]
-            out.append(np.asarray(hidden[:, 0, :], dtype=np.float32))  # the CLS token
+        with lifecycle.in_use():
+            with self._load_lock:
+                if self.session is None:
+                    self._open()
+            if self.device == "cuda":
+                batch_size = min(batch_size, device.MAX_GPU_BATCH)
+            for start in range(0, len(images), batch_size):
+                batch = np.stack([self.prepare(image) for image in images[start:start + batch_size]])
+                with self._run_lock:
+                    hidden = self.session.run(None, {self.input_name: batch})[0]
+                out.append(np.asarray(hidden[:, 0, :], dtype=np.float32))  # the CLS token
         if not out:
             return np.zeros((0, self.dim), dtype=np.float32)
         return l2_normalise(np.concatenate(out))

@@ -13,7 +13,7 @@ from database import get_db
 from models import Card, User
 from services import scan_trace, trace_correction, trace_sources
 from services.audit import record_audit
-from services.card_match import MATCHER_VERSION, benchmark, config, custom_models, embed, index as index_module, device as device_module, jobs as jobs_module, misses as misses_module, shadow as shadow_module, variants
+from services.card_match import MATCHER_VERSION, benchmark, config, custom_models, embed, index as index_module, device as device_module, jobs as jobs_module, warmup, misses as misses_module, shadow as shadow_module, variants
 from services.card_match.model_specs import DEFAULT_MODEL, MODEL_SPECS
 
 router = APIRouter()
@@ -46,6 +46,13 @@ def _compare_rows(kind: str) -> list[dict]:
          "seconds": (times.get(label) or {}).get("seconds"), "measured_at": (times.get(label) or {}).get("at")}
         for label in labels
     ]
+
+
+@router.post("/warm")
+def warm_card_matcher(current_user: User = Depends(get_current_user)):
+    """Any signed-in user's scanner screen calls this when it opens: loads the picture model and OCR in the background
+    (so the first scan is not slow after an idle unload) and returns at once. Rate-limited; a no-op unless CARD_MATCH_WARM is on."""
+    return warmup.request_warm()
 
 
 @router.get("/status")
