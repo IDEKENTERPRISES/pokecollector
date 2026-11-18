@@ -98,20 +98,38 @@ def gpu_busy(reserved_bytes):
     return others > 2800  # the desktop alone is ~1.4 GB; a game is much more
 
 
-class Bank(torch.utils.data.Dataset):
-    def __init__(self, files, clean_card, clean_art):
-        self.items = []
-        for f in files:
-            self.items += pickle.load(open(f, "rb"))
-        self.cc, self.ca = clean_card, clean_art
+class Bank(torch.utils.data.IterableDataset):
+    """Streams phone-like views from the shard files (each loader worker takes every n-th shard, shuffles a
+    buffer of a few shards). The clean pictures are read from the memmaps inside the worker."""
 
-    def __len__(self):
-        return len(self.items)
+    def __init__(self, files, data_dir, seed):
+        self.files, self.data_dir, self.seed = files, str(data_dir), seed
 
-    def __getitem__(self, i):
-        row, cls, cj, aj = self.items[i]
-        return (torch.from_numpy(common.from_jpg(cj).copy()), torch.from_numpy(common.from_jpg(aj).copy()),
-                torch.from_numpy(np.array(self.cc[row])), torch.from_numpy(np.array(self.ca[row])), cls)
+    def __iter__(self):
+        info = torch.utils.data.get_worker_info()
+        wid, nw = (info.id, info.num_workers) if info else (0, 1)
+        rnd = random.Random(self.seed * 100 + wid)
+        cc = np.load(Path(self.data_dir) / "clean_card.npy", mmap_mode="r")
+        ca = np.load(Path(self.data_dir) / "clean_art.npy", mmap_mode="r")
+        mine = self.files[wid::nw]
+        rnd.shuffle(mine)
+        for k in range(0, len(mine), 3):
+            buf = []
+            for f in mine[k:k + 3]:
+                buf += pickle.load(open(f, "rb"))
+            rnd.shuffle(buf)
+            for row, cls, cj, aj in buf:
+                yield (torch.from_numpy(common.from_jpg(cj).copy()), torch.from_numpy(common.from_jpg(aj).copy()),
+                       torch.from_numpy(np.array(cc[row])), torch.from_numpy(np.array(ca[row])), cls)
+
+
+def count_views(files, cache={}):
+    n = 0
+    for f in files:
+        if f not in cache:
+            cache[f] = len(pickle.load(open(f, "rb")))
+        n += cache[f]
+    return n
 
 
 def arcface(emb, protos, target, s, m):
@@ -213,13 +231,14 @@ def main():
     done = False
     while not done and time.time() < deadline:
         files = sorted(glob.glob(str(runs / "bank" / "*.pkl")))
-        ds = Bank(files, cc, ca)
-        if len(ds) < a.min_views:
-            P("waiting for views", len(ds))
+        nviews = count_views(files)
+        if nviews < a.min_views:
+            P("waiting for views", nviews)
             time.sleep(60)
             continue
-        P("epoch over", len(ds), "views")
-        dl = torch.utils.data.DataLoader(ds, batch_size=a.bs, shuffle=True, num_workers=a.workers, drop_last=True)
+        P("epoch over", nviews, "views")
+        ds = Bank(files, data, state["step"])
+        dl = torch.utils.data.DataLoader(ds, batch_size=a.bs, num_workers=a.workers, drop_last=True)
         net.train()
         tl = []
         for cu, au, ccl, cal, cls in dl:
