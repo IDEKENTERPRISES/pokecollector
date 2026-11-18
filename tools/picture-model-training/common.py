@@ -16,6 +16,8 @@ from services.card_match.embed import preprocess  # noqa: E402
 MEAN = np.array((0.485, 0.456, 0.406), dtype=np.float32).reshape(1, 1, 3)
 STD = np.array((0.229, 0.224, 0.225), dtype=np.float32).reshape(1, 1, 3)
 SIZE = 224
+# a 1024x1368 photo instead of 1536x2048: ~2.3x cheaper to make, and the finder shrinks photos to 900 px anyway
+synthetic.PHOTO_W, synthetic.PHOTO_H = 1024, 1368
 
 
 def to_tensor_array(img_rgb):
@@ -70,6 +72,37 @@ def degrade_flat(card, rnd):
     return cv2.imdecode(enc, 1)[..., ::-1].copy()
 
 
+def hard_extras(img, rnd):
+    """Extra real-photo trouble on top of the synthetic photo: motion blur, defocus, bigger framing errors,
+    colour cast + noise, a finger/shadow patch over part of the card, heavy JPEG."""
+    h, w = img.shape[:2]
+    if rnd.random() < 0.25:
+        k = rnd.choice([7, 11, 15])
+        ker = np.zeros((k, k), np.float32)
+        ker[k // 2, :] = 1.0 / k
+        rot = cv2.getRotationMatrix2D((k / 2 - 0.5, k / 2 - 0.5), rnd.uniform(0, 180), 1)
+        ker = cv2.warpAffine(ker, rot, (k, k)); ker /= max(ker.sum(), 1e-6)
+        img = cv2.filter2D(img, -1, ker)
+    if rnd.random() < 0.15:
+        img = cv2.GaussianBlur(img, (0, 0), rnd.uniform(2.0, 4.0))
+    if rnd.random() < 0.2:
+        img = crop_jitter(img, rnd, 0.10)
+    if rnd.random() < 0.3:
+        f = img.astype(np.float32) * np.array([rnd.uniform(0.8, 1.2) for _ in range(3)], np.float32)
+        f += np.random.default_rng(rnd.randrange(1 << 30)).standard_normal(img.shape) * rnd.uniform(4, 14)
+        img = np.clip(f, 0, 255).astype(np.uint8)
+    if rnd.random() < 0.1:
+        patch = img.copy()
+        cx, cy = rnd.randrange(w), rnd.randrange(h)
+        cv2.ellipse(patch, (cx, cy), (rnd.randrange(w // 12, w // 5), rnd.randrange(h // 14, h // 6)), rnd.uniform(0, 180), 0, 360,
+                    rnd.choice([(200, 160, 140), (60, 50, 50), (120, 120, 125)]), -1)
+        img = cv2.addWeighted(patch, 0.8, img, 0.2, 0)
+    if rnd.random() < 0.15:
+        ok, enc = cv2.imencode(".jpg", img[..., ::-1], [cv2.IMWRITE_JPEG_QUALITY, rnd.choice([25, 35, 50])])
+        img = cv2.imdecode(enc, 1)[..., ::-1].copy()
+    return img
+
+
 def phone_view(card_rgb: np.ndarray, seed: int):
     """One phone-like training view of a clean 630x880 card: returns (flat card 630x880 RGB, art window)."""
     rnd = random.Random(seed)
@@ -82,6 +115,7 @@ def phone_view(card_rgb: np.ndarray, seed: int):
         flat = det.card
     if rnd.random() < 0.7:
         flat = crop_jitter(flat, rnd, 0.05)
+    flat = hard_extras(flat, rnd)
     if rnd.random() < 0.25:
         flat = sleeve_shine(flat, rnd)
     if rnd.random() < 0.2:

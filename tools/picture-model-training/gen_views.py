@@ -13,6 +13,7 @@ def worker(wid, a):
     buf, shard = [], 0
     count = 0
     while True:
+        if a.limit and count >= a.limit: break
         if (out / "STOP").exists() or (a.until and time.time() > a.until): break
         row = rnd.choice(rows)
         seed = rnd.randrange(1 << 30)
@@ -20,10 +21,10 @@ def worker(wid, a):
         buf.append((row, cards[row]["class"], common.to_jpg(common.resize224(flat)), common.to_jpg(common.resize224(art))))
         count += 1
         if len(buf) >= a.shard:
-            tmp = out / f"w{wid}_{shard:05d}.tmp"; pickle.dump(buf, open(tmp, "wb")); os.replace(tmp, out / f"w{wid}_{shard:05d}.pkl")
+            tmp = out / f"s{a.seed}_w{wid}_{shard:05d}.tmp"; pickle.dump(buf, open(tmp, "wb")); os.replace(tmp, out / f"s{a.seed}_w{wid}_{shard:05d}.pkl")
             buf, shard = [], shard + 1
     if buf:
-        tmp = out / f"w{wid}_{shard:05d}.tmp"; pickle.dump(buf, open(tmp, "wb")); os.replace(tmp, out / f"w{wid}_{shard:05d}.pkl")
+        tmp = out / f"s{a.seed}_w{wid}_{shard:05d}.tmp"; pickle.dump(buf, open(tmp, "wb")); os.replace(tmp, out / f"s{a.seed}_w{wid}_{shard:05d}.pkl")
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()

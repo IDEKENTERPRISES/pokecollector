@@ -7,3 +7,4 @@ opencv-python-headless==5.1.0.95
 numpy==2.2.6
 pillow==12.3.0
 scipy==1.15.3
+tzdata
