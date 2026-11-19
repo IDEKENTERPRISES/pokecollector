@@ -320,7 +320,10 @@ class WarmUpOrderTests(DataDirCase):
 @skip
 class ComposeTests(unittest.TestCase):
     def text(self, name):
-        return (ROOT / name).read_text(encoding="utf-8")
+        path = ROOT / name
+        if not path.exists():  # the backend image has no compose files (CI runs the tests inside it)
+            self.skipTest(f"{name} is not in this checkout")
+        return path.read_text(encoding="utf-8")
 
     def test_prod_pins_the_calibrated_custom_model(self):
         text = self.text("docker-compose.portainer.yml")
