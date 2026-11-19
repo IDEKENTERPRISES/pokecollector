@@ -432,6 +432,11 @@ export function CompareTable({ report, title, order }) {
                 <td className="pr-2">
                   {describeOptions(row.label)}
                   {row.reference && <span className="text-text-secondary" data-testid="scanner-lab-row-reference"> · reference</span>}
+                  {row.serverocr && (
+                    <span className="block text-caption1 text-text-secondary" data-testid="scanner-lab-row-serverocr">
+                      second try ran on {number(row.serverocr.ran)} scans, {number(row.serverocr.complete)} got a complete number, median {row.serverocr.median_ms != null ? `${number(row.serverocr.median_ms)} ms` : '–'}, 95th percentile {row.serverocr.p95_ms != null ? `${number(row.serverocr.p95_ms)} ms` : '–'}
+                    </span>
+                  )}
                   {row.status === 'previous' && (
                     <span className="block text-caption1" data-testid="scanner-lab-row-previous-note">
                       previous run, {row.date?.slice(0, 10)}
@@ -942,6 +947,7 @@ export default function ScannerLabSection() {
           <Row label="Index built" value={index.built ? `${index.built_at?.slice(0, 16).replace('T', ' ')} UTC · ${duration(index.build_seconds) || 'in steps'}` : 'not yet'} />
           <Row testId="scanner-lab-device-model" label="Picture model running on" value={deviceText(data.device?.embedder)} />
           <Row testId="scanner-lab-device-ocr" label="OCR running on" value={deviceText(data.device?.ocr)} />
+          <Row testId="scanner-lab-device-ocr-server" label="Server OCR (v15 test) running on" value={deviceText(data.device?.ocr_server)} />
           <Row label="Threads" value={`${data.threads}${data.autorun ? ' · runs by itself after a deploy' : ''}`} />
           <Row testId="scanner-lab-options" label="Matching options in use" value={describeOptions(data.options?.active || 'baseline')} />
           <TraceSources sources={data.trace_sources} />

@@ -37,6 +37,15 @@ def warm_up() -> dict:
         result["ocr"] = get_reader().warm_up()
     except Exception:  # noqa: BLE001
         logger.exception("Card matcher: OCR warm-up failed")
+    try:  # version 15: the second engine is warmed only when the options in use include ``serverocr``
+        from . import variants
+
+        if variants.parse(variants.active_label()).serverocr:
+            from . import ocr_server
+
+            result["ocr_server"] = ocr_server.warm_up()
+    except Exception:  # noqa: BLE001
+        logger.exception("Card matcher: server OCR warm-up failed")
     view = device.report()
     after = device.gpu_used_mb()
     # The card's used memory around the warm-up (whole card, so another program on it shows up too): what the shares are tuned from.

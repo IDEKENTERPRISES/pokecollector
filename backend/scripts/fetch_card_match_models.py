@@ -22,7 +22,7 @@ module_spec.loader.exec_module(specs)
 def main() -> int:
     target = Path(sys.argv[1] if len(sys.argv) > 1 else "/app/models")
     target.mkdir(parents=True, exist_ok=True)
-    for name, spec in specs.MODEL_SPECS.items():
+    for name, spec in {**specs.MODEL_SPECS, **getattr(specs, "OCR_MODEL_SPECS", {})}.items():
         path = target / spec["filename"]
         if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == spec["sha256"]:
             print(f"{name}: already present")

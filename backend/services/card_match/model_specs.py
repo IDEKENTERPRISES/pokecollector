@@ -41,3 +41,28 @@ MODEL_SPECS = {
         "source": "https://huggingface.co/onnx-community/dinov2-base",
     },
 }
+
+# Version 15 test (option ``serverocr``): the PP-OCRv4 *server* text detector and recogniser (PaddleOCR, Apache-2.0) in the
+# ONNX conversion RapidOCR's author publishes (SWHL/RapidOCR on Hugging Face, Apache-2.0), pinned to a repository commit.
+# They load in ``rapidocr-onnxruntime==1.3.24`` unchanged: the recogniser carries its 6,623-character list in the ONNX metadata
+# (``character``), so no dictionary file is needed. Fetched at image build time like the picture models; the second engine is
+# only ever built when a matcher with ``serverocr`` runs. PP-OCRv5 server models were not used (they need a newer RapidOCR).
+_OCR_SERVER_COMMIT = "1cfba2e90fc938db55889873735088de210cc173"
+OCR_MODEL_SPECS = {
+    "ocr-server-det": {
+        "url": f"https://huggingface.co/SWHL/RapidOCR/resolve/{_OCR_SERVER_COMMIT}/PP-OCRv4/ch_PP-OCRv4_det_server_infer.onnx",
+        "sha256": "cfa39a3f298f6d3fc71789834d15da36d11a6c59b489fc16ea4733728012f786",
+        "filename": "ch_PP-OCRv4_det_server_infer.onnx",
+        "size_bytes": 113352104,
+        "license": "Apache-2.0",
+        "source": "https://huggingface.co/SWHL/RapidOCR",
+    },
+    "ocr-server-rec": {
+        "url": f"https://huggingface.co/SWHL/RapidOCR/resolve/{_OCR_SERVER_COMMIT}/PP-OCRv4/ch_PP-OCRv4_rec_server_infer.onnx",
+        "sha256": "6a2676219be9907c7fc9cf61ebaa843bf2898777def567925b78886fcd90c07a",
+        "filename": "ch_PP-OCRv4_rec_server_infer.onnx",
+        "size_bytes": 90530732,
+        "license": "Apache-2.0",
+        "source": "https://huggingface.co/SWHL/RapidOCR",
+    },
+}
