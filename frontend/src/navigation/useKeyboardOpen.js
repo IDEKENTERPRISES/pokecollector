@@ -81,8 +81,10 @@ export function useKeyboardOpen(resetKey) {
         focusedAt = Date.now()
         window.clearTimeout(settleTimer)
         settleTimer = window.setTimeout(evaluate, KEYBOARD_SETTLE_MS + 50)
+        evaluate()
       }
-      evaluate()
+      // Focus moving to a button or link is left to the delayed focusout check: showing the bar at once
+      // on press would put it under the finger and swallow the tap on whatever sat behind it.
     }
     const onFocusOut = () => {
       window.clearTimeout(blurTimer)
