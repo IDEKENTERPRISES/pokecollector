@@ -22,13 +22,52 @@ _last_request = float("-inf")
 _warming = False
 
 
+def picture_model() -> str:
+    """The picture model the options in use run on: the custom model when they contain ``custom`` and it is usable (uploaded, both indexes built),
+    else DINOv2-small. Warm-up loads this one first, so it gets the picture model's GPU share."""
+    try:
+        from . import variants
+
+        options = variants.usable(variants.parse(variants.active_label()))
+        if getattr(options, "custom", False):
+            name = variants.model_name(options)
+            if embed.model_available(name):
+                return name
+    except Exception:  # noqa: BLE001
+        logger.exception("Card matcher: could not work out the picture model in use")
+    return model_specs.DEFAULT_MODEL
+
+
+def promote_picture_model() -> str | None:
+    """The custom model has just become usable (its indexes are built) while DINOv2-small may hold the picture model's GPU share from an earlier
+    warm-up: release that share and open the custom model again, so it runs on the GPU without a restart. Returns the model promoted, or None
+    when the options in use do not run on a custom model. Never raises."""
+    try:
+        model = picture_model()
+        if model == model_specs.DEFAULT_MODEL:
+            return None
+        threads = embed.config.threads()
+        default = embed._cache.get((model_specs.DEFAULT_MODEL, threads))
+        released = bool(default is not None and default.unload())  # a CPU session is left alone: it holds no share
+        current = embed._cache.get((model, threads))
+        if current is not None and (released or getattr(current, "device", "cuda") != "cuda"):
+            current.reopen()
+        elif current is None:
+            embed.get_embedder(model)
+        return model
+    except Exception:  # noqa: BLE001
+        logger.exception("Card matcher: could not move the picture model to the custom model")
+        return None
+
+
 def warm_up() -> dict:
     """Warm both models; returns {"embedder": seconds | None, "ocr": seconds | None}. Never raises."""
     result: dict = {"embedder": None, "ocr": None}
     before = device.gpu_used_mb()
+    model = picture_model()
     try:
-        if embed.model_available(model_specs.DEFAULT_MODEL):
-            result["embedder"] = embed.get_embedder(model_specs.DEFAULT_MODEL).warm_up()
+        if embed.model_available(model):
+            result["embedder"] = embed.get_embedder(model).warm_up()
     except Exception:  # noqa: BLE001
         logger.exception("Card matcher: picture model warm-up failed")
     try:
@@ -46,7 +85,7 @@ def warm_up() -> dict:
             result["ocr_server"] = ocr_server.warm_up()
     except Exception:  # noqa: BLE001
         logger.exception("Card matcher: server OCR warm-up failed")
-    view = device.report()
+    view = device.report(model)
     after = device.gpu_used_mb()
     # The card's used memory around the warm-up (whole card, so another program on it shows up too): what the shares are tuned from.
     logger.info("Card matcher warm: picture model on %s (%s ms), OCR on %s (%s ms); card memory used %s -> %s MB",
@@ -58,7 +97,7 @@ def is_warm() -> bool:
     """Both models are loaded right now (nothing to do for a warm request)."""
     from . import ocr
 
-    embedder = embed._cache.get((model_specs.DEFAULT_MODEL, embed.config.threads()))
+    embedder = embed._cache.get((picture_model(), embed.config.threads()))
     reader = ocr._reader
     return bool(embedder is not None and embedder.session is not None and reader is not None and reader.engine is not None)
 

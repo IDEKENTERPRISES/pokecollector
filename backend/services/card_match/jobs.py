@@ -97,10 +97,15 @@ def build_index_work(model: str = DEFAULT_MODEL, *, session_factory=None, embedd
     from .embed import get_embedder
 
     spec = variants.index_specs().get(model, {"model": model, "crop": "full"})
-    return index_module.build_index(
+    result = index_module.build_index(
         session_factory or _session_factory(), embedder or get_embedder(spec["model"]), data_dir=data_dir,
         progress=jobs._progress, should_stop=jobs._stop.is_set, crop=spec["crop"], index_name=model,
     )
+    if spec.get("custom") and embedder is None:  # the custom model may have just become usable: give it the picture model's GPU share
+        from . import warmup
+
+        warmup.promote_picture_model()
+    return result
 
 
 def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=None, embedder=None, data_dir: Path | None = None,
@@ -203,6 +208,25 @@ def start_calibration(model_id: str, on_stored: Callable[[dict], None] | None = 
 
 def start_index(model: str = DEFAULT_MODEL) -> tuple[bool, dict]:
     return jobs.start("index", lambda: build_index_work(model))
+
+
+def custom_indexes_work(model_id: str, *, build=None) -> dict:
+    """Build a custom model's whole-card index, then its artwork index, in one job (a stop or a failure of the first ends the job)."""
+    from . import custom_models
+
+    build = build or build_index_work
+    names = custom_models.index_names(model_id)
+    summary = {}
+    for kind in ("whole", "art"):
+        if jobs._stop.is_set():
+            break
+        summary[kind] = build(names[kind])
+    return {"kind": "custom-indexes", "model": model_id, "indexes": summary}
+
+
+def start_custom_indexes(model_id: str) -> tuple[bool, dict]:
+    """After an upload: the model's two index builds, one job after another. Does nothing (False) while another job is running."""
+    return jobs.start("index", lambda: custom_indexes_work(model_id))
 
 
 def start_benchmark(kind: str = "synthetic", model: str = DEFAULT_MODEL, labels: list[str] | None = None, why: dict[str, str] | None = None) -> tuple[bool, dict]:

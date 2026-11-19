@@ -60,11 +60,13 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
     _require_admin(current_user)
     trace_dir = scan_trace.trace_root() or scan_trace.trace_storage_root()
     spec = MODEL_SPECS[DEFAULT_MODEL]
+    picture_model = warmup.picture_model()
     return {
         "matcher_version": MATCHER_VERSION,
         "model": {"name": DEFAULT_MODEL, "available": embed.model_available(DEFAULT_MODEL), "license": spec["license"], "dim": spec["dim"]},
         "ocr_available": _ocr_available(),
-        "device": device_module.report(DEFAULT_MODEL),
+        "device": device_module.report(picture_model),
+        "picture_model": picture_model,  # the model the options in use run on (DINOv2-small, or the custom model): its GPU/CPU is "device.embedder"
         "threads": config.threads(),
         "autorun": config.autorun_enabled(),
         "autorun_info": autorun_module.info(db),
@@ -91,6 +93,17 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
     }
 
 
+def _pinned_view(entry: dict) -> dict | None:
+    """The calibration pinned from the environment, when this model decides with it (it has none of its own)."""
+    from services.card_match import pipeline
+
+    calibration = custom_models.effective_calibration(entry)
+    if not calibration or calibration["origin"] != "environment":
+        return None
+    return {"source": calibration["source"], "at": calibration["at"], "thresholds": calibration["thresholds"],
+            "default": pipeline.default_thresholds().as_dict()}
+
+
 def _custom_models_view() -> list[dict]:
     """Uploaded custom models, newest first, each with the status of its two indexes."""
     out = []
@@ -101,6 +114,8 @@ def _custom_models_view() -> list[dict]:
             "sha_short": entry["sha256"][:8], "available": embed.model_available(entry["id"]),
             "indexes": {kind: {**index_module.index_status(index_name), "name": index_name} for kind, index_name in names.items()},
             "calibration": entry.get("calibration"),  # version 16 test: {at, scans, thresholds, default, ...} or None
+            "calibration_pinned": _pinned_view(entry),
+            "in_use": entry["id"] == custom_models.selected_name(),  # the model the ``custom`` option uses
         })
     return out
 
@@ -131,6 +146,7 @@ def upload_custom_model(
         db, "card_match.model_uploaded", request=request, actor=current_user, target_type="card_match_model", target_id=entry["id"],
         details={"name": entry["name"], "sha256": entry["sha256"], "size_bytes": entry["size_bytes"]},
     )
+    jobs_module.start_custom_indexes(entry["id"])  # its two index builds, one after the other, unless a job is running (then the Build buttons do it)
     return {"model": next((m for m in _custom_models_view() if m["id"] == entry["id"]), entry)}
 
 

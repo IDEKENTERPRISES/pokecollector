@@ -80,9 +80,10 @@ class ResolveLabelsTests(unittest.TestCase):
         self.assertEqual(variants.parse(pin).label, pin)
         self.assertEqual(pin, variants.NO_STRICT_LABEL + "+widefirst+topname+edgeguard")
         self.assertIn(pin, variants.COMPARE_LABELS)
+        self.assertEqual(variants.PIN_LABEL, pin)
         compose = Path(__file__).resolve().parents[2] / "docker-compose.portainer.yml"
-        if compose.exists():
-            self.assertIn("CARD_MATCH_OPTIONS: ${CARD_MATCH_OPTIONS:-" + pin + "}", compose.read_text(encoding="utf-8"))
+        if compose.exists():  # prod runs the pin plus the calibrated custom model (test_card_match_prod_custom.py)
+            self.assertIn("CARD_MATCH_OPTIONS: ${CARD_MATCH_OPTIONS:-" + pin + "+custom+calibrated}", compose.read_text(encoding="utf-8"))
 
     def test_titles_and_groups(self):
         groups = {variants.compare_group(label) for label in variants.COMPARE_LABELS}

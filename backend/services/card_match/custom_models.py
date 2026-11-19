@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -24,6 +25,8 @@ import numpy as np
 
 from . import config
 from .model_specs import DEFAULT_MODEL, MODEL_SPECS
+
+logger = logging.getLogger(__name__)
 
 PREFIX = "custom-"
 NAME_RE = re.compile(r"^custom-[0-9a-f]{8}$")
@@ -84,6 +87,92 @@ def newest(data_dir: Path | None = None) -> dict | None:
 def newest_name(data_dir: Path | None = None) -> str:
     entry = newest(data_dir)
     return entry["id"] if entry else MISSING_NAME
+
+
+# ── Which model ``custom`` means, and a calibration pinned from the environment ──────────────────────────────────
+
+ENV_MODEL = "CARD_MATCH_CUSTOM_MODEL"
+ENV_CALIBRATION = "CARD_MATCH_CUSTOM_CALIBRATION"
+
+
+def pinned_name() -> str | None:
+    """``CARD_MATCH_CUSTOM_MODEL`` (a model id), or None when it is unset or blank."""
+    value = (os.environ.get(ENV_MODEL) or "").strip()
+    return value or None
+
+
+def selected(data_dir: Path | None = None) -> dict | None:
+    """The registry entry the ``custom`` option uses: the pinned model when ``CARD_MATCH_CUSTOM_MODEL`` is set (None while it is not uploaded,
+    so the option behaves as if there were no custom model yet), else the newest uploaded model."""
+    pinned = pinned_name()
+    if pinned:
+        return get_model(pinned, data_dir)
+    return newest(data_dir)
+
+
+def selected_name(data_dir: Path | None = None) -> str:
+    entry = selected(data_dir)
+    return entry["id"] if entry else MISSING_NAME
+
+
+_logged_bad: set[str] = set()
+
+
+def _reject(raw: str, why: str) -> None:
+    if raw not in _logged_bad:
+        _logged_bad.add(raw)
+        logger.warning("Card-match: %s is ignored (%s)", ENV_CALIBRATION, why)
+
+
+def pinned_calibration() -> dict | None:
+    """The calibration pinned in ``CARD_MATCH_CUSTOM_CALIBRATION`` (JSON: ``model``, ``thresholds``, optional ``source`` and ``at``), validated:
+    unknown fields are ignored; a threshold that is not a number, a bad model id or broken JSON means no pinned calibration (logged once).
+    Returns ``{"model", "thresholds", "source", "at"}`` or None."""
+    raw = (os.environ.get(ENV_CALIBRATION) or "").strip()
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        _reject(raw, "not valid JSON")
+        return None
+    if not isinstance(value, dict):
+        _reject(raw, "not a JSON object")
+        return None
+    model, table = value.get("model"), value.get("thresholds")
+    if not isinstance(model, str) or not is_custom_name(model.strip()):
+        _reject(raw, '"model" must be a custom model id like custom-12345678')
+        return None
+    if not isinstance(table, dict) or not table:
+        _reject(raw, '"thresholds" must be a table of numbers')
+        return None
+    bad = [key for key, number in table.items()
+           if isinstance(number, bool) or not isinstance(number, (int, float)) or number != number or number in (float("inf"), float("-inf"))]
+    if bad:
+        _reject(raw, "thresholds that are not numbers: " + ", ".join(sorted(map(str, bad))))
+        return None
+    source, at = value.get("source"), value.get("at")
+    return {"model": model.strip(), "thresholds": {str(key): float(number) for key, number in table.items()},
+            "source": source.strip() if isinstance(source, str) and source.strip() else None, "at": at if isinstance(at, str) else None}
+
+
+def effective_calibration(entry: dict | None) -> dict | None:
+    """The calibration a model decides with: its own (registry entry), else the one pinned from the environment when it names this model.
+    ``{"thresholds", "origin": "model" | "environment", "at", "source"}`` or None."""
+    if not entry:
+        return None
+    own = calibrated_thresholds(entry)
+    if own:
+        return {"thresholds": own, "origin": "model", "at": (entry.get("calibration") or {}).get("at"), "source": None}
+    pinned = pinned_calibration()
+    if pinned and pinned["model"] == entry["id"]:
+        return {"thresholds": pinned["thresholds"], "origin": "environment", "at": pinned["at"], "source": pinned["source"]}
+    return None
+
+
+def effective_thresholds(entry: dict | None) -> dict | None:
+    calibration = effective_calibration(entry)
+    return dict(calibration["thresholds"]) if calibration else None
 
 
 def spec_for(name: str, data_dir: Path | None = None) -> dict:

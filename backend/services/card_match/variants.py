@@ -160,10 +160,11 @@ def row_signature(label: str, data_dir: Path | None = None) -> str:
     words = [f"{word}{OPTION_VERSIONS.get(word, 0)}" for word in ORDER + V12_WORDS + V14_WORDS + V15_WORDS + CUSTOM_WORDS + V16_WORDS if getattr(options, word, False)]
     parts = [f"v{MATCHER_VERSION}", "+".join(words) or "baseline"]
     if getattr(options, "custom", False):
-        entry = custom_models.newest(data_dir)
+        entry = custom_models.selected(data_dir)
         parts.append(f"model={entry['id'] if entry else 'none'}")
         if getattr(options, "calibrated", False):
-            parts.append(f"cal={((entry or {}).get('calibration') or {}).get('at') or 'none'}")
+            effective = custom_models.effective_calibration(entry) or {}
+            parts.append(f"cal={effective.get('at') or effective.get('source') or ('pinned' if effective else 'none')}")
     return "|".join(parts)
 
 
@@ -227,7 +228,7 @@ def parse(label: str | None) -> Options:
 
 def model_name(options: Options, data_dir: Path | None = None, custom_name: str | None = None) -> str:
     """The picture model of an option set: the newest custom model with ``custom`` (``custom_name`` names another one, for the calibration job)."""
-    return (custom_name or custom_models.newest_name(data_dir)) if options.custom else DEFAULT_MODEL
+    return (custom_name or custom_models.selected_name(data_dir)) if options.custom else DEFAULT_MODEL
 
 
 def main_index_name(options: Options, data_dir: Path | None = None, custom_name: str | None = None) -> str:
@@ -242,8 +243,8 @@ def calibration_problem(options: Options, data_dir: Path | None = None) -> str |
     """Why a ``custom+calibrated`` row cannot run yet: the newest custom model has no calibration (None when it has one, or the row does not use it)."""
     if not (getattr(options, "custom", False) and getattr(options, "calibrated", False)):
         return None
-    entry = custom_models.newest(data_dir)
-    if entry is not None and custom_models.calibrated_thresholds(entry):
+    entry = custom_models.selected(data_dir)
+    if entry is not None and custom_models.effective_thresholds(entry):
         return None
     return "calibrate the custom model first"
 
@@ -255,7 +256,7 @@ def thresholds_for(options: Options, data_dir: Path | None = None):
 
     if not (getattr(options, "custom", False) and getattr(options, "calibrated", False)):
         return None
-    table = custom_models.calibrated_thresholds(custom_models.newest(data_dir))
+    table = custom_models.effective_thresholds(custom_models.selected(data_dir))  # its own calibration, else the one pinned from the environment
     return pipeline.Thresholds.from_dict(table) if table else None
 
 
@@ -307,7 +308,8 @@ def usable(options: Options, data_dir: Path | None = None) -> Options:
     if not missing:
         return options
     if options.custom and (main_index_name(options, data_dir) in missing or art_index_name(options, data_dir) in missing):
-        return usable(replace(options, custom=False), data_dir)  # no custom indexes: the default model's search
+        # No custom model or indexes yet: exactly the same set without ``custom`` and ``calibrated`` (the default model's search, default thresholds).
+        return usable(replace(options, custom=False, calibrated=False), data_dir)
     art = art_index_name(options, data_dir)
     return replace(options, art=options.art and art not in missing, base=options.base and BASE_MODEL not in missing,
                    reprint=options.reprint and art not in missing)
@@ -333,8 +335,9 @@ def build_matcher(options: Options, session_factory, *, data_dir: Path | None = 
         index = index_module.get_index(main_index_name(options, data_dir), data_dir)
     except Exception:
         pass
-    entry = custom_models.newest(data_dir) if options.custom and options.calibrated else None
-    key = (options, ((entry or {}).get("calibration") or {}).get("at"), id(index), len(index) if index is not None else 0, id(session_factory), id(ocr_reader), read_hp, str(data_dir),
+    entry = custom_models.selected(data_dir) if options.custom and options.calibrated else None
+    table = custom_models.effective_thresholds(entry)
+    key = (options, ((entry or {}).get("calibration") or {}).get("at"), tuple(sorted(table.items())) if table else None, id(index), len(index) if index is not None else 0, id(session_factory), id(ocr_reader), read_hp, str(data_dir),
            tuple(len(ix) for ix in (index_module.get_index(n, data_dir) for n in needed_indexes(options, data_dir)) if ix is not None) if index is not None else ())
     cached = _matchers.get("last")
     if cached and cached[0] == key:
