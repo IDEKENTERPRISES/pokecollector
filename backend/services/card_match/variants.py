@@ -142,6 +142,31 @@ def compare_group(label: str) -> str:
     return "history"
 
 
+# Every option word and its version. A row's signature (``row_signature``) contains these numbers, so the autorun measures a row again when
+# one of its words changed. FUTURE PRs: bump a word's number here whenever you change what that option DOES (its code path, its thresholds,
+# the models it reads). Add a new word with 1. Without the bump the autorun keeps showing the old measurement as if it were current.
+OPTION_VERSIONS = {
+    "names": 1, "number": 1, "text": 1, "art": 1, "reprint": 1, "base": 1, "tta": 1, "fastread": 1, "numberonce": 1, "corners": 1, "wholepic": 1,
+    "trustrejected": 1, "wholeread": 1, "wholestrict": 1, "widefirst": 1, "topname": 1, "edgeguard": 1, "serverocr": 1, "custom": 1, "calibrated": 1,
+}
+
+
+def row_signature(label: str, data_dir: Path | None = None) -> str:
+    """What a measurement of this row depends on: the matcher version, each word with its version, the newest custom model's id for a
+    ``custom`` row, and that model's calibration time for a ``calibrated`` row. Two measurements with the same signature mean the same thing."""
+    from . import MATCHER_VERSION
+
+    options = parse(label)
+    words = [f"{word}{OPTION_VERSIONS.get(word, 0)}" for word in ORDER + V12_WORDS + V14_WORDS + V15_WORDS + CUSTOM_WORDS + V16_WORDS if getattr(options, word, False)]
+    parts = [f"v{MATCHER_VERSION}", "+".join(words) or "baseline"]
+    if getattr(options, "custom", False):
+        entry = custom_models.newest(data_dir)
+        parts.append(f"model={entry['id'] if entry else 'none'}")
+        if getattr(options, "calibrated", False):
+            parts.append(f"cal={((entry or {}).get('calibration') or {}).get('at') or 'none'}")
+    return "|".join(parts)
+
+
 def compare_reference_labels(labels=None, data_dir: Path | None = None) -> list[str]:
     """The rows a partial comparison always runs: the label in use (when it is one of the rows) and the kept set,
     in the order of ``labels`` (default: ``COMPARE_LABELS``)."""

@@ -267,7 +267,7 @@ def run_calibration(model_id: str, session_factory, *, data_dir: Path | None = N
     default = pipeline.default_thresholds().as_dict()
     calibration = {
         "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(), "scans": len(scans), "matcher_version": MATCHER_VERSION,
-        "thresholds": table, "default": {name: round(value, 4) for name, value in default.items()},
+        "thresholds": table, "scan_fingerprint": benchmark.scan_fingerprint(scans), "default": {name: round(value, 4) for name, value in default.items()},
         "tuned_decided": checked.get("decided"), "tuned_wrong": checked.get("wrong", 0),
     }
     custom_models.store_calibration(entry["id"], calibration, data_dir)

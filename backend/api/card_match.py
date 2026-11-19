@@ -13,7 +13,7 @@ from database import get_db
 from models import Card, User
 from services import scan_trace, trace_correction, trace_sources
 from services.audit import record_audit
-from services.card_match import MATCHER_VERSION, benchmark, config, custom_models, embed, index as index_module, device as device_module, jobs as jobs_module, warmup, misses as misses_module, shadow as shadow_module, variants
+from services.card_match import MATCHER_VERSION, autorun as autorun_module, benchmark, config, custom_models, embed, index as index_module, device as device_module, jobs as jobs_module, warmup, misses as misses_module, shadow as shadow_module, variants
 from services.card_match.model_specs import DEFAULT_MODEL, MODEL_SPECS
 
 router = APIRouter()
@@ -67,6 +67,7 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
         "device": device_module.report(DEFAULT_MODEL),
         "threads": config.threads(),
         "autorun": config.autorun_enabled(),
+        "autorun_info": autorun_module.info(db),
         "index_after_sync": config.index_after_sync_enabled(),
         "english_total": _english_picture_total(db),
         "index": index_module.index_status(DEFAULT_MODEL),
@@ -363,6 +364,37 @@ def start_benchmark(body: BenchmarkRequest, current_user: User = Depends(get_cur
     _require_ready(True)
     started, status = jobs_module.start_benchmark(body.kind, DEFAULT_MODEL, labels)
     return {"started": started, "job": status}
+
+
+class AutorunSwitchRequest(BaseModel):
+    enabled: bool
+
+
+def _require_autorun_available() -> None:
+    if not autorun_module.available():  # prod: SCAN_MATCHER_AUTORUN is off, so nothing here can run
+        raise HTTPException(status_code=409, detail=autorun_module.UNAVAILABLE)
+
+
+@router.post("/autorun/switch")
+def set_autorun_switch(body: AutorunSwitchRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Nonprod only: "Run the tests by itself after each deploy" (a server setting; audited)."""
+    _require_admin(current_user)
+    _require_autorun_available()
+    autorun_module.set_switch(db, body.enabled, current_user, request)
+    return {"autorun_info": autorun_module.info(db)}
+
+
+@router.post("/autorun/run")
+def run_all_tests_now(current_user: User = Depends(get_current_user)):
+    """Nonprod only: "Run all tests now" starts the autorun's chain at once, ignoring the fingerprint. Refused while a job runs."""
+    _require_admin(current_user)
+    _require_autorun_available()
+    from services.card_picture_packs import card_picture_warmer
+
+    started, refusal = autorun_module.start_run_all(card_picture_warmer)
+    if not started:
+        raise HTTPException(status_code=409, detail=refusal)
+    return {"started": True, "autorun_info": autorun_module.info()}
 
 
 @router.post("/stop")
