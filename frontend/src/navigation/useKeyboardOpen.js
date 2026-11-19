@@ -12,7 +12,13 @@ const KEYBOARD_MIN_COVER_PX = 120
 // no blur for that), or a lost event, must never leave the bar hidden for good.
 const RECHECK_MS = 2000
 
-const IOS_WEBKIT = () => Boolean(globalThis.CSS?.supports?.('-webkit-touch-callout', 'none'))
+/** iPhone, iPod and iPad (an iPad can report itself as a Mac, but only an iPad has a touch screen there). */
+export function isIosDevice(nav = globalThis.navigator) {
+  if (!nav) return false
+  if (/iPhone|iPad|iPod/.test(nav.userAgent || '')) return true
+  return nav.platform === 'MacIntel' && nav.maxTouchPoints > 1
+}
+const IOS_WEBKIT = () => isIosDevice()
 
 export function isTextEntry(element) {
   if (!element || element.nodeType !== 1) return false

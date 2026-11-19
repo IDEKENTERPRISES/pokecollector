@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isTextEntry, keyboardLikelyOpen } from './useKeyboardOpen'
+import { isIosDevice, isTextEntry, keyboardLikelyOpen } from './useKeyboardOpen'
 
 const el = (tagName, type) => ({ nodeType: 1, tagName, getAttribute: () => type ?? null })
 
@@ -10,6 +10,15 @@ describe('isTextEntry', () => {
     expect(isTextEntry(el('INPUT', 'checkbox'))).toBe(false)
     expect(isTextEntry(el('BUTTON'))).toBe(false)
     expect(isTextEntry(null)).toBe(false)
+  })
+})
+
+describe('isIosDevice', () => {
+  it('is true for iPhone and touch iPad, false for Chrome on Android or a desktop Mac', () => {
+    expect(isIosDevice({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' })).toBe(true)
+    expect(isIosDevice({ userAgent: 'Mozilla/5.0 (Macintosh)', platform: 'MacIntel', maxTouchPoints: 5 })).toBe(true)
+    expect(isIosDevice({ userAgent: 'Mozilla/5.0 (Macintosh)', platform: 'MacIntel', maxTouchPoints: 0 })).toBe(false)
+    expect(isIosDevice({ userAgent: 'Mozilla/5.0 (Linux; Android 14) Chrome/130', platform: 'Linux armv8l', maxTouchPoints: 5 })).toBe(false)
   })
 })
 
