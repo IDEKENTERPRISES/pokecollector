@@ -76,9 +76,9 @@ class ResolveLabelsTests(unittest.TestCase):
         self.assertFalse([label for label in variants.COMPARE_LABELS if "learned" in label])
 
     def test_the_prod_pin_is_the_best_set_and_spelled_in_canonical_order(self):
-        pin = "names+number+text+art+tta+fastread+numberonce+corners+wholepic+wholeread+widefirst+topname"
+        pin = "names+number+text+art+tta+fastread+numberonce+corners+wholepic+wholeread+widefirst+topname+edgeguard"
         self.assertEqual(variants.parse(pin).label, pin)
-        self.assertEqual(pin, variants.NO_STRICT_LABEL + "+widefirst+topname")
+        self.assertEqual(pin, variants.NO_STRICT_LABEL + "+widefirst+topname+edgeguard")
         self.assertIn(pin, variants.COMPARE_LABELS)
         compose = Path(__file__).resolve().parents[2] / "docker-compose.portainer.yml"
         if compose.exists():

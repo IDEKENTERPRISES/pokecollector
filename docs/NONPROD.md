@@ -89,7 +89,7 @@ Nonprod sets `SCAN_PICTURE_FIRST=1`: new scans go to the picture matcher before 
 
 ## Running the picture matcher on the GPU
 
-The nonprod backend is built with the GPU variant of the image (`CARD_MATCH_GPU: "1"`), is given the server's NVIDIA card through a Compose device reservation, and sets `CARD_MATCH_DEVICE=auto`, `CARD_MATCH_GPU_MEM_MB=1024` and `CARD_MATCH_WARM=1`. Prod's stack is unchanged. Details, the memory cap and the lines prod will need are in `docs/CARD_MATCH.md`, "Running on the GPU".
+The nonprod backend is built with the GPU variant of the image (`CARD_MATCH_GPU: "1"`), is given the server's NVIDIA card through a Compose device reservation, and sets `CARD_MATCH_DEVICE=auto`, `CARD_MATCH_GPU_MEM_MB=1024` and `CARD_MATCH_WARM=1`. These settings now live in `docker-compose.portainer.yml` (prod's file, which this stack merges too), not in `docker-compose.nonprod.yml`. Details and the memory cap are in `docs/CARD_MATCH.md`, "Running on the GPU".
 
 - **Re-deploy:** the image must be rebuilt (the GPU libraries are in a new layer), so use the redeploy with a rebuild. The Docker host already has the `nvidia` runtime; if the container does not start because of the device reservation, switch to `runtime: nvidia` in `docker-compose.nonprod.yml`.
 - **Check:** Scanner lab › status shows "Picture model running on: GPU (Quadro P620)" and "OCR running on: GPU (...)" with the warm-up time. If it says CPU, the reason is next to it, and the app works as before.
