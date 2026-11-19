@@ -1,5 +1,6 @@
 import { ITEM_TYPES } from '../../constants.js'
 import { validateShape } from '../classify.js'
+import { refreshScanQueries } from '../../../utils/scanJobs.js'
 
 export const scanUpload = {
   type: ITEM_TYPES.SCAN_UPLOAD,
@@ -25,6 +26,6 @@ export const scanUpload = {
   },
 
   onSynced(queryClient) {
-    queryClient?.invalidateQueries({ queryKey: ['scan-jobs'] })
+    refreshScanQueries(queryClient)
   },
 }

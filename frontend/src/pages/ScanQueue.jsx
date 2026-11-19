@@ -7,6 +7,7 @@ import {
   deleteScanJob,
   fetchScanJobItemImageBlob,
   getScanJob,
+  getScanJobs,
   getScanQueue,
   resolveAndAddScanJobItem,
   resolveScanJobItem,
@@ -29,6 +30,7 @@ import { useNavBar } from '../navigation/useNavBar'
 import {
   SCAN_JOBS_QUERY_KEY,
   SCAN_QUEUE_QUERY_KEY,
+  hasActiveScanJobs,
   isScanJobActive,
   queueIsActive,
   scanJobPollInterval,
@@ -77,16 +79,43 @@ function QueueRow({ item, number, onOpen, t }) {
   )
 }
 
+// Opening the page always asks again (the cached answer may predate the last scan). Polls every 3 s while
+// this list has scans in progress, or while the shared jobs poll (TabBar/scanner) says some are.
+export const scanQueueQueryOptions = ({ jobsActive = false } = {}) => ({
+  queryKey: SCAN_QUEUE_QUERY_KEY,
+  queryFn: getScanQueue,
+  refetchOnMount: 'always',
+  refetchInterval: query => (queueIsActive(query.state.data) || jobsActive) ? 3000 : false,
+})
+
+export function QueueLoadError({ onRetry, t }) {
+  return (
+    <div role="alert" className="space-y-4 rounded-[20px] bg-card px-4 py-10 text-center" data-testid="scan-queue-error">
+      <p className="text-subheadline text-red">{t('scanner.queueLoadFailed')}</p>
+      <Button onClick={onRetry}>{t('scanner.queueTryAgain')}</Button>
+    </div>
+  )
+}
+
 // Everything waiting on the trainer as ONE list, oldest first. Uploads are cut into jobs for sending;
 // that is not something to show.
 function QueueList({ t }) {
   const { openScanner } = useScanner()
   const [flow, setFlow] = useState(null) // { startItemId }
-  const { data, isLoading } = useQuery({
-    queryKey: SCAN_QUEUE_QUERY_KEY,
-    queryFn: getScanQueue,
-    refetchInterval: query => queueIsActive(query.state.data) ? 3000 : false,
-  })
+  const queryClient = useQueryClient()
+  // Read-only view of the jobs cache that the TabBar/scanner poll keeps fresh (enabled: false never fetches).
+  const { data: jobsData } = useQuery({ queryKey: SCAN_JOBS_QUERY_KEY, queryFn: getScanJobs, enabled: false })
+  const jobsActive = hasActiveScanJobs(jobsData?.jobs || [])
+  const { data, isLoading, isError, refetch } = useQuery(scanQueueQueryOptions({ jobsActive }))
+
+  // Coming back to the app (a phone unlocked, another tab) looks again. Scoped to this query only.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') queryClient.invalidateQueries({ queryKey: SCAN_QUEUE_QUERY_KEY })
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [queryClient])
   const items = data?.items || []
   const counts = data?.counts || {}
   const toReview = Number(counts.ready || 0) + Number(counts.failed || 0) + Number(counts.waiting || 0)
@@ -104,6 +133,8 @@ function QueueList({ t }) {
         <Loader2 size={28} className="animate-spin text-tint" />
       </div>
     )
+  } else if (isError && !data) {
+    content = <QueueLoadError onRetry={() => refetch()} t={t} />
   } else if (items.length === 0) {
     content = (
       <div className="space-y-4 rounded-[20px] bg-card px-4 py-10 text-center" data-tour="queue-list">
