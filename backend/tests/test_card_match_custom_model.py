@@ -88,6 +88,9 @@ class CustomModelTestCase(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.current = self.admin
+        auto = patch.object(jobs, "start_custom_indexes", return_value=(False, {}))  # an upload would start the two index builds (test_card_match_prod_custom.py)
+        self.auto_build = auto.start()
+        self.addCleanup(auto.stop)
 
         def override_db():
             session = self.Session()

@@ -121,6 +121,16 @@ class OnnxEmbedder:
             device.mark_unloaded(f"embedder:{self.name}")
             return True
 
+    def reopen(self) -> None:
+        """Close the session (GPU or CPU) and open it again: it takes the GPU share if one is free now. The object stays the same, so
+        anything holding it (a cached matcher) keeps working."""
+        with self._load_lock:
+            if isinstance(self.session, device.GpuSession):
+                self.session.close()
+                device.mark_unloaded(f"embedder:{self.name}")
+            self.session = None
+            self._open()
+
     def warm_up(self) -> float:
         """One dummy inference, so the first real scan does not pay for CUDA or session start-up. Returns seconds."""
         import time

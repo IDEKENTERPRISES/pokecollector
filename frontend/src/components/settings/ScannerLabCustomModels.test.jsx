@@ -66,6 +66,14 @@ describe('Scanner lab: custom picture models', () => {
     expect(calibrated).toContain('0.06 → 0.09')
   })
 
+  it('labels a calibration pinned from the environment with its source', () => {
+    const pinned = { source: 'nonprod autorun 2026-11-19T06:33:16Z, 139 Tuned scans', thresholds: { sim_min_picture_only: 0.65 }, default: { sim_min_picture_only: 0.8 } }
+    const html = view({ models: [{ ...model, calibration: null, calibration_pinned: pinned }] })
+    expect(html).toContain('Calibration pinned from the environment (source nonprod autorun 2026-11-19T06:33:16Z, 139 Tuned scans)')
+    expect(html).toContain('0.80 → 0.65')
+    expect(view({ models: [model] })).not.toContain('pinned from the environment')
+  })
+
   it('formats sizes and index states', () => {
     expect(megabytes(1572864)).toBe('1.5 MB')
     expect(indexState({ built: false })).toBe('not built')

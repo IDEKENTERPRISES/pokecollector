@@ -999,7 +999,7 @@ export default function ScannerLabSection() {
           <Row testId="scanner-lab-coverage" label="English cards indexed" value={`${number(index.count)} of ${number(data.english_total)}`} />
           <Row label="Model" value={`${data.model?.name}${ready ? '' : ' (missing from this image)'}`} />
           <Row label="Index built" value={index.built ? `${index.built_at?.slice(0, 16).replace('T', ' ')} UTC · ${duration(index.build_seconds) || 'in steps'}` : 'not yet'} />
-          <Row testId="scanner-lab-device-model" label="Picture model running on" value={deviceText(data.device?.embedder)} />
+          <Row testId="scanner-lab-device-model" label="Picture model running on" value={`${data.picture_model && data.picture_model !== data.model?.name ? `${data.picture_model}: ` : ''}${deviceText(data.device?.embedder)}`} />
           <Row testId="scanner-lab-device-ocr" label="OCR running on" value={deviceText(data.device?.ocr)} />
           <Row testId="scanner-lab-device-ocr-server" label="Server OCR (v15 test) running on" value={deviceText(data.device?.ocr_server)} />
           <Row label="Threads" value={`${data.threads}${data.autorun ? ' · runs by itself after a deploy' : ''}`} />

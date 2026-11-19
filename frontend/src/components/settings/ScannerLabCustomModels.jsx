@@ -28,13 +28,22 @@ const THRESHOLD_ROWS = [
 const value = v => (v === null || v === undefined ? '–' : Number(v).toFixed(2))
 
 /** The calibrated thresholds of one model: default value → this model's value. */
-export function CalibrationTable({ calibration }) {
-  if (!calibration?.thresholds) return null
+export function CalibrationTable({ calibration, pinned }) {
+  // A model's own calibration wins; else the one pinned from the server's environment (CARD_MATCH_CUSTOM_CALIBRATION) is shown and labelled.
+  const own = calibration?.thresholds ? calibration : null
+  if (!own && !pinned?.thresholds) return null
+  calibration = own || { thresholds: pinned.thresholds, default: pinned.default }
   return (
     <div className="space-y-1" data-testid="scanner-lab-calibration">
-      <p className="text-footnote text-text-secondary">
-        Calibrated {String(calibration.at || '').slice(0, 16).replace('T', ' ')} UTC on {number(calibration.scans)} Tuned scans (default → this model)
-      </p>
+      {own ? (
+        <p className="text-footnote text-text-secondary">
+          Calibrated {String(calibration.at || '').slice(0, 16).replace('T', ' ')} UTC on {number(calibration.scans)} Tuned scans (default → this model)
+        </p>
+      ) : (
+        <p className="text-footnote text-text-secondary" data-testid="scanner-lab-calibration-pinned">
+          Calibration pinned from the environment{pinned.source ? ` (source ${pinned.source})` : ''} (default → this model)
+        </p>
+      )}
       <table className="w-full text-footnote tabular-nums">
         <tbody>
           {THRESHOLD_ROWS.map(([key, label]) => (
@@ -75,7 +84,7 @@ export function CustomModelsView({ models, busy, uploading, progress, error, onU
             <p className="text-footnote" data-testid={`scanner-lab-custom-${model.id}-status`}>
               Whole card: {indexState(model.indexes?.whole)} · Artwork: {indexState(model.indexes?.art)}
             </p>
-            <CalibrationTable calibration={model.calibration} />
+            <CalibrationTable calibration={model.calibration} pinned={model.calibration_pinned} />
             <div className="flex flex-wrap gap-2">
               {['whole', 'art'].map(kind => {
                 const index = model.indexes?.[kind] || {}
