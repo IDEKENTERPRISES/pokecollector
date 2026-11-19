@@ -11,8 +11,6 @@ if DEPS_AVAILABLE:
     from services import notifications
     from services import push as push_service
 
-NOW = datetime.datetime.utcnow()
-
 
 class PushPresenceTests(PushDatabaseTestCase):
     def setUp(self):
@@ -24,7 +22,7 @@ class PushPresenceTests(PushDatabaseTestCase):
 
     def presence(self, sub, state, seconds_ago=0):
         sub.app_state = state
-        sub.foreground_at = NOW - datetime.timedelta(seconds=seconds_ago)
+        sub.foreground_at = datetime.datetime.utcnow() - datetime.timedelta(seconds=seconds_ago)
         self.db.commit()
 
     def send(self, user=None, **kwargs):
