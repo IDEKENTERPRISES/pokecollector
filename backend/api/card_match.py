@@ -99,6 +99,7 @@ def _custom_models_view() -> list[dict]:
             **{key: entry[key] for key in ("id", "name", "sha256", "size_bytes", "uploaded_by", "uploaded_at", "dim")},
             "sha_short": entry["sha256"][:8], "available": embed.model_available(entry["id"]),
             "indexes": {kind: {**index_module.index_status(index_name), "name": index_name} for kind, index_name in names.items()},
+            "calibration": entry.get("calibration"),  # version 16 test: {at, scans, thresholds, default, ...} or None
         })
     return out
 
@@ -149,6 +150,37 @@ def delete_custom_model(model_id: str, request: Request, db: Session = Depends(g
         details={"name": entry["name"], "sha256": entry["sha256"]},
     )
     return {"deleted": model_id}
+
+
+@router.post("/models/{model_id}/calibrate")
+def calibrate_custom_model(model_id: str, request: Request, current_user: User = Depends(get_current_user)):
+    """Version 16 test: work out this model's own picture thresholds from the real scans (a Scanner lab job; see docs/CARD_MATCH.md)."""
+    _require_admin(current_user)
+    if not custom_models.is_custom_name(model_id) or custom_models.get_model(model_id) is None:
+        raise HTTPException(status_code=404, detail="Unknown model")
+    missing = [name for name in (*custom_models.index_names(model_id).values(), DEFAULT_MODEL, variants.ART_INDEX)
+               if not (index_module.index_status(name).get("built") and index_module.index_status(name).get("count"))]
+    if missing:
+        raise HTTPException(status_code=409, detail=f"Build the indexes first (missing: {', '.join(missing)})")
+    if not _ocr_available():
+        raise HTTPException(status_code=409, detail="The OCR library is not installed")
+    actor_id, actor_name = current_user.id, current_user.username
+
+    def audit(stored: dict) -> None:
+        from database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            actor = db.query(User).filter(User.id == actor_id).first()
+            record_audit(
+                db, "card_match.model_calibrated", request=request, actor=actor, target_type="card_match_model", target_id=model_id,
+                details={"actor": actor_name, "scans": stored["scans"], "thresholds": stored["thresholds"], "default": stored["default"]},
+            )
+        finally:
+            db.close()
+
+    started, status = jobs_module.start_calibration(model_id, audit)
+    return {"started": started, "job": status}
 
 
 _SOURCE_STATUS_TTL_SECONDS = 30

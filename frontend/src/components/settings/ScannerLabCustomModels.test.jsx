@@ -51,6 +51,21 @@ describe('Scanner lab: custom picture models', () => {
     expect(html.match(/disabled=""/g)?.length).toBeGreaterThanOrEqual(3)
   })
 
+  it('offers Calibrate thresholds only once both indexes are built, and shows the table default -> model once it exists', () => {
+    const notReady = view({ models: [model] })
+    expect(notReady).toContain('scanner-lab-calibrate-custom-1a2b3c4d')
+    expect(notReady).toContain('Calibrate thresholds')
+    expect(notReady).not.toContain('scanner-lab-calibration"')
+    const built = { ...model, indexes: { ...model.indexes, art: { name: 'custom-1a2b3c4d-art', built: true, count: 19800 } } }
+    const calibrated = view({
+      models: [{ ...built, calibration: { at: '2026-11-19T04:05:06+00:00', scans: 253, default: { sim_min_picture_only: 0.8, lead_min_picture_only: 0.06 }, thresholds: { sim_min_picture_only: 0.72, lead_min_picture_only: 0.09 } } }],
+    })
+    expect(calibrated).toContain('Recalibrate thresholds')
+    expect(calibrated).toContain('Calibrated 2026-11-19 04:05 UTC on 253 Tuned scans')
+    expect(calibrated).toContain('0.80 → 0.72')
+    expect(calibrated).toContain('0.06 → 0.09')
+  })
+
   it('formats sizes and index states', () => {
     expect(megabytes(1572864)).toBe('1.5 MB')
     expect(indexState({ built: false })).toBe('not built')

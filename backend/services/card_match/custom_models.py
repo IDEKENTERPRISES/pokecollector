@@ -201,3 +201,24 @@ def delete_model(name: str, data_dir: Path | None = None) -> dict:
 
 def index_names(name: str) -> dict[str, str]:
     return {"whole": name, "art": art_name(name)}
+
+
+# ── Calibrated picture thresholds (version 16 test, ``calibration.py``) ──────────────────────────────────────────
+
+def calibrated_thresholds(entry: dict | None) -> dict | None:
+    """The calibrated table stored in a registry entry (``{threshold name: value}``), or None when it has none."""
+    table = ((entry or {}).get("calibration") or {}).get("thresholds")
+    return dict(table) if isinstance(table, dict) and table else None
+
+
+def store_calibration(name: str, calibration: dict, data_dir: Path | None = None) -> dict:
+    """Keep ``calibration`` (``at``, ``scans``, ``thresholds``, ``default``, ...) in the model's registry entry, so deleting the model removes it
+    too. Returns the updated entry; raises ``CustomModelError`` (404) for an unknown model."""
+    with _lock:
+        entries = list_models(data_dir)
+        entry = next((e for e in entries if e["id"] == name), None)
+        if entry is None:
+            raise CustomModelError("Unknown model", 404)
+        entry["calibration"] = calibration
+        _write_registry(entries, data_dir)
+    return entry

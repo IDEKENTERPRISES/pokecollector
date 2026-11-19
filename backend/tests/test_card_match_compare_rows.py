@@ -86,7 +86,7 @@ class ResolveLabelsTests(unittest.TestCase):
 
     def test_titles_and_groups(self):
         groups = {variants.compare_group(label) for label in variants.COMPARE_LABELS}
-        self.assertEqual(groups, {"history", "v10 kept", "v12", "v14", "v15", "custom"})
+        self.assertEqual(groups, {"history", "v10 kept", "v12", "v14", "v15", "v16", "custom"})
         self.assertEqual(variants.compare_group(variants.KEPT_LABEL), "v10 kept")
         self.assertEqual(variants.compare_group(variants.KEPT_LABEL + "+custom"), "custom")
         self.assertEqual(variants.compare_title(variants.KEPT_LABEL), "Kept set")

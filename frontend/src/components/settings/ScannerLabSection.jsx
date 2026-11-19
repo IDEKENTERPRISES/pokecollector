@@ -464,7 +464,7 @@ export function CompareTable({ report, title, order }) {
                   </>
                 ) : (
                   <td colSpan={11} className="text-text-secondary" data-testid="scanner-lab-row-skipped">
-                    {`needs the ${(row.missing_indexes || []).join(', ')} index`}
+                    {row.reason && !(row.missing_indexes || []).length ? row.reason : `needs the ${(row.missing_indexes || []).join(', ')} index`}
                   </td>
                 )}
               </tr>

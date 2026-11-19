@@ -180,6 +180,29 @@ def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=Non
     return {"report": path.name, "kind": kind, "n": report["metrics"]["n"], "duration_seconds": report["duration_seconds"]}
 
 
+def calibrate_work(model_id: str, *, session_factory=None, data_dir: Path | None = None, on_stored: Callable[[dict], None] | None = None) -> dict:
+    """Version 16 test: the Scanner lab job that calibrates one custom model's picture thresholds (``calibration.py``). ``on_stored`` (the audit
+    log entry) is called with the stored calibration."""
+    from . import calibration
+    from services import scan_trace, trace_sources
+
+    trace_dir = scan_trace.trace_root() or scan_trace.trace_storage_root()
+    if not trace_dir and not trace_sources.readonly_roots():
+        raise RuntimeError("No diagnostics traces with a confirmed answer yet")
+    try:
+        stored = calibration.run_calibration(model_id, session_factory or _session_factory(), data_dir=data_dir, trace_dir=trace_dir,
+                                             progress=jobs._progress, should_stop=jobs._stop.is_set)
+    except calibration.CalibrationError as exc:
+        raise RuntimeError(str(exc)) from exc
+    if on_stored is not None:
+        on_stored(stored)
+    return {"kind": "calibrate", "model": model_id, "scans": stored["scans"], "thresholds": stored["thresholds"]}
+
+
+def start_calibration(model_id: str, on_stored: Callable[[dict], None] | None = None) -> tuple[bool, dict]:
+    return jobs.start("calibrate", lambda: calibrate_work(model_id, on_stored=on_stored))
+
+
 def start_index(model: str = DEFAULT_MODEL) -> tuple[bool, dict]:
     return jobs.start("index", lambda: build_index_work(model))
 

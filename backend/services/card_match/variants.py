@@ -34,6 +34,9 @@ Options (all measured side by side by the labelled benchmark, "Compare options" 
   - ``serverocr`` (version 15 test): a number still incomplete after the whole normal reading is read once more by a second RapidOCR engine on the
     PP-OCRv4 *server* models (``ocr_server.py``): the two tight strips and the plain bottom band, merged so it can only add or complete a number.
     Off by default; a comparison row only.
+  - ``calibrated`` (version 16 test, acts only with ``custom``): the decision rules use the newest custom model's own picture thresholds
+    (``calibration.py``: worked out on the server from the real scans, stored in its registry entry) instead of DINOv2-small's constants.
+    Without ``custom`` it does nothing; with ``custom`` and no calibration yet the comparison row is skipped ("calibrate the custom model first").
 A label is the options joined by ``+``: ``baseline`` (none), ``names``, ``names+number``, ``names+number+text+tta`` ...
 
 The label in use comes from ``CARD_MATCH_OPTIONS``, else from ``chosen.json`` (written when a comparison
@@ -59,6 +62,7 @@ ART_INDEX = f"{DEFAULT_MODEL}-art"  # the artwork-window index of the default mo
 V12_WORDS = ("widefirst", "topname")  # version 12 test options: server only, off by default
 V14_WORDS = ("edgeguard",)  # version 14 test option: off by default
 V15_WORDS = ("serverocr",)  # version 15 test option: off by default
+V16_WORDS = ("calibrated",)  # version 16 test option: the custom model's own picture thresholds; off by default
 CUSTOM_WORDS = ("custom",)  # the newest uploaded custom picture model
 BEST_V8 = "names+number+text+art+tta+fastread+corners+wholepic"
 IN_USE = "names+number+text+art+tta+fastread+numberonce+corners+wholepic"  # picked on the server with version 9: 67.4% decided, 0 wrong, p95 1,431 ms
@@ -70,6 +74,7 @@ DEFAULT_LABEL = IN_USE  # an unbuilt artwork index is left out, see ``usable``
 # (measured against the set in use with version 9: 66.3% decided against 67.4%, both 0 wrong).
 KEPT_LABEL = IN_USE + "+wholeread+wholestrict"  # the kept set: 72.1% decided, 0 wrong on the real photos
 NO_STRICT_LABEL = IN_USE + "+wholeread"  # the kept set without ``wholestrict``
+PIN_LABEL = NO_STRICT_LABEL + "+widefirst+topname+edgeguard"  # the set in use on prod (the pin; its test is in test_card_match_v14.py)
 BEST_EXISTING_LABEL = KEPT_LABEL + "+widefirst"  # the best existing row, which the server picked with version 12
 COMPARE_LABELS = (
     "baseline", "names", "names+number", "names+number+text", "names+number+text+art",
@@ -85,7 +90,10 @@ COMPARE_LABELS = (
     NO_STRICT_LABEL + "+widefirst+topname+edgeguard", KEPT_LABEL + "+edgeguard",
     # Version 15 test: the set in use (the pin) with the server OCR second try.
     NO_STRICT_LABEL + "+widefirst+topname+edgeguard+serverocr",
+    # Version 16 test: the newest custom model on the set in use (the pin), with the default thresholds and with its own calibrated ones.
+    PIN_LABEL + "+custom", PIN_LABEL + "+custom+calibrated",
 )
+V16_LABELS = COMPARE_LABELS[-2:]
 # The synthetic comparison chooses nothing, so it runs a short list on fewer photos
 # (version 5: 10 rows x 400 photos took 89 minutes).
 SYNTHETIC_COMPARE_LABELS = (
@@ -98,6 +106,10 @@ def _base_compare_title(label: str) -> str:
     """A short readable name for a comparison row (the kept sets are named, the rest list their options)."""
     if label == "baseline":
         return "Baseline (picture only)"
+    if label == V16_LABELS[0]:
+        return "Set in use + custom model, default thresholds"
+    if label == V16_LABELS[1]:
+        return "Set in use + custom model, calibrated thresholds"
     for prefix, name in ((BEST_EXISTING_LABEL, "Kept set + widefirst"), (KEPT_LABEL, "Kept set"),
                          (NO_STRICT_LABEL, "Kept set without wholestrict"), (IN_USE, "In-use set (v9)")):
         if label == prefix:
@@ -114,6 +126,8 @@ def compare_title(label: str) -> str:
 
 def compare_group(label: str) -> str:
     """Where a comparison row sits in the picker: history, v10 kept, v12 or custom."""
+    if label in V16_LABELS:
+        return "v16"
     options = parse(label)
     if options.custom:
         return "custom"
@@ -164,9 +178,11 @@ class Options:
 
     custom: bool = False  # the newest uploaded custom picture model and its two indexes (needs art, so turns it on)
 
+    calibrated: bool = False  # version 16 test: with ``custom``, the decision rules use that model's calibrated picture thresholds
+
     @property
     def label(self) -> str:
-        parts = [name for name in ORDER + V12_WORDS + V14_WORDS + V15_WORDS + CUSTOM_WORDS if getattr(self, name)]
+        parts = [name for name in ORDER + V12_WORDS + V14_WORDS + V15_WORDS + CUSTOM_WORDS + V16_WORDS if getattr(self, name)]
         return "+".join(parts) or "baseline"
 
 
@@ -181,19 +197,41 @@ def parse(label: str | None) -> Options:
         words.add("wholeread")  # it judges the number the second read produced
     if "wholepic" in words or "trustrejected" in words or "edgeguard" in words:
         words.add("corners")  # both act on a quad the finder refused
-    return Options(**{name: name in words for name in ORDER + V12_WORDS + V14_WORDS + V15_WORDS + CUSTOM_WORDS})
+    return Options(**{name: name in words for name in ORDER + V12_WORDS + V14_WORDS + V15_WORDS + CUSTOM_WORDS + V16_WORDS})
 
 
-def model_name(options: Options, data_dir: Path | None = None) -> str:
-    return custom_models.newest_name(data_dir) if options.custom else DEFAULT_MODEL
+def model_name(options: Options, data_dir: Path | None = None, custom_name: str | None = None) -> str:
+    """The picture model of an option set: the newest custom model with ``custom`` (``custom_name`` names another one, for the calibration job)."""
+    return (custom_name or custom_models.newest_name(data_dir)) if options.custom else DEFAULT_MODEL
 
 
-def main_index_name(options: Options, data_dir: Path | None = None) -> str:
-    return model_name(options, data_dir)
+def main_index_name(options: Options, data_dir: Path | None = None, custom_name: str | None = None) -> str:
+    return model_name(options, data_dir, custom_name)
 
 
-def art_index_name(options: Options, data_dir: Path | None = None) -> str:
-    return custom_models.art_name(model_name(options, data_dir)) if options.custom else ART_INDEX
+def art_index_name(options: Options, data_dir: Path | None = None, custom_name: str | None = None) -> str:
+    return custom_models.art_name(model_name(options, data_dir, custom_name)) if options.custom else ART_INDEX
+
+
+def calibration_problem(options: Options, data_dir: Path | None = None) -> str | None:
+    """Why a ``custom+calibrated`` row cannot run yet: the newest custom model has no calibration (None when it has one, or the row does not use it)."""
+    if not (options.custom and options.calibrated):
+        return None
+    entry = custom_models.newest(data_dir)
+    if entry is not None and custom_models.calibrated_thresholds(entry):
+        return None
+    return "calibrate the custom model first"
+
+
+def thresholds_for(options: Options, data_dir: Path | None = None):
+    """The picture thresholds a matcher of this option set decides with: the newest custom model's calibrated table with
+    ``custom`` + ``calibrated`` (when it has one), else None (the default table)."""
+    from . import pipeline
+
+    if not (options.custom and options.calibrated):
+        return None
+    table = custom_models.calibrated_thresholds(custom_models.newest(data_dir))
+    return pipeline.Thresholds.from_dict(table) if table else None
 
 
 def needed_indexes(options: Options, data_dir: Path | None = None) -> list[str]:
@@ -270,7 +308,8 @@ def build_matcher(options: Options, session_factory, *, data_dir: Path | None = 
         index = index_module.get_index(main_index_name(options, data_dir), data_dir)
     except Exception:
         pass
-    key = (options, id(index), len(index) if index is not None else 0, id(session_factory), id(ocr_reader), read_hp, str(data_dir),
+    entry = custom_models.newest(data_dir) if options.custom and options.calibrated else None
+    key = (options, ((entry or {}).get("calibration") or {}).get("at"), id(index), len(index) if index is not None else 0, id(session_factory), id(ocr_reader), read_hp, str(data_dir),
            tuple(len(ix) for ix in (index_module.get_index(n, data_dir) for n in needed_indexes(options, data_dir)) if ix is not None) if index is not None else ())
     cached = _matchers.get("last")
     if cached and cached[0] == key:
@@ -280,19 +319,21 @@ def build_matcher(options: Options, session_factory, *, data_dir: Path | None = 
     return matcher
 
 
-def _build_matcher(options: Options, session_factory, *, data_dir: Path | None = None, ocr_reader=None, read_hp: bool = False):
+def _build_matcher(options: Options, session_factory, *, data_dir: Path | None = None, ocr_reader=None, read_hp: bool = False,
+                   custom_name: str | None = None, thresholds=None):
     """A CardMatcher with these options. Raises RuntimeError when the default index is missing; an extra
-    index that is not built leaves that option out (logged), so a half-built setup still answers."""
+    index that is not built leaves that option out (logged), so a half-built setup still answers. ``custom_name`` /
+    ``thresholds`` (the calibration job's safety check) name a custom model other than the newest and a table not stored yet."""
     from . import embed, index as index_module, lookup as lookup_module, names as names_module, pipeline
     from .ocr import get_reader
 
-    embedder = embed.get_embedder(model_name(options, data_dir))
-    index = index_module.get_index(main_index_name(options, data_dir), data_dir)
+    embedder = embed.get_embedder(model_name(options, data_dir, custom_name))
+    index = index_module.get_index(main_index_name(options, data_dir, custom_name), data_dir)
     if index is None or len(index) == 0:
         raise RuntimeError("The picture index is empty: build it first")
     signals = []
     if options.art:
-        art = index_module.get_index(art_index_name(options, data_dir), data_dir)
+        art = index_module.get_index(art_index_name(options, data_dir, custom_name), data_dir)
         if art is not None and len(art):
             signals.append(pipeline.Signal("art", art, embedder, crop="art"))
         else:
@@ -311,6 +352,7 @@ def _build_matcher(options: Options, session_factory, *, data_dir: Path | None =
         corners=options.corners, edgeguard=options.edgeguard, wholepic=options.wholepic, trustrejected=options.trustrejected,
         wholeread=options.wholeread, wholestrict=options.wholestrict, widefirst=options.widefirst, topname=options.topname, serverocr=options.serverocr,
         lookup=lookup, use_number=options.number, use_text=options.text, reprint=options.reprint,
+        thresholds=thresholds if thresholds is not None else thresholds_for(options, data_dir),
     )
 
 
