@@ -206,6 +206,17 @@ Provider-specific errors are translated into the same scanner states:
 - A provider block is shared safely across scans using a non-reversible credential fingerprint, or the configured endpoint for a keyless server. PokéCollector does not repeatedly hit a provider that has already asked it to wait.
 - **Scanner switched off.** When a keyless or self-hosted endpoint refuses connections, the scan is parked as "Waiting for the scanner" instead of climbing the retry delays. The backend checks the endpoint about once a minute (a 2-second request, cached for a minute) and releases every waiting scan when it answers. "Try now" on a scan checks immediately. While scans wait, their 14-day expiry is held at least two days ahead, so unrecognised photos are not deleted.
 
+## Matcher only (no AI)
+
+An administrator can switch AI scanning off for the whole server in **Settings › Scanner › Matcher only (no AI)** (`scan_matcher_only`; default from the `SCAN_MATCHER_ONLY` environment variable, off). While it is on:
+
+- no request goes to Ollama, an OpenAI-compatible endpoint or Gemini, not even a reachability check. The function that sends the request refuses with an internal error as a safety net, and the flows above it (the scan queue, the single scan, retries, the once-a-minute sweep) never get that far;
+- every scan gets the picture matcher's result however unsure it is, and the trainer confirms or picks another card (see "Matcher only" in `docs/CARD_MATCH.md`);
+- **Test** in the scanner settings answers "Matcher only is on: AI scanning is switched off" and sends nothing; "Wait for the scanner" is refused with the same words;
+- a user needs no scanner configuration at all to scan.
+
+Nobody's stored provider, model, endpoint, key or timeout is read or changed by the switch, so turning it off restores exactly what was there. Each change is written to the audit log (`scanner.matcher_only.updated`). Scans that were waiting for the scanner when it went on are finished by the matcher on the next poll or minute sweep.
+
 ## Reviewing scans: one list, card by card
 
 - **No photo limit.** A batch can be any size. The phone still uploads in chunks (12 photos or about 10 MB each, whichever comes first) so a request stays small and the offline outbox can resume, but that is invisible: each chunk is a job on the server, and the Scan inbox reads `GET /api/cards/recognize/queue`, one list of every scan still waiting, oldest first, with no cap (`limit` and `offset` page it). The old per-job pages (`/scans/<id>`) still open, but the inbox no longer lists jobs. Composites (2–4 photos in one model call) are only an internal recognition detail and are never shown as groups.

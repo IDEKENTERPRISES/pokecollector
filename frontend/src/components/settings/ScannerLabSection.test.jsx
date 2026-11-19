@@ -1,8 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
-import { CompareTable, WrongList, HowConfirmedView, OcrCheckView, PictureFirstView, Report, ShadowView, SourceGroups, TraceSources } from './ScannerLabSection'
-import { DecidedWrong, MissesView, StripRow } from './ScannerLabMisses'
+import { CompareTable, deviceText, WrongList, HowConfirmedView, OcrCheckView, PictureFirstView, Report, ShadowView, SourceGroups, TraceSources } from './ScannerLabSection'
+import { CorrectedNote, CorrectionBarView, CorrectionsProvider, DecidedWrong, MissesView, StripRow, correctionQuestion } from './ScannerLabMisses'
 
 const report = {
   kind: 'synthetic',
@@ -193,6 +194,16 @@ describe('Picture match first counts', () => {
     expect(html).toMatch(/Sent to Ollama<\/span><span[^>]*>12/)
     expect(html).toMatch(/while the scanner was unreachable<\/span><span[^>]*>4/)
     expect(html).toContain('1 of 20 confirmed (5%)')
+  })
+
+  it('shows the unsure picks line only when there are some, or when Matcher only is on', () => {
+    const none = renderToStaticMarkup(<PictureFirstView data={{ enabled: true, counts: { ...counts, forced_shown: 0, forced_kept: 0 } }} />)
+    expect(none).not.toContain('Unsure picks shown')
+    const some = renderToStaticMarkup(<PictureFirstView data={{ enabled: true, counts: { ...counts, forced_shown: 9, forced_kept: 6 } }} />)
+    expect(some).toContain('Unsure picks shown')
+    expect(some).toContain('9 · kept as proposed: 6')
+    const only = renderToStaticMarkup(<PictureFirstView data={{ enabled: true, matcher_only: true, counts }} />)
+    expect(only).toContain('0 · kept as proposed: 0')
   })
 
   it('says when it is off and copes with nothing confirmed yet', () => {
@@ -497,5 +508,141 @@ describe('Wrong decisions of a comparison row', () => {
     ]
     const html = renderToStaticMarkup(<CompareTable title="t" report={{ kind: 'compare-labelled', n: 1, rows, winner: null }} />)
     expect(html.match(/scanner-lab-row-wrong-open/g)).toHaveLength(1)
+  })
+})
+
+describe('Scanner lab matcher version 12 test rows', () => {
+  const kept = 'names+number+text+art+tta+fastread+numberonce+corners+wholepic+wholeread+wholestrict'
+  const rows = [
+    { label: kept, status: 'ok', n: 280, top1: 60, top5: 80, top20: 99.6, number_exact: 60.1, name_read: 71.4, number_ms_mean: 812.3, decided: 72.1, decided_wrong: 0, p95_ms: 1420 },
+    { label: `${kept}+widefirst+topname`, status: 'ok', n: 280, top1: 60, top5: 80, top20: 99.6, number_exact: 61, name_read: 80.2, number_ms_mean: 540.8, decided: 73, decided_wrong: 0, p95_ms: 1300 },
+    { label: 'baseline', status: 'ok', n: 280, top1: 40, top5: 60, top20: 70, number_exact: 10, decided: 5, decided_wrong: 0, p95_ms: 300 },
+  ]
+
+  it('shows the name-read rate and the mean number time, and names the new options', () => {
+    const html = renderToStaticMarkup(<CompareTable title="t" report={{ kind: 'compare-labelled', n: 280, rows, winner: null }} />)
+    expect(html).toContain('>Name<')
+    expect(html).toContain('Number time')
+    expect(html).toContain('71.4%')
+    expect(html).toContain('812.3 ms')
+    expect(html).toContain('540.8')
+    expect(html).toContain('wide bottom read first (test) + name from the top band (test)')
+    expect(html).toContain('–') // a row from an older report has no name or number time
+  })
+
+  it('shows where each set first reads its number in the OCR check', () => {
+    const row = { tight: 5, bottom_band: 1, narrow_wide: 0, bottom_wide: 9, never: 2 }
+    const check = renderToStaticMarkup(<OcrCheckView report={{ traces: 100, skipped: 0, by_resolution: {}, steps: {}, number_by_set: { all: { scans: 17, ...row }, min_scans: 3, sets: [{ set: '30C', scans: 17, ...row }] } }} />)
+    expect(check).toContain('scanner-lab-number-by-set')
+    expect(check).toContain('30C (17): 5 tight · 1 bottom band · 0 wide strips · 9 whole bottom · 2 never')
+  })
+})
+
+describe('Correcting a confirmed card', () => {
+  const item = {
+    key: 'job3-item4-abc', source: 'local', mechanism: 'number_and_picture', rank: 2,
+    decided_card: { tcg_card_id: 'me2-32', name: 'N’s Darumaka', number: '032', printed_total: 217, set: 'Ascended Heroes' },
+    truth: { tcg_card_id: 'sv9-26', name: 'N’s Darumaka', number: '026', printed_total: 159, set: 'Journey Together' },
+    ocr: {},
+  }
+
+  it('words the question with the old and the decided card (name, set, number)', () => {
+    expect(correctionQuestion(item.truth, item.decided_card)).toBe(
+      'Change the confirmed card from N’s Darumaka · Journey Together #026/159 to N’s Darumaka · Ascended Heroes #032/217?',
+    )
+    const html = renderToStaticMarkup(<CorrectionBarView item={item} mode="confirm" target={item.decided_card} />)
+    expect(html).toContain('Journey Together #026/159')
+    expect(html).toContain('Ascended Heroes #032/217')
+  })
+
+  it('offers both buttons on a wrong decision and only "Pick the right card" on other misses', () => {
+    const wrong = renderToStaticMarkup(<CorrectionBarView item={item} />)
+    expect(wrong).toContain('The scanner was right')
+    expect(wrong).toContain('Pick the right card')
+    const other = renderToStaticMarkup(<CorrectionBarView item={{ ...item, decided_card: null }} />)
+    expect(other).not.toContain('The scanner was right')
+    expect(other).toContain('Pick the right card')
+  })
+
+  it('shows no button for a scan of a read-only source', () => {
+    expect(renderToStaticMarkup(<CorrectionBarView item={{ ...item, source: 'prod' }} />)).toBe('')
+  })
+
+  it('shows who corrected it, with Undo', () => {
+    const html = renderToStaticMarkup(<CorrectionBarView item={item} correction={{ by_username: 'oak', from: 'sv9-26', to: 'me2-32' }} />)
+    expect(html).toContain('Corrected by oak')
+    expect(html).toContain('Undo')
+    expect(html).not.toContain('The scanner was right')
+  })
+
+  it('puts the bar on every decided-wrong entry of a comparison row and in Misses once the lab provides corrections', () => {
+    const queryClient = new QueryClient()
+    const row = { label: 'names+wholeread', status: 'ok', decided_wrong: 1, wrong_scans: [item] }
+    const html = renderToStaticMarkup(<QueryClientProvider client={queryClient}><CorrectionsProvider><WrongList row={row} /></CorrectionsProvider></QueryClientProvider>)
+    expect(html).toContain('The scanner was right')
+    const misses = renderToStaticMarkup(
+      <QueryClientProvider client={queryClient}>
+        <CorrectionsProvider>
+          <MissesView data={{ available: true, created_at: '2026-11-10T01:00:00+00:00', scans: 5, misses: 1, decided_wrong: 1, total: 1, offset: 0, tags: { decided_wrong: 'Decided wrong' }, counts: { decided_wrong: 1 }, items: [{ ...item, kind: 'decided_wrong', decided_wrong: true, tags: ['decided_wrong'], top3: [] }] }} tag={null} onTag={() => {}} onMore={() => {}} />
+        </CorrectionsProvider>
+      </QueryClientProvider>,
+    )
+    expect(misses).toContain('The scanner was right')
+    expect(misses).toContain('Pick the right card')
+  })
+
+  it('says how many corrected labels the benchmarks use', () => {
+    expect(renderToStaticMarkup(<CorrectedNote count={1} />)).toContain('1 confirmed card corrected by an admin')
+    expect(renderToStaticMarkup(<CorrectedNote count={3} />)).toContain('3 confirmed cards corrected by an admin')
+    expect(renderToStaticMarkup(<CorrectedNote count={0} />)).toBe('')
+  })
+})
+
+describe('Scanner lab: Tuned / New / Held back columns', () => {
+  const ok = (label, groups) => ({ label, status: 'ok', n: 280, top1: 98, top5: 99, top20: 99.6, number_exact: 80, name_read: 90, number_ms_mean: 100, decided: 72.1, decided_right: 100, decided_wrong: 0, p95_ms: 1400, eval_groups: groups })
+  const groups = {
+    tuned: { n: 200, decided: 150, wrong: 0 },
+    new: { n: 40, decided: 20, wrong: 0 },
+    held_back: { n: 40, decided: 10, wrong: 1 },
+  }
+  const render = rows => renderToStaticMarkup(<CompareTable report={{ kind: 'compare-labelled', n: 280, created_at: '2026-11-18T01:00:00+00:00', duration_seconds: 100, winner: null, rows }} title="Compare" />)
+
+  it('shows decided and wrong apart for the tuned, new and held-back groups', () => {
+    const html = render([ok('names+topname', groups)])
+    expect(html).toContain('data-testid="scanner-lab-group-head-tuned"')
+    expect(html).toContain('data-testid="scanner-lab-group-head-new"')
+    expect(html).toContain('data-testid="scanner-lab-group-head-held_back"')
+    expect(html).toContain('75% · ')
+    expect(html).toContain('50% · ')
+    expect(html).toContain('25% · ')
+    expect(html).toContain('text-red-500">1 wrong')
+    expect(html).toContain('(200)')
+  })
+
+  it('shows a dash for a group with no scans', () => {
+    const html = render([ok('names', { tuned: groups.tuned, new: { n: 0, decided: 0, wrong: 0 }, held_back: null })])
+    expect(html.match(/scanner-lab-group-(new|held_back)"[^>]*>–/g)).toHaveLength(2)
+  })
+
+  it('explains the three groups', () => {
+    const html = render([ok('names', groups)])
+    expect(html).toContain('never used for tuning')
+    expect(html).not.toContain('cross-fitted')
+  })
+})
+
+describe('deviceText', () => {
+  it('names the GPU with the warm-up time', () => {
+    expect(deviceText({ loaded: true, device: 'cuda', label: 'GPU (Quadro P620)', warm_ms: 812 })).toBe('GPU (Quadro P620) · warm-up 812 ms')
+  })
+  it('shows why it fell back to the CPU', () => {
+    expect(deviceText({ loaded: true, device: 'cpu', label: 'CPU', reason: 'CUDA failed: out of memory' })).toBe('CPU (CUDA failed: out of memory)')
+  })
+  it('shows warm or unloaded, and how many GPU runs fell back to the CPU', () => {
+    expect(deviceText({ loaded: true, device: 'cuda', label: 'GPU (Quadro P620)', state: 'warm', gpu_failures: 2 })).toBe('GPU (Quadro P620) · warm · 2 GPU runs rerun on the CPU')
+    expect(deviceText({ loaded: true, device: 'cuda', label: 'GPU (Quadro P620)', state: 'unloaded', unloaded_at: '2026-11-19T14:32:05+00:00' })).toBe('GPU (Quadro P620) · unloaded (idle since 14:32 UTC)')
+  })
+  it('says so before the model is loaded', () => {
+    expect(deviceText({ loaded: false })).toBe('not loaded yet')
   })
 })

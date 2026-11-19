@@ -3,7 +3,7 @@
 import base64
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session
 from api.auth import get_current_user
 from database import get_db
 from models import Card, User
-from services import scan_trace, trace_sources
-from services.card_match import MATCHER_VERSION, benchmark, config, embed, index as index_module, jobs as jobs_module, misses as misses_module, shadow as shadow_module, variants
+from services import scan_trace, trace_correction, trace_sources
+from services.audit import record_audit
+from services.card_match import MATCHER_VERSION, benchmark, config, custom_models, embed, index as index_module, device as device_module, jobs as jobs_module, warmup, misses as misses_module, shadow as shadow_module, variants
 from services.card_match.model_specs import DEFAULT_MODEL, MODEL_SPECS
 
 router = APIRouter()
@@ -35,6 +36,25 @@ def _english_picture_total(db: Session) -> int:
     return int(index_module.picture_query(db, "en").with_entities(func.count(Card.id)).scalar() or 0)
 
 
+def _compare_rows(kind: str) -> list[dict]:
+    """The rows of a comparison for the picker: label, readable title, group, whether it always runs, and how long it took last time."""
+    labels = variants.SYNTHETIC_COMPARE_LABELS if kind == "synthetic" else variants.COMPARE_LABELS
+    reference = set(variants.compare_reference_labels(labels))
+    times = benchmark.last_row_seconds(kind)
+    return [
+        {"label": label, "title": variants.compare_title(label), "group": variants.compare_group(label), "reference": label in reference,
+         "seconds": (times.get(label) or {}).get("seconds"), "measured_at": (times.get(label) or {}).get("at")}
+        for label in labels
+    ]
+
+
+@router.post("/warm")
+def warm_card_matcher(current_user: User = Depends(get_current_user)):
+    """Any signed-in user's scanner screen calls this when it opens: loads the picture model and OCR in the background
+    (so the first scan is not slow after an idle unload) and returns at once. Rate-limited; a no-op unless CARD_MATCH_WARM is on."""
+    return warmup.request_warm()
+
+
 @router.get("/status")
 def card_match_status(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     _require_admin(current_user)
@@ -44,6 +64,7 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
         "matcher_version": MATCHER_VERSION,
         "model": {"name": DEFAULT_MODEL, "available": embed.model_available(DEFAULT_MODEL), "license": spec["license"], "dim": spec["dim"]},
         "ocr_available": _ocr_available(),
+        "device": device_module.report(DEFAULT_MODEL),
         "threads": config.threads(),
         "autorun": config.autorun_enabled(),
         "index_after_sync": config.index_after_sync_enabled(),
@@ -51,17 +72,83 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
         "index": index_module.index_status(DEFAULT_MODEL),
         "extra_indexes": {
             name: {**index_module.index_status(name), "label": spec["label"], "available": embed.model_available(spec["model"])}
-            for name, spec in variants.index_specs().items() if name != DEFAULT_MODEL
+            for name, spec in variants.index_specs().items() if name != DEFAULT_MODEL and not spec.get("custom")
         },
-        "options": {"active": variants.active_label(), "compare": list(variants.COMPARE_LABELS)},
+        "custom_models": _custom_models_view(),
+        "options": {
+            "active": variants.active_label(), "compare": list(variants.COMPARE_LABELS),
+            "compare_rows": _compare_rows("labelled"), "compare_rows_synthetic": _compare_rows("synthetic"),
+        },
         "misses": _misses_summary(),
         "job": jobs_module.jobs.status(),
         "reports": benchmark.latest_reports(),
         "labelled_traces": benchmark.count_labelled_traces(trace_dir),
         "labelled_traces_local": benchmark.count_labelled_traces(trace_dir, source=trace_sources.LOCAL),
+        "corrected_labels": trace_correction.corrections_overview(trace_dir)["scans"],
         "trace_sources": _trace_sources(),
         "thresholds": benchmark.thresholds(),
     }
+
+
+def _custom_models_view() -> list[dict]:
+    """Uploaded custom models, newest first, each with the status of its two indexes."""
+    out = []
+    for entry in sorted(custom_models.list_models(), key=lambda e: e.get("uploaded_at", ""), reverse=True):
+        names = custom_models.index_names(entry["id"])
+        out.append({
+            **{key: entry[key] for key in ("id", "name", "sha256", "size_bytes", "uploaded_by", "uploaded_at", "dim")},
+            "sha_short": entry["sha256"][:8], "available": embed.model_available(entry["id"]),
+            "indexes": {kind: {**index_module.index_status(index_name), "name": index_name} for kind, index_name in names.items()},
+        })
+    return out
+
+
+@router.get("/models")
+def list_custom_models(current_user: User = Depends(get_current_user)):
+    _require_admin(current_user)
+    return {"models": _custom_models_view(), "max_bytes": custom_models.MAX_BYTES}
+
+
+@router.post("/models")
+def upload_custom_model(
+    request: Request, file: UploadFile = File(...), name: str = Form(""),
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """Upload a picture model (.onnx, at most 400 MB; see docs/CARD_MATCH.md, "Custom picture models")."""
+    _require_admin(current_user)
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > custom_models.MAX_BYTES + (1 << 20):
+        raise HTTPException(status_code=413, detail=f"The file is over the {custom_models.MAX_BYTES // (1024 * 1024)} MB limit")
+    if not (file.filename or "").lower().endswith(".onnx"):
+        raise HTTPException(status_code=422, detail="The file must be an .onnx model")
+    try:
+        entry = custom_models.save_upload(file.file, name or (file.filename or "")[:-5], current_user.username)
+    except custom_models.CustomModelError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    record_audit(
+        db, "card_match.model_uploaded", request=request, actor=current_user, target_type="card_match_model", target_id=entry["id"],
+        details={"name": entry["name"], "sha256": entry["sha256"], "size_bytes": entry["size_bytes"]},
+    )
+    return {"model": next((m for m in _custom_models_view() if m["id"] == entry["id"]), entry)}
+
+
+@router.delete("/models/{model_id}")
+def delete_custom_model(model_id: str, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Remove an uploaded model, its file and both its indexes."""
+    _require_admin(current_user)
+    if not custom_models.is_custom_name(model_id):
+        raise HTTPException(status_code=404, detail="Unknown model")
+    if jobs_module.jobs.is_running():
+        raise HTTPException(status_code=409, detail="A matcher job is running: stop it or wait before deleting a model")
+    try:
+        entry = custom_models.delete_model(model_id)
+    except custom_models.CustomModelError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    record_audit(
+        db, "card_match.model_deleted", request=request, actor=current_user, target_type="card_match_model", target_id=model_id,
+        details={"name": entry["name"], "sha256": entry["sha256"]},
+    )
+    return {"deleted": model_id}
 
 
 _SOURCE_STATUS_TTL_SECONDS = 30
@@ -111,6 +198,60 @@ def card_match_miss_full(key: str, current_user: User = Depends(get_current_user
     return {"photo": inline(photo), "card": inline(card), "strips": misses_module.strip_views(key) or []}
 
 
+class CorrectionRequest(BaseModel):
+    card_id: str
+    reason: str = ""
+
+
+def _card_summary(card: Card) -> dict:
+    return {"tcg_card_id": card.tcg_card_id, "name": card.name, "set": card.set_id, "number": card.number}
+
+
+def _local_trace_root():
+    return scan_trace.trace_root() or scan_trace.trace_storage_root()
+
+
+@router.get("/traces/corrections")
+def card_match_trace_corrections(current_user: User = Depends(get_current_user)):
+    """The scans whose confirmed card an admin corrected on this server, by Misses key (for the lab's "Corrected by ... Undo")."""
+    _require_admin(current_user)
+    return trace_correction.corrections_overview(_local_trace_root())
+
+
+@router.post("/traces/{key}/correct")
+def card_match_trace_correct(key: str, body: CorrectionRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Set the confirmed card of a scan to another card (an English, physical catalogue card); the old value is kept for Undo."""
+    _require_admin(current_user)
+    card_id = (body.card_id or "").strip()
+    card = index_module.picture_query(db, "en").filter(Card.tcg_card_id == card_id).first() if card_id else None
+    if card is None:
+        raise HTTPException(status_code=422, detail="Unknown card: it must be an English, physical card in the catalogue")
+    try:
+        result = trace_correction.correct(key, card_id, by_user_id=current_user.id, by_username=current_user.username, reason=body.reason)
+    except trace_correction.CorrectionError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    record_audit(
+        db, "scan_trace.ground_truth_corrected", request=request, actor=current_user, target_type="scan_trace", target_id=key,
+        details={"from_card_id": result["from"], "to_card_id": result["to"], "note": (body.reason or "").strip()[:200]},
+    )
+    return {**result, "card": _card_summary(card)}
+
+
+@router.post("/traces/{key}/undo-correct")
+def card_match_trace_undo_correct(key: str, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Put back the confirmed card the last correction replaced."""
+    _require_admin(current_user)
+    try:
+        result = trace_correction.undo(key, by_user_id=current_user.id, by_username=current_user.username)
+    except trace_correction.CorrectionError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    record_audit(
+        db, "scan_trace.ground_truth_restored", request=request, actor=current_user, target_type="scan_trace", target_id=key,
+        details={"from_card_id": result["from"], "to_card_id": result["to"]},
+    )
+    return result
+
+
 _SHADOW_REPORT_TTL_SECONDS = 20
 _shadow_report_cache: dict = {"at": 0.0, "value": None, "dir": None}
 
@@ -131,10 +272,11 @@ def card_match_shadow(current_user: User = Depends(get_current_user)):
 def card_match_picture_first(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Picture match first: whether it is on, and what the last 7 days looked like (services/picture_first.py)."""
     _require_admin(current_user)
-    from services import picture_first
+    from services import matcher_only, picture_first
 
     return {
         "enabled": picture_first.enabled(db),
+        "matcher_only": matcher_only.enabled(db),
         "env_default": picture_first.env_default(),
         "timeout_seconds": picture_first.timeout_seconds(),
         "counts": picture_first.lab_counts(db),
@@ -171,6 +313,7 @@ def start_index(body: IndexRequest | None = None, current_user: User = Depends(g
 
 class BenchmarkRequest(BaseModel):
     kind: str = "synthetic"
+    labels: list[str] | None = None  # compare-labelled / compare-synthetic: the rows to run (None or empty: all of them)
 
 
 @router.post("/benchmark")
@@ -178,8 +321,15 @@ def start_benchmark(body: BenchmarkRequest, current_user: User = Depends(get_cur
     _require_admin(current_user)
     if body.kind not in ("synthetic", "labelled", "compare-synthetic", "compare-labelled", "ocr-check"):
         raise HTTPException(status_code=422, detail="kind must be synthetic, labelled, compare-synthetic, compare-labelled or ocr-check")
+    labels = None
+    if body.kind in ("compare-labelled", "compare-synthetic") and body.labels:
+        try:
+            benchmark.resolve_compare_labels(body.kind.split("-", 1)[1], body.labels)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        labels = body.labels
     _require_ready(True)
-    started, status = jobs_module.start_benchmark(body.kind, DEFAULT_MODEL)
+    started, status = jobs_module.start_benchmark(body.kind, DEFAULT_MODEL, labels)
     return {"started": started, "job": status}
 
 

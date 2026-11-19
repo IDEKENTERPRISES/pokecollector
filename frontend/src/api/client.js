@@ -445,6 +445,23 @@ export const restoreBackup = async (file, password) => {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
 }
+// Backup files kept in the server's backups folder (pre-wipe, pre-upgrade, downloads). Admin only.
+export const getServerBackups = () => api.get('/backup/server').then(r => r.data.backups)
+export const downloadServerBackup = (filename) => api.get('/backup/server/download', {
+  responseType: 'blob',
+  params: { filename },
+  timeout: 10 * 60 * 1000,
+}).then(r => {
+  const url = window.URL.createObjectURL(r.data)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  window.URL.revokeObjectURL(url)
+})
+// Same restore job as an upload (answers 202; follow it with getRestoreStatus), reading the file from the server.
+export const restoreServerBackup = (filename, password) =>
+  api.post('/backup/server/restore', { filename, password: password || null })
 export const getRestoreStatus = () => api.get('/backup/restore/status', { timeout: 15000 }).then(r => r.data)
 
 // Settings
@@ -452,6 +469,7 @@ export const getSettings = () => api.get('/settings/')
 export const saveSettings = (data) => api.put('/settings/', data)
 export const getSetting = (key) => api.get(`/settings/${key}`).then(r => r.data)
 export const setSetting = (key, value) => api.post(`/settings/${key}`, { value }).then(r => r.data)
+export const warmCardMatcher = () => api.post('/card-match/warm').then(r => r.data)
 export const getScannerConfiguration = () => api.get('/settings/scanner').then(r => r.data)
 export const updateScannerConfiguration = (data) => api.put('/settings/scanner', data).then(r => r.data)
 export const adoptScannerSettings = () => api.post('/settings/scanner/global/adopt').then(r => r.data)

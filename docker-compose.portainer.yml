@@ -14,11 +14,33 @@ services:
   backend:
     networks:
       - pokelocal_internal
+    build:
+      args:
+        # The GPU variant of the backend image (CUDA 12 ONNX Runtime); docs/CARD_MATCH.md "Running on the GPU".
+        # The nonprod stack merges this file too, so it gets the GPU settings from here.
+        CARD_MATCH_GPU: "1"
+    # The server's Quadro P620 for the picture matcher. It is shared with the nonprod stack and Jellyfin, which is why
+    # there is a memory cap and an idle unload below. Falls back to the CPU by itself if the card is missing or full.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     environment:
+      # Picture matcher on the GPU (auto = GPU when it works, else CPU), kept warm: models load at startup and run one dummy scan.
+      CARD_MATCH_DEVICE: auto
+      CARD_MATCH_GPU_MEM_MB: "1024"
+      CARD_MATCH_WARM: "1"
+      # Release the GPU sessions after 10 idle minutes (the card is shared with Jellyfin and nonprod); the scan screen warms them again.
+      CARD_MATCH_IDLE_UNLOAD_MINUTES: "10"
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
       # Picture matcher (docs/CARD_MATCH.md, "Running it on prod"). None of this changes a scan until an admin
       # builds the picture indexes in Scanner lab and switches "Picture match first" on in Settings > Scanner.
-      # The option set is the one nonprod's real-photo comparison kept. Promote a better one by changing it here.
-      CARD_MATCH_OPTIONS: ${CARD_MATCH_OPTIONS:-names+number+text+art+tta+fastread+numberonce+corners+wholepic+wholeread+wholestrict}
+      # The option set is the one nonprod's real-photo comparison picked on 19 Nov 2026 (77.7% decided, 0 wrong on 287 real photos, against 77.0% without edgeguard).
+      # Promote a better one by changing it here.
+      CARD_MATCH_OPTIONS: ${CARD_MATCH_OPTIONS:-names+number+text+art+tta+fastread+numberonce+corners+wholepic+wholeread+widefirst+topname+edgeguard}
       # Set to 1 in the stack's environment to add new card pictures to the index after each card sync.
       SCAN_MATCHER_INDEX_AFTER_SYNC: ${SCAN_MATCHER_INDEX_AFTER_SYNC:-}
       # Default for the admin switch "Picture match first". Unset means off.

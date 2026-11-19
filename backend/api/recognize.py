@@ -478,6 +478,9 @@ async def post_gemini_generate(
     max_attempts: int = 3,
 ) -> httpx.Response:
     """Call Gemini with small retries for transient capacity errors."""
+    from services.matcher_only import assert_provider_allowed
+
+    assert_provider_allowed()  # Matcher only: no request leaves the server (safety net)
     last_error = None
 
     for attempt in range(max_attempts):
@@ -2009,6 +2012,19 @@ async def recognize_card(
         sanitized = sanitize_image_bytes(raw_image)
     except ScanUploadError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+    from services import matcher_only
+
+    if matcher_only.enabled(db):
+        # Matcher only: the picture matcher answers, whatever its confidence; no provider is looked at.
+        from services.scan_queue import matcher_only_scan
+
+        try:
+            return await matcher_only_scan(db, current_user.id, sanitized.data)
+        except (RuntimeError, HTTPException) as exc:
+            if isinstance(exc, HTTPException):
+                raise
+            raise HTTPException(status_code=503, detail=str(exc)) from None
 
     provider = get_provider(db, current_user.id)
     trace = create_scan_trace(

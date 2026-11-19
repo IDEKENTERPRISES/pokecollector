@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { Camera, Upload, ImagePlus, Trash2, X, Check, Loader2, RefreshCw, Plus } from 'lucide-react'
 import { recognizeCard, addToCollection, enqueueScanJob, getScannerConfiguration } from '../api/client'
+import { warmMatcher } from '../utils/warmMatcher'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSettings } from '../contexts/SettingsContext'
 import { useConfirmDialog } from '../contexts/ConfirmDialogContext'
@@ -17,6 +18,7 @@ import { tcgdexLanguageLabel } from '../utils/tcgdexLanguages'
 import { isSupportedScannerImage, SCANNER_IMAGE_ACCEPT } from '../utils/scannerImages'
 import { attachCollectionPhoto } from '../utils/collectionPhoto'
 import OwnPhotoPicker from './OwnPhotoPicker'
+import { CheckThisCardBadge, ForcedPickHint, FramingTip, hasRejectedOutline, isForcedResult } from './ForcedPickNotice'
 import { useDialogBehavior } from './ui/dialogBehavior'
 import PrintingDetailSelector from './PrintingDetailSelector'
 
@@ -62,6 +64,9 @@ export function ScanAddModal({
     // The scan is fixed for the lifetime of the modal; load it once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // The scan screen opened: have the server's picture matcher loaded.
+  useEffect(() => { warmMatcher() }, [])
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow
@@ -230,13 +235,14 @@ export default function CardScanner({ isOpen, onClose, onCardSelected }) {
   const scanPreviewRef = useRef(null)
   const scannedFileRef = useRef(null)
   const stagedFilesRef = useRef([])
-  const { t } = useSettings()
+  const { t, settings } = useSettings()
+  const matcherOnly = settings?.scan_matcher_only === 'true' // no AI scanner: nothing about one is fetched or shown
   const confirmDialog = useConfirmDialog()
   const navigate = useNavigate()
   const { data: scannerConfiguration } = useQuery({
     queryKey: ['scanner-configuration'],
     queryFn: getScannerConfiguration,
-    enabled: isOpen,
+    enabled: isOpen && !matcherOnly,
   })
 
   useEffect(() => {
@@ -533,6 +539,13 @@ export default function CardScanner({ isOpen, onClose, onCardSelected }) {
 
                 {results.matches?.length > 0 ? (
                   <div>
+                    {isForcedResult(results) && (
+                      <div className="mb-3 space-y-2">
+                        <CheckThisCardBadge t={t} />
+                        <ForcedPickHint t={t} />
+                      </div>
+                    )}
+                    {hasRejectedOutline(results.recognized) && <div className="mb-3"><FramingTip t={t} /></div>}
                     <p className="mb-3 text-[10px] font-black uppercase tracking-[0.2em] text-text-muted">
                       {t('scanner.bestMatches')} ({results.matches.length})
                     </p>

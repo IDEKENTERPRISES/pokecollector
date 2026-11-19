@@ -39,6 +39,9 @@ TRUE = {"1", "true", "yes", "on"}
 PATH_DECIDED = "decided"
 PATH_OLLAMA = "unsure_ollama"
 PATH_INBOX = "unsure_inbox"
+PATH_FORCED = "forced"  # Matcher only: the rules were unsure, the first candidate is shown anyway
+PATH_NO_CANDIDATE = "no_candidate"  # Matcher only: nothing to propose, the review shows the search
+FORCED_ALTERNATIVES = 4  # candidates shown after the forced first pick
 
 MATCH_IMAGE_MAX_SIDE = 2048  # the same decode the shadow run and the benchmark use
 INBOX_MATCH_LIMIT = 12  # matches shown when the scan goes to the inbox unsure
@@ -110,15 +113,23 @@ def _lazy_photo(reader):
     return load
 
 
+class MatcherUnavailable(Exception):
+    """The model, the picture index or OCR is not ready (``reason`` is the matcher factory's word for it)."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
 def _run_blocking(image_bytes: bytes, deadline: float, full_bytes: bytes | None = None, capture: dict | None = None, review_reader=None):
     from services.card_match.images import decode_rgb
 
     if time.monotonic() >= deadline:
-        return None  # waited in line past its time: the caller already moved on
+        raise TimeoutError("waited in line past its time")  # the caller already moved on
     matcher, reason = matcher_factory()
     if matcher is None:
         logger.info("Picture match not ready: %s", reason)
-        return None
+        raise MatcherUnavailable(reason or "not_ready")
     photo = decode_rgb(image_bytes, max_side=MATCH_IMAGE_MAX_SIDE)
     full_photo = None
     if full_bytes:
@@ -137,20 +148,28 @@ def _run_blocking(image_bytes: bytes, deadline: float, full_bytes: bytes | None 
     return PictureRun(result=result, elapsed_ms=round(elapsed, 1), matcher=matcher, input_info=info)
 
 
-async def run_matcher(image_bytes: bytes, full_bytes: bytes | None = None, capture: dict | None = None, review_reader=None) -> PictureRun | None:
+async def run_matcher(image_bytes: bytes, full_bytes: bytes | None = None, capture: dict | None = None, review_reader=None, *, failure: dict | None = None, timeout: float | None = None) -> PictureRun | None:
     """Run the matcher on one recognition image (``full_bytes``: the sharpest stored picture of the card, for
     reading the text; ``review_reader``: a function that returns the whole review photo's bytes, used only when the card is
     not found; ``capture``: the camera frame and crop sizes, only recorded). ``None`` when it is not
-    ready, failed or took too long."""
-    limit = timeout_seconds()
+    ready, failed or took too long; ``failure`` (when given) then gets ``reason``: the factory's word when it is
+    not ready, else ``timeout`` or ``error``. ``timeout`` replaces the usual few seconds (Matcher only waits longer:
+    there is no scanner to fall back to)."""
+    limit = timeout if timeout is not None else timeout_seconds()
     deadline = time.monotonic() + limit
     loop = asyncio.get_running_loop()
+    reason = "error"
     try:
         return await asyncio.wait_for(loop.run_in_executor(_executor, _run_blocking, image_bytes, deadline, full_bytes, capture, review_reader), timeout=limit)
-    except asyncio.TimeoutError:
+    except MatcherUnavailable as exc:
+        reason = exc.reason
+    except (asyncio.TimeoutError, TimeoutError):
+        reason = "timeout"
         logger.warning("Picture match took longer than %.1f s; using the scanner path", limit)
     except Exception as exc:
         logger.warning("Picture match failed (%s); using the scanner path", type(exc).__name__)
+    if failure is not None:
+        failure["reason"] = reason
     return None
 
 
@@ -213,6 +232,9 @@ def _meta(run: PictureRun, path: str, **extra) -> dict:
     }
     if decision:
         meta["decided_card"] = decision.get("tcg_card_id")
+    rejected = (result.detection or {}).get("rejected") or {}
+    if rejected.get("edgeguard"):  # version 14: the finder's outline was too big or edge-bound to be the card (the scan screen shows a framing tip)
+        meta["outline_rejected"] = rejected.get("reason") or "implausible"
     camera = {k: v for k, v in run.input_info.items() if k in ("frame", "crop", "text_height")}
     if camera:
         meta["camera"] = camera
@@ -246,6 +268,30 @@ def inbox_result(db, run: PictureRun, *, earlier: dict | None = None) -> dict | 
         "recognized": {"language": "en", "_picture": _meta(run, PATH_INBOX, **_carry(earlier))},
         "matches": candidates,
     }
+
+
+def matcher_only_result(db, run: PictureRun, *, earlier: dict | None = None) -> dict:
+    """Matcher only: the queue result for any matcher run (the review always gets the matcher's answer).
+
+    * the rules decided          -> exactly the decided result of today, marked ``matcher_only``
+    * unsure, candidates exist   -> the first candidate as the proposal plus up to four alternatives, marked
+                                    ``forced_pick``; the stored path stays honest (``forced``, never ``decided``)
+    * no candidate at all        -> no matches, the review shows the search
+    The rules' own outcome is in ``rules_decided`` and ``unsure_reason`` as the matcher reported it."""
+    if run.decided:
+        result = decided_result(db, run, earlier=earlier)
+        if result is not None:
+            result["recognized"]["_picture"].update(matcher_only=True, forced_pick=False, rules_decided=True)
+            return result
+    candidates = _load_candidates(db, run.result.matches, None, 1 + FORCED_ALTERNATIVES)
+    if not candidates:
+        meta = _meta(run, PATH_NO_CANDIDATE, matcher_only=True, forced_pick=False, rules_decided=False)
+        return {"recognized": {"language": "en", "_picture": meta}, "matches": []}
+    meta = _meta(
+        run, PATH_FORCED, matcher_only=True, forced_pick=True, rules_decided=False,
+        forced_card=candidates[0].get("tcg_card_id"), alternatives=len(candidates) - 1,
+    )
+    return {"recognized": {"language": "en", "_picture": meta}, "matches": candidates}
 
 
 def attach_to_scanner_result(db, result: dict, run: PictureRun, *, earlier: dict | None = None) -> None:
@@ -336,7 +382,10 @@ def record_confirmation(item, confirmed_card_id: str) -> None:
     picture = earlier_picture(item.recognized)
     if picture is None:
         return
-    item.recognized = {**item.recognized, "_picture": {**picture, "confirmed": confirmed_card_id}}
+    updated = {**picture, "confirmed": confirmed_card_id}
+    if picture.get("forced_pick"):
+        updated["forced_kept"] = confirmed_card_id == picture.get("forced_card")  # kept as proposed, or changed
+    item.recognized = {**item.recognized, "_picture": updated}
 
 
 # ── Scanner lab ──────────────────────────────────────────────────────────────
@@ -347,7 +396,7 @@ def lab_counts(db, *, now: datetime.datetime | None = None) -> dict:
 
     now = now or datetime.datetime.utcnow()
     cutoff = now - datetime.timedelta(days=LAB_WINDOW_DAYS)
-    counts = {"decided": 0, "ollama": 0, "inbox": 0, "decided_confirmed": 0, "picked_different": 0}
+    counts = {"decided": 0, "ollama": 0, "inbox": 0, "decided_confirmed": 0, "picked_different": 0, "forced_shown": 0, "forced_kept": 0}
     rows = db.query(ScanJobItem.recognized).filter(ScanJobItem.created_at >= cutoff, ScanJobItem.recognized.isnot(None)).all()
     for (recognized,) in rows:
         picture = earlier_picture(recognized)
@@ -362,6 +411,10 @@ def lab_counts(db, *, now: datetime.datetime | None = None) -> dict:
                     counts["picked_different"] += 1
         elif path == PATH_OLLAMA:
             counts["ollama"] += 1
+        elif path == PATH_FORCED:  # Matcher only: shown without a rules decision, counted apart from "decided"
+            counts["forced_shown"] += 1
+            if picture.get("forced_kept"):
+                counts["forced_kept"] += 1
         if path == PATH_INBOX or picture.get("was_inbox"):
             counts["inbox"] += 1
     counts["days"] = LAB_WINDOW_DAYS

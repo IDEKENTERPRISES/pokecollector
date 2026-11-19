@@ -14,6 +14,7 @@ Parsing is plain regexes on the recognised text; ``parse_text`` is pure so tests
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 import time
@@ -21,7 +22,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from . import config, lookup as lookup_module
+from . import config, device, lifecycle, lookup as lookup_module
+
+logger = logging.getLogger(__name__)
 
 # (x0, y0, x1, y1) as fractions of the flat card picture. The tight strips are quick (little text in them);
 # when no number is found there, the wide strips take a second look (older cards print flavour text lower).
@@ -342,12 +345,29 @@ NAME_LADDER = (
 SLOW_VARIANTS = ("binary", "deglare")
 NUMBER_LADDER_FAST = tuple(step for step in NUMBER_LADDER if step[2] not in SLOW_VARIANTS)
 NAME_LADDER_FAST = tuple(step for step in NAME_LADDER if step[2] not in SLOW_VARIANTS)
+WIDEFIRST_AFTER = 2  # version 12 test: the two tight strips come first; if both detect no text, ``widefirst`` reads the whole bottom next
 QUICK_STEPS = 3  # version 9, the second read of the whole picture: left strip, right strip, plain bottom band
 FAST_BUDGET_SECONDS = 0.9
 EXPANDED = {"top": (0.0, 0.0, 1.0, 0.24), "bottom": (0.0, 0.72, 1.0, 1.0)}  # the last-resort bands
 WHOLE_SIDE = 960  # the longest side the detector looks at in one read
 BUDGET_SECONDS = 1.2  # no further region is read once one card's reading has taken this long
 ACCEPT_CONFIDENCE = 0.85  # a complete number this sure needs no second view
+
+
+def strip_kind(label) -> str:
+    """Which read a recorded region belongs to: ``name`` (the name steps and the top-wide band), ``hp`` or ``number`` (everything else,
+    the whole-picture second read's ``whole-`` steps included)."""
+    label = str(label or "")
+    if label.startswith("whole-"):
+        label = label[len("whole-"):]
+    if label.startswith(("name-", "top-")):
+        return "name"
+    return "hp" if label == "hp" else "number"
+
+
+def number_read_ms(strips) -> float:
+    """Time the number steps of one scan took, from the recorded regions (cached repeats count 0, as recorded)."""
+    return round(sum(float(strip.get("ms") or 0.0) for strip in strips or [] if strip_kind(strip.get("label")) == "number"), 1)
 
 
 def render_strip(card: np.ndarray, strip: dict) -> np.ndarray:
@@ -377,17 +397,82 @@ class OcrReader:
     picture search knows); otherwise the turned card is tried too when nothing complete came out.
     """
 
-    def __init__(self, threads: int | None = None) -> None:
-        from rapidocr_onnxruntime import RapidOCR
+    engine = None  # RapidOCR; None after an idle unload (the next read builds it again)
+    _gpu_wrappers: tuple = ()
+    _load_lock = threading.RLock()
 
-        count = threads or config.threads()
-        self.engine = RapidOCR(
-            intra_op_num_threads=count, inter_op_num_threads=1, use_cls=False,
-            det_limit_side_len=480, det_limit_type="max",
-        )
+    def __init__(self, threads: int | None = None) -> None:
+        self._threads = threads
         self._lock = threading.Lock()
         self._whole: dict[tuple, list[Line]] = {}
         self.mode = "detect"  # "fixed": version 4's fixed strips only (the OCR check compares the two)
+        self._load_engine()
+        lifecycle.register(self)
+
+    def _load_engine(self) -> None:
+        """Build the RapidOCR engine (its sessions on the GPU when there is one). Also runs again after an idle unload."""
+        from rapidocr_onnxruntime import RapidOCR
+
+        import onnxruntime as ort
+
+        count = self._threads or config.threads()
+        # RapidOCR picks its own providers and cannot cap GPU memory, so its sessions are built through device.py
+        # (CUDA with a memory cap when there is a GPU, the CPU otherwise).
+        def build():
+            return RapidOCR(
+                intra_op_num_threads=count, inter_op_num_threads=1, use_cls=False,
+                det_limit_side_len=480, det_limit_type="max",
+            )
+
+        try:
+            with device.ocr_sessions(ort) as infos:
+                engine = build()
+            info = device.summarise_ocr(infos)
+            self._gpu_wrappers = tuple(info["wrappers"])
+            self.engine = engine
+        except Exception as exc:  # noqa: BLE001 - never leave OCR unusable: build it plainly (RapidOCR's own CPU sessions)
+            logger.warning("Card matcher: OCR could not be set up through device.py (%s); using RapidOCR's own CPU sessions", exc)
+            self.engine = build()
+            self._gpu_wrappers = ()
+            info = device.summarise_ocr([{"device": "cpu", "reason": f"device setup failed: {type(exc).__name__}", "granted_mb": 0.0}])
+        self.device = info["device"]
+        self.fallback_reason = info["reason"]
+
+    def _ensure_engine(self):
+        """The engine, built again first if an idle unload released it. Call inside ``lifecycle.in_use()``."""
+        engine = self.engine
+        if engine is None:
+            with self._load_lock:
+                if self.engine is None:
+                    self._load_engine()
+            engine = self.engine
+        return engine
+
+    def unload(self) -> bool:
+        """Release the GPU sessions after an idle spell (called by lifecycle, never during a use). True when released."""
+        with self._load_lock:
+            if self.engine is None or not self._gpu_wrappers:
+                return False
+            for wrapper in self._gpu_wrappers:
+                wrapper.close()
+            self._gpu_wrappers = ()
+            self.engine = None
+            device.mark_unloaded("ocr")
+            return True
+
+    def warm_up(self) -> float:
+        """One dummy read of a picture with some text (so the detector and the recogniser both run). Returns seconds."""
+        import time
+
+        import cv2
+
+        started = time.monotonic()
+        picture = np.full((96, 480, 3), 255, dtype=np.uint8)
+        cv2.putText(picture, "Pikachu 025/165", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 0, 0), 3)
+        self._run(picture)
+        seconds = time.monotonic() - started
+        device.note_warm("ocr", seconds)
+        return seconds
 
     # -- one recogniser call --------------------------------------------------
 
@@ -395,12 +480,13 @@ class OcrReader:
         import cv2
 
         side = 480 if self.mode == "fixed" else int(min(WHOLE_SIDE, max(480, max(picture.shape[:2]))))
-        with self._lock:
-            self.engine.text_det.preprocess_op.limit_side_len = side
+        with lifecycle.in_use(), self._lock:
+            engine = self._ensure_engine()
+            engine.text_det.preprocess_op.limit_side_len = side
             if low:  # fainter text counts: glossy and sleeved cards read with less contrast
-                found, _timing = self.engine(cv2.cvtColor(picture, cv2.COLOR_RGB2BGR), box_thresh=0.35, text_score=0.4)
+                found, _timing = engine(cv2.cvtColor(picture, cv2.COLOR_RGB2BGR), box_thresh=0.35, text_score=0.4)
             else:
-                found, _timing = self.engine(cv2.cvtColor(picture, cv2.COLOR_RGB2BGR), box_thresh=0.5, text_score=0.5)
+                found, _timing = engine(cv2.cvtColor(picture, cv2.COLOR_RGB2BGR), box_thresh=0.5, text_score=0.5)
         lines = []
         for item in found or []:
             xs, ys = [point[0] for point in item[0]], [point[1] for point in item[0]]
@@ -458,15 +544,19 @@ class OcrReader:
         strip = cv2.resize(card[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)], None, fx=self._zoom(card, zoom), fy=self._zoom(card, zoom), interpolation=cv2.INTER_CUBIC)
         if sharpen:
             strip = prepare(strip, "sharp")
-        with self._lock:
-            found, _timing = self.engine(cv2.cvtColor(strip, cv2.COLOR_RGB2BGR))
+        with lifecycle.in_use(), self._lock:
+            found, _timing = self._ensure_engine()(cv2.cvtColor(strip, cv2.COLOR_RGB2BGR))
         ordered = sorted(found or [], key=lambda item: min(point[0] for point in item[0]))
         return [(str(item[1]), float(max(point[1] for point in item[0]) - min(point[1] for point in item[0]))) for item in ordered]
 
     # -- the name -------------------------------------------------------------
 
-    def read_name(self, card: np.ndarray, *, flipped: bool = False, fast: bool = False):
-        """The name line (and the HP) at the top of the flat card; ``flipped`` turns the card first."""
+    def read_name(self, card: np.ndarray, *, flipped: bool = False, fast: bool = False, topname=None):
+        """The name line (and the HP) at the top of the flat card; ``flipped`` turns the card first.
+
+        ``topname`` (version 12 test, option ``topname``): a function that scores a name against the catalogue (``NameIndex.score_names``).
+        When the name-line and name-band steps detected no line at all, the name is taken from the top-wide read by
+        ``names.pick_top_line`` (a line that is name-like AND that the catalogue knows), whatever the time spent so far."""
         from . import names
 
         started = time.monotonic()
@@ -487,7 +577,15 @@ class OcrReader:
             found = [line for line in lines if is_name_like(line.text)]
             # What the name ladder had after this step (the OCR check's "what each step rescues" table).
             record[-1]["after"] = {"name": names.parse_name_lines([(line.text, line.height) for line in found]).name}
-        if not found and self.mode != "fixed" and time.monotonic() - started <= budget * 1.5:
+        top_done = False
+        if topname is not None and not all_lines and self.mode != "fixed":
+            top_done = True
+            top = self._expanded(card, record, flipped, "top")
+            all_lines += top
+            chosen = names.pick_top_line([(line.text, line.height) for line in top], topname)
+            found = [top[chosen]] if chosen is not None else []
+            record[-1]["after"] = {"name": names.parse_name_lines([(line.text, line.height) for line in found]).name}
+        if not found and not top_done and self.mode != "fixed" and time.monotonic() - started <= budget * 1.5:
             top = self._expanded(card, record, flipped, "top")
             all_lines += top
             found = [line for line in top if is_name_like(line.text) and line.y1 / record[-1]["zoom"] / card.shape[0] <= 0.2]
@@ -500,8 +598,8 @@ class OcrReader:
 
     # -- the number -----------------------------------------------------------
 
-    def _read_card(self, card: np.ndarray, fast: bool = False, stage: str = "all", budget: float | None = None) -> OcrResult:
-        """``stage`` (version 9, for the whole-picture second read): see ``read``."""
+    def _read_card(self, card: np.ndarray, fast: bool = False, stage: str = "all", budget: float | None = None, widefirst: bool = False) -> OcrResult:
+        """``stage`` (version 9, for the whole-picture second read): see ``read``. ``widefirst`` (version 12 test): see ``read``."""
         flipped = bool(getattr(self, "_turned", False))  # set by ``read``: which way up this card is being read
         record: list[dict] = []
         started = time.monotonic()
@@ -514,11 +612,14 @@ class OcrReader:
         lines: list[Line] = []
         best: OcrResult | None = None
         reads = 0
+        wide_empty: bool | None = None  # widefirst: None = the early bottom-wide read has not run; True / False = it found no line / some lines
         for label, box, variant, zoom, low in ladder:
             if best is not None and completeness(best) == 2 and (best.number_confidence or 0.0) >= ACCEPT_CONFIDENCE:
                 break
             if reads and time.monotonic() - started > budget:
                 break
+            if wide_empty and variant != "plain":
+                continue  # the whole bottom found no text: a sharper or contrasted look at a part of it will not find any
             got = self._scan(card, label, box, variant, zoom, low, record, flipped)
             if got is None:
                 continue
@@ -533,7 +634,16 @@ class OcrReader:
                 best.number_confidence = confidence
             # What the number ladder had after this step (the OCR check's "what each step rescues" table).
             record[-1]["after"] = {"number": best.number_local, "total": best.number_total}
-        if (best is None or completeness(best) < 2) and self.mode != "fixed" and stage in ("all", "last") and time.monotonic() - started <= budget * 1.5:
+            if widefirst and wide_empty is None and reads == WIDEFIRST_AFTER and not lines and self.mode != "fixed" and stage in ("all", "first"):
+                # Both tight strips detected no text at all: the text is not where the fixed strips look, so read the whole bottom now.
+                bottom = self._expanded(card, record, flipped, "bottom")
+                wide_empty = not bottom
+                lines += bottom
+                reading, confidence = pick_number_lines(bottom)
+                reading.number_confidence = confidence
+                best = better_read(best, reading) if best is not None else reading
+                record[-1]["after"] = {"number": best.number_local, "total": best.number_total}
+        if (best is None or completeness(best) < 2) and self.mode != "fixed" and wide_empty is None and stage in ("all", "last") and time.monotonic() - started <= budget * 1.5:
             bottom = self._expanded(card, record, flipped, "bottom")
             lines += bottom
             reading, confidence = pick_number_lines(bottom)
@@ -547,20 +657,26 @@ class OcrReader:
         return result
 
     def read(self, card: np.ndarray, *, read_hp: bool = True, flipped: bool | None = None, fast: bool = False,
-             stage: str = "all", budget: float | None = None) -> OcrResult:
+             stage: str = "all", budget: float | None = None, widefirst: bool = False) -> OcrResult:
         """``flipped`` True/False: the picture search already says which way up the card is, so read only that
         way. None: unknown, so try upright first and the turned card when no complete number came out.
 
         ``stage`` (version 9): ``all`` is the whole ladder and the last-resort band; ``first`` the ladder without the last-resort
         band; ``quick`` only the first ``QUICK_STEPS`` steps (the two tight strips and the plain bottom band), inside ``budget``
         seconds; ``last`` the last-resort band alone. The matcher's whole-picture second read uses them to spend the time the
-        last-resort band used to take on a second look at the whole picture first."""
+        last-resort band used to take on a second look at the whole picture first.
+
+        ``widefirst`` (version 12 test): when both tight strips detect no text at all, the whole bottom band (``EXPANDED``) is read
+        next instead of last (``stage`` ``all`` and ``first``); if that finds no text either, the remaining sharp / contrast steps are
+        skipped. A card whose tight strips find text reads exactly as before."""
         started = time.monotonic()
         turned = bool(flipped)
         if turned:
             card = np.ascontiguousarray(card[::-1, ::-1])
         self._turned = turned
         staged = {} if (stage == "all" and budget is None) else {"stage": stage, "budget": budget}  # (the plain call stays as it was for readers that override ``_read_card``)
+        if widefirst:
+            staged["widefirst"] = True
         result = self._read_card(card, fast, **staged)
         if flipped is None and not is_complete(result):
             other = np.ascontiguousarray(card[::-1, ::-1])

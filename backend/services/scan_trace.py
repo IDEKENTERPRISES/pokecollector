@@ -513,7 +513,7 @@ def create_scan_trace(
     provider: str | None = None,
     model: str | None = None,
 ) -> ScanTrace:
-    return ScanTrace(
+    trace = ScanTrace(
         enabled=user_trace_enabled(db, user_id),
         user_id=user_id,
         mode=mode,
@@ -523,6 +523,18 @@ def create_scan_trace(
         provider=provider,
         model=model,
     )
+    if trace.enabled:
+        # The data epoch this scan was made in: after a wipe of all user data, an old trace's item id must not
+        # fetch a new trainer's scan (services/trace_photos.py).
+        try:
+            from services.data_wipe import read_data_epoch
+
+            epoch = read_data_epoch(db)
+            if epoch:
+                trace.data["data_epoch"] = epoch
+        except Exception:
+            logger.warning("Could not read the data epoch for a scan trace", exc_info=True)
+    return trace
 
 
 # ── Matcher shadow mode (docs/CARD_MATCH.md) ─────────────────────────────────
@@ -763,6 +775,18 @@ def record_manual_trace(
     return True
 
 
+def rescore_label(data: dict, card_id: str) -> None:
+    """Recompute the fields scored against the confirmed card (``correct``, ``ground_truth_rank``, the shadow's)."""
+    selected = (data.get("decision") or {}).get("selected")
+    # A trace that deliberately abstained did not make a top-1 choice.
+    # Keep it labelled for retrieval analysis without counting it as an
+    # incorrect automatic decision.
+    data["correct"] = (selected == card_id) if selected else None
+    candidates = [candidate.get("tcg_card_id") for candidate in data.get("candidates") or []]
+    data["ground_truth_rank"] = candidates.index(card_id) + 1 if card_id in candidates else None
+    label_shadow(data)
+
+
 def record_ground_truth(
     user_id: int,
     job_id: int,
@@ -794,19 +818,7 @@ def record_ground_truth(
                     "source": classify_confirmation(data, card_id, manual=manual, had_matches=had_matches),
                     "lang": lang,
                 }
-                selected = (data.get("decision") or {}).get("selected")
-                # A trace that deliberately abstained did not make a top-1 choice.
-                # Keep it labelled for retrieval analysis without counting it as an
-                # incorrect automatic decision.
-                data["correct"] = (selected == card_id) if selected else None
-                candidates = [
-                    candidate.get("tcg_card_id")
-                    for candidate in data.get("candidates") or []
-                ]
-                data["ground_truth_rank"] = (
-                    candidates.index(card_id) + 1 if card_id in candidates else None
-                )
-                label_shadow(data)
+                rescore_label(data, card_id)
                 temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
                 _write_private(
                     temp,

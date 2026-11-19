@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FlaskConical, GitCompare, Hammer } from 'lucide-react'
+import ComparePicker from './ScannerLabComparePicker'
 import api from '../../api/client'
-import Misses, { DecidedWrong } from './ScannerLabMisses'
+import CustomModels from './ScannerLabCustomModels'
+import Misses, { CorrectedNote, CorrectionBar, CorrectionsProvider, DecidedWrong } from './ScannerLabMisses'
 
 const QUERY_KEY = ['card-match-status']
 const SHADOW_KEY = ['card-match-shadow']
@@ -16,6 +18,18 @@ function duration(seconds) {
   if (seconds < 90) return `${Math.round(seconds)} s`
   if (seconds < 5400) return `${Math.round(seconds / 60)} min`
   return `${(seconds / 3600).toFixed(1)} h`
+}
+
+// "Picture model running on: GPU (Quadro P620) · warm-up 800 ms", with the reason when it fell back to the CPU.
+export function deviceText(part) {
+  if (!part || !part.loaded) return 'not loaded yet';
+  const warm = part.warm_ms != null ? ` · warm-up ${part.warm_ms} ms` : '';
+  const why = part.device === 'cpu' && part.reason ? ` (${part.reason})` : '';
+  const state = part.state === 'unloaded'
+    ? ` · unloaded (idle since ${String(part.unloaded_at || '').slice(11, 16)} UTC)`
+    : part.state === 'warm' ? ' · warm' : '';
+  const fallbacks = part.gpu_failures ? ` · ${part.gpu_failures} GPU run${part.gpu_failures === 1 ? '' : 's'} rerun on the CPU` : '';
+  return `${part.label}${warm}${state}${fallbacks}${why}`;
 }
 
 function Row({ label, value, testId }) {
@@ -338,7 +352,7 @@ export function Report({ report, title }) {
   )
 }
 
-const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused', wholeread: 'second read of the whole picture', wholestrict: 'stricter rules for a number read only from the whole picture' }
+const OPTION_NAMES = { baseline: 'Picture only', names: 'Name search', number: 'number lookup', text: 'card text', reprint: 'reprint tie-break', tta: 'extra views', art: 'artwork', base: 'DINOv2-base', numberonce: 'one number boost', fastread: 'faster reading', corners: 'self-doubting card finder', wholepic: 'whole picture when corners are refused', trustrejected: 'normal rules when corners are refused', wholeread: 'second read of the whole picture', wholestrict: 'stricter rules for a number read only from the whole picture', widefirst: 'wide bottom read first (test)', topname: 'name from the top band (test)' }
 const describeOptions = label => (label === 'baseline' ? OPTION_NAMES.baseline : label.split('+').map(word => OPTION_NAMES[word] || word).join(' + '))
 
 /** The scans one comparison row decided wrong, in the same plain wording as Misses > Decided wrong (text only: no pictures are kept for these). */
@@ -350,24 +364,48 @@ export function WrongList({ row }) {
       {items.length === 0 ? (
         <p className="text-footnote text-text-secondary">{row.decided_wrong ? 'This run did not keep the details of its wrong decisions (it ran before they were kept).' : 'Nothing was decided wrong.'}</p>
       ) : (
-        items.map((item, position) => <DecidedWrong key={`${item.key}-${position}`} item={item} />)
+        items.map((item, position) => (
+          <div key={`${item.key}-${position}`} className="space-y-1">
+            <DecidedWrong item={item} />
+            <CorrectionBar item={item} />
+          </div>
+        ))
       )}
       {items.length > 0 && items.length < row.decided_wrong && <p className="text-footnote text-text-secondary">Showing the first {items.length} of {row.decided_wrong}.</p>}
     </div>
   )
 }
 
+const GROUP_COLUMNS = [['tuned', 'Tuned'], ['new', 'New'], ['held_back', 'Held back']]
+
+/** Decided and wrong for one of the three honest groups of a comparison row (version 13 test): "58% · 0 wrong", or a dash when the group has no scans. */
+export function GroupCell({ group, name }) {
+  if (!group || !group.n) return <td className="pr-2 text-text-secondary" data-testid={`scanner-lab-group-${name}`}>–</td>
+  return (
+    <td className="pr-2" data-testid={`scanner-lab-group-${name}`}>
+      {Math.round((100 * group.decided) / group.n)}% · <span className={group.wrong ? 'text-red-500' : ''}>{number(group.wrong)} wrong</span> <span className="text-text-secondary">({number(group.n)})</span>
+    </td>
+  )
+}
+
 /** The option sets side by side on the same photos: pick the row with the best top 20 and decided rate with 0 wrong. */
-export function CompareTable({ report, title }) {
+export function CompareTable({ report, title, order }) {
   const [openWrong, setOpenWrong] = useState(null)
   const opened = report.rows.find(row => row.label === openWrong)
+  const previous = report.previous_rows || []
+  const earlier = new Set(previous.map(row => row.label))
+  // Rows run now, rows shown from an earlier report, and rows with no earlier result either, in the order of the full list.
+  const neverRun = (report.not_run || []).filter(label => !earlier.has(label)).map(label => ({ label, status: 'never' }))
+  const shown = [...report.rows, ...previous, ...neverRun]
+  if (order) shown.sort((a, b) => (order.indexOf(a.label) + 1 || 999) - (order.indexOf(b.label) + 1 || 999))
+  const partial = Boolean((report.not_run || []).length)
   return (
     <div className="space-y-2 border-t border-separator px-4 py-3" data-testid={`scanner-lab-${report.kind}`}>
       <div>
         <h3 className="text-subheadline font-semibold">{title}</h3>
         <p className="text-footnote text-text-secondary">
           {number(report.n)} photos · {report.created_at?.slice(0, 16).replace('T', ' ')} UTC · took {duration(report.duration_seconds)}
-          {report.winner ? ` · kept: ${describeOptions(report.winner)}` : ''}
+          {report.winner ? ` · kept: ${describeOptions(report.winner)}${partial ? ' (picked among the rows run now)' : ''}` : ''}
         </p>
       </div>
       {report.held_back_note && <p className="text-footnote text-text-secondary" data-testid="scanner-lab-held-back-note">{report.held_back_note}</p>}
@@ -381,28 +419,48 @@ export function CompareTable({ report, title }) {
           <thead>
             <tr className="text-left text-text-secondary">
               <th className="pr-2 font-normal">Options</th><th className="pr-2 font-normal">Top 1</th><th className="pr-2 font-normal">Top 20</th>
-              <th className="pr-2 font-normal">Number</th><th className="pr-2 font-normal">Decided</th><th className="pr-2 font-normal">Wrong</th><th className="font-normal">p95</th>
+              <th className="pr-2 font-normal">Number</th><th className="pr-2 font-normal">Name</th><th className="pr-2 font-normal">Number time</th><th className="pr-2 font-normal">Decided</th><th className="pr-2 font-normal">Wrong</th><th className="pr-2 font-normal">p95</th>
+              {GROUP_COLUMNS.map(([name, label]) => <th key={name} className="pr-2 font-normal" data-testid={`scanner-lab-group-head-${name}`}>{label}</th>)}
             </tr>
           </thead>
           <tbody>
-            {report.rows.map(row => (
-              <tr key={row.label} className={`tabular-nums ${row.label === report.winner ? 'font-semibold' : ''}`}>
-                <td className="pr-2">{describeOptions(row.label)}</td>
-                {row.status === 'ok' ? (
+            {shown.map(row => (
+              <tr
+                key={row.label} data-testid={row.status === 'previous' ? 'scanner-lab-row-previous' : undefined}
+                className={`tabular-nums ${row.label === report.winner && row.status === 'ok' ? 'font-semibold' : ''} ${row.status === 'previous' || row.status === 'never' ? 'text-text-secondary opacity-70' : ''}`}
+              >
+                <td className="pr-2">
+                  {describeOptions(row.label)}
+                  {row.reference && <span className="text-text-secondary" data-testid="scanner-lab-row-reference"> · reference</span>}
+                  {row.status === 'previous' && (
+                    <span className="block text-caption1" data-testid="scanner-lab-row-previous-note">
+                      previous run, {row.date?.slice(0, 10)}
+                      {row.same_scans === false && <span className="ml-1 rounded-full bg-fill px-1.5 py-0.5" data-testid="scanner-lab-row-different-scans">different scans</span>}
+                    </span>
+                  )}
+                </td>
+                {row.status === 'never' ? (
+                  <td colSpan={11} data-testid="scanner-lab-row-never">not run, no earlier result</td>
+                ) : row.status === 'ok' || row.status === 'previous' ? (
                   <>
                     <td className="pr-2">{percent(row.top1)}</td><td className="pr-2">{percent(row.top20)}</td><td className="pr-2">{percent(row.number_exact)}</td>
+                    <td className="pr-2" data-testid="scanner-lab-row-name-read">{percent(row.name_read)}</td>
+                    <td className="pr-2" data-testid="scanner-lab-row-number-ms">{row.number_ms_mean != null ? `${number(row.number_ms_mean)} ms` : '–'}</td>
                     <td className="pr-2">{percent(row.decided)}</td>
                     <td className="pr-2">
-                      {row.decided_wrong > 0 ? (
+                      {row.decided_wrong > 0 && row.status === 'ok' ? (
                         <button type="button" className="ios-press text-tint underline" aria-expanded={openWrong === row.label} onClick={() => setOpenWrong(openWrong === row.label ? null : row.label)} data-testid="scanner-lab-row-wrong-open">
                           {number(row.decided_wrong)}
                         </button>
                       ) : number(row.decided_wrong)}
                     </td>
-                    <td>{row.p95_ms != null ? `${number(row.p95_ms)} ms` : '–'}</td>
+                    <td className="pr-2">{row.p95_ms != null ? `${number(row.p95_ms)} ms` : '–'}</td>
+                    {GROUP_COLUMNS.map(([name]) => <GroupCell key={name} name={name} group={row.eval_groups?.[name]} />)}
                   </>
                 ) : (
-                  <td colSpan={6} className="text-text-secondary">needs the {(row.missing_indexes || []).join(', ')} index</td>
+                  <td colSpan={11} className="text-text-secondary" data-testid="scanner-lab-row-skipped">
+                    {`needs the ${(row.missing_indexes || []).join(', ')} index`}
+                  </td>
                 )}
               </tr>
             ))}
@@ -410,6 +468,7 @@ export function CompareTable({ report, title }) {
               <tr className="tabular-nums text-text-secondary" data-testid="scanner-lab-held-back-row">
                 <td className="pr-2">Held back, with {describeOptions(report.held_back.label)} ({number(report.held_back.n)} scans)</td>
                 <td className="pr-2">{percent(report.held_back.top1)}</td><td className="pr-2">{percent(report.held_back.top20)}</td><td className="pr-2">{percent(report.held_back.number_exact)}</td>
+                <td className="pr-2">{percent(report.held_back.name_read)}</td><td className="pr-2">{report.held_back.number_ms_mean != null ? `${number(report.held_back.number_ms_mean)} ms` : '–'}</td>
                 <td className="pr-2">{percent(report.held_back.decided)}</td><td className="pr-2">{number(report.held_back.decided_wrong)}</td><td>{report.held_back.p95_ms != null ? `${number(report.held_back.p95_ms)} ms` : '–'}</td>
               </tr>
             )}
@@ -417,6 +476,9 @@ export function CompareTable({ report, title }) {
         </table>
       </div>
       {opened && <WrongList row={opened} />}
+      <p className="text-footnote text-text-secondary">
+        Tuned: scans used for tuning (your older scans and the other source&rsquo;s tuning scans). New: your scans from 5 Nov 02:00 UTC on, never used for tuning. Held back: the other source&rsquo;s held-back scans.
+      </p>
     </div>
   )
 }
@@ -584,6 +646,21 @@ export function WholeReadSummary({ data }) {
   )
 }
 
+/** Version 12 test: per set, which number step first had the right number (the sets that only read in the whole bottom band come first). */
+export function NumberBySet({ data }) {
+  if (!data || !data.all?.scans) return null
+  const where = row => `${row.tight} tight · ${row.bottom_band} bottom band · ${row.narrow_wide} wide strips · ${row.bottom_wide} whole bottom · ${row.never} never`
+  return (
+    <div className="space-y-1" data-testid="scanner-lab-number-by-set">
+      <h4 className="text-footnote font-semibold">Where each set’s number is first read right</h4>
+      <p className="text-footnote text-text-secondary">All {number(data.all.scans)} scans: {where(data.all)}. Sets with at least {data.min_scans} scans:</p>
+      <ul className="space-y-0.5 text-footnote text-text-secondary">
+        {(data.sets || []).map(row => <li key={row.set} data-testid="scanner-lab-number-by-set-row">{row.set} ({row.scans}): {where(row)}</li>)}
+      </ul>
+    </div>
+  )
+}
+
 /** The OCR check: the text reader alone on the confirmed real photos, split by the resolution it read from. */
 export function OcrCheckView({ report }) {
   const groups = Object.entries(report.by_resolution || {})
@@ -607,6 +684,7 @@ export function OcrCheckView({ report }) {
       })}
       <NeverRight data={report.never_right} capture={report.capture} />
       <WholeReadSummary data={report.wholeread} />
+      <NumberBySet data={report.number_by_set} />
       <OcrSteps steps={report.steps} />
       {Object.entries(report.groups || {}).map(([name, group]) => {
         const rows = Object.entries(group.by_resolution?.all || {})
@@ -686,6 +764,13 @@ export function PictureFirstView({ data, onOpenDecidedWrong }) {
           )
         }
       />
+      {(data.matcher_only || counts.forced_shown > 0) && (
+        <Row
+          testId="scanner-lab-pf-forced"
+          label="Unsure picks shown"
+          value={`${number(counts.forced_shown || 0)} · kept as proposed: ${number(counts.forced_kept || 0)}`}
+        />
+      )}
       {onOpenDecidedWrong && (
         <p className="text-footnote text-text-secondary">Tap the figure to see the scans the matcher decided wrong when it was run again on the confirmed photos (Misses › Decided wrong).</p>
       )}
@@ -815,7 +900,10 @@ export default function ScannerLabSection() {
   }
   const refresh = () => queryClient.invalidateQueries({ queryKey: QUERY_KEY })
   const buildIndex = useMutation({ mutationFn: () => api.post('/card-match/index').then(r => r.data), onSuccess: refresh })
-  const benchmark = useMutation({ mutationFn: kind => api.post('/card-match/benchmark', { kind }).then(r => r.data), onSuccess: refresh })
+  const benchmark = useMutation({
+    mutationFn: request => api.post('/card-match/benchmark', typeof request === 'string' ? { kind: request } : request).then(r => r.data),
+    onSuccess: refresh,
+  })
   const buildExtra = useMutation({ mutationFn: name => api.post('/card-match/index', { name }).then(r => r.data), onSuccess: refresh })
   const stop = useMutation({ mutationFn: () => api.post('/card-match/stop').then(r => r.data), onSuccess: refresh })
 
@@ -828,6 +916,8 @@ export default function ScannerLabSection() {
   const errorText = buildIndex.error?.response?.data?.detail || benchmark.error?.response?.data?.detail || buildExtra.error?.response?.data?.detail
   const busy = running || buildIndex.isPending || benchmark.isPending || buildExtra.isPending
   const extras = Object.entries(data.extra_indexes || {})
+  const compareRows = data.options?.compare_rows || []
+  const compareRowsSynthetic = data.options?.compare_rows_synthetic || []
 
   let jobLine = null
   if (running) {
@@ -839,6 +929,7 @@ export default function ScannerLabSection() {
   }
 
   return (
+    <CorrectionsProvider>
     <section className="space-y-1" data-testid="scanner-lab">
       <h2 className="px-4 pb-1.5 text-footnote text-text-secondary">Scanner lab</h2>
       <div className="overflow-hidden rounded-xl bg-card">
@@ -849,9 +940,12 @@ export default function ScannerLabSection() {
           <Row testId="scanner-lab-coverage" label="English cards indexed" value={`${number(index.count)} of ${number(data.english_total)}`} />
           <Row label="Model" value={`${data.model?.name}${ready ? '' : ' (missing from this image)'}`} />
           <Row label="Index built" value={index.built ? `${index.built_at?.slice(0, 16).replace('T', ' ')} UTC · ${duration(index.build_seconds) || 'in steps'}` : 'not yet'} />
+          <Row testId="scanner-lab-device-model" label="Picture model running on" value={deviceText(data.device?.embedder)} />
+          <Row testId="scanner-lab-device-ocr" label="OCR running on" value={deviceText(data.device?.ocr)} />
           <Row label="Threads" value={`${data.threads}${data.autorun ? ' · runs by itself after a deploy' : ''}`} />
           <Row testId="scanner-lab-options" label="Matching options in use" value={describeOptions(data.options?.active || 'baseline')} />
           <TraceSources sources={data.trace_sources} />
+          <CorrectedNote count={data.corrected_labels} />
           {extras.map(([name, extra]) => (
             <Row key={name} label={`Index: ${extra.label}`} value={extra.built ? `${number(extra.count)} pictures` : 'not built'} />
           ))}
@@ -871,12 +965,26 @@ export default function ScannerLabSection() {
             <button type="button" className={button} disabled={busy || !ready || !data.labelled_traces || !data.ocr_available} onClick={() => benchmark.mutate('ocr-check')} data-testid="scanner-lab-ocr-check-run">
               <FlaskConical size={13} aria-hidden="true" /> OCR check ({number(data.labelled_traces)} scans)
             </button>
-            <button type="button" className={button} disabled={busy || !ready || !index.built || !data.labelled_traces} onClick={() => benchmark.mutate('compare-labelled')} data-testid="scanner-lab-compare">
-              <GitCompare size={13} aria-hidden="true" /> Compare options (real scans)
-            </button>
-            <button type="button" className={button} disabled={busy || !ready || !index.built} onClick={() => benchmark.mutate('compare-synthetic')} data-testid="scanner-lab-compare-synthetic">
-              <GitCompare size={13} aria-hidden="true" /> Compare options (synthetic)
-            </button>
+            {compareRows.length ? (
+              <ComparePicker
+                rows={compareRows} kind="labelled" buttonText="Compare options (real scans)" buttonClassName={button} testId="scanner-lab-compare"
+                disabled={busy || !ready || !index.built || !data.labelled_traces} busy={busy} onRun={labels => benchmark.mutate({ kind: 'compare-labelled', labels })}
+              />
+            ) : (
+              <button type="button" className={button} disabled={busy || !ready || !index.built || !data.labelled_traces} onClick={() => benchmark.mutate('compare-labelled')} data-testid="scanner-lab-compare">
+                <GitCompare size={13} aria-hidden="true" /> Compare options (real scans)
+              </button>
+            )}
+            {compareRowsSynthetic.length ? (
+              <ComparePicker
+                rows={compareRowsSynthetic} kind="synthetic" buttonText="Compare options (synthetic)" buttonClassName={button} testId="scanner-lab-compare-synthetic"
+                disabled={busy || !ready || !index.built} busy={busy} onRun={labels => benchmark.mutate({ kind: 'compare-synthetic', labels })}
+              />
+            ) : (
+              <button type="button" className={button} disabled={busy || !ready || !index.built} onClick={() => benchmark.mutate('compare-synthetic')} data-testid="scanner-lab-compare-synthetic">
+                <GitCompare size={13} aria-hidden="true" /> Compare options (synthetic)
+              </button>
+            )}
             {extras.map(([name, extra]) => (
               <button key={name} type="button" className={button} disabled={busy || !extra.available || !index.built} onClick={() => buildExtra.mutate(name)} data-testid={`scanner-lab-build-${name}`}>
                 <Hammer size={13} aria-hidden="true" /> {extra.built ? 'Update' : 'Build'} {extra.label} index
@@ -887,19 +995,21 @@ export default function ScannerLabSection() {
             )}
           </div>
         </div>
+        <CustomModels models={data.custom_models || []} busy={busy} onChanged={refresh} />
         {pictureFirst.data?.counts && <PictureFirstView data={pictureFirst.data} onOpenDecidedWrong={data.misses ? openDecidedWrong : undefined} />}
         {shadow.data?.report && (shadow.data.enabled || shadow.data.report.compared > 0) && <ShadowView data={shadow.data} />}
         <HowConfirmedView data={shadow.data?.report?.how_confirmed} />
         {data.reports?.synthetic && <Report report={data.reports.synthetic} title="Latest benchmark: synthetic photos" />}
         {data.reports?.labelled && <Report report={data.reports.labelled} title="Latest benchmark: real scans (diagnostics)" />}
         {data.reports?.['ocr-check'] && <OcrCheckView report={data.reports['ocr-check']} />}
-        {data.reports?.['compare-labelled'] && <CompareTable report={data.reports['compare-labelled']} title="Option comparison: real scans" />}
-        {data.reports?.['compare-synthetic'] && <CompareTable report={data.reports['compare-synthetic']} title="Option comparison: synthetic photos" />}
+        {data.reports?.['compare-labelled'] && <CompareTable report={data.reports['compare-labelled']} order={data.options?.compare} title="Option comparison: real scans" />}
+        {data.reports?.['compare-synthetic'] && <CompareTable report={data.reports['compare-synthetic']} order={data.options?.compare} title="Option comparison: synthetic photos" />}
         {data.misses && <Misses version={data.misses.created_at} tag={missTag} onTagChange={setMissTag} />}
         {!data.reports?.synthetic && !data.reports?.labelled && (
           <p className="border-t border-separator px-4 py-3 text-footnote text-text-secondary">No benchmark has run yet.</p>
         )}
       </div>
     </section>
+    </CorrectionsProvider>
   )
 }

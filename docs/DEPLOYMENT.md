@@ -169,6 +169,139 @@ Selective backup groups are useful for targeted exports, but they may depend on
 rows outside their group and do not currently include every newer feature
 table. Full backups are the recovery and upgrade format.
 
+## Wiping user data
+
+Settings > Administrator > Danger zone > **Wipe all user data** deletes every
+user and everything they made, then creates one administrator again from the
+stack's environment. Use it to reset a test stack, or to start a fresh
+installation without touching the server's own configuration.
+
+**Before you can run it**, both `ADMIN_USERNAME` and `ADMIN_PASSWORD` must be set
+in the stack's environment. The wipe is refused (and the panel says why) when
+either is missing: the new administrator gets exactly that password, so without
+it nobody could sign in. Nothing else is needed; after the wipe sign in as that
+user.
+
+**What goes**
+
+- every account and session, invites, push subscriptions, idempotency keys;
+- collections, wishlists, collection card photos, binders, products, trades,
+  swaps, portfolio snapshots, printing-detail labels;
+- XP, achievements, goals, daily activity, feed events, reactions, comments,
+  notifications, weekly challenge results, admin notifications and banners;
+- every user's preferences (`user_settings`);
+- custom cards that trainers created (rows in `cards` with `is_custom` or an
+  owner) with their price rows, and the `custom_card_matches` that point at them;
+- files in the scan upload folder (`SCAN_UPLOAD_DIR`, `/app/data/scan-uploads`).
+
+**What stays**
+
+- the server settings (`settings`: picture match first, price sync, languages,
+  the `scanner_global.*` keys, debug mode and so on) and the stored data epoch;
+- the card catalogue (`sets`, TCGdex `cards`), `price_history`, `image_cache`,
+  `sync_log`, the Gemini and provider limit state, and the **audit log**;
+- `/app/data/card-match` (picture indexes, the chosen option set, admin
+  corrections, custom models), `/app/data/pokedex-images`, the card picture
+  packs, `/app/backups` and `/app/data/auth` (the JWT secret and VAPID keys);
+- the **scanner connection settings**. They are stored per user, so the wipe
+  reads the running administrator's scanner rows first (`scanner_provider`,
+  model, custom model, timeout and capability rows for both providers,
+  `scanner_gemini_fallback`, `gemini_api_key`, `openai_api_key`,
+  `scan_diagnostics_enabled`) and writes them onto the new administrator. The
+  endpoint itself (`OPENAI_BASE_URL`) is an environment value and is unchanged.
+  If the administrator had no scanner settings and `GEMINI_API_KEY` is set, it
+  seeds the new account, as on a first start;
+- **scan photos and diagnostics, always** (`SCAN_TRACE_DIR`: the traces, their
+  photos, admin corrections, misses and held-back marks that make up the
+  matcher's real-photo test set, and `/app/data/card-match`). The wipe never
+  deletes or rewrites them, apart from the detach step below, and there is no
+  option to delete them. Scanning and diagnostics keep working for the new
+  accounts as before (diagnostics consent is per user, so it starts fresh).
+
+**Safety checks.** To run it the administrator types `WIPE ALL DATA` and
+re-enters their password (no password is asked when the instance has no login
+screen). It is refused while a restore, a matcher or Scanner lab job, or a scan
+job is running, and for anyone who is not an administrator.
+
+**Order of operations.** (1) checks, (2) the administrator's scanner settings are
+read, (3) a `pre-wipe-<UTC>.sql` backup is written to the backups folder with
+`pg_dump`; if that fails the wipe stops and **nothing is deleted**, (4) the scan
+traces are detached (below); if that fails for any trace the wipe stops and
+nothing is deleted, (5) one database transaction under a lock deletes the rows,
+recreates the administrator, writes the scanner settings back, stores a new data
+epoch and writes the audit entry (who ran it, when, the backup file and the row
+counts per table); a failure rolls all of it back, (6) only then the scan upload
+folder is emptied.
+
+**Detaching the scan traces.** A local scan trace names its scan only by
+`item_id`, and the Scanner lab's card finder reads the scan's whole review photo
+through the database (`ScanJobItem.image_path`) from the scan upload folder,
+both of which the wipe deletes. So before deleting anything, every local trace
+with an `item_id` gets a copy of its review photo next to it
+(`<trace>.review.jpg`, written atomically), recorded in the trace JSON as
+`review_photo_file`, and is stamped with the `data_epoch` it was made in
+(`data_epoch`, also written into every new trace). It is idempotent: a trace
+that is already done is skipped. The finder reads the trace's own copy first and
+goes to the database only for a trace of the current epoch, so an old trace can
+never fetch a new trainer's scan, even though ids are not reused. These are the
+only changes to the trace folder: files are added and the two keys are added to
+trace JSON files; nothing is removed.
+ Rows are
+deleted, not truncated, so ids are never reused.
+
+**Devices.** Every session ends. `GET /api/health` carries `data_epoch`; each
+device stores the one it last saw, and when it differs (including a phone that
+was offline during the wipe and returns days later) it drops its queued changes
+without sending them, clears saved pages, caches and local preferences, and goes
+to the login screen. The downloaded card database stays. `/api/health` also carries
+`data_wiped_at` (when the last wipe finished; null if there never was one). A
+device with no stored epoch (it last ran before this feature, or was never opened
+between a deploy and the wipe) that holds anything user-specific (a stored
+sign-in, queued changes, saved pages) is treated as wiped when the server reports
+`data_wiped_at`: it resets and signs out, so its old queue can never be replayed
+into a new account. A device that holds nothing just stores the epoch. Every
+queued change is also stamped with the epoch it was queued in, and the outbox
+never sends an item stamped with a different epoch (or an unstamped one once the
+server has been wiped); it deletes it instead.
+
+**Restore from the pre-wipe backup.** The file is a plain dump (without image
+cache rows) that the restore's SQL guard accepts (tested). It is listed under
+Settings > Data & sync > **Server backups**, where an administrator can download
+it or restore it (see below). From the server instead:
+
+```bash
+docker exec -i <postgres container> psql -U pokemon -d pokemon_tcg --single-transaction -v ON_ERROR_STOP=1 < /app/backups/pre-wipe-<UTC>.sql
+```
+
+Restoring brings the old accounts back and also the old data epoch, so phones
+that already reset themselves will keep their reset state and simply sign in
+again. The scan upload folder is not in the backup; the scan traces were never deleted.
+
+## Server backups
+
+Settings > Data & sync > **Server backups** (administrators only) lists the `.sql`
+files in the backups folder (`/app/backups`), newest first, with name, kind, date
+and size: the `pre-wipe-<UTC>.sql` made by a wipe of all user data, the
+`pre_upgrade_*` files made before an upgrade, and earlier downloads. Hidden and
+temporary files, `restore_status.json` and anything that is not a `.sql` file are
+not listed.
+
+- **Download** streams the file.
+- **Restore this backup** needs the file name typed back (and the administrator's
+  password when logins are on) and then runs the same restore as an upload: the
+  same SQL guard, `RESTORE_TIMEOUT_SECONDS`, status polling and one-restore-at-a-time
+  lock. The file is copied first and the copy is what the job deletes, so the
+  backup itself stays.
+
+Only a bare file name is accepted: no path separators or `..`, the file must be a
+regular file directly inside the backups folder after resolving, and symlinks are
+refused. Download and restore are written to the audit log (a full restore then
+replaces the audit log with the backup's own copy).
+
+A restore also brings back the backup's `data_epoch`. Phones that had already seen
+a wipe (and reset) will see a changed epoch and reset again, which is intended;
+they only need to sign in again.
+
 ## Test stack (nonprod)
 
 New features are tested on a second stack built from the `nonprod` branch before

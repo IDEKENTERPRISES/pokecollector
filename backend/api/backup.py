@@ -2,6 +2,8 @@ import datetime
 import json
 import logging
 import os
+import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -12,11 +14,13 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from jose import JWTError
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user, multi_user_enabled, oauth2_scheme
 from database import get_db
 from models import User
+from services.audit import record_audit
 from services.auth import decode_token, verify_password
 from services import restore_schema
 from services.postgres_cli import parse_database_url
@@ -496,6 +500,200 @@ def restore_status(current_user: User = Depends(_restore_status_user)):
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     return _public_restore_state(_load_restore_state())
+
+
+# ── Server backups: the .sql files in the backups folder (pre-wipe, pre-upgrade, downloads) ──────────
+
+_SERVER_BACKUP_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.sql$")
+_TEMP_BACKUP_PREFIXES = ("restore_",)  # uploads being restored (removed when the job ends)
+
+
+def _server_backup_kind(name: str) -> str:
+    if name.startswith("pre-wipe-"):
+        return "pre-wipe"
+    if name.startswith("pre_upgrade_"):
+        return "pre-upgrade"
+    if name.startswith("pokemon_tcg_backup_"):
+        return "download"
+    return "other"
+
+
+def list_server_backups() -> list[dict]:
+    """The restorable .sql files in the backups folder, newest first. Hidden, temporary, empty, non-.sql
+    files and links are not listed."""
+    folder = Path(BACKUP_DIR)
+    items = []
+    try:
+        entries = list(folder.iterdir())
+    except OSError:
+        return []
+    for path in entries:
+        name = path.name
+        if name.startswith(".") or name.startswith(_TEMP_BACKUP_PREFIXES) or not _SERVER_BACKUP_NAME.match(name):
+            continue
+        try:
+            if path.is_symlink() or not path.is_file():
+                continue
+            info = path.stat()
+        except OSError:
+            continue
+        if info.st_size <= 0:
+            continue
+        items.append({
+            "name": name,
+            "size": info.st_size,
+            "modified": datetime.datetime.fromtimestamp(info.st_mtime, datetime.timezone.utc).isoformat(),
+            "kind": _server_backup_kind(name),
+            "_mtime": info.st_mtime,
+        })
+    items.sort(key=lambda item: (item["_mtime"], item["name"]), reverse=True)
+    for item in items:
+        del item["_mtime"]
+    return items
+
+
+def resolve_server_backup(name: str) -> Path:
+    """The file for a bare backup file name, or HTTPException. Only a plain name is accepted: no separators,
+    no "..", it must be a regular file directly inside the backups folder, and never a symlink."""
+    if not isinstance(name, str) or not _SERVER_BACKUP_NAME.match(name) or name.startswith(_TEMP_BACKUP_PREFIXES) or ".." in name:
+        raise HTTPException(status_code=400, detail="Invalid backup file name")
+    folder = Path(BACKUP_DIR)
+    candidate = folder / name
+    try:
+        if candidate.is_symlink():
+            raise HTTPException(status_code=400, detail="Invalid backup file name")
+        resolved = candidate.resolve(strict=True)
+        if resolved.parent != folder.resolve() or not resolved.is_file() or resolved.stat().st_size <= 0:
+            raise HTTPException(status_code=404, detail="Backup not found")
+    except (FileNotFoundError, OSError):
+        raise HTTPException(status_code=404, detail="Backup not found") from None
+    return resolved
+
+
+class ServerRestoreRequest(BaseModel):
+    filename: str
+    password: str | None = None
+
+
+@router.get("/server")
+def server_backups(current_user: User = Depends(get_current_user)):
+    """The backup files on the server (admin only)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return {"backups": list_server_backups()}
+
+
+@router.get("/server/download")
+def download_server_backup(
+    request: Request,
+    filename: str = Query(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Stream one server backup file (admin only; audited)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    path = resolve_server_backup(filename)
+    record_audit(db, "backup.download", request=request, actor=current_user, target_type="backup", target_id=path.name)
+    return FileResponse(
+        path,
+        media_type="application/sql",
+        filename=path.name,
+        headers={"Content-Disposition": f'attachment; filename="{path.name}"'},
+    )
+
+
+@router.post("/server/restore", status_code=202)
+async def restore_server_backup(
+    body: ServerRestoreRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Restore the database from a backup file in the backups folder: the same job, SQL guard, timeout,
+    status polling and one-at-a-time lock as an uploaded file, but the file is read from the server.
+
+    The file is copied first, because the restore job deletes the file it is given."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    multi_user = multi_user_enabled(db)
+    if multi_user and not (
+        body.password and verify_password(body.password, current_user.hashed_password)
+    ):
+        raise HTTPException(status_code=403, detail="Enter your password to restore a backup")
+    params = get_db_params()
+    if not params:
+        raise HTTPException(status_code=500, detail="Database URL not configured")
+    source = resolve_server_backup(body.filename)
+
+    with _restore_lock:
+        if _restore_state["state"] == "running":
+            raise HTTPException(status_code=409, detail="A restore is already running")
+        previous_state = dict(_restore_state)
+        _restore_state.update(
+            state="running",
+            started_at=_now_iso(),
+            finished_at=None,
+            error=None,
+            started_by=getattr(current_user, "id", None),
+            requires_token=bool(multi_user),
+        )
+        job_id = _restore_state["started_at"]
+
+    handed_off = False
+    restore_path: Path | None = None
+    try:
+        restore_fd, raw_restore_path = tempfile.mkstemp(prefix="restore_", suffix=".sql", dir=Path(BACKUP_DIR))
+        restore_path = Path(raw_restore_path)
+        with os.fdopen(restore_fd, "wb") as destination, open(source, "rb") as origin:
+            shutil.copyfileobj(origin, destination, RESTORE_CHUNK_SIZE)
+        try:
+            await run_in_threadpool(check_restore_sql, restore_path)
+        except RestoreSqlRejected as exc:
+            logger.warning("Rejected server backup %s: %s", source.name, exc)
+            raise HTTPException(
+                status_code=400,
+                detail=f"This file is not a plain PostgreSQL backup made by this app ({exc}).",
+            ) from None
+        env = os.environ.copy()
+        env["PGPASSWORD"] = params["password"]
+        command = [
+            "psql",
+            "-h", params["host"],
+            "-p", params["port"],
+            "-U", params["user"],
+            "-d", params["dbname"],
+            "--no-psqlrc",
+            "-v", "ON_ERROR_STOP=1",
+            "--single-transaction",
+            "-f", str(restore_path),
+        ]
+        timeout = _restore_timeout_seconds()
+        with _restore_lock:
+            snapshot = dict(_restore_state)
+        _save_restore_state(snapshot)
+        # Audited before the job starts: a full restore replaces the audit log with the backup's own copy.
+        record_audit(db, "backup.restore", request=request, actor=current_user, target_type="backup", target_id=source.name)
+        thread = threading.Thread(
+            target=_run_restore_job,
+            args=(restore_path, command, env, timeout, params),
+            name="backup-restore",
+            daemon=True,
+        )
+        thread.start()
+        handed_off = True
+        logger.info("Database restore of server backup %s started (timeout %s s)", source.name, timeout)
+        return {"message": "Restore started", "job_id": job_id, "state": "running", "filename": source.name}
+    finally:
+        if not handed_off:
+            with _restore_lock:
+                _restore_state.clear()
+                _restore_state.update(previous_state)
+            if restore_path is not None:
+                try:
+                    restore_path.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("Could not remove temporary restore file %s", restore_path, exc_info=True)
 
 
 @router.post("/clear-image-cache")

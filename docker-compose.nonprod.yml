@@ -19,6 +19,7 @@ services:
   backend:
     image: pokelocal-backend:nonprod
     container_name: pokemonlocal-nonprod-backend
+    # The GPU build arg, device reservation and GPU environment come from docker-compose.portainer.yml (merged before this file).
     environment:
       TELEGRAM_ENABLED: "false"
       # Wrapped opens outside 1 December to 15 January here, for testing (docs/NONPROD.md).

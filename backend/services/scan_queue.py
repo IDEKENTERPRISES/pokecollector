@@ -15,7 +15,7 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from models import ScanJob, ScanJobItem, ScanQueueUserState, User
-from services import picture_first
+from services import matcher_only, picture_first
 from services.gemini_rate_limit import gemini_priority_scope
 from services.scanner_reachability import (
     WAITING_EXPIRY_GRACE_DAYS,
@@ -706,6 +706,58 @@ def _fit_image_for_provider(provider, image_bytes: bytes, content_type: str):
     return downscale_for_recognition(image_bytes, content_type)
 
 
+MATCHER_ONLY_TIMEOUT_SECONDS = 25.0  # nothing to fall back to, so the matcher gets longer than "picture first" does
+
+
+def matcher_only_failure(db: Session, user_id: int | None, reason: str | None) -> Exception:
+    """The scan error for a matcher run that produced nothing (never a fallback to a provider)."""
+    if reason in matcher_only.INDEX_REASONS:
+        user = db.get(User, user_id) if user_id is not None else None
+        is_admin = user is not None and getattr(user, "role", None) == "admin"
+        return PermanentScanError(matcher_only.INDEX_NOT_READY_ADMIN if is_admin else matcher_only.INDEX_NOT_READY)
+    return TransientScanError("The picture matcher took too long or failed. Try again in a moment.")
+
+
+async def matcher_only_scan(
+    db: Session,
+    user_id: int,
+    image_bytes: bytes,
+    *,
+    job_id: int | None = None,
+    item_id: int | None = None,
+) -> dict:
+    """Matcher only (docs/scanner-providers.md): the scan result straight from the picture matcher, whatever its
+    confidence. No provider is read, called or waited for."""
+    from services.scan_trace import create_scan_trace
+
+    earlier = _earlier_picture_for_item(db, item_id)
+    failure: dict = {}
+    run = await picture_first.run_matcher(
+        image_bytes, _full_photo_for_item(db, item_id), _capture_info_for_item(db, item_id),
+        _review_reader_for_item(db, item_id), failure=failure, timeout=MATCHER_ONLY_TIMEOUT_SECONDS,
+    )
+    if run is None:
+        raise matcher_only_failure(db, user_id, failure.get("reason"))
+    result = picture_first.matcher_only_result(db, run, earlier=earlier)
+    meta = result["recognized"]["_picture"]
+    try:
+        trace = create_scan_trace(
+            db, user_id, mode="single", job_id=job_id, item_id=item_id,
+            filename="sanitized-scan.jpg", provider="picture", model=run.result.status,
+        )
+        try:
+            trace.set_image(image_bytes)
+            trace.record_candidates(result["matches"])
+            selected = run.result.decision["tcg_card_id"] if meta.get("path") == picture_first.PATH_DECIDED else None
+            picture_first.record_in_trace(trace, user_id, job_id, item_id, run, meta, selected=selected)
+        finally:
+            trace.save()
+    except Exception:
+        logger.exception("Could not record the matcher-only scan in the trace")
+        db.rollback()
+    return result
+
+
 async def default_scan_processor(
     db: Session,
     user_id: int,
@@ -725,6 +777,9 @@ async def default_scan_processor(
     user = db.get(User, user_id)
     if user is None or not user.is_active:
         raise PermanentScanError("The scan owner is no longer an active user.")
+    if matcher_only.enabled(db):
+        # Matcher only: before any provider is looked at, however the user's scanner is (or is not) set up.
+        return await matcher_only_scan(db, user_id, image_bytes, job_id=job_id, item_id=item_id)
     provider = get_provider(db, user_id)
     picture_run, picture_earlier = None, None
     if picture_first.enabled(db):
@@ -841,6 +896,8 @@ async def default_composite_processor(
     user = db.get(User, user_id)
     if user is None or not user.is_active:
         raise PermanentScanError("The scan owner is no longer an active user.")
+    if matcher_only.enabled(db):
+        return [None] * len(images)  # no composite call without a provider: each photo is scanned on its own
     provider = get_provider(db, user_id)
     request_timeout_seconds = resolve_scanner_request_timeout(
         db, user_id, provider.name
@@ -1229,6 +1286,8 @@ async def release_waiting_scans_if_reachable(db: Session) -> int:
     """Once-a-minute check: free all waiting scans as soon as the endpoint answers."""
     if waiting_scan_count(db) == 0:
         return 0
+    if matcher_only.enabled(db):
+        return release_waiting_scans(db)  # nothing to wait for: the matcher answers them now, no probe
     from services.scan_providers import openai_base_url
 
     if not await endpoint_reachable(openai_base_url(), force=True):

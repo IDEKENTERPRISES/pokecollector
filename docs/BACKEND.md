@@ -448,6 +448,29 @@ trades, trade-item tag associations, private collection-card photos, and scan
 queue/provider state. A full dump includes those database tables. Scanner trace
 and queued-photo files remain filesystem data and are not part of SQL backups.
 
+### Wipe all user data
+
+`GET /api/admin/data-wipe/preview` (admin) returns the row counts that would be
+deleted, the kept tables, readiness (`ADMIN_USERNAME` and `ADMIN_PASSWORD` set)
+and any busy reason. `POST /api/admin/data-wipe` runs it (body `phrase` =
+`WIPE ALL DATA`, `password` when logins are enforced). Scan traces and
+`card-match` are never deleted; `services/trace_photos.py` first copies each
+trace's review photo beside it. The table
+classification lives in `services/data_wipe.py` (`WIPE_TABLES` / `KEEP_TABLES`);
+`tests/test_data_wipe.py` fails when a table is in neither or both. See
+"Wiping user data" in `docs/DEPLOYMENT.md`. `GET /api/health` also returns
+`data_epoch` (a `settings` row, created on first use and replaced by every wipe).
+
+### Server backups
+
+`GET /api/backup/server` lists the `.sql` files in the backups folder (admin only),
+`GET /api/backup/server/download?filename=` streams one and
+`POST /api/backup/server/restore` (`{filename, password}`) starts the normal
+restore job from a copy of it (same guard, timeout, status and lock). File names
+are bare names only (`^[A-Za-z0-9][A-Za-z0-9._-]*\.sql$`, no `..`, no symlinks,
+regular file directly in the folder). Download and restore write `backup.download`
+and `backup.restore` audit entries. See "Server backups" in `docs/DEPLOYMENT.md`.
+
 ### Manual restore
 
 `POST /api/backup/restore` accepts only a non-empty `.sql` upload, streams it to

@@ -5,6 +5,7 @@ import { fetchScanCandidateImage, fetchScanJobItemImage } from '../api/client'
 import CardImage from './CardImage'
 import ScanZoomViewer from './ScanZoomViewer'
 import Button from './ios/Button'
+import { CheckThisCardBadge, ForcedPickHint, FramingTip, hasRejectedOutline, isForcedPick } from './ForcedPickNotice'
 import { useDialogBehavior } from './ui/dialogBehavior'
 import { formatRetryCountdown } from '../utils/retryCountdown'
 
@@ -734,6 +735,7 @@ export function ScanItemPanel({ jobId, item, onAdd, onRetry, onWait, isAdmin = f
   const picture = item.recognized?._picture
   const pictureUnsure = item.status === 'done' && !item.resolved && picture?.path === 'unsure_inbox'
   const matchedByPicture = isAdmin && picture?.path === 'decided'
+  const forcedPick = isForcedPick(item)
 
   // A resolved item is finished business. Left expanded it takes as much
   // room as one still needing a decision, and worse: resolving drops the
@@ -890,6 +892,14 @@ export function ScanItemPanel({ jobId, item, onAdd, onRetry, onWait, isAdmin = f
           )}
         </div>
       )}
+
+      {forcedPick && (
+        <div className="mt-4 space-y-2">
+          <CheckThisCardBadge t={t} />
+          <ForcedPickHint t={t} />
+        </div>
+      )}
+      {hasRejectedOutline(item.recognized) && <div className="mt-2"><FramingTip t={t} /></div>}
 
       {item.status === 'done' && item.matches?.length > 0 && (
         <div className="mt-4">

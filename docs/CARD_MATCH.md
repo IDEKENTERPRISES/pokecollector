@@ -334,10 +334,16 @@ On disk (`CARD_MATCH_DIR`, default `/app/data/card-match`; mounted in `docker-co
 | `CARD_MATCH_DIR` | `/app/data/card-match` | index, reports, cached pictures |
 | `CARD_MATCH_MODEL_DIR` | `/app/card-match-models` | where the image has the model file |
 | `CARD_MATCH_THREADS` | `3` (1–8) | ONNX Runtime and OpenCV thread cap |
+| `CARD_MATCH_DEVICE` | `auto` | `auto` / `cuda`: use the GPU when it works, else the CPU; `cpu`: never use the GPU (see "Running on the GPU") |
+| `CARD_MATCH_GPU_MEM_MB` | `1024` | GPU memory this process may use for the matcher, shared out between the picture model and OCR |
+| `CARD_MATCH_IDLE_UNLOAD_MINUTES` | `10` | after this long with no use of the matcher, release the GPU sessions (0 = never); the next use reloads them |
+| `CARD_MATCH_GPU_FAILURES` | `3` | GPU runs of one model that may fail (each is rerun on the CPU) before it is CPU-only until reloaded |
+| `CARD_MATCH_WARM` | off | `1`: at startup load the picture model and OCR and run one dummy scan through each (nonprod sets it) |
 | `SCAN_MATCHER_AUTORUN` | off | **nonprod only**: once per matcher version, after startup, fill the picture cache if needed, build the index and the artwork index, run the synthetic benchmark, and with at least 100 confirmed scans the real-photo benchmark and the option comparison |
 | `CARD_MATCH_OPTIONS` | unset | force an option set, e.g. `names+art`; unset = `chosen.json` of this matcher version, else `names+number+text+art+tta` |
 | `SCAN_MATCHER_SHADOW` | off | **nonprod only**: shadow mode (below) |
 | `SCAN_PICTURE_FIRST` | off | default for the admin switch "Picture match first" (below); nonprod sets it to on |
+| `SCAN_MATCHER_ONLY` | off | default for the admin switch "Matcher only (no AI)" (below): no scanner provider is ever contacted |
 | `SCAN_PICTURE_FIRST_TIMEOUT_SECONDS` | `5` (0.5–30) | longest a scan waits for the matcher before the old path takes over |
 | `SCAN_TRACE_READONLY_DIRS` | unset | **nonprod only**: extra folders of scan diagnostics that Scanner lab reads and never writes, as `label=path` entries (`prod=/app/data/scan-traces-prod`); see "Prod's scans in nonprod's Scanner lab" below |
 | `SCAN_MATCHER_INDEX_AFTER_SYNC` | off | after `schedule_after_sync` (card sync → picture warm-up), add the new pictures to the index; nonprod sets it |
@@ -349,7 +355,7 @@ On disk (`CARD_MATCH_DIR`, default `/app/data/card-match`; mounted in `docker-co
 Nonprod stays the place where option sets are measured and compared. Prod runs one pinned set and never the autorun or shadow mode.
 
 - `docker-compose.portainer.yml` mounts `/home/rage/Documents/docker/pokelocal/data/card-match` (create the folder once), so the indexes survive a redeploy.
-- It pins `CARD_MATCH_OPTIONS` to the set nonprod's real-photo comparison kept (`names+number+text+art+tta+fastread+numberonce+corners+wholepic+wholeread+wholestrict` on 12 November 2026, matcher version 10: 72.1% decided with 0 wrong on 276 real photos, 1,495 ms at the 95th percentile; before that `names+number+text+art+tta+fastread+corners+wholepic`, 66.3% with 0 wrong). Prod has no confirmed scans of its own to compare on, so without the pin it would run the plain default. To promote a better set, change that line; `docker-compose.nonprod.yml` sets the variable to empty so nonprod keeps using its own comparison's pick.
+- It pins `CARD_MATCH_OPTIONS` to the set nonprod's real-photo comparison kept (`names+number+text+art+tta+fastread+numberonce+corners+wholepic+wholeread+widefirst+topname+edgeguard` on 19 November 2026: 77.7% decided with 0 wrong on 287 real photos, against 77.0% without `edgeguard`; before that `names+number+text+art+tta+fastread+numberonce+corners+wholepic+wholeread+widefirst+topname` on 18 November 2026: 78.6% decided with 0 wrong on 280 real photos, about 1,450 ms at the 95th percentile; before that `names+number+text+art+tta+fastread+numberonce+corners+wholepic+wholeread+wholestrict` on 12 November 2026, matcher version 10: 72.1% decided with 0 wrong on 276 real photos, 1,495 ms at the 95th percentile; before that `names+number+text+art+tta+fastread+corners+wholepic`, 66.3% with 0 wrong). Prod has no confirmed scans of its own to compare on, so without the pin it would run the plain default. To promote a better set, change that line; `docker-compose.nonprod.yml` sets the variable to empty so nonprod keeps using its own comparison's pick.
 - `SCAN_MATCHER_INDEX_AFTER_SYNC` and `SCAN_PICTURE_FIRST` are passed through from the stack's environment and are empty (off) unless set there.
 - Nothing changes for a scan until an admin does both of these, in this order:
   1. Settings › Data & sync › Scanner lab: **Update index**, then **Update artwork only (DINOv2-small) index**, and wait until both show every English card. With the artwork index missing, `variants.usable` drops `art`, and that weaker set made 3 wrong decisions on the same photos instead of 1.
@@ -375,6 +381,29 @@ Until prod had scans of its own, the matcher was measured on the owner's scans o
 - **If prod's folder is empty, missing or unreadable** everything behaves exactly as it did before: no groups, no extra rows, only the line above.
 
 Limits: one index build or benchmark at a time (a second request gets `started: false`); jobs run in a thread at `nice 10` where the OS allows it; ONNX Runtime gets 3 intra-op threads and OpenCV 3.
+
+## Running on the GPU
+
+The picture model (DINOv2-small) and RapidOCR's two ONNX sessions can run on the server's NVIDIA card (Quadro P620, 2 GB, Pascal) instead of the CPU. Nonprod first; prod only after nonprod has been measured.
+
+- **Setting:** `CARD_MATCH_DEVICE` = `auto` (default), `cuda` or `cpu`. With `auto`, a session is created on `CUDAExecutionProvider` when ONNX Runtime lists it and the session really creates; any failure (no device, missing libraries, out of memory at load) is logged once ("Card matcher: embedder:dinov2-small runs on the CPU (reason)") and that model runs on the CPU. Nothing crashes, results are the same kind of answer. Pinned and uploaded (custom) picture models follow the same rule. `cpu` never touches the card.
+- **OCR:** RapidOCR chooses its own providers and cannot cap GPU memory, so `device.py` builds its sessions for it (CUDA with the cap, else CPU). If RapidOCR's internals change and the sessions cannot be intercepted, OCR simply stays on the CPU, which the lab shows.
+- **Memory cap (2 GB shared by two stacks):** each process gets a budget, `CARD_MATCH_GPU_MEM_MB` = 1024 MB, as `gpu_mem_limit` per session: 205 MB for the picture model (fixed 224 x 224 inputs, about 90 MB of weights), 358 MB each for OCR's detector and recogniser (their inputs vary in size, so they get generous headroom for the biggest crop) and 31 MB for its tiny direction classifier (RapidOCR loads it even though it is switched off), 952 MB in all, `arena_extend_strategy=kSameAsRequested` (the arena grows by what is asked, not by doubling), `cudnn_conv_algo_search=HEURISTIC` (the exhaustive search re-benchmarks every new OCR crop size). A model that would not fit in what is left of the budget (a second or custom picture model) runs on the CPU, with that reason shown. Only one run per model at a time (a lock), and batches on the card are at most 16 (the index build's size), so one scan cannot go over the cap. These are caps, not allocations: an arena only grows as far as the runs need, and a run that would pass its cap is rerun on the CPU. Each process also has a CUDA context outside the cap (roughly 100 to 200 MB, not measured), so with both stacks fully warm the worst case is the whole 2 GB card (2 × (1024 + context)); that is what idle unload is for, and the reason Jellyfin transcoding never has to wait on a warm matcher. Lower `CARD_MATCH_GPU_MEM_MB` if the card ever runs short.
+- **A GPU run that fails never fails a scan:** every GPU session is wrapped. If a run raises (the arena runs out of memory on a long input, any other CUDA runtime error) the same call is rerun on a CPU copy of that model, built the first time it is needed, and one line is logged. After 3 failures (`CARD_MATCH_GPU_FAILURES`) that model is CPU-only, its GPU session is released and the lab shows the reason, until it is unloaded and loaded again. This covers the picture model and each OCR session.
+- **Idle unload (the card is shared with Jellyfin):** a scan, a Scanner lab job or an index build counts as use. After `CARD_MATCH_IDLE_UNLOAD_MINUTES` (10) without any, every session holding GPU memory is released, which frees its arena; the Python objects stay, so the next use loads the sessions again (a second or two, on the CPU if the card is full at that moment). A running job or scan is never interrupted: unloading only happens when nothing is in use. The CUDA context itself (driver-side, roughly 100 to 200 MB on Pascal) cannot be dropped from inside ONNX Runtime and stays until the process exits; the unload log line shows the card's used memory before and after, so the real figure can be read from `docker logs`. Sessions that are on the CPU are never unloaded. Setting it to 0 keeps the models loaded for ever.
+- **Warm when the scan screen opens:** the scanner screens (`UnifiedCardScanner`, `CardScanner`) call `POST /api/card-match/warm` (any signed-in user). It counts as use, returns at once and, if the models are unloaded, loads them in the background, at most once every 20 seconds; with `CARD_MATCH_WARM` off it does nothing. Without it the first scan after an idle spell pays the load.
+- **Tuning the shares:** the warm-up log line shows the card's used memory before and after ("card memory used A -> B MB", the whole card, so another program shows up too); read each model's real use from there and the lab's CPU-rerun count.
+- **Warm:** with `CARD_MATCH_WARM=1` the models load in a background thread at startup and run one dummy inference each (a blank picture; a line of text for OCR), so the first scan pays no CUDA or session start-up; they stay loaded while the matcher is in use and are released after the idle time above.
+- **Checking:** Settings › Data & sync › Scanner lab shows "Picture model running on" and "OCR running on": `GPU (Quadro P620) · warm-up N ms`, or `CPU (reason)`. "not loaded yet" means no scan or warm-up has used that model since the container started. `docker logs` has the one-line fallback reasons and a "Card matcher warm: ..." line.
+- **Image:** the backend image is CPU-only by default. `--build-arg CARD_MATCH_GPU=1` swaps in `onnxruntime-gpu==1.19.2` (CUDA 12, cuDNN 9) and the CUDA 12 libraries from pip, and sets `LD_LIBRARY_PATH` to them. CUDA 13 dropped Pascal, so stay on CUDA 12.x (driver 580 is the last branch that runs it). Measured on the nonprod server: the GPU image is 6.6 GB against 2.28 GB for the CPU image (+4.3 GB), so the GPU build is opt-in; nonprod's Compose file turns it on. The ONNX Runtime GPU wheel's support for compute capability 6.1 is expected but has to be confirmed on the server (the lab says CPU with a reason if it is not).
+- **Trimming the image:** ONNX Runtime 1.19's CUDA provider links `cudart`, `cublas`/`cublasLt`, `cudnn`, `cufft` and `curand` (checked in the wheel), so none of those can go; `nvjitlink` is needed by cuFFT. Only `nvrtc` (about 70 MB installed) is not linked, and cuDNN may load it for some fused kernels, so it stays. The provider itself is 600 MB (kernels for several GPU generations) and cuDNN the largest library; neither can be cut safely with the pip packages. A smaller image would need a custom ONNX Runtime build for sm_61 only, which is not worth it for one card.
+- **Same answers:** the GPU's fp32 maths can differ from the CPU in the last digits of a vector. After the deploy, run Compare options with only the reference rows (the rows marked as always run) and expect the same decided and wrong numbers as before; a difference of one picture in a thousand at the margin is rounding, a bigger one is a bug to report.
+- **Prod:** `docker-compose.portainer.yml` now sets the same for the prod backend as nonprod has: `build: args: CARD_MATCH_GPU: "1"`, a `deploy.resources.reservations.devices` entry (`driver: nvidia`, `count: 1`, `capabilities: [gpu]`), and `CARD_MATCH_DEVICE: auto`, `CARD_MATCH_GPU_MEM_MB: "1024"`, `CARD_MATCH_WARM: "1"`, `CARD_MATCH_IDLE_UNLOAD_MINUTES: "10"`, `NVIDIA_DRIVER_CAPABILITIES: compute,utility`. The card is shared with the nonprod stack and Jellyfin, hence the cap and the idle unload. Nonprod's Portainer stack merges the prod file too, so `docker-compose.nonprod.yml` no longer repeats these (a repeated device list would be appended and ask for two GPUs). If Portainer's Compose rejects `deploy.resources.reservations.devices`, use `runtime: nvidia` instead.
+- **Prod's first deploy with this:** it builds the 6.6 GB GPU image, sharing layers with nonprod's on the same host, so expect a long first build. After it, check Scanner lab: "Picture model running on" and "OCR running on" show `GPU (Quadro P620)`, and "Matching options in use" ends with `edgeguard`.
+
+## Phone matcher (parked)
+
+A phone version of this matcher was built and measured on nonprod (version 11, tracker phase P27): an 8-bit and a 16-bit model, a downloadable phone bundle, JavaScript ports of the card finder, the text reader and the decision rules, a worker-based matcher and an admin speed-test page. It was parked on 2026-11-17 and removed from `nonprod`: on the owner's iPhone every WebGPU mode crashed iOS Safari, and the stable WebAssembly mode was slower than the server. The server matcher in this file is the product. The complete phone work, with its documentation (`docs/phone-scanner/`), is saved on the branch `parked/phone-matcher`.
 
 ## Shadow mode (Phase 2, nonprod only)
 
@@ -434,6 +463,23 @@ Where it is recorded: `recognized._picture` on the scan (path, mechanism, simila
 
 To turn it off if anything looks wrong: Settings › Scanner › **Picture match first** off (takes effect on the next scan, no restart), or remove `SCAN_PICTURE_FIRST` from the compose file and redeploy. Scans already in the inbox keep their results.
 
+## Matcher only (no AI)
+
+An admin switch, **Settings › Scanner › Matcher only (no AI)** (setting `scan_matcher_only`; default from `SCAN_MATCHER_ONLY`, off). While it is on the app never contacts Ollama, an OpenAI-compatible endpoint or Gemini, and **every scan gets the picture matcher's result however unsure it is**. It works with "Picture match first" on or off. Code: `services/matcher_only.py`, `picture_first.matcher_only_result`, `scan_queue.matcher_only_scan`.
+
+| Matcher says | What the scan holds | `_picture` |
+| --- | --- | --- |
+| decided | exactly the decided result of today (the card first, then the close matches) | `path: decided`, `matcher_only: true`, `forced_pick: false`, `rules_decided: true` |
+| unsure | the matcher's first candidate as the proposed card plus up to 4 alternatives | `path: forced`, `matcher_only: true`, `forced_pick: true`, `forced_card`, `rules_decided: false`, the real `unsure_reason` |
+| no candidate | no matches, so the review shows the card search | `path: no_candidate`, `forced_pick: false` |
+| index, model or OCR not ready | the scan fails with "The picture index isn't ready yet" (admins also read "Build it in Scanner lab."); retry once it is built | none |
+
+Nothing is ever added without the trainer confirming: the review shows a **Check this card** badge on a forced proposal, the alternatives as tappable cards and the search one tap away. The index holds English cards only, so a card in another language gets the nearest English match and the trainer picks.
+
+Diagnostics stay honest. The rules' real outcome is stored as always (a forced scan's `path` is `forced`, never `decided`, and the shadow record keeps `decision: null`), so Scanner lab's decided and wrong numbers are unchanged. On confirmation `_picture.forced_kept` records whether the trainer kept the forced pick or changed it, and `GET /api/card-match/picture-first` returns `counts.forced_shown` and `counts.forced_kept` ("unsure picks shown: N, kept as-is: M") for the last 7 days.
+
+Waiting scans: a scan that was "waiting for the scanner" when the switch went on is released on the next poll of the queue (or the once-a-minute sweep) and finished by the matcher; nothing waits for, retries with or queues for a scanner. A matcher run is given up to 25 seconds here (there is nothing to fall back to).
+
 ## Reading the Scanner lab
 
 - **English cards indexed — N of M**: pictures in the index vs. English physical cards with a catalogue picture. A gap means pictures are not cached yet (run "Prepare card pictures" first) or the build is not finished.
@@ -451,6 +497,10 @@ The **Picture match first** block in the lab counts the last 7 days from the sca
 ### How each confirmed card was chosen (manual step)
 
 Every confirmed card records `confirmation.source` in its trace: `scanner_decision` (the scanner's own pick accepted), `matcher_candidate` or `ollama_candidate` (picked from that path's candidates), `manual_search` (found by search, no scanner offered it) or `manual_no_result` (found by search on a scan that had nothing). The lab shows the counts under the shadow run (`how_confirmed` in `/api/card-match/shadow` and in the labelled report). A manual pick is a miss for the matcher and for Ollama by definition (the card was in nobody's candidates, rank none), is kept as ground truth with its photo, and is included in the confirmed-scans scores and the labelled benchmark (English cards only, like every other pick). Traces written before this change have no source and are counted as `unlabelled`.
+
+### Correcting a confirmed card
+
+A trainer can confirm the wrong card (for example an N's Darumaka confirmed as Journey Together #026/159 when it is Ascended Heroes #032/217), and that one label then counts a correct decision as wrong. An admin can fix it in Scanner lab › Misses: **The scanner was right** on a "Decided wrong" entry (also in a comparison row's list) sets the scan's confirmed card to the card the matcher decided, after a confirmation that names both cards; **Pick the right card** on any miss searches the catalogue for a different card. The correction changes the trace's `ground_truth` (every attempt of that scan) and re-scores its fields, so the labelled benchmark, the option comparison, the OCR check and Misses all read the corrected card from the next run on; the lab says how many confirmed cards were corrected. The old value is kept in `ground_truth_corrections` (who, when, why), **Undo** puts it back, and each change is an audit entry (`scan_trace.ground_truth_corrected` / `scan_trace.ground_truth_restored`). The new card must be an English, physical catalogue card. Only traces under this server's own trace folder can change: scans read from a read-only source (prod, on nonprod) show no button and the API refuses them. Scan photos are never touched.
 
 ## OCR choice
 
@@ -473,7 +523,126 @@ All permissive; the project itself is AGPL-3.0-only. TCGdex card pictures are fe
 
 ## Models in the image
 
-`backend/Dockerfile` runs `fetch_card_match_models.py` after installing the requirements: it downloads the pinned URL, checks the sha256 and puts the file in `/app/card-match-models`. This layer is cached until `model_specs.py` changes. At runtime `OnnxEmbedder` checks the sha256 again before loading. To add a second model (MobileCLIP, SigLIP) for comparison, add an entry to `MODEL_SPECS`; the index is stored per model name. The phone can later load the same `.onnx` file with `onnxruntime-web`, and the `.npy`/ids format is plain.
+`backend/Dockerfile` runs `fetch_card_match_models.py` after installing the requirements: it downloads the pinned URL, checks the sha256 and puts the file in `/app/card-match-models`. This layer is cached until `model_specs.py` changes. At runtime `OnnxEmbedder` checks the sha256 again before loading. To add a second model (MobileCLIP, SigLIP) for comparison, add an entry to `MODEL_SPECS`; the index is stored per model name.
+
+## Custom picture models
+
+An admin can upload an ONNX picture model in Scanner lab (nonprod, or any server) and compare it with the pinned DINOv2-small on the real photos. The file goes to the card-match data folder (it persists across deploys; scan photos are never involved): `models/custom-<sha8>.onnx` plus a registry `models/registry.json` (name, sha256, size, uploaded by, uploaded at, input size, mean/std).
+
+**What the model must look like** (the same as `onnx-community/dinov2-small` `model.onnx`):
+- input `pixel_values`, float32, shape 1x3x224x224 (any batch size), ImageNet normalisation (mean 0.485/0.456/0.406, std 0.229/0.224/0.225; the server does the resize and normalising);
+- output `last_hidden_state`, shape [batch, N, 384], the CLS token first (`[:, 0]` is the picture's vector; 384 numbers, the same as the default model, so the existing index and search code applies).
+The upload is refused (422) when the file is not an ONNX model onnxruntime can load, has more than one input, does not run on a zeros input, or has another output shape; 413 over 400 MB; 409 when the same file is already uploaded. The checksum is checked again every time the model loads.
+
+**Upload.** Scanner lab > "Custom picture models" > "Upload a model (.onnx)" (admin only; a progress bar shows the upload). API: `POST /api/card-match/models` (multipart: `file`, `name`), `GET /api/card-match/models`, `DELETE /api/card-match/models/<id>` (removes the file and both indexes; refused while a job runs). Each upload and delete is in the audit log (`card_match.model_uploaded`, `card_match.model_deleted`). The frontend nginx has a `/api/card-match/models` location with a 410M body limit and no request buffering; any proxy in front must allow bodies of that size on this route.
+
+**Build the indexes.** Two buttons per model: the whole-card index `custom-<sha8>` and the artwork-window index `custom-<sha8>-art`, built by the same checkpointed job as the other indexes from the cached English card pictures (about 17 minutes each on the T340; a stopped build continues).
+
+**Compare.** The option word `custom` makes the whole-card and artwork searches use the newest uploaded model and its two indexes (it turns on `art`). "Compare options (real scans)" has two extra rows: the server's kept set + `custom`, and the kept set without `wholestrict` + `custom`. A row whose custom indexes are not built (or with no model uploaded) is skipped and lists the missing indexes, like the other rows. `pick_winner` treats the rows like any other, so a `custom` row can become the one in use; prod would then need the same model uploaded (and both indexes built) before the same set could be used there. Until then prod's `usable()` drops `custom` and searches with the default model. Deleting a model removes it from the rows the same way.
+
+## Matcher version 12 test (options)
+
+Two reading options, **off by default**, measured as comparison rows only. `MATCHER_VERSION` stays **11**, and `DEFAULT_LABEL` are unchanged. Nothing about a real scan changes until a row wins and `chosen.json` picks it.
+
+### What the code does today (findings)
+
+**Name.** `OcrReader.read_name` with `NAME_LADDER_FAST` runs two steps: `name-line` (plain, strip x 3–100 %, y 2–15 %) and `name-band` (clahe, x 3–80 %, y 1.5–11.5 %). After each it keeps the lines that pass `is_name_like` and stops at the first step that has any. If neither strip has one, the top-wide band (0–24 % of the card height, clahe, low thresholds) is read, but only when `elapsed <= 1.5 × budget` (1.35 s with `fastread`, clock started at the beginning of the name read), and a line counts only if `is_name_like` and its bottom edge is above 20 % of the card height. Then `parse_name_lines` takes the tallest line left after `clean_name_line`, and the pipeline searches the catalogue (`NameIndex.score_names`, fuzzy ≥ 0.72). Fed the three lines `BASIC`, `Morpeko`, `70` as top-wide output (a scripted-detector test, `backend/tests/test_card_match_v12.py`), every step passes: `BASIC` is stripped to nothing by `clean_name_line` (stage word), `70` has no letters, `Morpeko` is name-like and clean, and the read returns "Morpeko". So **no single function drops "Morpeko"**. Two gates can, and the strips alone cannot say which fired on the real photo: (1) the time gate above (the whole detector pass of both strips counts against it, and on the phone each pass is much slower), (2) the 20 % height gate, if the name sits lower than the usual layout. The same photo has the number found only in the widest bottom band, which points to the text being lower or smaller than the fixed strips assume, not to a parsing problem. `ASIC | 70` has no name line in it at all, so no name is the right answer there. `topname` takes the time gate and the height gate out of the picture for the case that matters (no strip detected a line) and replaces them with the catalogue check.
+
+**Number.** `NUMBER_LADDER_FAST` is, in order: `number-left-tight` (plain, ×2), `number-right-tight` (plain, ×2), `bottom-band` (plain, ×3, y 88.5–100 %), `number-left-wide` (sharp), `number-right-wide` (sharp), `bottom-band` (clahe, ×2.5); the `binary` and `deglare` steps are the ones `fastread` drops. Before each step the ladder stops if the number and total are complete with confidence ≥ 0.85, or if one step has run and more than `FAST_BUDGET_SECONDS` (0.9 s) have passed. The last resort, `bottom-wide` (0–100 % wide, y 72–100 %, clahe ×2, low thresholds), runs after the ladder only while the number is incomplete and the time used is ≤ 1.5 × the budget (1.35 s). With `wholeread`, a guide picture holds that last step back (stage `first`), reads the whole picture once more with the first three steps, and only then reads `bottom-wide`. So a card whose number sits outside the narrow strips pays for six empty reads before the one that works, and the time gate can end the ladder before `bottom-wide` is reached.
+
+**How often only the wide steps find the number.** Existing data: the OCR check's step table (`steps` in `benchmark-ocr-check-*.json`) has, per step, how many scans ran it and how many first had the right number there; the Misses view's "What OCR read" shows each region's lines. Both live on the T340 and none of it is on the build PC, so the counts come after the next OCR check. The check now also files each scan under its set by the kind of step that first had the right number (`number_by_set`: tight, bottom band, wide strips, whole bottom, never), counts only, no photo kept. The report shows it as "Where each set's number is first read right" (sets with at least 3 scans, sets that needed the whole bottom most often first). Read it for per-set layout patterns: v8's sets with about half their numbers missing (Black Bolt, Ascended Heroes, 30th Celebration, Pitch Black, Chaos Rising) should stand out as the sets with many "whole bottom" or "never".
+
+### `widefirst`
+
+The two tight strips come first as before. If **both detect no text at all** (not just no number), the next read is the whole bottom (`bottom-wide`, the last resort), not the narrow steps. If that finds text, the ladder carries on as before (the wide read is not repeated). If that finds **no text** either, the remaining steps that only re-read part of that area under sharpening or contrast (the wide strips, bottom-band clahe) are skipped, and the plain bottom band is the only one left. A card whose tight strips find any text reads exactly as before. Works in stages `all` and `first` (so with `wholeread` the early wide read replaces the held-back last resort). Why this rule: on the Morpeko photos every narrow step is empty (0 lines) and only the last step finds the line, so the empty narrow steps are pure cost; "no text in either tight strip" is cheap to test and says the text is not where the fixed strips look. The risk is a card whose tight strips are empty for another reason (a dark photo): then the early wide read is one more read, no worse than the ladder's own last step, and a wrong early read can end the ladder before a later step finds a better one; the rows will show it as a lost number or a wrong decision.
+
+### `topname`
+
+When `name-line` and `name-band` detect **no line at all**, the name is taken from the top-wide lines by `names.pick_top_line`, whatever the time spent: a line counts only when it is `is_name_like` and `NameIndex.score_names` finds a close catalogue name for it (so stage words, `BASIC`, `STAGE 1`, `VSTAR`, HP figures and "HP", attack costs and rules text all fail one test). Of the lines that pass, the tallest wins, then the best catalogue score, then the topmost. Otherwise (a strip detected lines) the read is unchanged. If nothing passes, there is no name (the normal fallback is not tried: it would accept a name the catalogue does not know).
+
+### The rows and what to read
+
+`COMPARE_LABELS` gets `KEPT+widefirst`, `KEPT+topname`, `KEPT+widefirst+topname`, where `KEPT` is `names+number+text+art+tta+fastread+numberonce+corners+wholepic+wholeread+wholestrict` (all existing rows stay). The table has two new columns: **Name** (the confirmed card's name read right, `metrics.name_read_pct`) and **Number time** (mean time the number steps took per photo, from the recorded ladder timings, `metrics.number_ms_mean`; cached repeats count 0), next to top 1, top 20, number, decided, wrong and p95. Judge `widefirst` by number time and p95 down with number, decided and wrong not worse; `topname` by name read up with wrong not higher. `pick_winner` is unchanged, so a new row that wins can be chosen into `chosen.json`.
+
+## Matcher version 14 test: `edgeguard` (an outline that is not a card)
+
+Status: a comparison row only. Off by default; `MATCHER_VERSION` stays as it is (no change to the rows that do not use it).
+
+### Evidence (18 Nov 2026, seven live scans on nonprod, all 30th Celebration cards, all in the index)
+
+The phone sent a 2160x3840 frame; the finder works on it scaled to 1149x2046. The guide (70% of the width, 63:88) is 804x1123 there, 903k px. Outlines the finder returned (x, y, in the 1149x2046 photo):
+
+| Scan | Result | Outline | Edges touched | Area / guide |
+|---|---|---|---|---|
+| Pikachu 043 | decided right | (243,578) (887,555) (894,1472) (277,1461) | none | 0.63 |
+| Eevee 117 | decided right | not found, full photo used | n/a | n/a |
+| Articuno 018 | unsure, first pick right | (0,323) (1149,323) (1149,1886) (0,1886) | left, right | 2.0 |
+| Zweilous 098 | unsure, first pick right | (152,500) (1149,628) (1149,2045) (250,2045) | right, bottom | 1.55 |
+| Zeraora 057 | unsure, wrong | (0,746) (1149,851) (1149,2045) (252,2045) | left, right, bottom | 1.4 |
+| Morpeko 061 | unsure, wrong | (0,851) (901,630) (1149,2045) (0,2045) | left, right, bottom | 1.5 |
+| Jangmo-o 110 | unsure, wrong | (0,400) (1149,409) (1149,2045) (0,2045) | left, right, bottom | 2.1 |
+
+In every bad scan the outline (a sleeve, binder page, mat or table edge) touches two or three frame edges and is 1.4-2.1x the guide (the edge test is the reliable signal). Its confidence was 0.64-0.82, so no fallback ran; OCR then read the bottom of the wrong region (no number) and the picture search embedded a scene (the same junk neighbours every time).
+
+### The rule (`detect.edge_problem`, used by `detect_card(edgeguard=True)`)
+
+With `check` on, in a full frame (not a guide picture), the best outline is refused when:
+
+- it touches **two or more** frame edges (`MAX_EDGES_TOUCHED = 1`): a corner within `EDGE_MARGIN_FRACTION = 1.5%` of a side counts as on that edge (the live outlines sat 0-1 px off, 0.1%). A held card can brush one edge, never two; or
+- its area is over **1.6x the guide's** (`MAX_GUIDE_AREA_RATIO`): the right outline was 0.63x, the bad ones 1.4-2.1x (so the edge rule, not this one, catches Zeraora and Morpeko); this is only the backstop for a big outline that touches nothing.
+
+A refused outline is then handled like a refused quad: the card is looked for **inside the guide region** (the crop the user aimed at, judged as a guide crop, so the card must fill 45% of it and look like a rectangle). A plausible card there is used (its corners are put back in the photo's own pixels). Otherwise the guide crop is the card (the existing `guide_crop` fallback). The trace's `detection.rejected` holds `edgeguard: true`, `reason` (`touches_edges` / `oversized`), `edges_touched`, `guide_area_ratio`, the refused `corners` and `searched_guide` (whether the card was found inside the guide). Photos where no outline touches an edge or dwarfs the guide are not changed (a test checks the same corners with and without the option).
+
+The option needs `corners` and turns it on (`names+edgeguard` is `names+corners+edgeguard`). Group "v14" in the row picker.
+
+### Scan screen
+
+The camera guide says "Keep the whole card inside the frame with a little space around it." When a result's `_picture.outline_rejected` is set (the edge guard refused the outline), the review shows one short tip: scan the card on its own, not in a binder page or big sleeve. Nothing is blocked.
+
+### What to tick in Compare options
+
+The references always run. Tick the two new rows: **Kept set without wholestrict + widefirst + topname + edgeguard** (the set in use, the prod pin) and **Kept set + edgeguard**. Read them against the references (the in-use set and Kept set): decided up or equal, **wrong must stay 0**, top 1 and number read not lower, p95 not worse. The "New" group (the owner's newly confirmed scans, including these seven) is where the gain should show. If a row wins, `pick_winner` can choose it into `chosen.json`; making it the default is then a separate change.
+
+## Learned decision rule (parked)
+
+Status: **parked on 18 November 2026 and removed from `nonprod`. The code is not in the app.** `MATCHER_VERSION` stays "11".
+
+**What it was** (matcher version 13 test). A small logistic-regression model (`learned.py`, numpy only), trained in Scanner lab on the confirmed scans, that judged how likely the *first* candidate was to be right. It could decide a scan the rules left unsure (first candidate only, never overturning a rules decision), behind an option word `learned` and a **Train decision rule** button. Training was cross-fitted (5 folds, each with its own threshold) so a scan it trained on was judged by a model that never saw it.
+
+**The result on 18 Nov.** Only 2 of the 253 usable scans had a wrong first pick, so there was too little to learn where the line between right and wrong lies. No safe threshold could be learned: it decided 0 of the 50 unsure scans.
+
+**Where it lives.** The complete code, tests, lab button and documentation are saved on the branch `parked/learned-rule`.
+
+**When to revisit.** After many more confirmed scans with many more wrong first picks (dozens, not 2). Until then the hand-set rules plus the two reading options below are the better tool.
+
+### The 18 Nov comparison that replaced it
+
+Scanner lab's Compare options on 280 real photos picked **kept set without `wholestrict` + `widefirst` + `topname`** (`names+number+text+art+tta+fastread+numberonce+corners+wholepic+wholeread+widefirst+topname`): **78.6% decided, 0 wrong, p95 about 1,450 ms**, against 72.1% decided (0 wrong) for the v10 pin (`...+wholeread+wholestrict`). On the scans never used for tuning (the **New** group) it went from 60% to 68% decided. Prod's `CARD_MATCH_OPTIONS` is pinned to this set from the next promotion (see "Running it on prod").
+
+### The custom GPU-trained model (18 Nov)
+
+A custom DINOv2-style model trained on the GPU was uploaded as a custom picture model and compared (see "Custom picture models"). It found the card very well, **top 1 99.6% and top 20 100%**, but **decided only 75.4%**: the rules' similarity thresholds (`SIM_MIN_*`, `LEAD_MIN_*`, the reprint and picture-only rules) were set for the default model's scores, and this model's scores sit on another scale, so many right first picks fall under them. Using it would need the thresholds re-tuned for its scores, not a better model.
+
+### How to read the groups
+
+Every comparison row has three extra columns, each "decided % · wrong (scans)" (`eval_groups`, from `benchmark.eval_group`):
+
+- **Tuned**: the scans used for tuning (the owner's older scans and the other source's tuning scans).
+- **New**: the owner's scans from 5 Nov 02:00 UTC on, never used for tuning.
+- **Held back**: the other source's held-back scans (30% by a stable hash).
+
+Only **New** and **Held back** are an honest test of a change. Held-back scans are run for every row (`held_back="separate"`) but never counted in the headline numbers the pick reads. Overfitting is the risk: earlier runs decided about 53% on the not-used-for-tuning scans against 81% on the tuned ones.
+
+## Choosing which rows to run
+
+"Compare options" used to run every row (19 rows, 1½–2 hours on the T340). Scanner lab now opens a row picker first, so a change is measured on only the rows it affects.
+
+- **The picker** (Scanner lab → Compare options, real scans; the synthetic comparison has one too): the rows in groups (history, v10 kept, v12, v14, custom) with readable titles, **All** / **None**, and an estimate of the run time from each row's last measured time (`seconds` on a row; rows from older reports have none, and the estimate says how many it could not count). The last selection is remembered per browser (`localStorage`).
+- **Reference rows always run**: the option set in use (`CARD_MATCH_OPTIONS`, else `chosen.json`, else the default, when it is one of the rows) and the kept set (`variants.KEPT_LABEL`). They are ticked and cannot be unticked, and are marked `reference: true` in the report. **None** leaves only them.
+- **API**: `POST /api/card-match/benchmark` takes `labels` for `compare-labelled` / `compare-synthetic`. Missing or empty means every row, exactly as before (so the autorun is unchanged). An unknown label is a 422 naming it. Rows always run in `variants.COMPARE_LABELS` order, whatever order was sent. `GET /api/card-match/status` has `options.compare_rows` / `compare_rows_synthetic`: label, title, group, `reference`, `seconds` and `measured_at`.
+- **`pick_winner` sees only the rows measured in this run.** A partial run never compares against old numbers; the winner is "picked among the rows run now". A partial run still writes `chosen.json` from that pick (as a full run does), so run the references with the rows you are testing, which is what the picker forces.
+- **Rows not run** are shown from the newest earlier compare report that measured them (`previous_rows`, `status: "previous"`): date, n, top 1 / top 20, decided, wrong, `eval_groups`, and the number of wrong scans. They are display only (never in the pick, never saved as chosen) and are greyed in the table with "previous run, <date>". The report also has `selected_labels`, `reference_labels` and `not_run` (every label not run now, with or without an earlier result).
+- **Same scans?** Every labelled report stores `scan_fingerprint`: sha256 of `MATCHER_VERSION` and the sorted (trace name, confirmed card after admin corrections) of the scans measured. A previous row carries `same_scans`; when false (a scan added, a label corrected, a new matcher version) the table badges it **different scans**: do not compare its numbers with this run's. `same_scans` is null for a report from before fingerprints.
 
 ## Next steps
 
@@ -481,4 +650,4 @@ All permissive; the project itself is AGPL-3.0-only. TCGdex card pictures are fe
 2. **Labelled benchmark** once trainers have scanned 300–400 cards with diagnostics on: press "Run on diagnostics".
 3. **Shadow mode** on nonprod (built, see above): read the Shadow run block after 300-400 confirmed scans and decide on the thresholds.
 4. **Primary mode** with the Ollama fallback only when the gaming PC answers a quick check, and "straight to the inbox" (with the picture top matches) when the scanner is unreachable, as the owner chose.
-5. **Phone version** reusing the same model file and index format.
+5. **Phone version**: parked, see "Phone matcher (parked)" above.

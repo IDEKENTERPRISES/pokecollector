@@ -5,7 +5,7 @@ import { Crown, RefreshCw, Download, Upload, Plus, Pencil, Trash2, User, UserChe
 import clsx from 'clsx'
 import {
   getSyncStatus, triggerSync, triggerPriceSync, triggerAllPriceSync, rescheduleFullSync, reschedulePriceSync,
-  downloadBackup, restoreBackup, getRestoreStatus, exportCSV,
+  downloadBackup, restoreBackup, restoreServerBackup, getRestoreStatus, exportCSV,
   getSetting, setSetting, getTelegramStatus, saveSettings, setAuthMode,
   getUsers, createUser, updateUser, deleteUser, deleteUserScanDiagnostics, changePassword, changeAvatar, changeUsername,
   getContributors, getSupporters, getCustomMatches, downloadDebugLog, logoutOtherDevices,
@@ -25,7 +25,7 @@ import { useConfirmDialog } from '../contexts/ConfirmDialogContext'
 import Modal from '../components/ui/Modal'
 import PasswordPromptDialog from '../components/ui/PasswordPromptDialog'
 import AvatarPicker from '../components/AvatarPicker'
-import ScannerSettingsCard from '../components/ScannerSettingsCard'
+import ScannerSetupSection from '../components/MatcherOnlyScannerCard'
 import NotificationsCard from '../components/pwa/NotificationsCard'
 import { formatDistanceToNow } from 'date-fns'
 import toast from 'react-hot-toast'
@@ -45,6 +45,7 @@ import { readShowDaily, writeShowDaily } from '../progress/daily'
 import SplashCacheSection from '../components/splash/SplashCacheSection'
 import AdminSection from '../components/settings/AdminSection'
 import ScannerLabSection from '../components/settings/ScannerLabSection'
+import ServerBackupsSection from '../components/settings/ServerBackupsSection'
 import { ServerPicturesSection } from '../components/settings/OfflineCardDbSection'
 import { requestTour } from '../welcome/tourControl'
 import { resetTourDone } from '../welcome/tourStorage'
@@ -522,7 +523,7 @@ export default function Settings() {
   const { data: scannerConfiguration } = useQuery({
     queryKey: ['scanner-configuration'],
     queryFn: getScannerConfiguration,
-    enabled: section === 'scanner',
+    enabled: section === 'scanner' && settings.scan_matcher_only !== 'true',
   })
   const [cardPhotosDeleting, setCardPhotosDeleting] = useState(false)
 
@@ -1034,6 +1035,18 @@ export default function Settings() {
     await followRestore()
   }
 
+  const runServerRestore = async (filename, password) => {
+    setRestoring(true)
+    try {
+      await restoreServerBackup(filename, password)
+    } catch (err) {
+      toast.error(t('settings.errorPrefix') + (err.response?.data?.detail || err.message))
+      setRestoring(false)
+      return
+    }
+    await followRestore()
+  }
+
   // A page reload mid-restore picks the running job up again.
   useEffect(() => {
     if (user?.role !== 'admin') return undefined
@@ -1504,9 +1517,9 @@ export default function Settings() {
           {/* ── 6. KI / KARTEN-SCANNER ── */}
           {activeSection === 'scanner' && <section className="space-y-1">
             <SectionHeader title={t('settings.sectionAI')} />
-            <ScannerSettingsCard t={t} />
+            <ScannerSetupSection t={t} matcherOnly={settings.scan_matcher_only === 'true'} isAdmin={user?.role === 'admin'} />
             <SettingsCard>
-              {showGeminiFallback && (
+              {showGeminiFallback && settings.scan_matcher_only !== 'true' && (
                 <SettingsRow
                   label={t('settings.geminiFallback')}
                   description={scannerConfiguration?.scope === 'global'
@@ -1522,6 +1535,15 @@ export default function Settings() {
                 </SettingsRow>
               )}
               {scanDiagnosticsRow}
+              {user?.role === 'admin' && (
+                <SettingsRow label={t('settings.matcherOnly')} description={t('settings.matcherOnlyDesc')}>
+                  <Toggle
+                    value={settings.scan_matcher_only === 'true'}
+                    label={t('settings.matcherOnly')}
+                    onChange={val => handleAdminBooleanSettingToggle('scan_matcher_only', val)}
+                  />
+                </SettingsRow>
+              )}
               {user?.role === 'admin' && (
                 <SettingsRow label={t('settings.pictureFirst')} description={t('settings.pictureFirstDesc')}>
                   <Toggle
@@ -1890,6 +1912,8 @@ export default function Settings() {
               <p className="px-4 pt-1.5 text-footnote text-text-secondary">{t('settings.restoreFooter')}</p>
             </section>
           )}
+
+          {user?.role === 'admin' && <ServerBackupsSection onRestore={runServerRestore} restoring={restoring} />}
 
           <section>
             <PasswordPromptDialog

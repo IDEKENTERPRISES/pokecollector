@@ -42,6 +42,12 @@ MAX_ANGLE_DEVIATION = 35.0
 # A quad wider than tall by more than this, in a picture that is taller than wide: the guide is portrait and a card held
 # sideways could only fill about half of it, the size of the artwork window, which has the same 88:63 look turned.
 SIDEWAYS_RATIO = 1.1
+# Version 14 (``edgeguard``): an outline that touches the frame or dwarfs the guide is the sleeve, binder page, mat or table edge,
+# not the card. From the seven live scans of 18 Nov (a 1149x2046 frame): the right outline (Pikachu) touched no edge and was 0.63x
+# the guide's area; the five bad ones touched two or three edges and were 1.4x to 2.1x the guide (so the edge test is the reliable signal).
+EDGE_MARGIN_FRACTION = 0.015  # a corner this close to a frame edge (of that side) is "on" it; the live outlines sat 0 to 1 px off
+MAX_EDGES_TOUCHED = 1  # a quad touching two or more edges is refused (a held card can brush one edge, never two)
+MAX_GUIDE_AREA_RATIO = 1.6  # a quad over this many times the guide's area is refused (the right outline was 0.63x; a backstop for a big outline that touches nothing)
 
 
 # The artwork window of a flattened card (fractions of the picture): the same place on every normal card,
@@ -189,6 +195,24 @@ def plausibility_problem(measures: dict, guide_input: bool) -> str | None:
     return None
 
 
+def edge_problem(quad: np.ndarray, width: float, height: float, guide: tuple) -> dict | None:
+    """Version 14: why an outline in a full frame is too big or too edge-bound to be the card, or None. ``quad`` and ``guide``
+    are in the same pixels as ``width`` x ``height`` (the frame)."""
+    mx, my = EDGE_MARGIN_FRACTION * width, EDGE_MARGIN_FRACTION * height
+    edges = {
+        "left": bool((quad[:, 0] <= mx).any()), "right": bool((quad[:, 0] >= width - 1 - mx).any()),
+        "top": bool((quad[:, 1] <= my).any()), "bottom": bool((quad[:, 1] >= height - 1 - my).any()),
+    }
+    touched = sorted(name for name, on in edges.items() if on)
+    gx0, gy0, gx1, gy1 = guide
+    guide_area = (gx1 - gx0) * (gy1 - gy0)
+    ratio = float(cv2.contourArea(quad.astype(np.float32))) / guide_area if guide_area > 0 else 0.0
+    reason = "touches_edges" if len(touched) > MAX_EDGES_TOUCHED else "oversized" if ratio > MAX_GUIDE_AREA_RATIO else None
+    if reason is None:
+        return None
+    return {"reason": reason, "edges_touched": touched, "guide_area_ratio": round(ratio, 2)}
+
+
 def _edge_maps(small_bgr: np.ndarray) -> list[np.ndarray]:
     gray = cv2.cvtColor(small_bgr, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -300,14 +324,19 @@ def _sharper_copy(photo_rgb: np.ndarray, rect: tuple[float, float, float, float]
     return cv2.resize(crop, (int(round(height * CARD_RATIO)), height), interpolation=cv2.INTER_AREA)
 
 
-def detect_card(photo_rgb: np.ndarray, *, check: bool = False, whole: bool = False, guide: bool | None = None) -> Detection:
+def detect_card(photo_rgb: np.ndarray, *, check: bool = False, whole: bool = False, guide: bool | None = None,
+                edgeguard: bool = False) -> Detection:
     """Find and flatten the card in an RGB photo; fall back to the guide crop.
 
     ``check`` (version 8): every candidate quad is judged for plausibility; in a card-shaped picture (a guide crop) the
     card has to fill most of it. When nothing plausible is left the fallback is used and ``Detection.rejected`` says why
     the best refused quad was refused. ``whole``: that fallback is the whole picture instead of the centre guide crop (a
     card that fills the crop has its edges at the picture border; the centre 70% would cut them off). ``guide``: whether
-    the picture is a guide crop; None = judge by its shape (``is_guide_picture``)."""
+    the picture is a guide crop; None = judge by its shape (``is_guide_picture``).
+
+    ``edgeguard`` (version 14, needs ``check``): in a full frame, an outline that touches two or more frame edges or is far bigger
+    than the guide is not trusted (``edge_problem``). The card is then looked for inside the guide region, where the user aimed
+    (judged as a guide crop); failing that the guide crop itself is the card. ``Detection.rejected`` records why."""
     config.apply_thread_caps()
     h, w = photo_rgb.shape[:2]
     scale = min(1.0, DETECT_MAX_SIDE / max(h, w))
@@ -317,6 +346,20 @@ def detect_card(photo_rgb: np.ndarray, *, check: bool = False, whole: bool = Fal
     guide_input = check and (is_guide_picture(photo_rgb) if guide is None else guide)
     rejections: list[dict] = []
     found = _find_quad(small_bgr, guide_box, check=check, guide_input=guide_input, rejections=rejections)
+    if edgeguard and check and not guide_input and found is not None and found[1] >= MIN_CONFIDENCE:
+        problem = edge_problem(found[0], small.shape[1], small.shape[0], guide_box)
+        if problem:
+            outline = [[round(x / scale, 1), round(y / scale, 1)] for x, y in found[0]]
+            edge_info = {**problem, "edgeguard": True, "corners": outline, "score": round(found[1], 3), "guide_picture": False}
+            gx0, gy0, gx1, gy1 = (int(round(v)) for v in guide_rect(w, h))
+            gx0, gy0, gx1, gy1 = max(0, gx0), max(0, gy0), min(w, gx1), min(h, gy1)
+            inner = detect_card(np.ascontiguousarray(photo_rgb[gy0:gy1, gx0:gx1]), check=True, whole=False, guide=True)
+            if inner.found:
+                inner.corners = [(x + gx0, y + gy0) for x, y in inner.corners]
+                inner.rejected = {**edge_info, "searched_guide": True}
+                return inner
+            return Detection(card=guide_crop(photo_rgb), found=False, confidence=FALLBACK_CONFIDENCE, method="guide_crop",
+                             hires=_sharper_copy(photo_rgb, guide_rect(w, h)), rejected={**edge_info, "searched_guide": False})
     if found is not None and found[1] >= MIN_CONFIDENCE:
         quad = found[0] / scale  # back to full-resolution coordinates
         size = hires_size(quad)

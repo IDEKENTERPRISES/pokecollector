@@ -5,4 +5,4 @@ Nothing here changes how scans are recognised today. Importing this package is c
 libraries (OpenCV, ONNX Runtime, RapidOCR) are imported by the modules that need them, on first use.
 """
 
-MATCHER_VERSION = "10"
+MATCHER_VERSION = "11"

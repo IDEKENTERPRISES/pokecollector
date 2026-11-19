@@ -460,3 +460,12 @@ describe('history and meta', () => {
     expect(await store.getMeta('autoSync')).toBeUndefined()
   })
 })
+
+describe('store — data epoch stamp', () => {
+  it('stamps new items with the epoch they were queued in', async () => {
+    const stamped = await store.enqueue({ ctx: CTX, type: 'collection.add', payload: { card_id: 'a' }, dataEpoch: 'e1' })
+    const plain = await store.enqueue({ ctx: CTX, type: 'collection.add', payload: { card_id: 'b' } })
+    expect(stamped.dataEpoch).toBe('e1')
+    expect(plain.dataEpoch).toBeNull()
+  })
+})

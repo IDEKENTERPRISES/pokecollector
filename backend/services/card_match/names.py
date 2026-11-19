@@ -93,6 +93,38 @@ def parse_name_lines(items: Iterable) -> NameRead:
     return result
 
 
+# Version 12 test (option ``topname``): words printed beside the name on the top band that are not a card's name by themselves.
+_TOP_LABELS = {
+    "vstar", "vmax", "v", "gx", "ex", "tag team", "prism star", "tera", "radiant", "break", "lv x", "hp", "evolves", "pokemon", "pokémon",
+    "stage", "level up", "vmax climax", "v union", "v-union",
+}
+
+
+def pick_top_line(items: Iterable, check) -> int | None:
+    """Version 12 test (``topname``): the index of the line of a top-band read that is the card's name, or None.
+
+    ``items`` are ``(text, height)`` pairs (or plain strings). A line counts only when it is name-like (``ocr.is_name_like``: short,
+    letters, no rules text) AND ``check(cleaned name)`` (``NameIndex.score_names``) finds a close catalogue name: the same two tests a
+    normal name read passes (name-like here, the name search in the pipeline). Stage words ("BASIC", "STAGE 1", "VSTAR"), the HP
+    figure, "HP" and attack costs fail one of the two. Of the lines that pass, the tallest wins (the name is the biggest type), then
+    the best catalogue score, then the highest on the card."""
+    from . import ocr
+
+    best: tuple[tuple[float, float, int], int] | None = None
+    for index, item in enumerate(items):
+        text, height = (item if isinstance(item, tuple) else (item, None))
+        cleaned = clean_name_line(text)
+        if not cleaned or cleaned.casefold() in _TOP_LABELS or not ocr.is_name_like(text):
+            continue
+        scored = check(cleaned)
+        if not scored:
+            continue
+        key = (float(height or 0.0), float(scored[0][0]), -index)
+        if best is None or key > best[0]:
+            best = (key, index)
+    return best[1] if best else None
+
+
 # ── The catalogue side ────────────────────────────────────────────────────────
 
 @dataclass

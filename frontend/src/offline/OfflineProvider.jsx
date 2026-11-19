@@ -20,6 +20,8 @@ import { applyFirst, persist, purge, purgeOthers, readFirst, restoreMissing } fr
 import { checkIn } from '../progress/checkin'
 import { buildPrefetchPlan, runPrefetch } from './prefetch'
 import { clearAllUserData, clearOtherUsersData } from './sessionCleanup'
+import { guardProbeWithEpoch, onDataWiped } from './dataEpoch'
+import { probe as defaultProbe } from './outbox/probe'
 import { createSyncReporter } from './syncToasts'
 import { OutboxContext } from './useOutbox'
 
@@ -137,6 +139,8 @@ export function OfflineProvider({ children }) {
       flags: { queue: true },
       queryClient,
       onlineManager,
+      // A wipe of all user data on the server drops the queue instead of replaying it (offline/dataEpoch.js).
+      probeImpl: guardProbeWithEpoch(defaultProbe),
     })
     // Every replay result, whoever started it (ticks, the sheet, the logout guard), feeds the toasts.
     const report = createSyncReporter({ toast, getT: () => tRef.current })
@@ -147,7 +151,16 @@ export function OfflineProvider({ children }) {
       return result
     }
     setOutbox(instance)
+    // Wiped server: stop the queue and the cache saver first, so nothing is written back or sent.
+    const unlistenWipe = onDataWiped(async () => {
+      signingOutRef.current = true
+      await persisterRef.current?.stop()
+      instance.stop()
+      queryClient.cancelQueries()
+      queryClient.clear()
+    })
     return () => {
+      unlistenWipe()
       instance.stop()
       setOutbox(null)
     }

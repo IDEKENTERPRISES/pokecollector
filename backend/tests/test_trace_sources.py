@@ -369,10 +369,52 @@ class RunLabelledGroupTests(unittest.TestCase):
         self.assertFalse({trace for _source, trace in sources} & held)
         self.assertTrue(all(a["trace_rel"].count("/") == 2 for a in collector.added))
 
+    def test_the_report_carries_the_three_groups(self):
+        report, _ = self.run_it()
+        groups = report["eval_groups"]
+        self.assertEqual(set(groups), {"tuned", "new", "held_back"})
+        self.assertEqual(groups["new"]["n"], 1)
+        self.assertEqual(groups["held_back"]["n"], report["by_group"]["prod_held_back"]["n"])
+        self.assertEqual(groups["tuned"]["n"], report["by_group"]["prod_tuning"]["n"])
+        row = benchmark.compare_row("x", report)
+        self.assertEqual(row["eval_groups"], groups)
+
+
+@skip
+class EvalGroupTests(unittest.TestCase):
+    """The Tuned / New / Held back columns on every comparison row."""
+
+    @staticmethod
+    def data(group, created):
+        data = {"user_id": 1, "job_id": 1, "item_id": 1, "created_at": created}
+        if group != "local":
+            data[trace_sources.SOURCE_KEY] = "prod"
+            data[trace_sources.HELD_BACK_KEY] = group == "held_back"
+        return data
+
+    def test_a_scan_is_tuned_new_or_held_back(self):
+        for group, created, expected in (("local", "2026-10-01T00:00:00+00:00", "tuned"), ("local", "2026-11-06T00:00:00+00:00", "new"),
+                                         ("tuning", "2026-11-12T00:00:00+00:00", "tuned"), ("held_back", "2026-10-01T00:00:00+00:00", "held_back")):
+            data = self.data(group, created)
+            self.assertEqual(benchmark.eval_group(trace_sources.group_of(data), benchmark.scan_batch(data)), expected)
+
+    def test_group_rows_count_decided_and_wrong_apart(self):
+        results = [
+            {"group": "local", "batch": "tuning", "decided": True, "decided_right": True},
+            {"group": "local", "batch": "tuning", "decided": False, "decided_right": False},
+            {"group": "local", "batch": "new", "decided": True, "decided_right": False},
+            {"group": "prod_held_back", "batch": "tuning", "decided": True, "decided_right": True},
+            {"group": "prod_tuning", "batch": "tuning", "decided": True, "decided_right": True},
+        ]
+        rows = benchmark.eval_group_rows(results)
+        self.assertEqual(rows["tuned"], {"n": 3, "decided": 2, "wrong": 0})
+        self.assertEqual(rows["new"], {"n": 1, "decided": 1, "wrong": 1})
+        self.assertEqual(rows["held_back"], {"n": 1, "decided": 1, "wrong": 0})
+
 
 @skip
 class PickIgnoresHeldBackTests(unittest.TestCase):
-    def test_compare_runs_without_the_held_back_scans_and_measures_them_once_for_the_winner(self):
+    def test_compare_measures_the_held_back_scans_apart_from_the_headline_and_once_more_for_the_winner(self):
         calls = []
 
         def fake_run_labelled(session_factory, matcher, **kwargs):
@@ -393,7 +435,7 @@ class PickIgnoresHeldBackTests(unittest.TestCase):
                 patch.object(benchmark, "run_labelled", fake_run_labelled), \
                 patch.object(ocr_check, "labelled_traces", return_value=[(held, Path("a")), (tuning, Path("b"))]):
             report = benchmark.run_compare("labelled", lambda: None, ["plain", "other"], trace_dir=None)
-        self.assertEqual([held_back for _label, held_back in calls[:2]], ["skip", "skip"])
+        self.assertEqual([held_back for _label, held_back in calls[:2]], ["separate", "separate"])
         self.assertEqual(calls[2], (report["winner"], "only"))
         self.assertEqual(len(calls), 3)
         self.assertEqual(report["held_back"]["n"], 5)
@@ -414,7 +456,7 @@ class PickIgnoresHeldBackTests(unittest.TestCase):
                 patch.object(benchmark, "run_labelled", fake_run_labelled), \
                 patch.object(ocr_check, "labelled_traces", return_value=[({"user_id": 1}, Path("a"))]):
             report = benchmark.run_compare("labelled", lambda: None, ["plain"], trace_dir=None)
-        self.assertEqual(calls, ["skip"])
+        self.assertEqual(calls, ["separate"])
         self.assertIsNone(report["held_back"])
         self.assertIsNone(report["held_back_note"])
 
