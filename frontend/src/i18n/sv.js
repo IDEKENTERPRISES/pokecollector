@@ -919,6 +919,8 @@ const sv = {
 
   // Card Scanner
   scanner: {
+    queueLoadFailed: 'Dina skanningar kunde inte laddas.',
+    queueTryAgain: 'Försök igen',
     title: 'Skanna kort',
     subtitle: 'Ta ett foto',
     alignCard: 'Rikta kortet rakt, välbelyst',

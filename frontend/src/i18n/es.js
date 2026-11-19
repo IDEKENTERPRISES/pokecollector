@@ -929,6 +929,8 @@ const es = {
 
   // Card Scanner
   scanner: {
+    queueLoadFailed: 'No se pudieron cargar tus escaneos.',
+    queueTryAgain: 'Reintentar',
     title: 'Escanear carta',
     subtitle: 'Haz una foto',
     alignCard: 'Alinea la carta recta y bien iluminada',

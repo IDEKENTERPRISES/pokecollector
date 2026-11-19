@@ -929,6 +929,8 @@ const ja = {
 
   // Card Scanner
   scanner: {
+    queueLoadFailed: 'スキャンを読み込めませんでした。',
+    queueTryAgain: 'もう一度試す',
     title: 'カードをスキャン',
     subtitle: '写真を撮る',
     alignCard: 'カードをまっすぐ、明るく合わせる',

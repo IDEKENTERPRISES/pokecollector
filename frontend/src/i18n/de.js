@@ -1636,6 +1636,8 @@ const de = {
 
   // Card Scanner
   scanner: {
+    queueLoadFailed: 'Deine Scans konnten nicht geladen werden.',
+    queueTryAgain: 'Erneut versuchen',
     title: 'Karte scannen',
     reviewAll: 'Alle prüfen',
     zoomViewerLabel: 'Vergrößertes Bild',

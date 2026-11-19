@@ -927,6 +927,8 @@ const th = {
 
   // Card Scanner
   scanner: {
+    queueLoadFailed: 'โหลดผลสแกนของคุณไม่สำเร็จ',
+    queueTryAgain: 'ลองอีกครั้ง',
     title: 'สแกนการ์ด',
     subtitle: 'ถ่ายรูป',
     alignCard: 'จัดการ์ดให้ตรงและมีแสงพอดี',

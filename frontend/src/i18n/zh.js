@@ -928,6 +928,8 @@ const zh = {
 
   // Card Scanner
   scanner: {
+    queueLoadFailed: '无法加载你的扫描。',
+    queueTryAgain: '重试',
     title: '扫描卡牌',
     subtitle: '拍照',
     alignCard: '摆正卡牌，光线充足',

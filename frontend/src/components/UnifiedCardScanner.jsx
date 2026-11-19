@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Camera, Inbox, Loader2, Upload, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -12,7 +12,7 @@ import { MAX_PHOTO_BYTES } from '../offline/constants'
 import { submitScanBatch } from '../offline/ops/scanSubmit'
 import { useOutbox } from '../offline/useOutbox'
 import { addUpdateGuard } from '../pwa/register'
-import { SCAN_JOBS_QUERY_KEY, hasActiveScanJobs, scanAttentionCount } from '../utils/scanJobs'
+import { SCAN_JOBS_QUERY_KEY, hasActiveScanJobs, refreshScanQueries, scanAttentionCount } from '../utils/scanJobs'
 import { isSupportedScannerImage, SCANNER_IMAGE_ACCEPT } from '../utils/scannerImages'
 import BatchCameraCapture from './BatchCameraCapture'
 import ActionSheet from './ios/ActionSheet'
@@ -52,6 +52,7 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
   const { t, settings } = useSettings()
   const matcherOnly = settings?.scan_matcher_only === 'true' // no AI scanner: nothing about one is fetched or shown
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const { data: scannerConfiguration } = useQuery({
     queryKey: ['scanner-configuration'],
     queryFn: getScannerConfiguration,
@@ -169,6 +170,8 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
           reachability: reachabilityRef.current,
         })
         finishClose()
+        // Whatever reached the server must show up, even if the trainer is already on /scans.
+        if (result.mode === 'sent' || result.mode === 'partial') refreshScanQueries(queryClient)
         // One list for the whole batch, however many uploads it was cut into.
         if (result.mode === 'sent') navigate('/scans')
         else toast.success(t('sync.savedOffline'))
@@ -179,6 +182,7 @@ export default function UnifiedCardScanner({ isOpen, onClose }) {
         individualPositions,
       )
       finishClose()
+      refreshScanQueries(queryClient)
       navigate('/scans')
     } catch (error) {
       if (error?.code === 'quota' || error?.code === 'too_many_items') toast.error(t('sync.storageFull'))

@@ -929,6 +929,8 @@ const ko = {
 
   // Card Scanner
   scanner: {
+    queueLoadFailed: '스캔을 불러오지 못했어요.',
+    queueTryAgain: '다시 시도',
     title: '카드 스캔',
     subtitle: '사진 촬영',
     alignCard: '카드를 똑바로, 밝게 맞추세요',

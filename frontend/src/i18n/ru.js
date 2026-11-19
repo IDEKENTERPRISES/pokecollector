@@ -929,6 +929,8 @@ const ru = {
 
   // Card Scanner
   scanner: {
+    queueLoadFailed: 'Не удалось загрузить ваши сканы.',
+    queueTryAgain: 'Повторить',
     title: 'Сканировать карту',
     subtitle: 'Сделайте фото',
     alignCard: 'Выровняйте карту, хорошее освещение',

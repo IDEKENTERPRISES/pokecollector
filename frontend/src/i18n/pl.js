@@ -929,6 +929,8 @@ const pl = {
 
   // Card Scanner
   scanner: {
+    queueLoadFailed: 'Nie udało się wczytać Twoich skanów.',
+    queueTryAgain: 'Spróbuj ponownie',
     title: 'Skanuj kartę',
     subtitle: 'Zrób zdjęcie',
     alignCard: 'Ustaw kartę prosto, dobrze oświetloną',

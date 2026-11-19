@@ -2144,6 +2144,8 @@ const en = {
 
   // Card Scanner
   scanner: {
+    queueLoadFailed: 'Your scans could not be loaded.',
+    queueTryAgain: 'Try again',
     title: 'Scan card',
     subtitle: 'Take a photo',
     alignCard: 'Align card straight, well-lit',
