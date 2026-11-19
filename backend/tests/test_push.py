@@ -302,6 +302,7 @@ class PushApiTests(PushDatabaseTestCase):
             ("/vapid-public-key", ("GET",)),
             ("/subscribe", ("POST",)),
             ("/subscribe", ("DELETE",)),
+            ("/presence", ("POST",)),
             ("/test", ("POST",)),
         })
         for route in push_api.router.routes:

@@ -29,6 +29,9 @@ services:
               count: 1
               capabilities: [gpu]
     environment:
+      # Display currency for new users (and anyone who has not chosen one), e.g. GBP. Unset means EUR.
+      # Set it in the stack's environment in Portainer, not here.
+      # DEFAULT_CURRENCY: ${DEFAULT_CURRENCY:-EUR}
       # Picture matcher on the GPU (auto = GPU when it works, else CPU), kept warm: models load at startup and run one dummy scan.
       CARD_MATCH_DEVICE: auto
       CARD_MATCH_GPU_MEM_MB: "1024"

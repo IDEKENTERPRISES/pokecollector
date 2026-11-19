@@ -843,7 +843,9 @@ def _sent_reason(outcome: dict | None) -> str:
     if outcome is None:
         return "send_failed"
     delivered = "" if outcome.get("sent") else " (no device received it)"
-    return f"sent={outcome.get('sent', 0)} removed={outcome.get('removed', 0)}{delivered}"
+    skipped = outcome.get("skipped_foreground", 0)
+    extra = f" skipped_foreground={skipped}" if skipped else ""
+    return f"sent={outcome.get('sent', 0)} removed={outcome.get('removed', 0)}{extra}{delivered}"
 
 
 def _flush_isolated(db: Session, label: str, user_id: int, step, *args) -> None:

@@ -9,6 +9,7 @@ import SidebarNav from './ios/SidebarNav'
 import TabBar from './ios/TabBar'
 import { ScannerProvider } from '../contexts/ScannerContext'
 import UnlockSheetHost from '../progress/UnlockSheetHost'
+import { usePresenceHeartbeat } from '../hooks/usePresenceHeartbeat'
 import { useReleaseManualHistoryScrollRestoration } from '../hooks/useListScrollRestoration'
 import { recordNavigation } from '../navigation/historyMirror'
 import { NavBarContext, createNavBarStore } from '../navigation/NavBarContext'
@@ -30,6 +31,7 @@ export default function Layout() {
   const showUnavailable = offline && !isOfflineRoute(location.pathname)
   const [navBarStore] = useState(createNavBarStore)
   useReleaseManualHistoryScrollRestoration()
+  usePresenceHeartbeat()
 
   // The history mirror (§6.4) must know the current entry when the nav bar renders its back label,
   // so it is recorded during render, once per location key.
