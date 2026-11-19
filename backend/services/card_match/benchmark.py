@@ -95,6 +95,20 @@ def timing_summary(rows: list[dict]) -> dict:
     return out
 
 
+def serverocr_summary(tries: list[dict]) -> dict | None:
+    """Version 15 (``serverocr``): how many scans ran the second try, how many of those got a complete number, and its time (median, p95, ms).
+    None when no scan ran it (the option is off, or every first read was complete)."""
+    if not tries:
+        return None
+    times = [float(t["ms"]) for t in tries if t.get("ms") is not None]
+    return {
+        "ran": len(tries), "complete": sum(1 for t in tries if t.get("complete")), "rescued": sum(1 for t in tries if t.get("rescued")),
+        "errors": sum(1 for t in tries if t.get("error")),
+        "median_ms": round(statistics.median(times), 1) if times else None, "p95_ms": round(percentile(times, 0.95), 1) if times else None,
+        "device": next((t.get("device") for t in tries if t.get("device")), None),
+    }
+
+
 def pct(part: int, whole: int) -> float | None:
     return round(100 * part / whole, 1) if whole else None
 
@@ -187,6 +201,7 @@ def _finish_report(kind: str, started: float, index: CardIndex, matcher, results
     number_exact = sum(1 for r in results if r["number_exact"])
     name_known = [r for r in results if r.get("name_read") is not None]
     number_times = [r["number_ms"] for r in results if r.get("number_ms") is not None]
+    second_tries = [r["serverocr"] for r in results if r.get("serverocr")]  # version 15: the scans whose number was read a second time by the server models
     total_exact = sum(1 for r in results if r.get("total_exact"))
     decided = [r for r in results if r["decided"]]
     decided_right = sum(1 for r in decided if r["decided_right"])
@@ -222,6 +237,7 @@ def _finish_report(kind: str, started: float, index: CardIndex, matcher, results
         "name_read_pct": pct(sum(1 for r in name_known if r["name_read"]), len(name_known)),  # version 12 test: the confirmed card's name read right
         "number_ms_mean": round(statistics.fmean(number_times), 1) if number_times else None,  # mean time the number steps took per photo
         "total_exact_pct": pct(total_exact, n) if kind == "synthetic" else None,
+        "serverocr": serverocr_summary(second_tries),
         "decided_pct": pct(len(decided), n), "decided_right_pct": pct(decided_right, len(decided)),
         "decided_wrong": len(decided) - decided_right,
         "mechanisms": {m: {"used": c, "right": mechanism_right[m]} for m, c in mechanisms.items()},
@@ -442,6 +458,7 @@ def _score(outcome, entry: dict, settings: dict, corners, card_width: float) -> 
         "mechanism": decision["mechanism"] if decision else None, "unsure_reason": outcome.unsure_reason,
         "timings_ms": outcome.timings_ms,
         "name_read": _name_read(outcome, entry["name"]), "number_ms": ocr_module.number_read_ms(outcome.ocr.get("strips")),
+        "serverocr": outcome.ocr.get("serverocr"),
     }
 
 
@@ -603,7 +620,7 @@ def run_labelled(
             "resolution": resolution, "batch": scan_batch(data), "fallback": outcome.detection.get("fallback"),
             "number_exact": bool(number_local and truth_number and _numbers_equal(number_local, truth_number)),
             "name_read": _name_read(outcome, next((m["name"] for m in outcome.matches if m["card_id"] == truth_id), None)),
-            "number_ms": ocr_module.number_read_ms(outcome.ocr.get("strips")),
+            "number_ms": ocr_module.number_read_ms(outcome.ocr.get("strips")), "serverocr": outcome.ocr.get("serverocr"),
             "decided": decision is not None, "decided_right": bool(decision and decision["card_id"] == truth_id),
             "mechanism": decision["mechanism"] if decision else None, "unsure_reason": outcome.unsure_reason,
             "top_match": outcome.matches[0]["card_id"] if outcome.matches else None, "timings_ms": outcome.timings_ms,
@@ -687,7 +704,7 @@ def compare_row(label: str, report: dict | None, *, missing: list[str] | None = 
     timings = report.get("timings_ms", {}).get("total", {})
     return {
         "label": label, "status": "ok", "n": m["n"], "top1": m["top1_pct"], "top5": m["top5_pct"], "top20": m["top20_pct"],
-        "number_exact": m["number_exact_pct"], "name_read": m.get("name_read_pct"), "number_ms_mean": m.get("number_ms_mean"), "decided": m["decided_pct"], "decided_right": m["decided_right_pct"],
+        "number_exact": m["number_exact_pct"], "name_read": m.get("name_read_pct"), "number_ms_mean": m.get("number_ms_mean"), "serverocr": m.get("serverocr"), "decided": m["decided_pct"], "decided_right": m["decided_right_pct"],
         "decided_wrong": m["decided_wrong"], "median_ms": timings.get("median"), "p95_ms": timings.get("p95"),
         "extra_mb": report.get("memory", {}).get("extra_mb"),
         "eval_groups": report.get("eval_groups"),  # decided and wrong per group (tuned / new / held back)

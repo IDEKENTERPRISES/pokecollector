@@ -480,7 +480,7 @@ class AdminApiTests(unittest.TestCase):
         options = self.client.get("/api/card-match/status").json()["options"]
         rows = options["compare_rows"]
         self.assertEqual([row["label"] for row in rows], options["compare"])
-        self.assertTrue(all(row["title"] and row["group"] in ("history", "v10 kept", "v12", "v14", "custom") for row in rows))
+        self.assertTrue(all(row["title"] and row["group"] in ("history", "v10 kept", "v12", "v14", "v15", "custom") for row in rows))
         self.assertTrue(any(row["reference"] for row in rows))
         self.assertTrue(all(row["seconds"] is None for row in rows))  # nothing measured here yet
         self.assertTrue(options["compare_rows_synthetic"])

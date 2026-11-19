@@ -514,6 +514,7 @@ RapidOCR (PP-OCRv4 detection and recognition models, ONNX Runtime) installs clea
 | ONNX export `onnx-community/dinov2-small` (commit `8b1f705a`, sha256 `f22797ea…`) | follows the base model, Apache-2.0 |
 | DINOv2 ViT-B/14 weights (`facebook/dinov2-base`) and its ONNX export `onnx-community/dinov2-base` (commit `31ef06ca`, sha256 `320d1012…`, 347 MB) | Apache-2.0 |
 | RapidOCR (`rapidocr-onnxruntime` 1.3.24) and PaddleOCR PP-OCRv4 models | Apache-2.0 |
+| PP-OCRv4 server detector and recogniser (ONNX, PaddleOCR models as converted in `SWHL/RapidOCR`, commit `1cfba2e9`, sha256 `cfa39a3f…` 113 MB and `6a267621…` 91 MB; version 15 test, `serverocr`) | Apache-2.0 (the `SWHL/RapidOCR` repository's licence is Apache-2.0; PaddleOCR is Apache-2.0) |
 | OpenCV 4.10 (`opencv-python-headless`) | Apache-2.0 (the wheel bundles FFmpeg libraries under LGPL) |
 | ONNX Runtime 1.19.2 | MIT |
 | Shapely, pyclipper, six | BSD-3-Clause, MIT, MIT |
@@ -523,7 +524,7 @@ All permissive; the project itself is AGPL-3.0-only. TCGdex card pictures are fe
 
 ## Models in the image
 
-`backend/Dockerfile` runs `fetch_card_match_models.py` after installing the requirements: it downloads the pinned URL, checks the sha256 and puts the file in `/app/card-match-models`. This layer is cached until `model_specs.py` changes. At runtime `OnnxEmbedder` checks the sha256 again before loading. To add a second model (MobileCLIP, SigLIP) for comparison, add an entry to `MODEL_SPECS`; the index is stored per model name.
+`backend/Dockerfile` runs `fetch_card_match_models.py` after installing the requirements: it downloads the pinned URL, checks the sha256 and puts the file in `/app/card-match-models`. This layer is cached until `model_specs.py` changes. At runtime `OnnxEmbedder` checks the sha256 again before loading. To add a second model (MobileCLIP, SigLIP) for comparison, add an entry to `MODEL_SPECS`; the index is stored per model name. The two PP-OCRv4 server models (version 15 test) are in `OCR_MODEL_SPECS` (the fetch script reads both) and add 204 MB to the image; see "Version 15 test: `serverocr`".
 
 ## Custom picture models
 
@@ -602,6 +603,40 @@ The camera guide says "Keep the whole card inside the frame with a little space 
 ### What to tick in Compare options
 
 The references always run. Tick the two new rows: **Kept set without wholestrict + widefirst + topname + edgeguard** (the set in use, the prod pin) and **Kept set + edgeguard**. Read them against the references (the in-use set and Kept set): decided up or equal, **wrong must stay 0**, top 1 and number read not lower, p95 not worse. The "New" group (the owner's newly confirmed scans, including these seven) is where the gain should show. If a row wins, `pick_winner` can choose it into `chosen.json`; making it the default is then a separate change.
+
+## Version 15 test: `serverocr` (a stronger second try at the card number)
+
+**Why.** On the 287 real photos the prod set decides 77.7% with 0 wrong and has the right card first 98.3% of the time, so what holds scans back is confidence, and the biggest single cause of an undecided scan is that **no complete card number was read**. The reading uses RapidOCR's PP-OCRv4 *mobile* models (the ones in the wheel). `serverocr` gives a number that is still missing a second look with the bigger PP-OCRv4 *server* models.
+
+**What it does.** With the option on, when the whole normal number reading (the ladder, `wholeread` and `widefirst` included) ends **without a complete number** (`ocr.is_complete` false: no number, or a number without its total that is not a promo), the same flat card the text was read from is read once more by a second RapidOCR engine (`ocr_server.ServerOcrReader`) built on the server detection and recognition models:
+
+- at most the first three steps of the fast ladder (`ocr.QUICK_STEPS`): the two tight number strips, then the plain bottom band; all plain preprocessing (no sharpening, contrast or glare steps); it stops at the first complete number and takes at most 4 seconds (`SERVER_BUDGET_SECONDS`);
+- the card is read the way up the first read settled on, never turned again;
+- merged with `ocr.merge_reads` **only when the second reading is more complete** than the first, so it can only add or complete a number. A complete first read is never read again or replaced; the name read is never touched (the second reader's `read_name` is never called);
+- a number read this way goes through exactly the same parsing, lookup and decision rules as any other. No rule or threshold was loosened, and `number_source` stays `finder_card`; the regions it read are in the scan's strips as `server-number-left-tight` etc. (`source: server_ocr`).
+
+**What is recorded.** The scan's `ocr.serverocr`: `tried`, `steps`, the `number`/`total` it read, `complete`, `rescued` (the number became more complete because of it), `ms`, the `device` and `reason`, and `error` if the engine could not run (the scan then simply keeps its first reading; a missing model file is reported the same way). The labelled report's `metrics.serverocr` and the compare row's `serverocr` give, for the row: how many scans ran the second try (`ran`), how many of those got a complete number (`complete`), how many it rescued, and its median and 95th-percentile time in ms. The lab shows them under the row's name ("second try ran on N scans, M got a complete number, median … ms, 95th percentile … ms").
+
+**Off means untouched.** With the option off nothing is imported or built: no second engine, no memory taken, results identical to before (a test builds a matcher with the constructor patched to fail). The normal reading path was not changed (`rapidocr-onnxruntime` stays at 1.3.24; the mobile engine's code only gained a status name).
+
+**Models.** From `SWHL/RapidOCR` on Hugging Face (RapidOCR's author; Apache-2.0), commit `1cfba2e90fc938db55889873735088de210cc173`, folder `PP-OCRv4/`; pinned in `model_specs.OCR_MODEL_SPECS` like DINOv2 (URL at the commit, sha256, size), fetched at image build time by `fetch_card_match_models.py` and checked again before the first load. Nothing downloads at runtime.
+
+| Model | File | Size | sha256 |
+| --- | --- | --- | --- |
+| PP-OCRv4 server text detector | `ch_PP-OCRv4_det_server_infer.onnx` | 113,352,104 bytes | `cfa39a3f…f786` |
+| PP-OCRv4 server text recogniser | `ch_PP-OCRv4_rec_server_infer.onnx` | 90,530,732 bytes | `6a267621…c07a` |
+
+They load in `rapidocr-onnxruntime` 1.3.24 unchanged (checked: the engine builds through `det_model_path` / `rec_model_path`, and the recogniser carries its 6,623-character list in the ONNX metadata, so no `rec_keys_path` dictionary is needed; generated number strips such as `018/091`, `SVI EN 058/102` and `TG06/TG30` read right). PP-OCRv5 server models were not used: they need a newer RapidOCR than 1.3.24.
+
+**Image size.** +203.9 MB of model files (113.4 + 90.5), about +0.2 GB on the 2.28 GB CPU image and the 6.6 GB GPU image (+9% / +3%). Computed from the pinned sizes; no image was built for this change.
+
+**Loading and the GPU budget.** The second engine is built on first use (the first scan that needs a second try, or the warm-up when the options in use include `serverocr`; `warmup.warm_up` only warms it then), registered with `lifecycle`, so the idle unload frees it like the others. Its sessions are built through `device.py` with their own shares of the **same** per-process budget (`CARD_MATCH_GPU_MEM_MB`, 1024 MB, unchanged): the detector and recogniser get the same 0.35 shares as the mobile OCR, and the classifier RapidOCR still loads gets 0.03. The picture model (0.20) and the mobile OCR (0.73 for its three sessions) already use 0.93 of the budget and leave about 70 MB, so **at the 1 GB cap the server models are refused the GPU and run on the CPU**, and the reason ("GPU memory budget used by other models") is recorded. That is fine for this round: it measures accuracy, which does not depend on the device. Scanner lab's status has a row "Server OCR (v15 test) running on" with the device and reason (`not loaded yet` until a second try or the warm-up builds it). The second try's time on the CPU is not what a GPU run would cost; if the row wins, the GPU memory question is the owner's separate decision.
+
+**How to read its row.** Group "v15" in the picker: **Kept set without wholestrict + widefirst + topname + edgeguard + serverocr**. It is the prod pin plus the option, so read it against the same set without the option (the pin): decided up, **wrong stays 0**, number read and top 1 not lower; then look at the "second try ran on …" line: how many scans needed it, how many it completed, and the median and p95 time (the extra time shows in the row's p95). An option is only adopted if its row shows more decided scans with 0 wrong; making it part of the pin is a separate change and the owner's decision.
+
+### What to tick in Compare options
+
+Tick the one new row, **Kept set without wholestrict + widefirst + topname + edgeguard + serverocr**, and also **Kept set without wholestrict + widefirst + topname + edgeguard** (the prod pin) if it is not already ticked, so there is a row without the option to measure the gain against. The references always run.
 
 ## Learned decision rule (parked)
 

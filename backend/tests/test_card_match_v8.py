@@ -51,7 +51,7 @@ class OptionAndVersionTests(unittest.TestCase):
 
     def test_the_comparison_has_the_finder_rows_and_at_most_twelve(self):
         labels = variants.COMPARE_LABELS
-        self.assertLessEqual(len(labels), 19)  # the two version 14 edgeguard rows, the ten version 10 rows, the version 12 test three, the two without wholestrict and the two custom rows
+        self.assertLessEqual(len(labels), 20)  # the two version 14 edgeguard rows, the ten version 10 rows, the version 12 test three, the two without wholestrict and the two custom rows
         self.assertEqual(len(set(labels)), len(labels))
         self.assertFalse([label for label in labels if "tworeads" in label])
         for word in ("corners", "corners+wholepic"):  # version 9 dropped the trustrejected row (61.2%, no real gain); the option stays

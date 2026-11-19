@@ -381,6 +381,7 @@ class CardMatcher:
         lookup=None, use_number: bool = False, use_text: bool = False, reprint: bool = False, fastread: bool = False,
         number_once: bool = False, corners: bool = False, wholepic: bool = False, trustrejected: bool = False,
         wholeread: bool = False, wholestrict: bool = False, widefirst: bool = False, topname: bool = False, edgeguard: bool = False,
+        serverocr: bool = False, server_reader=None,
     ) -> None:
         self.index = index
         self.embedder = embedder
@@ -402,6 +403,8 @@ class CardMatcher:
         self.wholeread = wholeread  # version 9: a guide picture whose number was not read from the finder's card is read once more from the whole picture
         self.wholestrict = wholestrict  # version 10: a number read only from the whole picture decides only under ``whole_number_problem``'s rules
         self.edgeguard = edgeguard  # version 14 test: an outline touching 2+ frame edges or far bigger than the guide is not trusted
+        self.serverocr = serverocr  # version 15 test: a number still incomplete after the whole reading is read once more by the PP-OCRv4 server models
+        self._server_reader = server_reader  # the second engine (tests pass a fake); built only when it is first needed
         self.widefirst = widefirst  # version 12 test: no text in the tight number strips -> read the whole bottom band next
         self.topname = topname  # version 12 test: no line in the name strips -> the name from the top band's lines (needs ``names``)
         self.reprint = reprint  # break ties between reprints by the artwork-only similarity
@@ -581,6 +584,23 @@ class CardMatcher:
         info["ms"] = round((_timer() - began) * 1000, 1)
         return result, info
 
+    def _server_second_try(self, text_card: np.ndarray, first, flipped: bool) -> tuple[object, dict]:
+        """Version 15 (``serverocr``): the number is still incomplete after the whole normal reading, so the same flat card is read once more by
+        the server-model engine (``ocr_server``) and merged with ``ocr.merge_reads``: it can only add or complete a number. Returns
+        (the reading, what happened). A missing model file or an engine failure leaves the first reading as it was."""
+        try:
+            reader = self._server_reader
+            if reader is None:
+                from . import ocr_server
+
+                if not ocr_server.models_available():
+                    return first, {"tried": True, "steps": 0, "complete": False, "rescued": False, "ms": 0.0, "error": "the server OCR model files are not in the image"}
+                reader = self._server_reader = ocr_server.get_server_reader()
+            return reader.second_try(text_card, first, flipped=flipped)
+        except Exception as exc:  # noqa: BLE001 - never fail a scan for the test option
+            logger.warning("Card matcher: server OCR second try skipped (%s)", exc)
+            return first, {"tried": True, "steps": 0, "complete": False, "rescued": False, "ms": 0.0, "error": f"{type(exc).__name__}: {exc}"[:200]}
+
     def _text_card(self, detection, upright: np.ndarray, full_photo, flat_card, fallback: str | None = None) -> tuple[np.ndarray, str]:
         """The flat card the text is read from, and where it came from. Text is small, so it is read from the
         sharpest picture there is: a stored high-resolution card (a trace), or the full-resolution photo
@@ -640,6 +660,9 @@ class CardMatcher:
             wholeread_info = None
             if second_read and not ocr_module.is_complete(ocr_result):
                 ocr_result, wholeread_info = self._second_read(photo_rgb, text_card, ocr_result, flipped, self.fastread or fallback == "guide_crop")
+            serverocr_info = None
+            if getattr(self, "serverocr", False) and not ocr_module.is_complete(ocr_result):
+                ocr_result, serverocr_info = self._server_second_try(text_card, ocr_result, flipped)
             if ocr_result.number_local and not getattr(ocr_result, "number_source", None):
                 ocr_result.number_source = ocr_module.SOURCE_FINDER_CARD
             timings["ocr"] = (_timer() - t0) * 1000
@@ -658,6 +681,8 @@ class CardMatcher:
             # Every region OCR read (box, preprocessing, each line's text and confidence): Scanner lab draws them.
             if wholeread_info is not None:
                 ocr_info["wholeread"] = wholeread_info
+            if serverocr_info is not None and serverocr_info.get("tried"):
+                ocr_info["serverocr"] = serverocr_info  # version 15: the second try ran: what it read, whether it completed the number, how long it took
             ocr_info["strips"] = list(getattr(ocr_result, "strips", None) or []) + list(getattr(name_read, "strips", None) or [])
             if name_read is not None:
                 if name_read.hp and not ocr_info.get("hp"):

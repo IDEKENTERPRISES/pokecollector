@@ -31,6 +31,9 @@ Options (all measured side by side by the labelled benchmark, "Compare options" 
   - ``edgeguard`` (version 14 test, needs ``corners``): an outline in the full frame that touches two or more frame edges, or is over 1.6x the
     guide's area, is not trusted (a sleeve, binder page or table edge, not the card): the card is looked for inside the guide region,
     else the guide crop is the card. The reason is recorded in the detection info. Off by default; a comparison row only.
+  - ``serverocr`` (version 15 test): a number still incomplete after the whole normal reading is read once more by a second RapidOCR engine on the
+    PP-OCRv4 *server* models (``ocr_server.py``): the two tight strips and the plain bottom band, merged so it can only add or complete a number.
+    Off by default; a comparison row only.
 A label is the options joined by ``+``: ``baseline`` (none), ``names``, ``names+number``, ``names+number+text+tta`` ...
 
 The label in use comes from ``CARD_MATCH_OPTIONS``, else from ``chosen.json`` (written when a comparison
@@ -55,6 +58,7 @@ BASE_MODEL = "dinov2-base"
 ART_INDEX = f"{DEFAULT_MODEL}-art"  # the artwork-window index of the default model
 V12_WORDS = ("widefirst", "topname")  # version 12 test options: server only, off by default
 V14_WORDS = ("edgeguard",)  # version 14 test option: off by default
+V15_WORDS = ("serverocr",)  # version 15 test option: off by default
 CUSTOM_WORDS = ("custom",)  # the newest uploaded custom picture model
 BEST_V8 = "names+number+text+art+tta+fastread+corners+wholepic"
 IN_USE = "names+number+text+art+tta+fastread+numberonce+corners+wholepic"  # picked on the server with version 9: 67.4% decided, 0 wrong, p95 1,431 ms
@@ -79,6 +83,8 @@ COMPARE_LABELS = (
     KEPT_LABEL + "+custom", NO_STRICT_LABEL + "+custom",
     # Version 14 test: the set in use (the pin) and the kept set, each with the edge guard.
     NO_STRICT_LABEL + "+widefirst+topname+edgeguard", KEPT_LABEL + "+edgeguard",
+    # Version 15 test: the set in use (the pin) with the server OCR second try.
+    NO_STRICT_LABEL + "+widefirst+topname+edgeguard+serverocr",
 )
 # The synthetic comparison chooses nothing, so it runs a short list on fewer photos
 # (version 5: 10 rows x 400 photos took 89 minutes).
@@ -111,6 +117,8 @@ def compare_group(label: str) -> str:
     options = parse(label)
     if options.custom:
         return "custom"
+    if options.serverocr:
+        return "v15"
     if options.edgeguard:
         return "v14"
     if options.widefirst or options.topname:
@@ -152,11 +160,13 @@ class Options:
 
     edgeguard: bool = False  # version 14 test: an outline touching 2+ frame edges or far bigger than the guide is not trusted (needs corners)
 
+    serverocr: bool = False  # version 15 test: a number still incomplete after the whole reading is read once more by the PP-OCRv4 server models
+
     custom: bool = False  # the newest uploaded custom picture model and its two indexes (needs art, so turns it on)
 
     @property
     def label(self) -> str:
-        parts = [name for name in ORDER + V12_WORDS + V14_WORDS + CUSTOM_WORDS if getattr(self, name)]
+        parts = [name for name in ORDER + V12_WORDS + V14_WORDS + V15_WORDS + CUSTOM_WORDS if getattr(self, name)]
         return "+".join(parts) or "baseline"
 
 
@@ -171,7 +181,7 @@ def parse(label: str | None) -> Options:
         words.add("wholeread")  # it judges the number the second read produced
     if "wholepic" in words or "trustrejected" in words or "edgeguard" in words:
         words.add("corners")  # both act on a quad the finder refused
-    return Options(**{name: name in words for name in ORDER + V12_WORDS + V14_WORDS + CUSTOM_WORDS})
+    return Options(**{name: name in words for name in ORDER + V12_WORDS + V14_WORDS + V15_WORDS + CUSTOM_WORDS})
 
 
 def model_name(options: Options, data_dir: Path | None = None) -> str:
@@ -299,7 +309,7 @@ def _build_matcher(options: Options, session_factory, *, data_dir: Path | None =
         index, embedder, pipeline.db_candidate_loader(session_factory), ocr_reader or get_reader(),
         read_hp=read_hp, extra_signals=signals, tta=options.tta, names=names, label=options.label, fastread=options.fastread, number_once=options.numberonce,
         corners=options.corners, edgeguard=options.edgeguard, wholepic=options.wholepic, trustrejected=options.trustrejected,
-        wholeread=options.wholeread, wholestrict=options.wholestrict, widefirst=options.widefirst, topname=options.topname,
+        wholeread=options.wholeread, wholestrict=options.wholestrict, widefirst=options.widefirst, topname=options.topname, serverocr=options.serverocr,
         lookup=lookup, use_number=options.number, use_text=options.text, reprint=options.reprint,
     )
 
