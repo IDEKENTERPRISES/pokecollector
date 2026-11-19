@@ -793,6 +793,16 @@ def previous_rows(kind: str, labels, fingerprint: str | None, data_dir: Path | N
     return [found[label] for label in labels if label in found]
 
 
+def _row_signature(label: str, data_dir: Path | None) -> str | None:
+    try:
+        from . import variants
+
+        return variants.row_signature(label, data_dir)
+    except Exception:  # a signature is a convenience for the autorun: never stop a comparison for it
+        logger.exception("Card-match: could not work out the signature of %s", label)
+        return None
+
+
 def plan_rows(kind: str, fingerprint: str | None, data_dir: Path | None = None) -> dict[str, str]:
     """The autorun's choice of rows to run: ``{label: why}`` in the order of the full list. ``reference``: the label in use and the kept set always
     run. ``new``: no earlier result. ``changed``: the newest earlier result has another signature (or none: it was measured before signatures
@@ -871,7 +881,7 @@ def run_compare(
             raise RuntimeError("No diagnostics traces with a confirmed answer for English cards yet")
         reports[label] = report
         rows.append({**compare_row(label, report), "reference": label in reference, "seconds": round(time.monotonic() - row_started, 1),
-                     "signature": variants.row_signature(label, data_dir), "why": (why or {}).get(label)})
+                     "signature": _row_signature(label, data_dir), "why": (why or {}).get(label)})
     winner = pick_winner(rows)  # only the rows measured in this run: a row from an earlier report is never in it
     first = next(iter(reports.values()), None)
     held_back_row, groups, fingerprint = None, None, None
