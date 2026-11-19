@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 
@@ -57,6 +58,44 @@ def families() -> tuple[dict, ...]:
 
 def family_by_id() -> dict[str, dict]:
     return {entry["id"]: entry for entry in families()}
+
+
+def fold(text: str) -> str:
+    """Lower-case, accent-folded text for searching (Pokémon -> pokemon, Flabébé -> flabebe)."""
+    decomposed = unicodedata.normalize("NFKD", str(text or "").casefold().replace("ß", "ss"))
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch)).strip()
+
+
+def family_members(entry: dict) -> list[dict]:
+    """The family's species as [{dex_id, name, name_de}] in the family's order."""
+    from services.pokedex import pokedex_by_id
+
+    species = pokedex_by_id()
+    return [
+        {"dex_id": dex_id, "name": species[dex_id]["name_en"], "name_de": species[dex_id].get("name_de")}
+        for dex_id in entry["dex_ids"] if dex_id in species
+    ]
+
+
+def search_families(query: str) -> list[dict]:
+    """Families with any member whose English or German name matches, as {family, matched dex ids}.
+
+    Names starting with the query rank first (then the popular families, then the Pokédex order).
+    """
+    needle = fold(query)
+    if not needle:
+        return []
+    hits = []
+    for position, entry in enumerate(families()):
+        matched, prefix = [], False
+        for member in family_members(entry):
+            names = [fold(member["name"]), fold(member["name_de"] or "")]
+            if any(needle in name for name in names):
+                matched.append(member["dex_id"])
+                prefix = prefix or any(name.startswith(needle) for name in names)
+        if matched:
+            hits.append((not prefix, position, {"family": entry, "matched": matched}))
+    return [hit for _, _, hit in sorted(hits, key=lambda item: item[:2])]
 
 
 def generations() -> dict[int, dict]:

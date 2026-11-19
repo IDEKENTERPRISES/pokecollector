@@ -31,3 +31,44 @@ export const setGoalParams = set => ({ set_id: set.tcg_set_id || String(set.id).
 
 export const goalsQueryKey = userId => ['goals', userId]
 export const goalQueryKey = (userId, goalId) => ['goal', userId, String(goalId)]
+
+export const FAMILY_RESULT_CAP = 60
+
+/** Lower-case, accent-folded text for searching (Pokémon -> pokemon). */
+export function foldText(text) {
+  return String(text ?? '').toLowerCase().replace(/ß/g, 'ss').normalize('NFD').replace(/[̀-ͯ]/g, '').trim()
+}
+
+/**
+ * Narrow the family list to a search. A family matches when any member's English or German name contains
+ * the text; names starting with it come first, then the popular families, then the Pokédex order the list is in.
+ * Without a query the popular families come first. Each result says which members matched.
+ */
+export function filterFamilies(families, query, cap = FAMILY_RESULT_CAP) {
+  const list = Array.isArray(families) ? families : []
+  const needle = foldText(query)
+  if (!needle) {
+    const ordered = [...list.filter(f => f.popular), ...list.filter(f => !f.popular)]
+    return { items: ordered.slice(0, cap).map(family => ({ family, matched: [] })), total: ordered.length }
+  }
+  const hits = []
+  list.forEach((family, position) => {
+    const matched = []
+    let prefix = false
+    for (const member of family.members || []) {
+      const names = [foldText(member.name), foldText(member.name_de)]
+      if (names.some(name => name.includes(needle))) {
+        matched.push(member.dex_id)
+        prefix = prefix || names.some(name => name.startsWith(needle))
+      }
+    }
+    if (matched.length) hits.push({ family, matched, rank: prefix ? 0 : 1, position })
+  })
+  hits.sort((a, b) => a.rank - b.rank || a.position - b.position)
+  return { items: hits.slice(0, cap).map(({ family, matched }) => ({ family, matched })), total: hits.length }
+}
+
+/** The goal params for a picked family: one of each Pokémon, or every print. */
+export function familyGoalParams(family, scope) {
+  return scope === 'every' ? { family: family.id, every: true } : { family: family.id }
+}
