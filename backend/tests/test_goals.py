@@ -373,6 +373,15 @@ class ApiTests(ApiBase):
         self.assertEqual(len(options["generations"]), 9)
         self.assertIn("eeveelutions", [f["id"] for f in options["families"]])
         self.assertEqual(options["artists"], [{"artist": "Mitsuhiro Arita", "cards": 1}])
+        self.assertGreater(len(options["families"]), 500)
+        eevee = next(f for f in options["families"] if f["id"] == "eeveelutions")
+        self.assertEqual(eevee["members"][0], {"dex_id": 133, "name": "Eevee", "name_de": "Evoli"})
+
+    def test_family_search_option(self):
+        found = self.client.get("/api/goals/options?q=chariz").json()["families"]
+        self.assertEqual([f["id"] for f in found], ["charmander"])
+        self.assertEqual(found[0]["matched"], [6])
+        self.assertEqual(self.client.get("/api/goals/options?q=zzzz").json()["families"], [])
 
     def test_wishlist_action_adds_only_missing_cards_not_already_listed(self):
         goal_id = self.create().json()["id"]
@@ -422,3 +431,67 @@ class BackupAndDeletionTests(ApiBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(DEPS_AVAILABLE, "FastAPI is not installed")
+class FamilyCatalogueTests(GoalBase):
+    OLD_FAMILIES = {
+        "eeveelutions": [133, 134, 135, 136, 196, 197, 470, 471, 700], "pikachu": [172, 25, 26],
+        "bulbasaur": [1, 2, 3], "charmander": [4, 5, 6], "snorlax": [446, 143], "togepi": [175, 176, 468],
+        "ralts": [280, 281, 282, 475], "riolu": [447, 448], "magikarp": [129, 130],
+    }
+
+    def test_every_species_is_in_exactly_one_family(self):
+        from services.pokedex import load_pokedex
+
+        seen = [dex_id for entry in goals.families() for dex_id in entry["dex_ids"]]
+        self.assertEqual(sorted(seen), sorted(int(row["dex_id"]) for row in load_pokedex()))
+        self.assertEqual(len({entry["id"] for entry in goals.families()}), len(goals.families()))
+
+    def test_old_ids_keep_their_species_and_come_first(self):
+        by_id = goals.family_by_id()
+        for family_id, dex_ids in self.OLD_FAMILIES.items():
+            self.assertTrue(set(dex_ids) <= set(by_id[family_id]["dex_ids"]), family_id)
+        popular = [entry["id"] for entry in goals.families() if entry.get("popular")]
+        self.assertEqual(len(popular), 40)
+        self.assertEqual([entry["id"] for entry in goals.families()[:40]], popular)
+
+    def test_branched_and_single_species_families(self):
+        by_id = goals.family_by_id()
+        self.assertEqual(by_id["tauros"]["dex_ids"], [128])
+        self.assertEqual(by_id["tyrogue"]["dex_ids"], [106, 107, 236, 237])
+        self.assertEqual(by_id["wurmple"]["dex_ids"], [265, 266, 267, 268, 269])
+
+    def test_validation_accepts_old_and_new_ids(self):
+        for family_id in ("eeveelutions", "pikachu", "machop", "tauros", "wurmple"):
+            self.assertEqual(goals.clean_params(self.db, "family", {"family": family_id}), {"family": family_id})
+        for entry in goals.families():
+            goals.clean_params(self.db, "family", {"family": entry["id"]})
+        with self.assertRaises(goals.GoalError):
+            goals.clean_params(self.db, "family", {"family": "not-a-family"})
+
+    def test_search_matches_any_member_with_folding(self):
+        def ids(query):
+            return [hit["family"]["id"] for hit in goals.search_families(query)]
+
+        self.assertEqual(ids("chariz"), ["charmander"])
+        self.assertIn("eeveelutions", ids("EEVEE"))
+        self.assertEqual(ids("eevee")[0], "eeveelutions")
+        self.assertIn("flabebe", ids("flabebe"))  # accents folded
+        self.assertIn("bulbasaur", ids("bisasam"))  # German name
+        self.assertIn("bulbasaur", ids("bisaflor"))  # a later stage finds its family
+        self.assertEqual(goals.search_families("  "), [])
+        self.assertEqual(goals.search_families("zzzzzz"), [])
+        self.assertEqual(goals.search_families("venus")[0]["matched"], [3])
+
+    def test_goal_progress_for_a_new_family(self):
+        self.species("mach-1", [66])
+        self.species("mach-2", [68])
+        self.species("other-1", [25])
+        goal = self.goal("family", {"family": "machop"})
+        self.db.add(CollectionItem(card_id="mach-2_en", user_id=self.user.id, quantity=1, variant="Normal", lang="en"))
+        self.db.commit()
+        result = self.progress(goal)
+        self.assertEqual((result["owned"], result["total"]), (1, 2))
+        every = self.goal("family", {"family": "tauros", "every": True})
+        self.assertEqual(self.progress(every)["total"], 0)
