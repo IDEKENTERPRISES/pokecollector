@@ -784,13 +784,37 @@ def previous_rows(kind: str, labels, fingerprint: str | None, data_dir: Path | N
             label = row.get("label")
             if label in wanted and label not in found and row.get("status") == "ok":
                 found[label] = {
-                    "label": label, "status": "previous", "date": report.get("created_at"), "report": name,
+                    "label": label, "status": "previous", "date": report.get("created_at"), "report": name, "signature": row.get("signature"),
                     **{key: row.get(key) for key in ("n", "top1", "top5", "top20", "number_exact", "name_read", "number_ms_mean", "decided",
                                                       "decided_right", "decided_wrong", "median_ms", "p95_ms", "eval_groups")},
                     "wrong_scans_count": len(row.get("wrong_scans") or []),
                     "same_scans": (old == fingerprint) if (old and fingerprint) else None,
                 }
     return [found[label] for label in labels if label in found]
+
+
+def plan_rows(kind: str, fingerprint: str | None, data_dir: Path | None = None) -> dict[str, str]:
+    """The autorun's choice of rows to run: ``{label: why}`` in the order of the full list. ``reference``: the label in use and the kept set always
+    run. ``new``: no earlier result. ``changed``: the newest earlier result has another signature (or none: it was measured before signatures
+    existed). ``scans changed``: it was measured on another scan set (or one nobody can tell), so every row runs and the table stays comparable.
+    A row whose newest result has the same signature on the same scans is left out and shows as "previous"."""
+    from . import variants
+
+    full = list(variants.SYNTHETIC_COMPARE_LABELS if kind == "synthetic" else variants.COMPARE_LABELS)
+    reference = set(variants.compare_reference_labels(full, data_dir))
+    previous = {row["label"]: row for row in previous_rows(kind, full, fingerprint, data_dir)}
+    out: dict[str, str] = {}
+    for label in full:
+        old = previous.get(label)
+        if label in reference:
+            out[label] = "reference"
+        elif old is None:
+            out[label] = "new"
+        elif old.get("signature") != variants.row_signature(label, data_dir):
+            out[label] = "changed"
+        elif kind == "labelled" and old.get("same_scans") is not True:
+            out[label] = "scans changed"
+    return out
 
 
 def last_row_seconds(kind: str, data_dir: Path | None = None) -> dict[str, dict]:
@@ -808,7 +832,7 @@ def last_row_seconds(kind: str, data_dir: Path | None = None) -> dict[str, dict]
 def run_compare(
     kind: str, session_factory, labels, *, data_dir: Path | None = None, trace_dir: Path | None = None, ocr_reader=None,
     progress: Callable[[dict], None] | None = None, should_stop: Callable[[], bool] | None = None, count: int = 400,
-    selected: list[str] | None = None, reference: list[str] | None = None,
+    selected: list[str] | None = None, reference: list[str] | None = None, why: dict[str, str] | None = None,
 ) -> dict:
     """Run ``labelled`` or ``synthetic`` once per option set and put the results in one table.
 
@@ -830,7 +854,7 @@ def run_compare(
         missing = variants.missing_indexes(options, data_dir)
         problem = None if missing else variants.calibration_problem(options, data_dir)  # version 16: custom + calibrated, but not calibrated yet
         if missing or problem:
-            rows.append({**compare_row(label, None, missing=missing, reason=problem), "reference": label in reference})
+            rows.append({**compare_row(label, None, missing=missing, reason=problem), "reference": label in reference, "why": (why or {}).get(label)})
             continue
         matcher = variants.build_matcher(options, session_factory, data_dir=data_dir, ocr_reader=ocr_reader)
 
@@ -846,7 +870,8 @@ def run_compare(
         if report is None:
             raise RuntimeError("No diagnostics traces with a confirmed answer for English cards yet")
         reports[label] = report
-        rows.append({**compare_row(label, report), "reference": label in reference, "seconds": round(time.monotonic() - row_started, 1)})
+        rows.append({**compare_row(label, report), "reference": label in reference, "seconds": round(time.monotonic() - row_started, 1),
+                     "signature": variants.row_signature(label, data_dir), "why": (why or {}).get(label)})
     winner = pick_winner(rows)  # only the rows measured in this run: a row from an earlier report is never in it
     first = next(iter(reports.values()), None)
     held_back_row, groups, fingerprint = None, None, None
@@ -869,7 +894,7 @@ def run_compare(
     not_run = [label for label in full if label not in labels]
     return {
         "kind": f"compare-{kind}", "matcher_version": MATCHER_VERSION,
-        "selected_labels": selected, "reference_labels": reference, "not_run": not_run,
+        "selected_labels": selected, "reference_labels": reference, "not_run": not_run, "why": dict(why or {}),
         "previous_rows": previous_rows(kind, not_run, fingerprint, data_dir), "scan_fingerprint": fingerprint, "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "duration_seconds": round(time.monotonic() - started, 1), "rows": rows, "winner": winner["label"] if winner else None,
         "n": rows[0].get("n") if rows and rows[0]["status"] == "ok" else None,

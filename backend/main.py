@@ -102,11 +102,11 @@ async def lifespan(app: FastAPI):
     from services.scheduler import start_scheduler
     start_scheduler()
 
-    # Nonprod only (SCAN_MATCHER_AUTORUN=1): build the picture index and run the benchmark once.
-    from services.card_match.jobs import autorun_once
+    # Nonprod only (SCAN_MATCHER_AUTORUN=1): after the delay, run the Scanner lab tests when what they measure changed (card_match/autorun.py).
+    from services.card_match.autorun import autorun_once
     from services.card_picture_packs import card_picture_warmer
     if autorun_once(card_picture_warmer):
-        logger.info("Card matcher: the index build and benchmark will start shortly")
+        logger.info("Card matcher: the autorun will check shortly whether the tests need to run")
 
     # CARD_MATCH_WARM=1 (nonprod): load the picture model and OCR now and run one dummy inference through each.
     from services.card_match.warmup import start_in_background as warm_card_matcher
