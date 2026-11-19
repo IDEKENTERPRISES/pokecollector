@@ -157,12 +157,12 @@ def row_signature(label: str, data_dir: Path | None = None) -> str:
     from . import MATCHER_VERSION
 
     options = parse(label)
-    words = [f"{word}{OPTION_VERSIONS.get(word, 0)}" for word in ORDER + V12_WORDS + V14_WORDS + V15_WORDS + CUSTOM_WORDS + V16_WORDS if getattr(options, word)]
+    words = [f"{word}{OPTION_VERSIONS.get(word, 0)}" for word in ORDER + V12_WORDS + V14_WORDS + V15_WORDS + CUSTOM_WORDS + V16_WORDS if getattr(options, word, False)]
     parts = [f"v{MATCHER_VERSION}", "+".join(words) or "baseline"]
-    if options.custom:
+    if getattr(options, "custom", False):
         entry = custom_models.newest(data_dir)
         parts.append(f"model={entry['id'] if entry else 'none'}")
-        if options.calibrated:
+        if getattr(options, "calibrated", False):
             parts.append(f"cal={((entry or {}).get('calibration') or {}).get('at') or 'none'}")
     return "|".join(parts)
 
