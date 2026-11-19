@@ -20,7 +20,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import MATCHER_VERSION, config, custom_models
+from . import config, custom_models
 from .jobs import AUTORUN_WARMUP_WAIT_SECONDS, jobs, start_benchmark, start_calibration, start_index
 from .model_specs import DEFAULT_MODEL
 
@@ -34,6 +34,12 @@ FORCED = "forced"  # the "why" of every row when "Run all tests now" is pressed
 
 REAL_STEPS = ("ocr-check", "labelled", "compare-labelled")
 SYNTHETIC_STEPS = ("synthetic", "compare-synthetic")
+
+
+def _version() -> str:
+    from . import MATCHER_VERSION  # read at call time
+
+    return str(MATCHER_VERSION)
 
 
 def _now() -> str:
@@ -128,7 +134,7 @@ def plan_inputs(scan_fp: str | None, data_dir: Path | None = None) -> dict:
 
     entry = custom_models.newest(data_dir)
     return {
-        "matcher_version": str(MATCHER_VERSION),
+        "matcher_version": _version(),
         "rows": {label: variants.row_signature(label, data_dir) for label in all_labels()},
         "custom": {"id": entry["id"] if entry else None, "calibrated_at": ((entry or {}).get("calibration") or {}).get("at")},
         "indexes": {name: index_module.index_status(name, data_dir).get("built_at") for name in needed_index_names(data_dir)},
@@ -194,7 +200,7 @@ def calibration_due(entry: dict | None, tuned_fingerprint: str | None) -> bool:
         return True
     if str(calibration.get("at") or "") < str(entry.get("uploaded_at") or ""):
         return True
-    if str(calibration.get("matcher_version")) != str(MATCHER_VERSION):
+    if str(calibration.get("matcher_version")) != _version():
         return True
     return tuned_fingerprint is not None and calibration.get("scan_fingerprint") != tuned_fingerprint
 
@@ -307,11 +313,11 @@ def run_chain(*, trigger: str, warmer=None, model: str = DEFAULT_MODEL, force: b
         enough = benchmark.count_labelled_traces(scan_trace.trace_root() or scan_trace.trace_storage_root()) >= MIN_LABELLED
         steps = choose_steps(
             missing=missing, calibrate=calibrate or (force and bool(entry)), force=force, enough_real=enough,
-            version_changed=marker.get("matcher_version") != str(MATCHER_VERSION), scans_changed=marker.get("scan_fingerprint") != scan_fp,
+            version_changed=marker.get("matcher_version") != _version(), scans_changed=marker.get("scan_fingerprint") != scan_fp,
         )
         if not entry and "calibrate" in steps:
             steps.remove("calibrate")
-        log = {"matcher_version": str(MATCHER_VERSION), "trigger": trigger, "started_at": started, "finished_at": None, "steps": [], "planned": steps}
+        log = {"matcher_version": _version(), "trigger": trigger, "started_at": started, "finished_at": None, "steps": [], "planned": steps}
         failed: set[str] = set()
 
         def finish_step(record: dict) -> None:
@@ -378,7 +384,7 @@ def run_chain(*, trigger: str, warmer=None, model: str = DEFAULT_MODEL, force: b
         try:
             marker_path().parent.mkdir(parents=True, exist_ok=True)
             marker_path().write_text(json.dumps({
-                "matcher_version": str(MATCHER_VERSION), "model": model, "finished_at": log["finished_at"], "trigger": trigger,
+                "matcher_version": _version(), "model": model, "finished_at": log["finished_at"], "trigger": trigger,
                 "plan_fingerprint": plan_fingerprint(final_scans, data_dir), "scan_fingerprint": final_scans,
                 "steps": [{key: step.get(key) for key in ("step", "seconds", "error", "skipped")} for step in log["steps"]],
             }), encoding="utf-8")
@@ -425,8 +431,8 @@ def start_run_all(warmer=None, model: str = DEFAULT_MODEL) -> tuple[bool, str | 
     return True, None
 
 
-def info() -> dict:
+def info(db=None) -> dict:
     """For Scanner lab: where the autorun exists, the switch, what runs now, the last run's log."""
     if not available():
         return {"available": False}
-    return {"available": True, "enabled": switch_on(), "state": state(), "log": read_log(), "marker": {k: read_marker().get(k) for k in ("finished_at", "trigger")}}
+    return {"available": True, "enabled": switch_on(db), "state": state(), "log": read_log(), "marker": {k: read_marker().get(k) for k in ("finished_at", "trigger")}}

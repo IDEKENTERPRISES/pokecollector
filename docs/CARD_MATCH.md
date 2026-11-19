@@ -304,7 +304,8 @@ A decision the picture alone took (`picture_lead_strong`, the number named nothi
 | `…/misses.py` | the Misses view: collecting, tagging (pure), thumbnails, paging |
 | `…/pipeline.py` | `CardMatcher`, `decide`, `db_candidate_loader` |
 | `…/synthetic.py`, `…/benchmark.py` | phone-style synthetic photos; synthetic and labelled benchmarks; reports |
-| `…/jobs.py` | one-at-a-time background jobs, nonprod autorun, after-sync hook |
+| `…/jobs.py` | one-at-a-time background jobs, after-sync hook |
+| `…/autorun.py` | the nonprod autorun: plan fingerprint, which steps and rows run, the switch, "Run all tests now" (see "The autorun") |
 | `…/shadow.py` | shadow mode: the background worker, and the report the Scanner lab reads back |
 | `backend/api/card_match.py` | admin API: `GET /api/card-match/status`, `GET /shadow`, `GET /misses`, `POST /index` (`{name}`: whole card, artwork or DINOv2-base), `POST /benchmark` (`synthetic`, `labelled`, `compare-synthetic`, `compare-labelled`, `ocr-check`), `POST /stop` |
 | `backend/scripts/scan_benchmark.py` | the same build/benchmark from a shell |
@@ -318,7 +319,7 @@ On disk (`CARD_MATCH_DIR`, default `/app/data/card-match`; mounted in `docker-co
 - `misses/latest.json` + `misses/run-<time>/` (the Misses view) and `chosen.json` (the option set a comparison picked);
 - `reports/benchmark-<kind>-<timestamp>.json`;
 - `hires/` (cached high-resolution TCGdex pictures for the synthetic photos);
-- `autorun.json` (marker so the nonprod autorun happens once per matcher version).
+- `autorun.json` (the autorun's marker: the plan fingerprint of the state the last run left, so an unchanged deploy runs nothing) and `autorun-log.json` (the last run: each step with its time, error and, for a compare, the rows run with the reason).
 
 ## The index
 
@@ -339,7 +340,7 @@ On disk (`CARD_MATCH_DIR`, default `/app/data/card-match`; mounted in `docker-co
 | `CARD_MATCH_IDLE_UNLOAD_MINUTES` | `10` | after this long with no use of the matcher, release the GPU sessions (0 = never); the next use reloads them |
 | `CARD_MATCH_GPU_FAILURES` | `3` | GPU runs of one model that may fail (each is rerun on the CPU) before it is CPU-only until reloaded |
 | `CARD_MATCH_WARM` | off | `1`: at startup load the picture model and OCR and run one dummy scan through each (nonprod sets it) |
-| `SCAN_MATCHER_AUTORUN` | off | **nonprod only**: once per matcher version, after startup, fill the picture cache if needed, build the index and the artwork index, run the synthetic benchmark, and with at least 100 confirmed scans the real-photo benchmark and the option comparison |
+| `SCAN_MATCHER_AUTORUN` | off | **nonprod only**: after startup, run Scanner lab's tests when what they measure changed since the last run (see "The autorun"). It is also the default of the admin switch "Run the tests by itself after each deploy", and where it is off (prod) the switch, the "Run all tests now" button and their API do not exist |
 | `CARD_MATCH_OPTIONS` | unset | force an option set, e.g. `names+art`; unset = `chosen.json` of this matcher version, else `names+number+text+art+tta` |
 | `SCAN_MATCHER_SHADOW` | off | **nonprod only**: shadow mode (below) |
 | `SCAN_PICTURE_FIRST` | off | default for the admin switch "Picture match first" (below); nonprod sets it to on |
@@ -704,6 +705,46 @@ Only **New** and **Held back** are an honest test of a change. Held-back scans a
 - **`pick_winner` sees only the rows measured in this run.** A partial run never compares against old numbers; the winner is "picked among the rows run now". A partial run still writes `chosen.json` from that pick (as a full run does), so run the references with the rows you are testing, which is what the picker forces.
 - **Rows not run** are shown from the newest earlier compare report that measured them (`previous_rows`, `status: "previous"`): date, n, top 1 / top 20, decided, wrong, `eval_groups`, and the number of wrong scans. They are display only (never in the pick, never saved as chosen) and are greyed in the table with "previous run, <date>". The report also has `selected_labels`, `reference_labels` and `not_run` (every label not run now, with or without an earlier result).
 - **Same scans?** Every labelled report stores `scan_fingerprint`: sha256 of `MATCHER_VERSION` and the sorted (trace name, confirmed card after admin corrections) of the scans measured. A previous row carries `same_scans`; when false (a scan added, a label corrected, a new matcher version) the table badges it **different scans**: do not compare its numbers with this run's. `same_scans` is null for a report from before fingerprints.
+
+## The autorun
+
+Where `SCAN_MATCHER_AUTORUN=1` (nonprod; `docker-compose.nonprod.yml`) Scanner lab runs every test by itself after a deploy that changed what the tests measure, so nobody has to press Compare and tick rows. This replaces the older "once per `MATCHER_VERSION`" marker (the version stayed "11" while v12 to v16 added options, so none of them ever ran by themselves). The code is `services/card_match/autorun.py`; the older per-version notes above describe the order of the steps at the time.
+
+**Prod never runs it.** The same server (the T340) serves real users and prod keeps one pinned option set. Where the variable is off the autorun does not start, the switch and the button are hidden in Scanner lab, and their API routes answer 409.
+
+**What triggers a run.** At startup, after the existing delay, the autorun computes a **plan fingerprint** and runs when it differs from the one in `autorun.json` (a missing marker, or one with no fingerprint, counts as different). The fingerprint is a hash of:
+
+- `MATCHER_VERSION`;
+- every compare row's **signature** (below), for the real-photo and the synthetic rows;
+- the newest custom model's id and its calibration time;
+- the build time of every index the rows need;
+- the current scan-set fingerprint (`benchmark.scan_fingerprint`: the confirmed scans and their cards).
+
+So a deploy that adds or changes a row, changes the matcher version, brings new confirmed scans, a new or recalibrated custom model, or a rebuilt index runs the tests. A deploy that changes none of these runs nothing. The marker is written when a chain finishes, with the fingerprint of the state it left behind (the indexes it built and the calibration it made), so the next unchanged start finds a match. A chain that was interrupted (a restart, Stop) writes no marker and runs again at the next start.
+
+**Row signatures and `OPTION_VERSIONS`.** A row's signature is `MATCHER_VERSION` + its option words, each with its number from `variants.OPTION_VERSIONS` + for a `custom` row the custom model's id + for a `calibrated` row that model's calibration time. Each measured row of a compare report stores it (`signature`), and `previous_rows` returns it. **When you add an option, add its word to `OPTION_VERSIONS` with 1. When you change what an existing option does (its code path, thresholds or the models it reads), bump its number.** Without the bump the autorun shows the old measurement as if it were current and never measures the changed option.
+
+**Which rows run** (`benchmark.plan_rows`; passed through the `labels` parameter, so the rows not run keep showing as "previous"). Each row that runs has a reason, saved on its row in the report, shown as "ran: ..." in the Compare table and listed in the autorun log:
+
+- `reference`: the option set in use and the kept set always run;
+- `new`: the row has no earlier result;
+- `changed`: its newest earlier result has another signature, or none (measured before signatures existed);
+- `scans changed`: its newest earlier result was measured on another scan set (or one nobody can tell), so every row runs when the scans changed and the table stays comparable.
+
+A row with the same signature on the same scans is not run. "Run all tests now" runs every row (reason `forced`). The first run after the deploy that brings this change has no signature on any earlier result, so every row runs (`new` or `changed`, the reference rows as `reference`).
+
+**The steps, in order** (what the owner decides from first; `autorun.choose_steps`):
+
+1. Picture warm-up and the **index builds**, for the indexes that are missing: whole card and artwork, and the newest custom model's two indexes when a custom model exists.
+2. **Calibration** of the newest custom model (`calibration.py`) when it has none, or it is older than the model, the matcher version or the Tuned scans it was made on (stored in the calibration as `scan_fingerprint`).
+3. The **OCR check**, only when the matcher version or the scan set changed.
+4. The **labelled benchmark** of the option set in use (it writes Misses), with at least 100 confirmed scans.
+5. The **compare** with the rows chosen above.
+6. The **synthetic benchmark and synthetic compare**, only when the matcher version changed (they choose nothing).
+
+**A failing step does not stop the chain**: it is logged in `autorun-log.json` with its error and the chain goes on. The exception is a failed index build, which skips the steps that need that index (the default model's: everything; a custom model's: the calibration). A refused calibration (too few Tuned scans, a wrong decision in its safety check) only leaves the `calibrated` row skipped, with its reason.
+
+**The switch and the button** (Scanner lab, nonprod only). The admin setting "Run the tests by itself after each deploy" is a server-wide setting stored like Matcher only (a `settings` row, `scan_matcher_autorun`); it defaults to on where `SCAN_MATCHER_AUTORUN` is set and an admin can turn it off and on (`POST /api/card-match/autorun/switch`, audit action `scanner.matcher_autorun.updated`). Off: nothing runs by itself. **Run all tests now** (`POST /api/card-match/autorun/run`) starts the same chain at once, ignoring the fingerprint and running every row; it is refused (409) while a job or the chain is running. `GET /api/card-match/status` has `autorun_info`: the switch, what runs now and the last run's log (when, each step with its time, error and rows run with reasons).
 
 ## Next steps
 

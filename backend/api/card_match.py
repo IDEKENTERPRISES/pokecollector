@@ -67,7 +67,7 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
         "device": device_module.report(DEFAULT_MODEL),
         "threads": config.threads(),
         "autorun": config.autorun_enabled(),
-        "autorun_info": autorun_module.info(),
+        "autorun_info": autorun_module.info(db),
         "index_after_sync": config.index_after_sync_enabled(),
         "english_total": _english_picture_total(db),
         "index": index_module.index_status(DEFAULT_MODEL),
@@ -381,7 +381,7 @@ def set_autorun_switch(body: AutorunSwitchRequest, request: Request, db: Session
     _require_admin(current_user)
     _require_autorun_available()
     autorun_module.set_switch(db, body.enabled, current_user, request)
-    return {"autorun_info": autorun_module.info()}
+    return {"autorun_info": autorun_module.info(db)}
 
 
 @router.post("/autorun/run")

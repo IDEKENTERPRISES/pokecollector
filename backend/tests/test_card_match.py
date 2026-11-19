@@ -380,14 +380,10 @@ class JobTests(unittest.TestCase):
         self.assertEqual(runner.status()["error"], "no pictures")
 
     def test_autorun_is_off_unless_the_flag_is_set(self):
-        with patch.dict(os.environ, {"SCAN_MATCHER_AUTORUN": ""}):
-            self.assertFalse(jobs.autorun_once(None, delay_seconds=0))
+        from services.card_match import autorun
 
-    def test_autorun_runs_once_per_matcher_version(self):
-        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"CARD_MATCH_DIR": directory}):
-            self.assertTrue(jobs.autorun_due())
-            Path(directory, "autorun.json").write_text('{"matcher_version": "%s", "model": "%s"}' % (jobs.MATCHER_VERSION, jobs.DEFAULT_MODEL))
-            self.assertFalse(jobs.autorun_due())
+        with patch.dict(os.environ, {"SCAN_MATCHER_AUTORUN": ""}):
+            self.assertFalse(autorun.autorun_once(None, delay_seconds=0))
 
     def test_threads_are_capped(self):
         with patch.dict(os.environ, {"CARD_MATCH_THREADS": "99"}):
