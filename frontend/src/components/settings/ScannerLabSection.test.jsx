@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
-import { CompareTable, deviceText, WrongList, HowConfirmedView, OcrCheckView, PictureFirstView, Report, ShadowView, SourceGroups, TraceSources } from './ScannerLabSection'
+import { AutorunPanel, CompareTable, deviceText, WrongList, HowConfirmedView, OcrCheckView, PictureFirstView, Report, ShadowView, SourceGroups, TraceSources } from './ScannerLabSection'
 import { CorrectedNote, CorrectionBarView, CorrectionsProvider, DecidedWrong, MissesView, StripRow, correctionQuestion } from './ScannerLabMisses'
 
 const report = {
@@ -644,5 +644,41 @@ describe('deviceText', () => {
   })
   it('says so before the model is loaded', () => {
     expect(deviceText({ loaded: false })).toBe('not loaded yet')
+  })
+})
+
+describe('AutorunPanel', () => {
+  const render = info => renderToStaticMarkup(
+    <QueryClientProvider client={new QueryClient()}><AutorunPanel info={info} onChanged={() => {}} jobRunning={false} /></QueryClientProvider>,
+  )
+
+  it('is hidden where the autorun does not exist (prod)', () => {
+    expect(render({ available: false })).toBe('')
+    expect(render(undefined)).toBe('')
+  })
+
+  it('shows the switch, the button, what runs now and the last run with each step and the rows run with reasons', () => {
+    const html = render({
+      available: true, enabled: true, state: { running: true, trigger: 'deploy', step: 'calibrate' },
+      log: {
+        trigger: 'deploy', started_at: '2026-11-19T22:00:00+00:00', finished_at: '2026-11-19T23:00:00+00:00',
+        steps: [
+          { step: 'calibrate', started_at: 'a', seconds: 120, error: 'Only 40 confirmed scans' },
+          { step: 'compare-labelled', started_at: 'b', seconds: 3600, error: null, rows: [{ label: 'baseline', why: 'new' }, { label: 'names', why: 'reference' }] },
+        ],
+      },
+    })
+    expect(html).toContain('scanner-lab-autorun-switch')
+    expect(html).toContain('Run all tests now')
+    expect(html).toContain('Calibrate custom model')
+    expect(html).toContain('failed: Only 40 confirmed scans')
+    expect(html).toContain('2 rows ran')
+    expect(html).toContain('(new)')
+  })
+
+  it('tags a compare row with why it ran', () => {
+    const rows = [{ label: 'names', status: 'ok', n: 10, decided: 50, decided_wrong: 0, reference: false, why: 'changed' }]
+    const html = renderToStaticMarkup(<CompareTable report={{ rows, not_run: [], previous_rows: [], created_at: '2026-11-19T22:00:00+00:00' }} title="t" order={['names']} />)
+    expect(html).toContain('ran: changed')
   })
 })

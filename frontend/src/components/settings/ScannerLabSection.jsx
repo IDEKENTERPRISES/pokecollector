@@ -432,6 +432,7 @@ export function CompareTable({ report, title, order }) {
                 <td className="pr-2">
                   {describeOptions(row.label)}
                   {row.reference && <span className="text-text-secondary" data-testid="scanner-lab-row-reference"> · reference</span>}
+                  {row.why && row.why !== 'reference' && <span className="ml-1 rounded-full bg-fill px-1.5 py-0.5 text-caption1 text-text-secondary" data-testid="scanner-lab-row-why">ran: {row.why}</span>}
                   {row.serverocr && (
                     <span className="block text-caption1 text-text-secondary" data-testid="scanner-lab-row-serverocr">
                       second try ran on {number(row.serverocr.ran)} scans, {number(row.serverocr.complete)} got a complete number, median {row.serverocr.median_ms != null ? `${number(row.serverocr.median_ms)} ms` : '–'}, 95th percentile {row.serverocr.p95_ms != null ? `${number(row.serverocr.p95_ms)} ms` : '–'}
@@ -878,12 +879,65 @@ export function ShadowView({ data }) {
  * coverage, build and benchmark buttons, and the latest benchmark report against the Phase 1 pass bar.
  * Nothing here changes how scans are recognised or what trainers see.
  */
+const STEP_NAMES = {
+  'warm-up': 'Picture warm-up', index: 'Build index', 'art-index': 'Build artwork index', 'custom-index': 'Build custom model index',
+  'custom-art-index': 'Build custom model artwork index', calibrate: 'Calibrate custom model', 'ocr-check': 'OCR check', labelled: 'Real-scan benchmark',
+  'compare-labelled': 'Compare options (real scans)', synthetic: 'Synthetic benchmark', 'compare-synthetic': 'Compare options (synthetic)',
+}
+
+export function AutorunPanel({ info, onChanged, jobRunning }) {
+  const toggle = useMutation({ mutationFn: enabled => api.post('/card-match/autorun/switch', { enabled }).then(r => r.data), onSuccess: onChanged })
+  const runAll = useMutation({ mutationFn: () => api.post('/card-match/autorun/run').then(r => r.data), onSuccess: onChanged })
+  if (!info?.available) return null // prod: SCAN_MATCHER_AUTORUN is off, so no switch and no button
+  const log = info.log
+  const state = info.state || {}
+  const error = toggle.error?.response?.data?.detail || runAll.error?.response?.data?.detail
+  return (
+    <div className="space-y-2 border-t border-separator px-4 py-3" data-testid="scanner-lab-autorun">
+      <h3 className="text-footnote font-semibold">Run the tests by itself after each deploy</h3>
+      <label className="flex items-center gap-2 text-footnote">
+        <input type="checkbox" checked={Boolean(info.enabled)} disabled={toggle.isPending} onChange={event => toggle.mutate(event.target.checked)} data-testid="scanner-lab-autorun-switch" />
+        {info.enabled ? 'On: a deploy that changes the matcher, a row, the scans or the custom model runs every test' : 'Off: nothing runs by itself'}
+      </label>
+      <button type="button" className={button} disabled={runAll.isPending || state.running || jobRunning} onClick={() => runAll.mutate()} data-testid="scanner-lab-autorun-run">
+        <FlaskConical size={13} aria-hidden="true" /> Run all tests now
+      </button>
+      {state.running && (
+        <p className="text-footnote" aria-live="polite" data-testid="scanner-lab-autorun-state">
+          Running ({state.trigger === 'manual' ? 'started by hand' : 'after a deploy'}): {STEP_NAMES[state.step] || state.step || 'starting'}
+        </p>
+      )}
+      {error && <p className="text-footnote text-red-500">{error}</p>}
+      {log ? (
+        <div className="text-footnote" data-testid="scanner-lab-autorun-log">
+          <p className="text-text-secondary">
+            Last run: {log.started_at?.slice(0, 16).replace('T', ' ')} UTC ({log.trigger === 'manual' ? 'by hand' : 'after a deploy'}){log.finished_at ? '' : ', not finished'}{log.stopped ? ', stopped' : ''}
+          </p>
+          <ul className="space-y-0.5">
+            {(log.steps || []).map(step => (
+              <li key={`${step.step}-${step.started_at}`} data-testid="scanner-lab-autorun-step">
+                {STEP_NAMES[step.step] || step.step}: {step.skipped ? `skipped (${step.skipped})` : step.error ? <span className="text-red-500">failed: {step.error}</span> : 'done'}
+                {step.seconds != null && !step.skipped ? ` · ${duration(step.seconds) || `${step.seconds} s`}` : ''}
+                {step.rows && (
+                  <span className="block text-caption1 text-text-secondary">
+                    {step.rows.length} rows ran: {step.rows.filter(row => row.why !== 'reference').map(row => `${describeOptions(row.label)} (${row.why})`).join('; ') || 'reference rows only'}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : <p className="text-footnote text-text-secondary">It has not run yet.</p>}
+    </div>
+  )
+}
+
 export default function ScannerLabSection() {
   const queryClient = useQueryClient()
   const { data, isError } = useQuery({
     queryKey: QUERY_KEY,
     queryFn: () => api.get('/card-match/status').then(response => response.data),
-    refetchInterval: query => (query.state.data?.job?.running ? 3000 : false),
+    refetchInterval: query => (query.state.data?.job?.running || query.state.data?.autorun_info?.state?.running ? 3000 : false),
     retry: false,
   })
   const shadow = useQuery({
@@ -1001,6 +1055,7 @@ export default function ScannerLabSection() {
             )}
           </div>
         </div>
+        <AutorunPanel info={data.autorun_info} onChanged={refresh} jobRunning={running} />
         <CustomModels models={data.custom_models || []} busy={busy} onChanged={refresh} />
         {pictureFirst.data?.counts && <PictureFirstView data={pictureFirst.data} onOpenDecidedWrong={data.misses ? openDecidedWrong : undefined} />}
         {shadow.data?.report && (shadow.data.enabled || shadow.data.report.compared > 0) && <ShadowView data={shadow.data} />}
