@@ -926,6 +926,8 @@ const nl = {
 
   // Card Scanner
   scanner: {
+    queueLoadFailed: 'Je scans konden niet worden geladen.',
+    queueTryAgain: 'Opnieuw proberen',
     title: 'Kaart scannen',
     subtitle: 'Maak een foto',
     alignCard: 'Lijn de kaart recht uit, met goed licht',

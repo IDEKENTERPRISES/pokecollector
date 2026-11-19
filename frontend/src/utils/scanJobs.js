@@ -16,6 +16,13 @@ export const SCAN_QUEUE_QUERY_KEY = ['scan-queue']
 
 export const queueIsActive = queue => Number(queue?.counts?.processing || 0) > 0
 
+// After a scan batch reaches the server: the list the trainer reviews and the job poll both have
+// to look again, or an empty cached answer keeps saying "nothing to review".
+export function refreshScanQueries(queryClient) {
+  queryClient?.invalidateQueries({ queryKey: SCAN_QUEUE_QUERY_KEY })
+  queryClient?.invalidateQueries({ queryKey: SCAN_JOBS_QUERY_KEY })
+}
+
 /**
  * Splits the flat queue for the review flow: `ready` (something to decide, in order, starting at `startId`
  * when given), `processing` (still being recognised, reached when ready), `skipped` (put back by the

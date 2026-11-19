@@ -930,6 +930,8 @@ const id = {
 
   // Card Scanner
   scanner: {
+    queueLoadFailed: 'Pindaian kamu tidak dapat dimuat.',
+    queueTryAgain: 'Coba lagi',
     title: 'Pindai kartu',
     subtitle: 'Ambil foto',
     alignCard: 'Luruskan kartu, pencahayaan baik',
