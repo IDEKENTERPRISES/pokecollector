@@ -41,6 +41,10 @@ MAX_PAYLOAD_BYTES = 4096
 MAX_FAILURES = 10
 PUSH_TTL_SECONDS = 86400
 PUSH_TIMEOUT_SECONDS = 10
+DEFAULT_FOREGROUND_WINDOW_SECONDS = 60
+PRESENCE_STATES = ("foreground", "background")
+# Pushes skipped because the device had the app open, since the process started (diagnostics).
+presence_stats = {"skipped_foreground": 0}
 ALERT_NAVIGATE_PATH = "/wishlist"
 
 # Exact hosts and dot-prefixed domain suffixes of the push services that browsers use.
@@ -278,20 +282,70 @@ def _record_failure(db: Session, sub: PushSubscription, reason: str) -> str:
     return "skipped"
 
 
-def send_to_user(db: Session, user_id: int, payload: dict | str) -> dict:
-    """Send a payload (dict or prepared JSON string) to every subscription of the user."""
+def foreground_window_seconds() -> int:
+    """How long a foreground heartbeat counts (env PUSH_FOREGROUND_WINDOW_SECONDS, default 60; 0 turns the skip off)."""
+    raw = (os.getenv("PUSH_FOREGROUND_WINDOW_SECONDS") or "").strip()
+    try:
+        value = int(raw) if raw else DEFAULT_FOREGROUND_WINDOW_SECONDS
+    except ValueError:
+        logger.warning(
+            "PUSH_FOREGROUND_WINDOW_SECONDS=%r is not a number; using %s", raw, DEFAULT_FOREGROUND_WINDOW_SECONDS
+        )
+        return DEFAULT_FOREGROUND_WINDOW_SECONDS
+    return max(0, value)
+
+
+def is_in_foreground(sub: PushSubscription, now: datetime.datetime) -> bool:
+    """True while the device last said "foreground" less than the window ago (and not "background" since)."""
+    window = foreground_window_seconds()
+    if window <= 0 or sub.app_state != "foreground" or sub.foreground_at is None:
+        return False
+    return (now - sub.foreground_at).total_seconds() < window
+
+
+def record_presence(db: Session, user_id: int, endpoint: str, state: str) -> bool:
+    """Store a device's presence. Returns False when the user has no subscription with that endpoint."""
+    if state not in PRESENCE_STATES:
+        raise ValueError("state must be foreground or background")
+    sub = db.query(PushSubscription).filter(
+        PushSubscription.endpoint == endpoint, PushSubscription.user_id == user_id
+    ).first()
+    if sub is None:
+        return False
+    sub.app_state = state
+    if state == "foreground":
+        sub.foreground_at = datetime.datetime.utcnow()
+    db.commit()
+    return True
+
+
+def send_to_user(db: Session, user_id: int, payload: dict | str, force: bool = False) -> dict:
+    """Send a payload (dict or prepared JSON string) to every subscription of the user.
+
+    A device that has the app open (see `is_in_foreground`) is skipped: the app shows the news itself, and
+    skipping happens here on the server so that no push goes out that would show nothing (iOS can drop a
+    subscription whose pushes show no notification). `force` sends to every device (test sends).
+    """
     body = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     if len(body.encode("utf-8")) > MAX_PAYLOAD_BYTES:
         raise ValueError("Push payload exceeds 4096 bytes")
 
     subs = db.query(PushSubscription).filter(PushSubscription.user_id == user_id).all()
-    result = {"sent": 0, "removed": 0}
+    result = {"sent": 0, "removed": 0}  # plus "skipped_foreground" when a device had the app open
     if not subs:
         return result
 
     vapid, _public = get_or_create_vapid_keys()
     now = datetime.datetime.utcnow()
     for sub in subs:
+        if not force and is_in_foreground(sub, now):
+            result["skipped_foreground"] = result.get("skipped_foreground", 0) + 1
+            presence_stats["skipped_foreground"] += 1
+            logger.info(
+                "Push skipped: user=%s subscription=%s reason=app_in_foreground total_skipped=%s",
+                user_id, sub.id, presence_stats["skipped_foreground"],
+            )
+            continue
         outcome = _send_one(db, sub, body, vapid, now)
         if outcome in result:
             result[outcome] += 1
@@ -301,7 +355,7 @@ def send_to_user(db: Session, user_id: int, payload: dict | str) -> dict:
 
 def send_test(db: Session, user_id: int) -> dict:
     payload = _encode_payload("PokéCollector", "Test notification", ALERT_NAVIGATE_PATH)
-    return send_to_user(db, user_id, payload)
+    return send_to_user(db, user_id, payload, force=True)  # a test must always arrive, even with the app open
 
 
 def send_price_alert(

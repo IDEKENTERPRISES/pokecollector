@@ -75,6 +75,22 @@ def unsubscribe(
     return Response(status_code=204)
 
 
+class PushPresenceRequest(BaseModel):
+    endpoint: str = Field(min_length=1, max_length=push_service.MAX_ENDPOINT_LENGTH)
+    state: str = Field(pattern="^(foreground|background)$")
+
+
+@router.post("/presence", status_code=204)
+def set_presence(
+    body: PushPresenceRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """This device has the app open ("foreground", repeated while it stays open) or has left it ("background")."""
+    push_service.record_presence(db, current_user.id, body.endpoint, body.state)
+    return Response(status_code=204)
+
+
 @router.post("/test")
 def send_test_notification(
     current_user: User = Depends(get_current_user),

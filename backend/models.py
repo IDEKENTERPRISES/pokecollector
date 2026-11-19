@@ -918,6 +918,10 @@ class PushSubscription(Base):
     last_seen_at = Column(DateTime, nullable=False, default=func.now())
     last_success_at = Column(DateTime, nullable=True)
     failure_count = Column(Integer, nullable=False, default=0)
+    # Presence: the app says when this device has it open ("foreground", repeated while it stays open)
+    # or has left it ("background"). A push to a device that is looking at the app is skipped.
+    app_state = Column(String(16), nullable=True)
+    foreground_at = Column(DateTime, nullable=True)
 
     __table_args__ = (UniqueConstraint("endpoint", name="uq_push_subscription_endpoint"),)
 
