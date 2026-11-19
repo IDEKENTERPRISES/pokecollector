@@ -26,6 +26,7 @@ const MAX_TRANSITION_MS = 1500
 // leaving such a page is instant instead.
 export const MAX_PAGE_SCREENS = 4
 const waiters = new Set()
+let activeTransition = null
 
 export function viewTransitionsSupported(doc = globalThis.document) {
   return typeof doc?.startViewTransition === 'function'
@@ -62,6 +63,15 @@ export function runViewTransition(update, { direction = 'push', doc = globalThis
     return null
   }
   const root = doc.documentElement
+  // A second navigation while one is still animating (a quick tap on Back, a double tap): finish the
+  // running one at once. Otherwise its cleanup would later strip `data-vt` from the new one (the page
+  // then stops sliding and the bars pop), and its timer would skip the new transition mid-flight.
+  const previous = activeTransition
+  if (previous) {
+    try { previous.transition.skipTransition?.() } catch { /* already finished */ }
+    previous.cancelTimer?.()
+    activeTransition = null
+  }
   root.dataset.vt = direction
   let transition
   try {
@@ -76,10 +86,26 @@ export function runViewTransition(update, { direction = 'push', doc = globalThis
     update()
     return null
   }
-  const clear = () => { delete root.dataset.vt }
-  win.setTimeout(() => { try { transition.skipTransition?.() } catch { /* already finished */ } }, MAX_TRANSITION_MS)
+  const mine = { transition, cancelTimer: null }
+  activeTransition = mine
+  const clear = () => {
+    // Only the newest transition owns `data-vt` and the active slot.
+    if (activeTransition !== mine) return
+    activeTransition = null
+    delete root.dataset.vt
+  }
+  const timer = win.setTimeout(() => {
+    try { transition.skipTransition?.() } catch { /* already finished */ }
+    clear()
+  }, MAX_TRANSITION_MS)
+  mine.cancelTimer = () => (win.clearTimeout ?? globalThis.clearTimeout)(timer)
   transition.finished?.then(clear, clear)
   return transition
+}
+
+/** True while a slide transition is running (used to ignore a second one and by tests). */
+export function viewTransitionRunning() {
+  return activeTransition !== null
 }
 
 /** True for a plain left click that the browser would handle as an in-page navigation. */
