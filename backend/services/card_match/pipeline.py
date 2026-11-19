@@ -103,6 +103,61 @@ WHOLE_CONFIDENCE_MIN = ocr_module.ACCEPT_CONFIDENCE  # 5) the number line's reco
 ROTATED_MIN_SIMILARITY = 0.45  # measuring a real rotation against the confirmed card: the turned view must also be this close
 
 
+# ── The picture thresholds as a table (version 16 test) ──────────────────────────────────────────────────────────
+# Every comparison of the decision rules against a picture similarity or a lead reads this table. The default table is the
+# constants above (read when it is built, so an env override or a test patch of a constant still counts). A custom picture model
+# scores on another scale than DINOv2-small, so the ``calibrated`` option gives it a table of its own (``calibration.py``).
+THRESHOLD_FIELDS = (
+    "sim_min_with_rules", "sim_min_picture_only", "lead_min_picture_only", "sim_min_picture_strong", "lead_min_picture_strong",
+    "sim_min_name_picture", "lead_min_name_picture", "lookup_sim_set", "lookup_sim_total", "whole_sim_min",
+    "reprint_art_lead", "same_name_picture_margin",
+)
+
+
+@dataclass(frozen=True)
+class Thresholds:
+    """What a picture score must reach for each rule. Similarities and leads are of the matcher's per-card picture score
+    (``_similarity``), except ``reprint_art_lead``, which is a gap of the artwork-only score (``_art_similarity``).
+    ``whole_sim_min`` is ``SIM_MIN_WITH_RULES + WHOLE_SIM_MARGIN`` as one number. ``same_name_picture_margin`` is a guard: a SMALLER
+    value is stricter (it refuses more); every other field is stricter when larger."""
+    sim_min_with_rules: float
+    sim_min_picture_only: float
+    lead_min_picture_only: float
+    sim_min_picture_strong: float
+    lead_min_picture_strong: float
+    sim_min_name_picture: float
+    lead_min_name_picture: float
+    lookup_sim_set: float
+    lookup_sim_total: float
+    whole_sim_min: float
+    reprint_art_lead: float
+    same_name_picture_margin: float
+
+    def as_dict(self) -> dict:
+        return {name: getattr(self, name) for name in THRESHOLD_FIELDS}
+
+    @classmethod
+    def from_dict(cls, values: dict | None) -> "Thresholds":
+        """The default table with the fields ``values`` names replaced (an unknown or non-number entry is ignored)."""
+        base = default_thresholds().as_dict()
+        for name in THRESHOLD_FIELDS:
+            value = (values or {}).get(name)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                base[name] = float(value)
+        return cls(**base)
+
+
+def default_thresholds() -> Thresholds:
+    """Today's constants (DINOv2-small's scale). Built on every call so patched or env-overridden constants are honoured."""
+    return Thresholds(
+        sim_min_with_rules=SIM_MIN_WITH_RULES, sim_min_picture_only=SIM_MIN_PICTURE_ONLY, lead_min_picture_only=LEAD_MIN_PICTURE_ONLY,
+        sim_min_picture_strong=SIM_MIN_PICTURE_STRONG, lead_min_picture_strong=LEAD_MIN_PICTURE_STRONG,
+        sim_min_name_picture=SIM_MIN_NAME_PICTURE, lead_min_name_picture=LEAD_MIN_NAME_PICTURE,
+        lookup_sim_set=LOOKUP_SIM_SET, lookup_sim_total=LOOKUP_SIM_TOTAL, whole_sim_min=SIM_MIN_WITH_RULES + WHOLE_SIM_MARGIN,
+        reprint_art_lead=REPRINT_ART_LEAD, same_name_picture_margin=SAME_NAME_PICTURE_MARGIN,
+    )
+
+
 @dataclass
 class MatchResult:
     status: str  # "decided" | "unsure"
@@ -162,16 +217,17 @@ def _timer() -> float:
     return time.perf_counter()
 
 
-def _lookup_near(card: dict) -> bool:
+def _lookup_near(card: dict, th: Thresholds | None = None) -> bool:
     """A printing found by its printed number may sit far down the picture ranking only with a unique number +
     total match and a picture that still agrees."""
+    th = th or default_thresholds()
     level, unique = card.get("_lookup"), card.get("_lookup_unique")
     if not unique:
         return False
     if level == "number_total_set":
-        return card["_rank"] <= LOOKUP_RANK_MAX and card["_similarity"] >= LOOKUP_SIM_SET
+        return card["_rank"] <= LOOKUP_RANK_MAX and card["_similarity"] >= th.lookup_sim_set
     if level == "number_total":
-        return card["_rank"] <= LOOKUP_RANK_MAX_TOTAL and card["_similarity"] >= LOOKUP_SIM_TOTAL
+        return card["_rank"] <= LOOKUP_RANK_MAX_TOTAL and card["_similarity"] >= th.lookup_sim_total
     return False
 
 
@@ -180,25 +236,26 @@ def _name_conflict(card: dict) -> bool:
     return bool(card.get("_name_known")) and card.get("_name_score", 0.0) <= 0.0
 
 
-def _reprint_choice(candidates: list[dict]) -> dict | None:
+def _reprint_choice(candidates: list[dict], th: Thresholds | None = None) -> dict | None:
     """Several printings of one name look alike: take the one whose artwork-only similarity is clearly highest,
     when the group as a whole is clearly the picture's answer. Never guesses: no artwork scores, no lead, no choice."""
     from . import names
 
+    th = th or default_thresholds()
     ranked = sorted(candidates, key=lambda card: card["_rank"])
-    if len(ranked) < 2 or ranked[0]["_similarity"] < SIM_MIN_PICTURE_ONLY:
+    if len(ranked) < 2 or ranked[0]["_similarity"] < th.sim_min_picture_only:
         return None
     key = names.name_key(ranked[0].get("name") or "")
     group = [card for card in ranked if names.name_key(card.get("name") or "") == key]
     if not key or len(group) < 2 or any(card.get("_art_similarity") is None for card in group):
         return None
     others = [card for card in ranked if card not in group]
-    if others and group[0]["_similarity"] - others[0]["_similarity"] < LEAD_MIN_PICTURE_ONLY:
+    if others and group[0]["_similarity"] - others[0]["_similarity"] < th.lead_min_picture_only:
         return None
     by_art = sorted(group, key=lambda card: -card["_art_similarity"])
     lead = by_art[0]["_art_similarity"] - by_art[1]["_art_similarity"]
     winner = by_art[0]
-    if lead < REPRINT_ART_LEAD or winner["_similarity"] < SIM_MIN_PICTURE_ONLY or winner["_rank"] > 5:
+    if lead < th.reprint_art_lead or winner["_similarity"] < th.sim_min_picture_only or winner["_rank"] > 5:
         return None
     return {"candidate": winner, "mechanism": "reprint_art_lead", "lead": round(lead, 4)}
 
@@ -210,19 +267,21 @@ def _total_contradiction(card_info: dict, card: dict) -> bool:
     return rules._printed_total_signal(card_info.get("number_total"), card.get("printed_total")) == 2
 
 
-def _closer_same_name(chosen: dict, candidates: list[dict]) -> dict | None:
+def _closer_same_name(chosen: dict, candidates: list[dict], th: Thresholds | None = None) -> dict | None:
     """Another printing of the chosen card's name whose picture is closer by more than ``SAME_NAME_PICTURE_MARGIN``."""
     from . import names
 
+    margin = (th or default_thresholds()).same_name_picture_margin
     key = names.name_key(chosen.get("name") or "")
     if not key:
         return None
     rivals = [c for c in candidates if c is not chosen and names.name_key(c.get("name") or "") == key
-              and c["_similarity"] - chosen["_similarity"] > SAME_NAME_PICTURE_MARGIN]
+              and c["_similarity"] - chosen["_similarity"] > margin]
     return max(rivals, key=lambda c: c["_similarity"]) if rivals else None
 
 
-def whole_number_problem(card_info: dict, chosen: dict, *, number_source: str | None, number_confidence: float | None) -> str | None:
+def whole_number_problem(card_info: dict, chosen: dict, *, number_source: str | None, number_confidence: float | None,
+                         th: Thresholds | None = None) -> str | None:
     """Version 10 (``wholestrict``): why a decision resting on a number read only from the whole picture is refused, or None when it may
     stand. Only ever refuses; a number from the finder's card is not judged here."""
     from api import recognize as rules
@@ -234,7 +293,7 @@ def whole_number_problem(card_info: dict, chosen: dict, *, number_source: str | 
         return None  # the picture decided and the number named nothing: the number is not what this decision rests on
     if not card_info.get("number_total") or rules._printed_total_signal(card_info.get("number_total"), candidate.get("printed_total")) != 0:
         return "whole_number_total_not_confirmed"
-    if candidate["_rank"] > WHOLE_PICK_RANK_MAX or candidate["_similarity"] < SIM_MIN_WITH_RULES + WHOLE_SIM_MARGIN:
+    if candidate["_rank"] > WHOLE_PICK_RANK_MAX or candidate["_similarity"] < (th or default_thresholds()).whole_sim_min:
         return "whole_number_picture_too_weak"
     if _name_conflict(candidate):
         return "whole_number_name_conflict"
@@ -245,22 +304,23 @@ def whole_number_problem(card_info: dict, chosen: dict, *, number_source: str | 
 
 def decide(card_info: dict, candidates: list[dict], *, reprint: bool = False, fallback: bool = False,
            number_read: bool = True, whole_strict: bool = False, number_source: str | None = None,
-           number_confidence: float | None = None) -> tuple[dict | None, str | None]:
+           number_confidence: float | None = None, th: Thresholds | None = None) -> tuple[dict | None, str | None]:
     """The lanes of ``_decide_lanes``, then one check that holds for every lane: a card whose printed total contradicts a
     total that was read is never decided (the number lanes check it for the printing they choose; the picture-only lanes
     had no number to compare, but a read total alone can still rule a printing out)."""
-    chosen, reason = _decide_lanes(card_info, candidates, reprint=reprint, fallback=fallback, number_read=number_read)
+    th = th or default_thresholds()
+    chosen, reason = _decide_lanes(card_info, candidates, reprint=reprint, fallback=fallback, number_read=number_read, th=th)
     if chosen is not None and _total_contradiction(card_info, chosen["candidate"]):
         return None, "total_contradicts_read"
     if chosen is not None and whole_strict:
-        problem = whole_number_problem(card_info, chosen, number_source=number_source, number_confidence=number_confidence)
+        problem = whole_number_problem(card_info, chosen, number_source=number_source, number_confidence=number_confidence, th=th)
         if problem:
             return None, problem
     return chosen, reason
 
 
 def _decide_lanes(card_info: dict, candidates: list[dict], *, reprint: bool = False, fallback: bool = False,
-                  number_read: bool = True) -> tuple[dict | None, str | None]:
+                  number_read: bool = True, th: Thresholds | None = None) -> tuple[dict | None, str | None]:
     """(chosen candidate + mechanism, or None + reason) from OCR'd identifiers and picture scores.
 
     Each candidate carries ``_similarity``, ``_rank`` (1 = closest picture) and ``_lead`` for the top one.
@@ -271,6 +331,7 @@ def _decide_lanes(card_info: dict, candidates: list[dict], *, reprint: bool = Fa
     """
     from api import recognize as rules  # the existing rules; imported here so this package imports cheaply
 
+    th = th or default_thresholds()
     if not candidates:
         return None, "no_picture_matches"
     if fallback and not (number_read and card_info.get("number_local")):
@@ -288,39 +349,39 @@ def _decide_lanes(card_info: dict, candidates: list[dict], *, reprint: bool = Fa
                 return None, "number_lookup_conflicts_with_name"  # picture, number and name must agree
             if _total_contradiction(card_info, chosen):
                 return None, "total_contradicts_read"
-            if _closer_same_name(chosen, candidates) is not None:
+            if _closer_same_name(chosen, candidates, th) is not None:
                 return None, "closer_printing_of_same_name"
-            if chosen["_similarity"] >= SIM_MIN_WITH_RULES and (near or _lookup_near(chosen)):
+            if chosen["_similarity"] >= th.sim_min_with_rules and (near or _lookup_near(chosen, th)):
                 return {"candidate": chosen, "mechanism": mechanism, "lead": round(lead, 4)}, None
             return None, "rules_choice_not_close_in_picture"
         if not number_hits:
-            if not fallback and top_picture["_similarity"] >= SIM_MIN_PICTURE_STRONG and lead >= LEAD_MIN_PICTURE_STRONG:
+            if not fallback and top_picture["_similarity"] >= th.sim_min_picture_strong and lead >= th.lead_min_picture_strong:
                 return {"candidate": top_picture, "mechanism": "picture_lead_strong", "lead": round(lead, 4)}, None
             return None, "number_not_among_picture_matches"
         # The number matches several printings: the picture breaks the tie only when it is clear.
         if len(number_hits) > 1:
             number_hits.sort(key=lambda card: card["_rank"])
             gap = number_hits[0]["_similarity"] - number_hits[1]["_similarity"]
-            if gap >= LEAD_MIN_PICTURE_ONLY and number_hits[0]["_similarity"] >= SIM_MIN_WITH_RULES:
+            if gap >= th.lead_min_picture_only and number_hits[0]["_similarity"] >= th.sim_min_with_rules:
                 pick = number_hits[0]
                 if _total_contradiction(card_info, pick):
                     return None, "total_contradicts_read"
-                if _closer_same_name(pick, candidates) is not None:
+                if _closer_same_name(pick, candidates, th) is not None:
                     return None, "closer_printing_of_same_name"
                 return {"candidate": pick, "mechanism": "number_and_picture", "lead": round(gap, 4)}, None
-        if reprint and not fallback and (found := _reprint_choice(candidates)):
+        if reprint and not fallback and (found := _reprint_choice(candidates, th)):
             return found, None
         return None, "number_matches_several_printings"
-    if top_picture["_similarity"] >= SIM_MIN_PICTURE_ONLY and lead >= LEAD_MIN_PICTURE_ONLY:
+    if top_picture["_similarity"] >= th.sim_min_picture_only and lead >= th.lead_min_picture_only:
         return {"candidate": top_picture, "mechanism": "picture_lead", "lead": round(lead, 4)}, None
-    if (top_picture.get("_name_score", 0.0) >= NAME_AGREES and top_picture["_similarity"] >= SIM_MIN_NAME_PICTURE
-            and lead >= LEAD_MIN_NAME_PICTURE):
+    if (top_picture.get("_name_score", 0.0) >= NAME_AGREES and top_picture["_similarity"] >= th.sim_min_name_picture
+            and lead >= th.lead_min_name_picture):
         return {"candidate": top_picture, "mechanism": "name_and_picture", "lead": round(lead, 4)}, None
     if (top_picture.get("_text_score", 0.0) >= TEXT_AGREES and top_picture.get("_text_cards", 99) <= TEXT_MAX_CARDS
             and not _name_conflict(top_picture)
-            and top_picture["_similarity"] >= SIM_MIN_NAME_PICTURE and lead >= LEAD_MIN_NAME_PICTURE):
+            and top_picture["_similarity"] >= th.sim_min_name_picture and lead >= th.lead_min_name_picture):
         return {"candidate": top_picture, "mechanism": "text_and_picture", "lead": round(lead, 4)}, None
-    if reprint and (found := _reprint_choice(candidates)):
+    if reprint and (found := _reprint_choice(candidates, th)):
         return found, None
     return None, "no_number_and_picture_not_clear"
 
@@ -382,6 +443,7 @@ class CardMatcher:
         number_once: bool = False, corners: bool = False, wholepic: bool = False, trustrejected: bool = False,
         wholeread: bool = False, wholestrict: bool = False, widefirst: bool = False, topname: bool = False, edgeguard: bool = False,
         serverocr: bool = False, server_reader=None,
+        thresholds: Thresholds | None = None,
     ) -> None:
         self.index = index
         self.embedder = embedder
@@ -402,6 +464,7 @@ class CardMatcher:
         self.trustrejected = trustrejected  # a refused quad with the guide crop used is decided by the normal rules, not the strict fallback ones
         self.wholeread = wholeread  # version 9: a guide picture whose number was not read from the finder's card is read once more from the whole picture
         self.wholestrict = wholestrict  # version 10: a number read only from the whole picture decides only under ``whole_number_problem``'s rules
+        self.thresholds = thresholds  # version 16 test: a custom model's own picture thresholds (None: the default table)
         self.edgeguard = edgeguard  # version 14 test: an outline touching 2+ frame edges or far bigger than the guide is not trusted
         self.serverocr = serverocr  # version 15 test: a number still incomplete after the whole reading is read once more by the PP-OCRv4 server models
         self._server_reader = server_reader  # the second engine (tests pass a fake); built only when it is first needed
@@ -753,7 +816,8 @@ class CardMatcher:
         chosen, reason = decide(card_info, candidates, reprint=self.reprint, fallback=fallback is not None and not trusted,
                                 number_read=bool(ocr_result and ocr_result.number_local and not looked_up),
                                 whole_strict=self.wholestrict, number_source=getattr(ocr_result, "number_source", None) if ocr_result else None,
-                                number_confidence=getattr(ocr_result, "number_confidence", None) if ocr_result else None)
+                                number_confidence=getattr(ocr_result, "number_confidence", None) if ocr_result else None,
+                                th=getattr(self, "thresholds", None))
         timings["decide"] = (_timer() - t0) * 1000
         timings["total"] = sum(timings.values())
 

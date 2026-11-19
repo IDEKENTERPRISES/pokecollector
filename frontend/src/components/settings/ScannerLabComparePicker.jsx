@@ -7,8 +7,8 @@ import { GitCompare } from 'lucide-react'
  * selection is remembered per browser. See docs/CARD_MATCH.md, "Choosing which rows to run".
  */
 
-export const GROUP_ORDER = ['history', 'v10 kept', 'v12', 'v14', 'v15', 'custom']
-export const GROUP_NAMES = { history: 'History', 'v10 kept': 'v10 kept set', v12: 'v12 reading options', v14: 'v14 edge guard', v15: 'v15 server OCR', custom: 'Custom model' }
+export const GROUP_ORDER = ['history', 'v10 kept', 'v12', 'v14', 'v15', 'v16', 'custom']
+export const GROUP_NAMES = { history: 'History', 'v10 kept': 'v10 kept set', v12: 'v12 reading options', v14: 'v14 edge guard', v15: 'v15 server OCR', v16: 'v16 custom model thresholds', custom: 'Custom model' }
 const STORAGE_PREFIX = 'scanner-lab-compare-rows-'
 
 /** The saved selection for one comparison kind, or null (nothing saved, or storage is not available). */

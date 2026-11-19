@@ -264,6 +264,7 @@ def _finish_report(kind: str, started: float, index: CardIndex, matcher, results
                    "peak_rss_mb": round(peak, 1) if peak is not None else None, "extra_mb": extra_ram},
         "metrics": metrics, "groups": groups, "by_scan_time": by_scan_time, "undecided_first_right": undecided_right, "fallback": fallback_group, "corners_check": None, "picture_only_sweep": sweep, "timings_ms": timings, "pass_bar": bar,
         "thresholds": thresholds(),
+        "picture_thresholds": (getattr(matcher, "thresholds", None) or _default_table()).as_dict(),  # the table the rules used (version 16 test)
         "failures": [r for r in results if (r["rank"] != 1 or (r["decided"] and not r["decided_right"]))][:25],
         **extra,
     }
@@ -369,6 +370,12 @@ def picture_only_sweep(results: list[dict]) -> list[dict]:
                 "trap_n": len(traps),
             })
     return rows
+
+
+def _default_table():
+    from . import pipeline
+
+    return pipeline.default_thresholds()
 
 
 def thresholds() -> dict:
@@ -697,9 +704,9 @@ def run_labelled(
 COMPARE_MIN_GAIN = 0.5  # points of top-20 or decided a challenger must add to replace the plainer option set
 
 
-def compare_row(label: str, report: dict | None, *, missing: list[str] | None = None) -> dict:
+def compare_row(label: str, report: dict | None, *, missing: list[str] | None = None, reason: str | None = None) -> dict:
     if report is None:
-        return {"label": label, "status": "skipped", "missing_indexes": missing or []}
+        return {"label": label, "status": "skipped", "missing_indexes": missing or [], "reason": reason}
     m = report["metrics"]
     timings = report.get("timings_ms", {}).get("total", {})
     return {
@@ -821,8 +828,9 @@ def run_compare(
             break
         options = variants.parse(label)
         missing = variants.missing_indexes(options, data_dir)
-        if missing:
-            rows.append({**compare_row(label, None, missing=missing), "reference": label in reference})
+        problem = None if missing else variants.calibration_problem(options, data_dir)  # version 16: custom + calibrated, but not calibrated yet
+        if missing or problem:
+            rows.append({**compare_row(label, None, missing=missing, reason=problem), "reference": label in reference})
             continue
         matcher = variants.build_matcher(options, session_factory, data_dir=data_dir, ocr_reader=ocr_reader)
 

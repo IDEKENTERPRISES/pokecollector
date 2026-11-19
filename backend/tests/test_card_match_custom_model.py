@@ -296,5 +296,56 @@ class IndexAndDeleteTests(CustomModelTestCase):
         self.assertEqual(len(custom_models.list_models(self.dir)), 1)
 
 
+@skip
+class CalibrateRouteTests(CustomModelTestCase):
+    """Version 16 test: ``POST /api/card-match/models/<id>/calibrate`` (the job itself is in test_card_match_v16.py)."""
+
+    def registered(self):
+        entry = {"id": "custom-abcd1234", "name": "Mine", "sha256": "a" * 64, "uploaded_at": "2026-11-19T00:00:00+00:00", "uploaded_by": "oak",
+                 "size_bytes": 1, "dim": 384, "input_size": 224, "mean": [0, 0, 0], "std": [1, 1, 1]}
+        custom_models._write_registry([entry], self.dir)
+        return entry
+
+    def test_admin_only_and_unknown_models(self):
+        self.registered()
+        self.current = self.user
+        self.assertEqual(self.client.post("/api/card-match/models/custom-abcd1234/calibrate").status_code, 403)
+        self.current = self.admin
+        self.assertEqual(self.client.post("/api/card-match/models/custom-00000000/calibrate").status_code, 404)
+        self.assertEqual(self.client.post("/api/card-match/models/nonsense/calibrate").status_code, 404)
+
+    def test_it_refuses_without_the_indexes_and_says_which(self):
+        self.registered()
+        response = self.client.post("/api/card-match/models/custom-abcd1234/calibrate")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("custom-abcd1234", response.json()["detail"])
+
+    def test_it_starts_the_job_and_audits_a_stored_calibration(self):
+        self.registered()
+        for name in ("custom-abcd1234", "custom-abcd1234-art", variants.ART_INDEX, "dinov2-small"):
+            self.fake_index(name)
+        seen = {}
+
+        def start(model_id, on_stored):
+            seen["model"] = model_id
+            on_stored({"scans": 120, "thresholds": {"sim_min_picture_only": 0.9}, "default": {"sim_min_picture_only": 0.8}})
+            return True, {"running": True}
+
+        with patch("api.card_match._ocr_available", return_value=True), patch.object(jobs, "start_calibration", side_effect=start),                 patch("database.SessionLocal", self.Session):
+            response = self.client.post("/api/card-match/models/custom-abcd1234/calibrate")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(seen["model"], "custom-abcd1234")
+        rows = self.Session().query(AuditLog).filter(AuditLog.action == "card_match.model_calibrated").all()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].target_id, "custom-abcd1234")
+        self.assertIn("0.9", rows[0].details)
+
+    def test_the_listing_shows_the_stored_calibration(self):
+        entry = self.registered()
+        self.assertIsNone(self.client.get("/api/card-match/models").json()["models"][0]["calibration"])
+        custom_models.store_calibration(entry["id"], {"at": "x", "scans": 120, "thresholds": {"sim_min_picture_only": 0.9}, "default": {}}, self.dir)
+        self.assertEqual(self.client.get("/api/card-match/models").json()["models"][0]["calibration"]["scans"], 120)
+
+
 if __name__ == "__main__":
     unittest.main()

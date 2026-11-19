@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { Hammer, Trash2, Upload } from 'lucide-react'
+import { Gauge, Hammer, Trash2, Upload } from 'lucide-react'
 import api from '../../api/client'
 
 const button = 'inline-flex min-h-[32px] flex-shrink-0 items-center gap-1.5 rounded-full bg-accent/20 px-3.5 text-subheadline font-semibold text-tint ios-press disabled:opacity-40'
@@ -16,17 +16,50 @@ export function indexState(index) {
   return index?.built ? `${number(index.count)} pictures` : 'not built'
 }
 
+const THRESHOLD_ROWS = [
+  ['sim_min_with_rules', 'Picture floor with a number'], ['whole_sim_min', 'Number read from the whole picture'],
+  ['sim_min_picture_only', 'Picture alone: similarity'], ['lead_min_picture_only', 'Picture alone: lead'],
+  ['sim_min_picture_strong', 'Number names nothing: similarity'], ['lead_min_picture_strong', 'Number names nothing: lead'],
+  ['sim_min_name_picture', 'Name agrees: similarity'], ['lead_min_name_picture', 'Name agrees: lead'],
+  ['lookup_sim_set', 'Number lookup + set: similarity'], ['lookup_sim_total', 'Number lookup: similarity'],
+  ['reprint_art_lead', 'Reprint tie-break: artwork lead'], ['same_name_picture_margin', 'Closer same-name printing: margin'],
+]
+
+const value = v => (v === null || v === undefined ? '–' : Number(v).toFixed(2))
+
+/** The calibrated thresholds of one model: default value → this model's value. */
+export function CalibrationTable({ calibration }) {
+  if (!calibration?.thresholds) return null
+  return (
+    <div className="space-y-1" data-testid="scanner-lab-calibration">
+      <p className="text-footnote text-text-secondary">
+        Calibrated {String(calibration.at || '').slice(0, 16).replace('T', ' ')} UTC on {number(calibration.scans)} Tuned scans (default → this model)
+      </p>
+      <table className="w-full text-footnote tabular-nums">
+        <tbody>
+          {THRESHOLD_ROWS.map(([key, label]) => (
+            <tr key={key}>
+              <td className="pr-2">{label}</td>
+              <td className="text-right" data-testid={`scanner-lab-calibration-${key}`}>{value(calibration.default?.[key])} → {value(calibration.thresholds[key])}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 /**
  * The "Custom picture models" block of Scanner lab: every uploaded model with its size, short checksum, who uploaded it
  * and when, the state of its two indexes and the build buttons, plus the upload control and delete.
  * Presentational: ``CustomModels`` below holds the state.
  */
-export function CustomModelsView({ models, busy, uploading, progress, error, onUpload, onBuild, onDelete, fileInput }) {
+export function CustomModelsView({ models, busy, uploading, progress, error, onUpload, onBuild, onDelete, onCalibrate, fileInput }) {
   return (
     <div className="space-y-2 border-t border-separator px-4 py-3" data-testid="scanner-lab-custom-models">
       <h3 className="text-subheadline font-semibold">Custom picture models</h3>
       <p className="text-footnote text-text-secondary">
-        An ONNX model with the same input and output as the default one (docs/CARD_MATCH.md). Build its two indexes, then use "Compare options (real scans)": the rows ending in +custom use the newest model.
+        An ONNX model with the same input and output as the default one (docs/CARD_MATCH.md). Build its two indexes, then use "Compare options (real scans)": the rows ending in +custom use the newest model. "Calibrate thresholds" works out the model's own picture thresholds from your real scans (the "+calibrated" row uses them).
       </p>
       {models.length === 0 && <p className="text-footnote text-text-secondary" data-testid="scanner-lab-custom-empty">No custom model uploaded.</p>}
       <ul className="space-y-3">
@@ -42,6 +75,7 @@ export function CustomModelsView({ models, busy, uploading, progress, error, onU
             <p className="text-footnote" data-testid={`scanner-lab-custom-${model.id}-status`}>
               Whole card: {indexState(model.indexes?.whole)} · Artwork: {indexState(model.indexes?.art)}
             </p>
+            <CalibrationTable calibration={model.calibration} />
             <div className="flex flex-wrap gap-2">
               {['whole', 'art'].map(kind => {
                 const index = model.indexes?.[kind] || {}
@@ -51,6 +85,9 @@ export function CustomModelsView({ models, busy, uploading, progress, error, onU
                   </button>
                 )
               })}
+              <button type="button" className={button} disabled={busy || !model.indexes?.whole?.built || !model.indexes?.art?.built} onClick={() => onCalibrate?.(model)} data-testid={`scanner-lab-calibrate-${model.id}`}>
+                <Gauge size={13} aria-hidden="true" /> {model.calibration ? 'Recalibrate thresholds' : 'Calibrate thresholds'}
+              </button>
               <button type="button" className={button} disabled={busy} onClick={() => onDelete(model)} data-testid={`scanner-lab-delete-${model.id}`}>
                 <Trash2 size={13} aria-hidden="true" /> Delete
               </button>
@@ -92,6 +129,7 @@ export default function CustomModels({ models, busy, onChanged }) {
     onSuccess: onChanged,
   })
   const remove = useMutation({ mutationFn: id => api.delete(`/card-match/models/${id}`).then(r => r.data), onSuccess: onChanged })
+  const calibrate = useMutation({ mutationFn: id => api.post(`/card-match/models/${id}/calibrate`).then(r => r.data), onSuccess: onChanged })
   const build = useMutation({ mutationFn: name => api.post('/card-match/index', { name }).then(r => r.data), onSuccess: onChanged })
 
   const onUpload = event => {
@@ -105,11 +143,11 @@ export default function CustomModels({ models, busy, onChanged }) {
   const onDelete = model => {
     if (window.confirm(`Delete "${model.name}" and both its indexes? This cannot be undone.`)) remove.mutate(model.id)
   }
-  const detail = upload.error?.response?.data?.detail || remove.error?.response?.data?.detail || build.error?.response?.data?.detail
+  const detail = upload.error?.response?.data?.detail || remove.error?.response?.data?.detail || build.error?.response?.data?.detail || calibrate.error?.response?.data?.detail
   return (
     <CustomModelsView
-      models={models} busy={busy || remove.isPending || build.isPending || upload.isPending} uploading={upload.isPending} progress={progress}
-      error={localError || (typeof detail === 'string' ? detail : '')} onUpload={onUpload} onBuild={name => build.mutate(name)} onDelete={onDelete} fileInput={fileInput}
+      models={models} busy={busy || remove.isPending || build.isPending || calibrate.isPending || upload.isPending} uploading={upload.isPending} progress={progress}
+      error={localError || (typeof detail === 'string' ? detail : '')} onUpload={onUpload} onBuild={name => build.mutate(name)} onCalibrate={model => calibrate.mutate(model.id)} onDelete={onDelete} fileInput={fileInput}
     />
   )
 }
