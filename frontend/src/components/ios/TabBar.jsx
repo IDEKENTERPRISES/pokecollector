@@ -95,7 +95,7 @@ export default function TabBar() {
   const { t } = useSettings()
   const { user } = useAuth()
   const { isOpen: scannerOpen, openScanner } = useScanner()
-  const keyboardOpen = useKeyboardOpen()
+  const keyboardOpen = useKeyboardOpen(location.key)
 
   useEffect(() => {
     const idle = window.requestIdleCallback ?? (cb => window.setTimeout(cb, 1500))
