@@ -215,7 +215,7 @@ def art_index_name(options: Options, data_dir: Path | None = None, custom_name: 
 
 def calibration_problem(options: Options, data_dir: Path | None = None) -> str | None:
     """Why a ``custom+calibrated`` row cannot run yet: the newest custom model has no calibration (None when it has one, or the row does not use it)."""
-    if not (options.custom and options.calibrated):
+    if not (getattr(options, "custom", False) and getattr(options, "calibrated", False)):
         return None
     entry = custom_models.newest(data_dir)
     if entry is not None and custom_models.calibrated_thresholds(entry):
@@ -228,7 +228,7 @@ def thresholds_for(options: Options, data_dir: Path | None = None):
     ``custom`` + ``calibrated`` (when it has one), else None (the default table)."""
     from . import pipeline
 
-    if not (options.custom and options.calibrated):
+    if not (getattr(options, "custom", False) and getattr(options, "calibrated", False)):
         return None
     table = custom_models.calibrated_thresholds(custom_models.newest(data_dir))
     return pipeline.Thresholds.from_dict(table) if table else None
