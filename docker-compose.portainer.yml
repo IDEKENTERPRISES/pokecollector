@@ -29,9 +29,11 @@ services:
               count: 1
               capabilities: [gpu]
     environment:
-      # Display currency for new users (and anyone who has not chosen one), e.g. GBP. Unset means EUR.
-      # Set it in the stack's environment in Portainer, not here.
-      # DEFAULT_CURRENCY: ${DEFAULT_CURRENCY:-EUR}
+      # Display currency for new users (and anyone who has not chosen one), e.g. GBP. Set DEFAULT_CURRENCY in the
+      # Portainer stack's environment (stack variables only reach the container through this line); unset means EUR.
+      DEFAULT_CURRENCY: ${DEFAULT_CURRENCY:-EUR}
+      # Seconds after its last "app is open" report that a phone gets no push (the app shows the news itself). 0 turns it off.
+      PUSH_FOREGROUND_WINDOW_SECONDS: ${PUSH_FOREGROUND_WINDOW_SECONDS:-60}
       # Picture matcher on the GPU (auto = GPU when it works, else CPU), kept warm: models load at startup and run one dummy scan.
       CARD_MATCH_DEVICE: auto
       CARD_MATCH_GPU_MEM_MB: "1024"

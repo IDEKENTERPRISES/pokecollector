@@ -76,8 +76,11 @@ update check. Reverting to the previous image tag also works.
 
 `DEFAULT_CURRENCY` (for example `GBP`) sets the display currency for new users and for users
 who have not picked one. It is case-insensitive; an unsupported code logs a warning and falls
-back to `EUR`. A currency someone chose in Settings is never changed. Set it in the stack's
-environment (Portainer), not in the compose file.
+back to `EUR`. A currency someone chose in Settings is never changed. Set it as a variable in
+the Portainer stack's environment: `docker-compose.portainer.yml` passes it to the backend
+(`DEFAULT_CURRENCY: ${DEFAULT_CURRENCY:-EUR}`), and a stack variable the compose file does not
+list never reaches the container. Recreate the backend after changing it.
+`PUSH_FOREGROUND_WINDOW_SECONDS` (default `60`) is passed through the same way.
 
 ### Push notification key
 
