@@ -954,7 +954,11 @@ input:-webkit-autofill:focus {
 /* Slide transitions for push and back (navigation/viewTransition.js). While a transition runs the
    page slides and the bars stay put; tab switches never use this. */
 @media (prefers-reduced-motion: no-preference) {
-  html[data-vt] .vt-page { view-transition-name: shell-page; }
+  /* The page is captured as a picture. <main> has no background of its own (the page colour comes from
+     body), so the incoming picture was see-through wherever a page has no content and the outgoing page
+     showed through it for the whole slide. An opaque page colour (the same --color-bg as body) makes the
+     incoming page cover the one sliding away. Only while a transition runs. */
+  html[data-vt] .vt-page { view-transition-name: shell-page; background-color: var(--color-bg); }
   html[data-vt] .vt-navbar { view-transition-name: shell-navbar; }
   html[data-vt] .vt-tabbar { view-transition-name: shell-tabbar; }
   ::view-transition-group(shell-navbar),
