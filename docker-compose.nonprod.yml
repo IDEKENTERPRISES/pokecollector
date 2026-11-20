@@ -44,6 +44,9 @@ services:
       # Empty on purpose: this stack is where option sets are compared, so the comparison's own pick
       # (chosen.json) is used here, not the set docker-compose.portainer.yml pins for prod.
       CARD_MATCH_OPTIONS: ""
+      # ... and so are the custom model and its calibration: nonprod uses its newest uploaded model and that model's own calibration.
+      CARD_MATCH_CUSTOM_MODEL: ""
+      CARD_MATCH_CUSTOM_CALIBRATION: ""
       # Shadow mode (docs/CARD_MATCH.md): run the matcher on every stored scan photo once, in the background,
       # and record what it would have decided in the scan trace. Nothing changes for trainers. Prod does not set it.
       SCAN_MATCHER_SHADOW: "1"

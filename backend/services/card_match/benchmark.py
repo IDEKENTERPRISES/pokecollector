@@ -95,6 +95,20 @@ def timing_summary(rows: list[dict]) -> dict:
     return out
 
 
+def serverocr_summary(tries: list[dict]) -> dict | None:
+    """Version 15 (``serverocr``): how many scans ran the second try, how many of those got a complete number, and its time (median, p95, ms).
+    None when no scan ran it (the option is off, or every first read was complete)."""
+    if not tries:
+        return None
+    times = [float(t["ms"]) for t in tries if t.get("ms") is not None]
+    return {
+        "ran": len(tries), "complete": sum(1 for t in tries if t.get("complete")), "rescued": sum(1 for t in tries if t.get("rescued")),
+        "errors": sum(1 for t in tries if t.get("error")),
+        "median_ms": round(statistics.median(times), 1) if times else None, "p95_ms": round(percentile(times, 0.95), 1) if times else None,
+        "device": next((t.get("device") for t in tries if t.get("device")), None),
+    }
+
+
 def pct(part: int, whole: int) -> float | None:
     return round(100 * part / whole, 1) if whole else None
 
@@ -187,6 +201,7 @@ def _finish_report(kind: str, started: float, index: CardIndex, matcher, results
     number_exact = sum(1 for r in results if r["number_exact"])
     name_known = [r for r in results if r.get("name_read") is not None]
     number_times = [r["number_ms"] for r in results if r.get("number_ms") is not None]
+    second_tries = [r["serverocr"] for r in results if r.get("serverocr")]  # version 15: the scans whose number was read a second time by the server models
     total_exact = sum(1 for r in results if r.get("total_exact"))
     decided = [r for r in results if r["decided"]]
     decided_right = sum(1 for r in decided if r["decided_right"])
@@ -222,6 +237,7 @@ def _finish_report(kind: str, started: float, index: CardIndex, matcher, results
         "name_read_pct": pct(sum(1 for r in name_known if r["name_read"]), len(name_known)),  # version 12 test: the confirmed card's name read right
         "number_ms_mean": round(statistics.fmean(number_times), 1) if number_times else None,  # mean time the number steps took per photo
         "total_exact_pct": pct(total_exact, n) if kind == "synthetic" else None,
+        "serverocr": serverocr_summary(second_tries),
         "decided_pct": pct(len(decided), n), "decided_right_pct": pct(decided_right, len(decided)),
         "decided_wrong": len(decided) - decided_right,
         "mechanisms": {m: {"used": c, "right": mechanism_right[m]} for m, c in mechanisms.items()},
@@ -248,6 +264,7 @@ def _finish_report(kind: str, started: float, index: CardIndex, matcher, results
                    "peak_rss_mb": round(peak, 1) if peak is not None else None, "extra_mb": extra_ram},
         "metrics": metrics, "groups": groups, "by_scan_time": by_scan_time, "undecided_first_right": undecided_right, "fallback": fallback_group, "corners_check": None, "picture_only_sweep": sweep, "timings_ms": timings, "pass_bar": bar,
         "thresholds": thresholds(),
+        "picture_thresholds": (getattr(matcher, "thresholds", None) or _default_table()).as_dict(),  # the table the rules used (version 16 test)
         "failures": [r for r in results if (r["rank"] != 1 or (r["decided"] and not r["decided_right"]))][:25],
         **extra,
     }
@@ -355,6 +372,12 @@ def picture_only_sweep(results: list[dict]) -> list[dict]:
     return rows
 
 
+def _default_table():
+    from . import pipeline
+
+    return pipeline.default_thresholds()
+
+
 def thresholds() -> dict:
     from . import pipeline
 
@@ -442,6 +465,7 @@ def _score(outcome, entry: dict, settings: dict, corners, card_width: float) -> 
         "mechanism": decision["mechanism"] if decision else None, "unsure_reason": outcome.unsure_reason,
         "timings_ms": outcome.timings_ms,
         "name_read": _name_read(outcome, entry["name"]), "number_ms": ocr_module.number_read_ms(outcome.ocr.get("strips")),
+        "serverocr": outcome.ocr.get("serverocr"),
     }
 
 
@@ -603,7 +627,7 @@ def run_labelled(
             "resolution": resolution, "batch": scan_batch(data), "fallback": outcome.detection.get("fallback"),
             "number_exact": bool(number_local and truth_number and _numbers_equal(number_local, truth_number)),
             "name_read": _name_read(outcome, next((m["name"] for m in outcome.matches if m["card_id"] == truth_id), None)),
-            "number_ms": ocr_module.number_read_ms(outcome.ocr.get("strips")),
+            "number_ms": ocr_module.number_read_ms(outcome.ocr.get("strips")), "serverocr": outcome.ocr.get("serverocr"),
             "decided": decision is not None, "decided_right": bool(decision and decision["card_id"] == truth_id),
             "mechanism": decision["mechanism"] if decision else None, "unsure_reason": outcome.unsure_reason,
             "top_match": outcome.matches[0]["card_id"] if outcome.matches else None, "timings_ms": outcome.timings_ms,
@@ -680,14 +704,14 @@ def run_labelled(
 COMPARE_MIN_GAIN = 0.5  # points of top-20 or decided a challenger must add to replace the plainer option set
 
 
-def compare_row(label: str, report: dict | None, *, missing: list[str] | None = None) -> dict:
+def compare_row(label: str, report: dict | None, *, missing: list[str] | None = None, reason: str | None = None) -> dict:
     if report is None:
-        return {"label": label, "status": "skipped", "missing_indexes": missing or []}
+        return {"label": label, "status": "skipped", "missing_indexes": missing or [], "reason": reason}
     m = report["metrics"]
     timings = report.get("timings_ms", {}).get("total", {})
     return {
         "label": label, "status": "ok", "n": m["n"], "top1": m["top1_pct"], "top5": m["top5_pct"], "top20": m["top20_pct"],
-        "number_exact": m["number_exact_pct"], "name_read": m.get("name_read_pct"), "number_ms_mean": m.get("number_ms_mean"), "decided": m["decided_pct"], "decided_right": m["decided_right_pct"],
+        "number_exact": m["number_exact_pct"], "name_read": m.get("name_read_pct"), "number_ms_mean": m.get("number_ms_mean"), "serverocr": m.get("serverocr"), "decided": m["decided_pct"], "decided_right": m["decided_right_pct"],
         "decided_wrong": m["decided_wrong"], "median_ms": timings.get("median"), "p95_ms": timings.get("p95"),
         "extra_mb": report.get("memory", {}).get("extra_mb"),
         "eval_groups": report.get("eval_groups"),  # decided and wrong per group (tuned / new / held back)
@@ -760,13 +784,47 @@ def previous_rows(kind: str, labels, fingerprint: str | None, data_dir: Path | N
             label = row.get("label")
             if label in wanted and label not in found and row.get("status") == "ok":
                 found[label] = {
-                    "label": label, "status": "previous", "date": report.get("created_at"), "report": name,
+                    "label": label, "status": "previous", "date": report.get("created_at"), "report": name, "signature": row.get("signature"),
                     **{key: row.get(key) for key in ("n", "top1", "top5", "top20", "number_exact", "name_read", "number_ms_mean", "decided",
                                                       "decided_right", "decided_wrong", "median_ms", "p95_ms", "eval_groups")},
                     "wrong_scans_count": len(row.get("wrong_scans") or []),
                     "same_scans": (old == fingerprint) if (old and fingerprint) else None,
                 }
     return [found[label] for label in labels if label in found]
+
+
+def _row_signature(label: str, data_dir: Path | None) -> str | None:
+    try:
+        from . import variants
+
+        return variants.row_signature(label, data_dir)
+    except Exception:  # a signature is a convenience for the autorun: never stop a comparison for it
+        logger.exception("Card-match: could not work out the signature of %s", label)
+        return None
+
+
+def plan_rows(kind: str, fingerprint: str | None, data_dir: Path | None = None) -> dict[str, str]:
+    """The autorun's choice of rows to run: ``{label: why}`` in the order of the full list. ``reference``: the label in use and the kept set always
+    run. ``new``: no earlier result. ``changed``: the newest earlier result has another signature (or none: it was measured before signatures
+    existed). ``scans changed``: it was measured on another scan set (or one nobody can tell), so every row runs and the table stays comparable.
+    A row whose newest result has the same signature on the same scans is left out and shows as "previous"."""
+    from . import variants
+
+    full = list(variants.SYNTHETIC_COMPARE_LABELS if kind == "synthetic" else variants.COMPARE_LABELS)
+    reference = set(variants.compare_reference_labels(full, data_dir))
+    previous = {row["label"]: row for row in previous_rows(kind, full, fingerprint, data_dir)}
+    out: dict[str, str] = {}
+    for label in full:
+        old = previous.get(label)
+        if label in reference:
+            out[label] = "reference"
+        elif old is None:
+            out[label] = "new"
+        elif old.get("signature") != variants.row_signature(label, data_dir):
+            out[label] = "changed"
+        elif kind == "labelled" and old.get("same_scans") is not True:
+            out[label] = "scans changed"
+    return out
 
 
 def last_row_seconds(kind: str, data_dir: Path | None = None) -> dict[str, dict]:
@@ -784,7 +842,7 @@ def last_row_seconds(kind: str, data_dir: Path | None = None) -> dict[str, dict]
 def run_compare(
     kind: str, session_factory, labels, *, data_dir: Path | None = None, trace_dir: Path | None = None, ocr_reader=None,
     progress: Callable[[dict], None] | None = None, should_stop: Callable[[], bool] | None = None, count: int = 400,
-    selected: list[str] | None = None, reference: list[str] | None = None,
+    selected: list[str] | None = None, reference: list[str] | None = None, why: dict[str, str] | None = None,
 ) -> dict:
     """Run ``labelled`` or ``synthetic`` once per option set and put the results in one table.
 
@@ -804,8 +862,9 @@ def run_compare(
             break
         options = variants.parse(label)
         missing = variants.missing_indexes(options, data_dir)
-        if missing:
-            rows.append({**compare_row(label, None, missing=missing), "reference": label in reference})
+        problem = None if missing else variants.calibration_problem(options, data_dir)  # version 16: custom + calibrated, but not calibrated yet
+        if missing or problem:
+            rows.append({**compare_row(label, None, missing=missing, reason=problem), "reference": label in reference, "why": (why or {}).get(label)})
             continue
         matcher = variants.build_matcher(options, session_factory, data_dir=data_dir, ocr_reader=ocr_reader)
 
@@ -821,7 +880,8 @@ def run_compare(
         if report is None:
             raise RuntimeError("No diagnostics traces with a confirmed answer for English cards yet")
         reports[label] = report
-        rows.append({**compare_row(label, report), "reference": label in reference, "seconds": round(time.monotonic() - row_started, 1)})
+        rows.append({**compare_row(label, report), "reference": label in reference, "seconds": round(time.monotonic() - row_started, 1),
+                     "signature": _row_signature(label, data_dir), "why": (why or {}).get(label)})
     winner = pick_winner(rows)  # only the rows measured in this run: a row from an earlier report is never in it
     first = next(iter(reports.values()), None)
     held_back_row, groups, fingerprint = None, None, None
@@ -844,7 +904,7 @@ def run_compare(
     not_run = [label for label in full if label not in labels]
     return {
         "kind": f"compare-{kind}", "matcher_version": MATCHER_VERSION,
-        "selected_labels": selected, "reference_labels": reference, "not_run": not_run,
+        "selected_labels": selected, "reference_labels": reference, "not_run": not_run, "why": dict(why or {}),
         "previous_rows": previous_rows(kind, not_run, fingerprint, data_dir), "scan_fingerprint": fingerprint, "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "duration_seconds": round(time.monotonic() - started, 1), "rows": rows, "winner": winner["label"] if winner else None,
         "n": rows[0].get("n") if rows and rows[0]["status"] == "ok" else None,

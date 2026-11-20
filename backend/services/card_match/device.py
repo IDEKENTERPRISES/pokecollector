@@ -273,7 +273,7 @@ def gpu_used_mb() -> int | None:
 
 
 @contextlib.contextmanager
-def ocr_sessions(ort):
+def ocr_sessions(ort, kind: str = "ocr-part"):
     """While RapidOCR builds its sessions, route them through ``create_session``: RapidOCR cannot set a GPU memory
     cap itself. Yields a list that collects each session's info."""
     infos: list[dict] = []
@@ -285,7 +285,7 @@ def ocr_sessions(ort):
             targets.append(module)
 
     def factory(path, sess_options=None, providers=None, **kwargs):
-        session, info = create_session(ort, str(path), sess_options, kind="ocr-part", share=ocr_share(path), session_class=real)
+        session, info = create_session(ort, str(path), sess_options, kind=kind, share=ocr_share(path), session_class=real)
         infos.append(info)
         return session
 
@@ -304,10 +304,10 @@ def ocr_sessions(ort):
             owner.InferenceSession = real
 
 
-def summarise_ocr(infos: list[dict]) -> dict:
-    """One status for the OCR engine: GPU only if every one of its sessions got it."""
+def summarise_ocr(infos: list[dict], kind: str = "ocr") -> dict:
+    """One status for an OCR engine (``ocr``, or ``ocr-server`` for the version 15 second engine): GPU only if every one of its sessions got it."""
     with _lock:
-        _status.pop("ocr-part", None)
+        _status.pop(f"{kind}-part", None)
     granted = sum(i["granted_mb"] for i in infos)
     wrappers = [w for i in infos for w in i.get("wrappers", [])]
     if infos and all(i["device"] == "cuda" for i in infos):
@@ -316,7 +316,7 @@ def summarise_ocr(infos: list[dict]) -> dict:
         reasons = [i["reason"] for i in infos if i.get("reason")]
         info = {"device": "cpu", "reason": reasons[0] if reasons else None, "granted_mb": granted}
     info.update(unloaded_at=None, wrappers=wrappers)
-    _record("ocr", info)
+    _record(kind, info)
     return info
 
 
@@ -363,6 +363,7 @@ def report(default_model: str = "dinov2-small") -> dict:
         "requested": requested(), "gpu_budget_mb": budget_mb(), "idle_unload_minutes": _idle_minutes(), "embedders": embedders,
         "embedder": embedders.get(default_model) or (next(iter(embedders.values())) if embedders else _view(None)),
         "ocr": _view(snapshot.get("ocr")),
+        "ocr_server": _view(snapshot.get("ocr-server")),  # version 15 test (``serverocr``): "Not loaded yet" until a matcher with that option reads
     }
 
 

@@ -26,7 +26,7 @@ export default function TrainerCard({ user = {}, stats = {}, badges, level, show
 
   return (
     <div
-      className={`holo relative overflow-hidden rounded-[22px] p-4 text-on-accent ${className}`}
+      className={`holo holo--scrollable relative overflow-hidden rounded-[22px] p-4 text-on-accent ${className}`}
       style={{
         background: 'linear-gradient(145deg, color-mix(in srgb, var(--color-accent) 92%, white) 0%, var(--color-accent) 45%, var(--color-brand-red-dark) 100%)',
         boxShadow: '0 10px 28px color-mix(in srgb, var(--color-accent) 40%, transparent)',

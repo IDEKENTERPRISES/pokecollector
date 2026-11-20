@@ -14,6 +14,7 @@ from models import CollectionCardPhoto, Setting, UserSetting, User
 from services import challenge, feed as feed_service, matcher_only, notifications
 from services.audit import record_audit
 from services.debug_logging import configure_debug_logging, get_debug_log_path
+from services.default_currency import default_currency
 from services.digital_sets import DIGITAL_SETS_SETTING_KEY, refresh_digital_catalogue_flags
 from services.exchange_rates import (
     ExchangeRateError,
@@ -202,7 +203,6 @@ DEFAULT_SETTINGS = {
     "price_alerts_enabled": "false",
     "price_alert_threshold": "10",
     "language": "en",
-    "currency": "EUR",
     "price_primary": "trend",
     "portfolio_display_mode": "portfolio_value",
     "price_display": '["trend", "avg", "avg1", "avg7", "avg30", "low"]',
@@ -336,6 +336,8 @@ def _get_user_settings(db: Session, user_id: int) -> dict:
         result.setdefault(SCAN_DIAGNOSTICS_SETTING_KEY, "true")
     for key, value in DEFAULT_SETTINGS.items():
         result.setdefault(key, value)
+    # Display currency for anyone who has not chosen one (env DEFAULT_CURRENCY, else EUR).
+    result["currency"] = result.get("currency") or default_currency()
     for key, value in notifications.default_settings().items():
         result.setdefault(key, value)
     for key, value in feed_service.default_settings().items():

@@ -10,7 +10,8 @@ const {
   pageTooTall,
   runViewTransition,
   viewTransitionsEnabled,
-} = await import('./viewTransition')
+  viewTransitionRunning,
+} =await import('./viewTransition')
 
 function fakeDoc({ supported = true } = {}) {
   const doc = {
@@ -112,6 +113,42 @@ describe('runViewTransition', () => {
     expect(runViewTransition(update, { doc, win: win() })).toBeNull()
     expect(update).toHaveBeenCalledTimes(1)
     expect(doc.documentElement.dataset.vt).toBeUndefined()
+  })
+})
+
+describe('a transition that is already running', () => {
+  it('skips the running one, and the older one cannot clear or skip the newer', async () => {
+    vi.useFakeTimers()
+    try {
+      const w = { matchMedia: () => ({ matches: false }), setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: id => clearTimeout(id) }
+      const doc = fakeDoc()
+      const make = () => {
+        let finish
+        const finished = new Promise(resolve => { finish = resolve })
+        return { finished, finish, skipTransition: vi.fn(() => finish()) }
+      }
+      const first = make()
+      const second = make()
+      const queue = [first, second]
+      doc.startViewTransition = () => queue.shift()
+      runViewTransition(vi.fn(), { doc, win: w, direction: 'push' })
+      expect(viewTransitionRunning()).toBe(true)
+      runViewTransition(vi.fn(), { doc, win: w, direction: 'back' })
+      expect(first.skipTransition).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(0)
+      // The first one finishing must not strip the direction of the second.
+      expect(doc.documentElement.dataset.vt).toBe('back')
+      expect(viewTransitionRunning()).toBe(true)
+      // Nor may the first one's 1.5 s timer skip the second early.
+      await vi.advanceTimersByTimeAsync(1400)
+      expect(second.skipTransition).not.toHaveBeenCalled()
+      second.finish()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(doc.documentElement.dataset.vt).toBeUndefined()
+      expect(viewTransitionRunning()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

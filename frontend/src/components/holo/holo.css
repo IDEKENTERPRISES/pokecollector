@@ -92,6 +92,9 @@
   -webkit-touch-callout: none;
 }
 
+/* A .holo surface with no drag-to-tilt (the profile trainer card) must not swallow page scrolling. */
+.holo--scrollable { touch-action: pan-y; }
+
 .holo__rotator {
   position: relative;
   /* Flat while the card rests or tilts, so the foil blends with the art in one flat context.

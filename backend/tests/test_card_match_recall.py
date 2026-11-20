@@ -376,26 +376,12 @@ class ResultShapeTests(unittest.TestCase):
 
 @unittest.skipUnless(DEPS_AVAILABLE, "backend dependencies are not installed")
 class AutorunTests(unittest.TestCase):
-    def test_the_autorun_adds_the_real_photo_benchmark_only_with_enough_confirmed_scans(self):
-        from services.card_match import jobs
+    def test_the_autorun_adds_the_real_photo_steps_only_with_enough_confirmed_scans(self):
+        from services.card_match import autorun
 
-        for traces, expected in ((99, ["index"] * 2 + ["benchmark-synthetic", "benchmark-compare-synthetic"]),
-                                 (100, ["index"] * 2 + ["benchmark-ocr-check", "benchmark-labelled", "benchmark-compare-labelled", "benchmark-synthetic", "benchmark-compare-synthetic"])):
-            started = []
-
-            def fake_start(kind, work):
-                started.append(kind)
-                return True, {}
-
-            with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"SCAN_MATCHER_AUTORUN": "1", "CARD_MATCH_DIR": tmp}), \
-                    patch.object(jobs.jobs, "start", side_effect=fake_start), patch.object(jobs.jobs, "wait"), \
-                    patch.object(jobs.jobs, "status", return_value={"error": None}), \
-                    patch.object(benchmark, "count_labelled_traces", return_value=traces):
-                self.assertTrue(jobs.autorun_once(None, delay_seconds=0))
-                for thread in __import__("threading").enumerate():
-                    if thread.name == "card-match-autorun":
-                        thread.join(10)
-            self.assertEqual(started, expected)
+        steps = dict(missing=[], calibrate=False, version_changed=True, scans_changed=True)
+        self.assertEqual(autorun.choose_steps(enough_real=False, **steps), ["synthetic", "compare-synthetic"])
+        self.assertEqual(autorun.choose_steps(enough_real=True, **steps), ["ocr-check", "labelled", "compare-labelled", "synthetic", "compare-synthetic"])
 
     def test_the_matcher_version_was_bumped_so_the_autorun_runs_again_after_this_deploy(self):
         from services.card_match import MATCHER_VERSION

@@ -130,3 +130,10 @@ The hands-on tour (docs/WELCOME_DESIGN.md §3) runs in multi-user mode only.
 - **Reset by hand:** `UPDATE users SET tutorial_completed_at = NULL, tutorial_outcome = NULL WHERE username = '...';` and clear `pc.tour.done.<userId>` in the browser's local storage.
 - **Home Screen step:** it shows in iPhone Safari (not the Home Screen app) and in other browsers that offered an install. In the installed app it is skipped, and the scan step offers the notifications button.
 - Leaving it part-way (closing the app, "I'll add it now") writes nothing: it starts over from the welcome. Only Finish, a confirmed Skip or "Not now" is stored (`tutorial_outcome`: `finished`, `skipped`, `dismissed`).
+
+## Scanner lab runs its tests by itself
+
+`docker-compose.nonprod.yml` sets `SCAN_MATCHER_AUTORUN=1`. After each deploy, shortly after startup, the backend works out whether anything the tests measure changed (the matcher version, a compare row or its option versions, the confirmed scans, the newest custom model or its calibration, an index rebuild). If so it runs the chain: missing indexes, calibration of the newest custom model, the OCR check, the real-photo benchmark, the compare of the rows that are new or changed (plus the reference rows), and the synthetic runs when the matcher version changed. A deploy that changes none of these runs nothing. The whole chain takes hours on the T340, so watch Settings › Data & sync › Scanner lab: the "Run the tests by itself after each deploy" block shows what is running and the last run's steps, times, errors and rows with the reason each ran.
+
+- **Switch it off** (no redeploy): the same block, admins only. **Run all tests now** starts everything at once, ignoring the change check; it is refused while a job runs.
+- **Prod never runs it**: `SCAN_MATCHER_AUTORUN` is not set there, so the block, the button and their API do not exist. Details in `docs/CARD_MATCH.md`, "The autorun".

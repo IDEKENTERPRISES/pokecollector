@@ -398,6 +398,7 @@ class OcrReader:
     """
 
     engine = None  # RapidOCR; None after an idle unload (the next read builds it again)
+    kind = "ocr"  # the name its device status goes under (device.report); the version 15 second engine uses ``ocr-server``
     _gpu_wrappers: tuple = ()
     _load_lock = threading.RLock()
 
@@ -419,24 +420,28 @@ class OcrReader:
         # RapidOCR picks its own providers and cannot cap GPU memory, so its sessions are built through device.py
         # (CUDA with a memory cap when there is a GPU, the CPU otherwise).
         def build():
-            return RapidOCR(
-                intra_op_num_threads=count, inter_op_num_threads=1, use_cls=False,
-                det_limit_side_len=480, det_limit_type="max",
-            )
+            return self._new_engine(RapidOCR, count)
 
         try:
-            with device.ocr_sessions(ort) as infos:
+            with device.ocr_sessions(ort, f"{self.kind}-part") as infos:
                 engine = build()
-            info = device.summarise_ocr(infos)
+            info = device.summarise_ocr(infos, self.kind)
             self._gpu_wrappers = tuple(info["wrappers"])
             self.engine = engine
         except Exception as exc:  # noqa: BLE001 - never leave OCR unusable: build it plainly (RapidOCR's own CPU sessions)
             logger.warning("Card matcher: OCR could not be set up through device.py (%s); using RapidOCR's own CPU sessions", exc)
             self.engine = build()
             self._gpu_wrappers = ()
-            info = device.summarise_ocr([{"device": "cpu", "reason": f"device setup failed: {type(exc).__name__}", "granted_mb": 0.0}])
+            info = device.summarise_ocr([{"device": "cpu", "reason": f"device setup failed: {type(exc).__name__}", "granted_mb": 0.0}], self.kind)
         self.device = info["device"]
         self.fallback_reason = info["reason"]
+
+    def _new_engine(self, rapid_class, count: int):
+        """One RapidOCR engine with the models that ship in the wheel (PP-OCRv4 mobile)."""
+        return rapid_class(
+            intra_op_num_threads=count, inter_op_num_threads=1, use_cls=False,
+            det_limit_side_len=480, det_limit_type="max",
+        )
 
     def _ensure_engine(self):
         """The engine, built again first if an idle unload released it. Call inside ``lifecycle.in_use()``."""
@@ -457,7 +462,7 @@ class OcrReader:
                 wrapper.close()
             self._gpu_wrappers = ()
             self.engine = None
-            device.mark_unloaded("ocr")
+            device.mark_unloaded(self.kind)
             return True
 
     def warm_up(self) -> float:
@@ -471,7 +476,7 @@ class OcrReader:
         cv2.putText(picture, "Pikachu 025/165", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 0, 0), 3)
         self._run(picture)
         seconds = time.monotonic() - started
-        device.note_warm("ocr", seconds)
+        device.note_warm(self.kind, seconds)
         return seconds
 
     # -- one recogniser call --------------------------------------------------

@@ -51,6 +51,7 @@ def list_goals(current_user: User = Depends(get_current_user), db: Session = Dep
 @router.get("/options")
 def goal_options(
     artist: Optional[str] = Query(None, max_length=80),
+    q: Optional[str] = Query(None, max_length=80),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -61,10 +62,19 @@ def goal_options(
             for gen, info in sorted(goal_service.generations().items())
         ],
         "families": [
-            {"id": entry["id"], "name": entry["name"], "dex_ids": entry["dex_ids"]}
+            {
+                "id": entry["id"], "name": entry["name"], "dex_ids": entry["dex_ids"],
+                "base": entry.get("base"), "generation": entry.get("generation"),
+                "popular": bool(entry.get("popular")), "members": goal_service.family_members(entry),
+            }
             for entry in goal_service.families()
         ],
     }
+    if q is not None:  # a search narrows the list; each family says which Pokémon matched
+        result["families"] = [
+            {**next(f for f in result["families"] if f["id"] == hit["family"]["id"]), "matched": hit["matched"]}
+            for hit in goal_service.search_families(q)
+        ]
     query = " ".join((artist or "").split())
     if len(query) >= 2:
         like = "%" + query.lower().replace("%", "").replace("_", "") + "%"

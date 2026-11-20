@@ -15,8 +15,9 @@ import ListSection from '../components/ios/ListSection'
 import PageSheet from '../components/ios/PageSheet'
 import SearchField from '../components/ios/SearchField'
 import SegmentedControl from '../components/ios/SegmentedControl'
+import FamilyPicker from '../goals/FamilyPicker'
 import GoalRing from '../goals/GoalRing'
-import { GOAL_KINDS, KIND_LABEL_KEYS, goalPercent, goalsQueryKey, isGoalComplete, setGoalParams } from '../goals/goals'
+import { GOAL_KINDS, KIND_LABEL_KEYS, familyGoalParams, goalPercent, goalsQueryKey, isGoalComplete, setGoalParams } from '../goals/goals'
 
 function GoalRow({ goal, onPin, onDelete, t, formatPrice, tour }) {
   const progress = goal.progress || {}
@@ -246,10 +247,10 @@ function NewGoalSheet({ isOpen, onClose, onCreate, t }) {
             <p className="px-1 text-footnote text-text-secondary">
               {t(familyScope === 'every' ? 'goals.familyEveryDesc' : 'goals.familyOneEachDesc')}
             </p>
-            <ListPicker
-              items={options.data?.families || []}
-              render={item => ({ key: `family-${item.id}`, title: item.name, subtitle: t('goals.speciesCount').replace('{count}', item.dex_ids.length) })}
-              onPick={item => create('family', familyScope === 'every' ? { family: item.id, every: true } : { family: item.id })}
+            <FamilyPicker
+              families={options.data?.families || []}
+              onPick={item => create('family', familyGoalParams(item, familyScope))}
+              t={t}
             />
           </>
         )}

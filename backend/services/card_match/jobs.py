@@ -1,6 +1,6 @@
 """Background jobs for the matcher: build the index, run the benchmark. One at a time, in a thread,
 at low priority, with ONNX Runtime and OpenCV held to the thread cap. The admin API starts them; so do
-the nonprod autorun and the after-sync hook."""
+the nonprod autorun (autorun.py) and the after-sync hook."""
 
 from __future__ import annotations
 
@@ -16,9 +16,6 @@ from . import MATCHER_VERSION, config, lifecycle
 from .model_specs import DEFAULT_MODEL
 
 logger = logging.getLogger(__name__)
-
-AUTORUN_WARMUP_WAIT_SECONDS = 4 * 3600  # how long the autorun waits for the picture warm-up
-
 
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -100,14 +97,20 @@ def build_index_work(model: str = DEFAULT_MODEL, *, session_factory=None, embedd
     from .embed import get_embedder
 
     spec = variants.index_specs().get(model, {"model": model, "crop": "full"})
-    return index_module.build_index(
+    result = index_module.build_index(
         session_factory or _session_factory(), embedder or get_embedder(spec["model"]), data_dir=data_dir,
         progress=jobs._progress, should_stop=jobs._stop.is_set, crop=spec["crop"], index_name=model,
     )
+    if spec.get("custom") and embedder is None:  # the custom model may have just become usable: give it the picture model's GPU share
+        from . import warmup
+
+        warmup.promote_picture_model()
+    return result
 
 
 def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=None, embedder=None, data_dir: Path | None = None,
-                   count: int = 400, options: str | None = None, labels: list[str] | None = None) -> dict:
+                   count: int = 400, options: str | None = None, labels: list[str] | None = None,
+                   why: dict[str, str] | None = None) -> dict:
     """``kind``: synthetic, labelled (the option set in use, or ``options``), or compare-synthetic /
     compare-labelled (every option set side by side; a clear winner on real photos becomes the one in use)."""
     from . import benchmark, misses, pipeline, variants
@@ -149,7 +152,7 @@ def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=Non
         report = benchmark.run_compare(
             base_kind, factory, run_labels, selected=selected, reference=reference, data_dir=data_dir,
             trace_dir=trace_dir, ocr_reader=get_reader(), progress=jobs._progress, should_stop=jobs._stop.is_set,
-            count=variants.SYNTHETIC_COMPARE_COUNT if synthetic else count,
+            count=variants.SYNTHETIC_COMPARE_COUNT if synthetic else count, why=why,
         )
         if base_kind == "labelled" and report["winner"] and not jobs._stop.is_set():
             winner = next(row for row in report["rows"] if row["label"] == report["winner"])
@@ -180,19 +183,61 @@ def benchmark_work(kind: str, model: str = DEFAULT_MODEL, *, session_factory=Non
     return {"report": path.name, "kind": kind, "n": report["metrics"]["n"], "duration_seconds": report["duration_seconds"]}
 
 
+def calibrate_work(model_id: str, *, session_factory=None, data_dir: Path | None = None, on_stored: Callable[[dict], None] | None = None) -> dict:
+    """Version 16 test: the Scanner lab job that calibrates one custom model's picture thresholds (``calibration.py``). ``on_stored`` (the audit
+    log entry) is called with the stored calibration."""
+    from . import calibration
+    from services import scan_trace, trace_sources
+
+    trace_dir = scan_trace.trace_root() or scan_trace.trace_storage_root()
+    if not trace_dir and not trace_sources.readonly_roots():
+        raise RuntimeError("No diagnostics traces with a confirmed answer yet")
+    try:
+        stored = calibration.run_calibration(model_id, session_factory or _session_factory(), data_dir=data_dir, trace_dir=trace_dir,
+                                             progress=jobs._progress, should_stop=jobs._stop.is_set)
+    except calibration.CalibrationError as exc:
+        raise RuntimeError(str(exc)) from exc
+    if on_stored is not None:
+        on_stored(stored)
+    return {"kind": "calibrate", "model": model_id, "scans": stored["scans"], "thresholds": stored["thresholds"]}
+
+
+def start_calibration(model_id: str, on_stored: Callable[[dict], None] | None = None) -> tuple[bool, dict]:
+    return jobs.start("calibrate", lambda: calibrate_work(model_id, on_stored=on_stored))
+
+
 def start_index(model: str = DEFAULT_MODEL) -> tuple[bool, dict]:
     return jobs.start("index", lambda: build_index_work(model))
 
 
-def start_benchmark(kind: str = "synthetic", model: str = DEFAULT_MODEL, labels: list[str] | None = None) -> tuple[bool, dict]:
-    """``labels``: for the two comparisons, the rows to run (None or empty: all of them)."""
-    return jobs.start(f"benchmark-{kind}", lambda: benchmark_work(kind, model, labels=labels))
+def custom_indexes_work(model_id: str, *, build=None) -> dict:
+    """Build a custom model's whole-card index, then its artwork index, in one job (a stop or a failure of the first ends the job)."""
+    from . import custom_models
+
+    build = build or build_index_work
+    names = custom_models.index_names(model_id)
+    summary = {}
+    for kind in ("whole", "art"):
+        if jobs._stop.is_set():
+            break
+        summary[kind] = build(names[kind])
+    return {"kind": "custom-indexes", "model": model_id, "indexes": summary}
 
 
-AUTORUN_MIN_LABELLED = 100  # confirmed traces needed before the real-photo benchmark runs by itself
+def start_custom_indexes(model_id: str) -> tuple[bool, dict]:
+    """After an upload: the model's two index builds, one job after another. Does nothing (False) while another job is running."""
+    return jobs.start("index", lambda: custom_indexes_work(model_id))
 
 
-# ── After a card sync, and once after a nonprod deploy ───────────────────────
+def start_benchmark(kind: str = "synthetic", model: str = DEFAULT_MODEL, labels: list[str] | None = None, why: dict[str, str] | None = None) -> tuple[bool, dict]:
+    """``labels``: for the two comparisons, the rows to run (None or empty: all of them). ``why``: the autorun's reason for each row, saved in the report."""
+    return jobs.start(f"benchmark-{kind}", lambda: benchmark_work(kind, model, labels=labels, why=why))
+
+
+AUTORUN_WARMUP_WAIT_SECONDS = 4 * 3600  # how long the autorun waits for the picture warm-up (autorun.py)
+
+
+# ── After a card sync (the nonprod autorun is in autorun.py) ─────────────────
 
 def index_after_warmup(warmer) -> None:
     """After the picture warmer finishes, add the new pictures to the index (SCAN_MATCHER_INDEX_AFTER_SYNC=1)."""
@@ -206,96 +251,3 @@ def index_after_warmup(warmer) -> None:
         start_index()
 
     threading.Thread(target=wait_then_build, name="card-match-after-sync", daemon=True).start()
-
-
-def autorun_plan(*, indexes_ready: bool, enough_real: bool) -> list[str]:
-    """The autorun's steps, in order. What the owner decides from comes first: the OCR check, the real-photo
-    benchmark and the real-photo comparison. The synthetic runs choose nothing and go last. When the indexes are already
-    built the real-photo steps run before the picture warm-up and the index update (version 5 ran those first and the
-    synthetic benchmark before any real-photo report: about two hours before the first report)."""
-    real = ["ocr-check", "labelled", "compare-labelled"] if enough_real else []
-    build = ["warm-up", "index", "art-index"]
-    synthetic = ["synthetic", "compare-synthetic"]
-    return (real + build + synthetic) if indexes_ready else (build + real + synthetic)
-
-
-def _autorun_log(entries: list[dict]) -> None:
-    """When each autorun step started and how long it took, so a slow rerun can be explained from the file."""
-    try:
-        path = config.data_dir() / "autorun-log.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"matcher_version": MATCHER_VERSION, "steps": entries}), encoding="utf-8")
-    except OSError:
-        logger.exception("Could not write the card-match autorun log")
-
-
-def _autorun_marker() -> Path:
-    return config.data_dir() / "autorun.json"
-
-
-def autorun_due(model: str = DEFAULT_MODEL) -> bool:
-    try:
-        marker = json.loads(_autorun_marker().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return True
-    return marker.get("matcher_version") != MATCHER_VERSION or marker.get("model") != model
-
-
-def autorun_once(warmer=None, model: str = DEFAULT_MODEL, *, delay_seconds: float = 90) -> bool:
-    """SCAN_MATCHER_AUTORUN=1 (nonprod only): once per matcher version. In the order of ``autorun_plan``: the OCR
-    check, the real-photo benchmark and comparison (when at least ``AUTORUN_MIN_LABELLED`` scans are confirmed),
-    filling the picture cache and building the indexes, then the synthetic benchmark and its short comparison.
-    Returns whether a run was started."""
-    if not config.autorun_enabled() or not autorun_due(model):
-        return False
-
-    def chain() -> None:
-        time.sleep(delay_seconds)  # let the app finish starting
-        from . import benchmark, index as index_module, variants
-        from services import scan_trace
-
-        enough = benchmark.count_labelled_traces(scan_trace.trace_root() or scan_trace.trace_storage_root()) >= AUTORUN_MIN_LABELLED
-        try:
-            ready = all(index_module.index_status(name).get("built") and index_module.index_status(name).get("count")
-                        for name in (model, variants.ART_INDEX))
-        except Exception:
-            ready = False
-        actions = {
-            "index": lambda: start_index(model), "art-index": lambda: start_index(variants.ART_INDEX),
-            "ocr-check": lambda: start_benchmark("ocr-check", model), "labelled": lambda: start_benchmark("labelled", model),
-            "compare-labelled": lambda: start_benchmark("compare-labelled", model),
-            "synthetic": lambda: start_benchmark("synthetic", model), "compare-synthetic": lambda: start_benchmark("compare-synthetic", model),
-        }
-        log: list[dict] = []
-        for name in autorun_plan(indexes_ready=ready, enough_real=enough):
-            began, clock = _now(), time.monotonic()
-            if name == "warm-up":
-                if warmer is not None:
-                    warmer.start()
-                    deadline = time.monotonic() + AUTORUN_WARMUP_WAIT_SECONDS
-                    while warmer.is_running() and time.monotonic() < deadline:
-                        time.sleep(10)
-                log.append({"step": name, "started_at": began, "seconds": round(time.monotonic() - clock, 1)})
-                _autorun_log(log)
-                continue
-            step = actions[name]
-            started, _status = step()
-            while not started:  # another job (a manual one) is running: wait our turn
-                time.sleep(15)
-                started, _status = step()
-            jobs.wait()
-            error = jobs.status().get("error")
-            log.append({"step": name, "started_at": began, "seconds": round(time.monotonic() - clock, 1), "error": error})
-            _autorun_log(log)
-            if error:
-                logger.error("Card-match autorun stopped: %s", error)
-                return
-        try:
-            marker = _autorun_marker()
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(json.dumps({"matcher_version": MATCHER_VERSION, "model": model, "finished_at": _now(), "steps": log}), encoding="utf-8")
-        except OSError:
-            logger.exception("Could not write the card-match autorun marker")
-
-    threading.Thread(target=chain, name="card-match-autorun", daemon=True).start()
-    return True

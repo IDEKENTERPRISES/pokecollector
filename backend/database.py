@@ -716,6 +716,9 @@ def _run_migrations(conn):
             CONSTRAINT uq_push_subscription_endpoint UNIQUE (endpoint)
         )""",
         "CREATE INDEX IF NOT EXISTS ix_push_subscriptions_user_id ON push_subscriptions(user_id)",
+        # Push presence: skip pushes to a device that has the app open.
+        "ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS app_state VARCHAR(16)",
+        "ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS foreground_at TIMESTAMP",
         # Push details: what each queued notification was about (card, prices, badge id).
         "ALTER TABLE notification_queue ADD COLUMN IF NOT EXISTS details JSON",
         # Quest celebrations: awards already in the ledger when the column is added count as seen.

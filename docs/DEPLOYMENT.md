@@ -72,6 +72,16 @@ To roll back a bad service worker (the kill switch), set `PWA_ENABLED=false` and
 frontend container: phones replace the worker with a kill worker on their next
 update check. Reverting to the previous image tag also works.
 
+### Default currency
+
+`DEFAULT_CURRENCY` (for example `GBP`) sets the display currency for new users and for users
+who have not picked one. It is case-insensitive; an unsupported code logs a warning and falls
+back to `EUR`. A currency someone chose in Settings is never changed. Set it as a variable in
+the Portainer stack's environment: `docker-compose.portainer.yml` passes it to the backend
+(`DEFAULT_CURRENCY: ${DEFAULT_CURRENCY:-EUR}`), and a stack variable the compose file does not
+list never reaches the container. Recreate the backend after changing it.
+`PUSH_FOREGROUND_WINDOW_SECONDS` (default `60`) is passed through the same way.
+
 ### Push notification key
 
 Web push (see [`PWA.md`](PWA.md)) signs with a private key stored at

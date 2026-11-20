@@ -265,14 +265,11 @@ class FallbackTests(unittest.TestCase):
 
 @unittest.skipUnless(DEPS_AVAILABLE, "backend dependencies are not installed")
 class AutorunOrderTests(unittest.TestCase):
-    def test_real_photo_steps_come_before_the_synthetic_ones_and_before_the_builds_when_the_indexes_exist(self):
-        plan = jobs.autorun_plan(indexes_ready=True, enough_real=True)
-        self.assertEqual(plan, ["ocr-check", "labelled", "compare-labelled", "warm-up", "index", "art-index", "synthetic", "compare-synthetic"])
+    def test_the_real_photo_steps_come_before_the_synthetic_ones_and_after_the_builds_and_the_calibration(self):
+        from services.card_match import autorun
 
-    def test_on_a_first_run_the_indexes_are_built_first_but_real_photos_still_beat_synthetic(self):
-        plan = jobs.autorun_plan(indexes_ready=False, enough_real=True)
-        self.assertEqual(plan, ["warm-up", "index", "art-index", "ocr-check", "labelled", "compare-labelled", "synthetic", "compare-synthetic"])
-        self.assertEqual(jobs.autorun_plan(indexes_ready=True, enough_real=False), ["warm-up", "index", "art-index", "synthetic", "compare-synthetic"])
+        plan = autorun.choose_steps(missing=["index", "art-index"], calibrate=True, version_changed=True, scans_changed=True, enough_real=True)
+        self.assertEqual(plan, ["warm-up", "index", "art-index", "calibrate", "ocr-check", "labelled", "compare-labelled", "synthetic", "compare-synthetic"])
 
 
 if __name__ == "__main__":

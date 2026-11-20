@@ -13,7 +13,7 @@ from database import get_db
 from models import Card, User
 from services import scan_trace, trace_correction, trace_sources
 from services.audit import record_audit
-from services.card_match import MATCHER_VERSION, benchmark, config, custom_models, embed, index as index_module, device as device_module, jobs as jobs_module, warmup, misses as misses_module, shadow as shadow_module, variants
+from services.card_match import MATCHER_VERSION, autorun as autorun_module, benchmark, config, custom_models, embed, index as index_module, device as device_module, jobs as jobs_module, warmup, misses as misses_module, shadow as shadow_module, variants
 from services.card_match.model_specs import DEFAULT_MODEL, MODEL_SPECS
 
 router = APIRouter()
@@ -60,13 +60,16 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
     _require_admin(current_user)
     trace_dir = scan_trace.trace_root() or scan_trace.trace_storage_root()
     spec = MODEL_SPECS[DEFAULT_MODEL]
+    picture_model = warmup.picture_model()
     return {
         "matcher_version": MATCHER_VERSION,
         "model": {"name": DEFAULT_MODEL, "available": embed.model_available(DEFAULT_MODEL), "license": spec["license"], "dim": spec["dim"]},
         "ocr_available": _ocr_available(),
-        "device": device_module.report(DEFAULT_MODEL),
+        "device": device_module.report(picture_model),
+        "picture_model": picture_model,  # the model the options in use run on (DINOv2-small, or the custom model): its GPU/CPU is "device.embedder"
         "threads": config.threads(),
         "autorun": config.autorun_enabled(),
+        "autorun_info": autorun_module.info(db),
         "index_after_sync": config.index_after_sync_enabled(),
         "english_total": _english_picture_total(db),
         "index": index_module.index_status(DEFAULT_MODEL),
@@ -90,6 +93,17 @@ def card_match_status(db: Session = Depends(get_db), current_user: User = Depend
     }
 
 
+def _pinned_view(entry: dict) -> dict | None:
+    """The calibration pinned from the environment, when this model decides with it (it has none of its own)."""
+    from services.card_match import pipeline
+
+    calibration = custom_models.effective_calibration(entry)
+    if not calibration or calibration["origin"] != "environment":
+        return None
+    return {"source": calibration["source"], "at": calibration["at"], "thresholds": calibration["thresholds"],
+            "default": pipeline.default_thresholds().as_dict()}
+
+
 def _custom_models_view() -> list[dict]:
     """Uploaded custom models, newest first, each with the status of its two indexes."""
     out = []
@@ -99,6 +113,9 @@ def _custom_models_view() -> list[dict]:
             **{key: entry[key] for key in ("id", "name", "sha256", "size_bytes", "uploaded_by", "uploaded_at", "dim")},
             "sha_short": entry["sha256"][:8], "available": embed.model_available(entry["id"]),
             "indexes": {kind: {**index_module.index_status(index_name), "name": index_name} for kind, index_name in names.items()},
+            "calibration": entry.get("calibration"),  # version 16 test: {at, scans, thresholds, default, ...} or None
+            "calibration_pinned": _pinned_view(entry),
+            "in_use": entry["id"] == custom_models.selected_name(),  # the model the ``custom`` option uses
         })
     return out
 
@@ -129,6 +146,7 @@ def upload_custom_model(
         db, "card_match.model_uploaded", request=request, actor=current_user, target_type="card_match_model", target_id=entry["id"],
         details={"name": entry["name"], "sha256": entry["sha256"], "size_bytes": entry["size_bytes"]},
     )
+    jobs_module.start_custom_indexes(entry["id"])  # its two index builds, one after the other, unless a job is running (then the Build buttons do it)
     return {"model": next((m for m in _custom_models_view() if m["id"] == entry["id"]), entry)}
 
 
@@ -149,6 +167,37 @@ def delete_custom_model(model_id: str, request: Request, db: Session = Depends(g
         details={"name": entry["name"], "sha256": entry["sha256"]},
     )
     return {"deleted": model_id}
+
+
+@router.post("/models/{model_id}/calibrate")
+def calibrate_custom_model(model_id: str, request: Request, current_user: User = Depends(get_current_user)):
+    """Version 16 test: work out this model's own picture thresholds from the real scans (a Scanner lab job; see docs/CARD_MATCH.md)."""
+    _require_admin(current_user)
+    if not custom_models.is_custom_name(model_id) or custom_models.get_model(model_id) is None:
+        raise HTTPException(status_code=404, detail="Unknown model")
+    missing = [name for name in (*custom_models.index_names(model_id).values(), DEFAULT_MODEL, variants.ART_INDEX)
+               if not (index_module.index_status(name).get("built") and index_module.index_status(name).get("count"))]
+    if missing:
+        raise HTTPException(status_code=409, detail=f"Build the indexes first (missing: {', '.join(missing)})")
+    if not _ocr_available():
+        raise HTTPException(status_code=409, detail="The OCR library is not installed")
+    actor_id, actor_name = current_user.id, current_user.username
+
+    def audit(stored: dict) -> None:
+        from database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            actor = db.query(User).filter(User.id == actor_id).first()
+            record_audit(
+                db, "card_match.model_calibrated", request=request, actor=actor, target_type="card_match_model", target_id=model_id,
+                details={"actor": actor_name, "scans": stored["scans"], "thresholds": stored["thresholds"], "default": stored["default"]},
+            )
+        finally:
+            db.close()
+
+    started, status = jobs_module.start_calibration(model_id, audit)
+    return {"started": started, "job": status}
 
 
 _SOURCE_STATUS_TTL_SECONDS = 30
@@ -331,6 +380,37 @@ def start_benchmark(body: BenchmarkRequest, current_user: User = Depends(get_cur
     _require_ready(True)
     started, status = jobs_module.start_benchmark(body.kind, DEFAULT_MODEL, labels)
     return {"started": started, "job": status}
+
+
+class AutorunSwitchRequest(BaseModel):
+    enabled: bool
+
+
+def _require_autorun_available() -> None:
+    if not autorun_module.available():  # prod: SCAN_MATCHER_AUTORUN is off, so nothing here can run
+        raise HTTPException(status_code=409, detail=autorun_module.UNAVAILABLE)
+
+
+@router.post("/autorun/switch")
+def set_autorun_switch(body: AutorunSwitchRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Nonprod only: "Run the tests by itself after each deploy" (a server setting; audited)."""
+    _require_admin(current_user)
+    _require_autorun_available()
+    autorun_module.set_switch(db, body.enabled, current_user, request)
+    return {"autorun_info": autorun_module.info(db)}
+
+
+@router.post("/autorun/run")
+def run_all_tests_now(current_user: User = Depends(get_current_user)):
+    """Nonprod only: "Run all tests now" starts the autorun's chain at once, ignoring the fingerprint. Refused while a job runs."""
+    _require_admin(current_user)
+    _require_autorun_available()
+    from services.card_picture_packs import card_picture_warmer
+
+    started, refusal = autorun_module.start_run_all(card_picture_warmer)
+    if not started:
+        raise HTTPException(status_code=409, detail=refusal)
+    return {"started": True, "autorun_info": autorun_module.info()}
 
 
 @router.post("/stop")
