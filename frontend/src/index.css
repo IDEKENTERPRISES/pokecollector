@@ -973,6 +973,21 @@ input:-webkit-autofill:focus {
   html[data-vt='push']::view-transition-new(shell-page) { animation: vt-in-from-right 0.38s var(--ease-ios) both; }
   html[data-vt='back']::view-transition-old(shell-page) { animation: vt-out-to-right 0.38s var(--ease-ios) both; z-index: 2; }
   html[data-vt='back']::view-transition-new(shell-page) { animation: vt-in-from-left 0.38s var(--ease-ios) both; }
+
+  /* The top bar (titles, back label) hands over iOS-style instead of the default cross-fade, where the
+     old and new titles sat on top of each other at half opacity for the whole slide: the old one fades
+     out quickly while drifting a little with the page, and the new one fades in after it has left. The
+     bar's own backdrop stays put (the group does not animate), and plain `normal` blending stops the two
+     pictures adding up to a brighter flash. */
+  @keyframes vt-title-out-left { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(-24px); } }
+  @keyframes vt-title-out-right { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(24px); } }
+  @keyframes vt-title-in-right { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+  @keyframes vt-title-in-left { from { opacity: 0; transform: translateX(-24px); } to { opacity: 1; transform: none; } }
+  ::view-transition-old(shell-navbar), ::view-transition-new(shell-navbar) { mix-blend-mode: normal; }
+  html[data-vt='push']::view-transition-old(shell-navbar) { animation: vt-title-out-left 0.15s var(--ease-ios) both; }
+  html[data-vt='push']::view-transition-new(shell-navbar) { animation: vt-title-in-right 0.28s var(--ease-ios) 0.1s both; }
+  html[data-vt='back']::view-transition-old(shell-navbar) { animation: vt-title-out-right 0.15s var(--ease-ios) both; }
+  html[data-vt='back']::view-transition-new(shell-navbar) { animation: vt-title-in-left 0.28s var(--ease-ios) 0.1s both; }
 }
 
 /* Static rainbow sheen for featured cards and the trainer card. No animation. */
