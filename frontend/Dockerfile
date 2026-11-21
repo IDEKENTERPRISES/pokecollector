@@ -17,7 +17,7 @@ RUN cp public/robots-block.txt public/robots.txt \
 
 FROM nginx:alpine
 
-LABEL org.opencontainers.image.source="https://github.com/Git-Romer/pokecollector" \
+LABEL org.opencontainers.image.source="https://github.com/IDEKENTERPRISES/pokecollector" \
       org.opencontainers.image.description="PokéCollector web frontend" \
       org.opencontainers.image.licenses="AGPL-3.0-only"
 

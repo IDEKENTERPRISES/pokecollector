@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-LABEL org.opencontainers.image.source="https://github.com/Git-Romer/pokecollector" \
+LABEL org.opencontainers.image.source="https://github.com/IDEKENTERPRISES/pokecollector" \
       org.opencontainers.image.description="PokéCollector FastAPI backend" \
       org.opencontainers.image.licenses="AGPL-3.0-only"
 
