@@ -1608,7 +1608,7 @@ export default function Settings() {
               </SettingsRow>
               <SettingsRow label={t('settings.sourceCode')} description={t('settings.sourceCodeDesc')}>
                 <a
-                  href="https://github.com/Git-Romer/pokecollector"
+                  href="https://github.com/IDEKENTERPRISES/pokecollector/tree/deploy"
                   target="_blank"
                   rel="noreferrer"
                   className="text-body text-tint"

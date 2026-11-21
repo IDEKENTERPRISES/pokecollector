@@ -35,7 +35,7 @@ except ModuleNotFoundError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_VAPID_SUBJECT = "https://github.com/Git-Romer/pokecollector"
+DEFAULT_VAPID_SUBJECT = "https://github.com/IDEKENTERPRISES/pokecollector"
 MAX_ENDPOINT_LENGTH = 2048
 MAX_PAYLOAD_BYTES = 4096
 MAX_FAILURES = 10

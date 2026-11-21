@@ -73,7 +73,7 @@ DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 # headline price, and overridable per installation and per user.
 DEFAULT_OPENAI_MODEL = "gpt-5.6-luna"
 SCANNER_PROVIDER_GUIDE_URL = (
-    "https://github.com/Git-Romer/pokecollector/blob/main/docs/scanner-providers.md"
+    "https://github.com/IDEKENTERPRISES/pokecollector/blob/deploy/docs/scanner-providers.md"
 )
 GEMINI_API_KEY_HELP_URL = "https://aistudio.google.com/apikey"
 OPENAI_API_KEY_HELP_URL = "https://platform.openai.com/api-keys"
